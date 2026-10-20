@@ -42,6 +42,8 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     "/": pageHtml(),
     "/same.html": frameHtml("Same frame action", "Same frame field"),
     "/cross.html": frameHtml("Cross frame action", "Cross frame field"),
+    "/moved.html": frameHtml("Moved frame action", "Moved frame field"),
+    "/returned.html": frameHtml("Returned frame action", "Returned frame field"),
   };
   const server = http.createServer((request, response) => {
     const body = pages[new URL(request.url, "http://localhost").pathname];
@@ -129,6 +131,8 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
 
     const full = await call("get_ax_tree", { tabId, scope: "page", limit: 300 });
     expect(full.snapshot).toContain("Below fold");
+    expect(full.snapshot).toContain("Cross frame action");
+    expect(full.frames.some(frame => frame.oopif === true)).toBe(true);
 
     const uid = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`))?.match(/target=(uid:\S+)/)?.[1];
     const click = async (label) => call("act_on_element", { tabId, target: uid(ax.snapshot, label), action: "click" });
@@ -157,6 +161,20 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     expect(await page.locator("open-host").evaluate(host => host.shadowRoot.querySelector("input").value)).toBe("shadow value");
     expect(await page.frameLocator("#same").locator("#field").inputValue()).toBe("same value");
     expect(await page.frameLocator("#cross").locator("#field").inputValue()).toBe("cross value");
+
+    const navigateCross = async (url, label) => {
+      await page.locator("#cross").evaluate((frame, src) => { frame.src = src; }, url);
+      await page.frameLocator("#cross").getByRole("button", { name: label }).waitFor();
+      return call("get_ax_tree", { tabId });
+    };
+    const inProcess = await navigateCross(`http://localhost:${PORT}/moved.html`, "Moved frame action");
+    expect(inProcess.snapshot).toContain("Moved frame action");
+    const outOfProcess = await navigateCross(`http://127.0.0.1:${PORT}/returned.html`, "Returned frame action");
+    expect(outOfProcess.snapshot).toContain("Returned frame action");
+    expect(outOfProcess.frames.some(frame => frame.oopif === true)).toBe(true);
+    const returned = await call("act_on_element", { tabId, target: uid(outOfProcess.snapshot, "Returned frame action"), action: "click" });
+    expect(returned.error, JSON.stringify(returned)).toBeUndefined();
+    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Returned frame action");
   } finally {
     await browser?.close();
     await rm(directory, { recursive: true, force: true });

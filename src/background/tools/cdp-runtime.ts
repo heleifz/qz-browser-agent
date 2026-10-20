@@ -152,6 +152,7 @@ export function createCdpRuntime({
       state.attachPromise = (async () => {
         try {
           await debuggerApi.attach(state.target, "1.3");
+          forgetTabFrames(id);
           state.attached = true;
           state.connectionId = ++connectionSeq;
         } catch (err) {
@@ -365,6 +366,7 @@ export function createCdpRuntime({
       await assertTabAllowedBySecurityGuardrails?.(state.tabId, { tool: "debugger", source: "cdp:restore" });
       check();
       state.attachPromise = debuggerApi.attach(state.target, "1.3").then(() => {
+        forgetTabFrames(state.tabId);
         state.attached = true;
         state.connectionId = ++connectionSeq;
       });

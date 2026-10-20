@@ -18,19 +18,38 @@ export interface LayoutBox {
 }
 type DebuggerListener = (method: string, params: Record<string, unknown>) => void;
 
-const rememberedOopifSessions = new Map<number, Map<string, string>>();
-
-export function forgetTabFrames(tabId: number) {
-  rememberedOopifSessions.delete(tabId);
+interface TrackedTab {
+  /** OOPIF target id, which equals its frame id, mapped to the flat child session. */
+  sessions: Map<string, string>;
+  stop: () => void;
 }
 
-function rememberOopifSession(tabId: number, frameId: string, sessionId: string) {
-  let sessions = rememberedOopifSessions.get(tabId);
-  if (!sessions) {
-    sessions = new Map();
-    rememberedOopifSessions.set(tabId, sessions);
-  }
-  sessions.set(frameId, sessionId);
+// Chrome announces each auto-attached OOPIF once per debugger attachment, so the
+// listener lives until the attachment ends rather than for one discovery call.
+const trackedTabs = new Map<number, TrackedTab>();
+
+export function forgetTabFrames(tabId: number) {
+  trackedTabs.get(tabId)?.stop();
+  trackedTabs.delete(tabId);
+}
+
+function trackTab(tabId: number, subscribe: (listener: DebuggerListener) => () => void) {
+  const existing = trackedTabs.get(tabId);
+  if (existing) return { tracked: existing, fresh: false };
+  const sessions = new Map<string, string>();
+  const stop = subscribe((method, params) => {
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
+    if (!sessionId) return;
+    if (method === "Target.attachedToTarget") {
+      const info = record(params.targetInfo);
+      if (info.type === "iframe" && typeof info.targetId === "string") sessions.set(info.targetId, sessionId);
+    } else if (method === "Target.detachedFromTarget") {
+      for (const [frameId, current] of sessions) if (current === sessionId) sessions.delete(frameId);
+    }
+  });
+  const tracked = { sessions, stop };
+  trackedTabs.set(tabId, tracked);
+  return { tracked, fresh: true };
 }
 
 export interface DiscoveredFrame {
@@ -52,14 +71,8 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
   mainFrameId: string;
   frames: DiscoveredFrame[];
 }> {
-  const attached: string[] = [];
-  const stop = subscribe((method, params) => {
-    const info = params.targetInfo as { type?: string } | undefined;
-    if (method === "Target.attachedToTarget" && info?.type === "iframe" && typeof params.sessionId === "string") {
-      attached.push(params.sessionId);
-    }
-  });
-  try {
+  const { tracked, fresh } = trackTab(tabId, subscribe);
+  if (fresh) {
     try {
       await send("Target.setAutoAttach", {
         autoAttach: true,
@@ -71,8 +84,6 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
     } catch {
       // A target that cannot auto-attach still exposes same-process frames.
     }
-  } finally {
-    stop();
   }
 
   const tree = record(await send("Page.getFrameTree"));
@@ -91,7 +102,7 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
   };
   walk(frameTree);
 
-  for (const sessionId of attached) {
+  for (const [targetId, sessionId] of [...tracked.sessions]) {
     try {
       const childTree = record(record(await send("Page.getFrameTree", {}, sessionId)).frameTree) as FrameTreeNode;
       const frameId = String(childTree.frame?.id || "");
@@ -101,7 +112,10 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
       try {
         iframeBackendNodeId = Number(record(await send("DOM.getFrameOwner", { frameId })).backendNodeId || 0);
       } catch { /* The owner can sit in another process. */ }
-      rememberOopifSession(tabId, frameId, sessionId);
+      if (frameId !== targetId) {
+        tracked.sessions.delete(targetId);
+        tracked.sessions.set(frameId, sessionId);
+      }
       frames.push({
         frameId,
         oopif: true,
@@ -109,7 +123,9 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
         iframeBackendNodeId: iframeBackendNodeId || undefined,
         url: childTree.frame?.url,
       });
-    } catch { /* The frame detached during discovery. */ }
+    } catch {
+      tracked.sessions.delete(targetId);
+    }
   }
 
   for (const frame of frames) {
@@ -123,7 +139,7 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: (list
 
 export async function sessionForFrame(tabId: number, send: Send, subscribe: (listener: DebuggerListener) => () => void, frameId: string) {
   if (!frameId) return undefined;
-  const cached = rememberedOopifSessions.get(tabId)?.get(frameId);
+  const cached = trackedTabs.get(tabId)?.sessions.get(frameId);
   if (cached) return cached;
   const discovered = await discoverFrames(tabId, send, subscribe);
   return discovered.frames.find(frame => frame.oopif && frame.frameId === frameId)?.sessionId;
