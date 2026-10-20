@@ -411,10 +411,12 @@ function intersectsViewport(box: ViewportBox, viewport: { width: number; height:
 }
 
 function pruneToViewport(roots: SemanticNode[], boxes: Map<string, ViewportBox>, viewport: { width: number; height: number }) {
+  // A frame without any layout data has unknown geometry; keep its nodes rather than hide the frame.
+  const measuredFrames = new Set([...boxes.values()].map(box => box.frameId));
   const keep = (node: SemanticNode): SemanticNode | null => {
     const children = node.children.map(keep).filter((child): child is SemanticNode => !!child);
     const box = boxFor(node, boxes);
-    const self = !!box && intersectsViewport(box, viewport);
+    const self = box ? intersectsViewport(box, viewport) : !measuredFrames.has(node.compact.frameId);
     if (!self && children.length === 0 && node.depth !== 0) return null;
     return { ...node, children };
   };

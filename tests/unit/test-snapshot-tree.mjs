@@ -148,6 +148,32 @@ assert.equal(inner.frameId, "child");
 assert.equal(inner.oopif, true);
 assert.equal(inner.backendNodeId, 1, "a frame-local backend id stays distinct from the top document");
 
+const unmeasuredSources = [
+  {
+    frameId: "main",
+    nodes: [
+      node("root", "RootWebArea", "Host", { backend: 1, childIds: ["go", "frame"] }),
+      node("go", "button", "Main action", { parentId: "root", backend: 2 }),
+      node("frame", "Iframe", "Guest", { parentId: "root", backend: 9 }),
+    ],
+  },
+  {
+    frameId: "child",
+    parentFrameId: "main",
+    iframeBackendNodeId: 9,
+    nodes: [
+      node("croot", "RootWebArea", "Guest", { backend: 1, childIds: ["inner"] }),
+      node("inner", "button", "Unmeasured frame action", { parentId: "croot", backend: 2 }),
+    ],
+  },
+];
+const noGeometry = build(unmeasuredSources);
+assert.match(noGeometry.snapshot, /button "Main action"/, "a page without layout data keeps its nodes");
+assert.match(noGeometry.snapshot, /button "Unmeasured frame action"/);
+const unmeasuredFrame = build(unmeasuredSources, { boxes: [box("main", 1, 0, 0, 800, 600), box("main", 9, 0, 100, 300, 200)] });
+assert.doesNotMatch(unmeasuredFrame.snapshot, /button "Main action"/, "an unboxed node in a measured frame is treated as not rendered");
+assert.match(unmeasuredFrame.snapshot, /button "Unmeasured frame action"/, "a frame without layout data is not hidden");
+
 const cyclic = build([{
   frameId: "main",
   nodes: [
