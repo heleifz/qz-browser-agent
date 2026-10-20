@@ -104,40 +104,85 @@ async function fillElement(send: Send, objectId: string, backendNodeId: number, 
 }
 
 async function pagePoint(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined) {
-  const local = record(await evaluate(send, objectId, POINT_FN, sessionId));
-  if (local.ok !== true) return null;
-  if (local.covered === true) return { x: 0, y: 0, covered: true };
-  if (!sessionId) {
-    const x = Number(local.pageX);
-    const y = Number(local.pageY);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return { x, y, covered: false };
+  const local = await quadCenter(send, backendNodeId, sessionId);
+  if (!local) return null;
+  let origin = { x: 0, y: 0 };
+  if (sessionId) {
+    // Quads are relative to the frame's local root; an OOPIF is its own local root.
+    const tree = record(await send("Page.getFrameTree", {}, sessionId));
+    const frameId = String(record(record(tree.frameTree).frame).id || "");
+    const ownerId = frameId ? Number(record(await send("DOM.getFrameOwner", { frameId })).backendNodeId || 0) : 0;
+    if (!ownerId) return null;
+    await send("DOM.scrollIntoViewIfNeeded", { backendNodeId: ownerId });
+    const content = arrayNumbers(record(record(await send("DOM.getBoxModel", { backendNodeId: ownerId })).model).content);
+    if (content.length < 2) return null;
+    origin = { x: content[0], y: content[1] };
+    const again = await quadCenter(send, backendNodeId, sessionId);
+    if (!again) return null;
+    local.x = again.x;
+    local.y = again.y;
   }
-  const tree = record(await send("Page.getFrameTree", {}, sessionId));
-  const frameId = String(record(record(tree.frameTree).frame).id || "");
-  if (!frameId) return null;
-  const owner = record(await send("DOM.getFrameOwner", { frameId }));
-  const ownerId = Number(owner.backendNodeId || 0);
-  if (!ownerId) return null;
-  await send("DOM.scrollIntoViewIfNeeded", { backendNodeId: ownerId });
-  const ownerObject = await resolveObject(send, ownerId);
-  const origin = record(await evaluate(send, ownerObject, "function(){ const rect = this.getBoundingClientRect(); return { x: rect.left + this.clientLeft, y: rect.top + this.clientTop }; }"));
-  const again = record(await evaluate(send, objectId, POINT_FN, sessionId));
-  if (again.ok !== true) return null;
-  const x = Number(origin.x) + Number(again.x);
-  const y = Number(origin.y) + Number(again.y);
+  const x = origin.x + local.x;
+  const y = origin.y + local.y;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const covered = await parentCoversFrame(send, x, y);
+  const covered = !(await hitsTarget(send, objectId, x, y, local, sessionId));
   return { x, y, covered };
 }
 
-async function parentCoversFrame(send: Send, x: number, y: number) {
-  const evaluated = record(await send("Runtime.evaluate", {
-    expression: `(() => { const hit = document.elementFromPoint(${JSON.stringify(x)}, ${JSON.stringify(y)}); return hit ? hit.localName : ""; })()`,
-    returnByValue: true,
-  }));
-  const tag = String(record(evaluated.result).value || "");
-  return tag !== "" && tag !== "iframe";
+async function quadCenter(send: Send, backendNodeId: number, sessionId: string | undefined) {
+  let quads: unknown[];
+  try {
+    quads = arrayValue(record(await send("DOM.getContentQuads", { backendNodeId }, sessionId)).quads);
+  } catch {
+    return null;
+  }
+  const quad = quads.map(arrayNumbers).find(points => points.length >= 8 && quadArea(points) > 1);
+  if (!quad) return null;
+  return {
+    x: (quad[0] + quad[2] + quad[4] + quad[6]) / 4,
+    y: (quad[1] + quad[3] + quad[5] + quad[7]) / 4,
+  };
+}
+
+/** The dispatched point must land on the target or its composed descendant, in the target's own frame. */
+async function hitsTarget(send: Send, objectId: string, x: number, y: number, local: { x: number; y: number }, sessionId: string | undefined) {
+  try {
+    const top = record(await send("DOM.getNodeForLocation", { x: Math.round(x), y: Math.round(y), ignorePointerEventsNone: true }));
+    let hitId = Number(top.backendNodeId || 0);
+    if (sessionId) {
+      const inner = record(await send("DOM.getNodeForLocation", { x: Math.round(local.x), y: Math.round(local.y), ignorePointerEventsNone: true }, sessionId));
+      if (!(await ownsFrame(send, hitId, sessionId))) return false;
+      hitId = Number(inner.backendNodeId || 0);
+    }
+    if (!hitId) return false;
+    const hitObject = await resolveObject(send, hitId, sessionId);
+    if (!hitObject) return false;
+    const evaluated = record(await send("Runtime.callFunctionOn", {
+      objectId,
+      returnByValue: true,
+      arguments: [{ objectId: hitObject }],
+      functionDeclaration: CONTAINS_FN,
+    }, sessionId));
+    return record(evaluated.result).value === true;
+  } catch {
+    return false;
+  }
+}
+
+async function ownsFrame(send: Send, hitId: number, sessionId: string) {
+  const tree = record(await send("Page.getFrameTree", {}, sessionId));
+  const frameId = String(record(record(tree.frameTree).frame).id || "");
+  const owner = Number(record(await send("DOM.getFrameOwner", { frameId })).backendNodeId || 0);
+  return owner !== 0 && owner === hitId;
+}
+
+function quadArea(points: number[]) {
+  let area = 0;
+  for (let index = 0; index < 4; index += 1) {
+    const next = (index + 1) % 4;
+    area += points[index * 2] * points[next * 2 + 1] - points[next * 2] * points[index * 2 + 1];
+  }
+  return Math.abs(area) / 2;
 }
 
 async function resolveObject(send: Send, backendNodeId: number, sessionId?: string) {
@@ -158,44 +203,11 @@ async function evaluate(send: Send, objectId: string, expression: string, sessio
   return record(evaluated.result).value;
 }
 
-const POINT_FN = `function() {
-  const el = this instanceof Element ? this : null;
-  if (!el) return { ok: false, reason: "not-element" };
-  const rect = el.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return { ok: false, reason: "no-box" };
-  const x = rect.left + rect.width / 2;
-  const y = rect.top + rect.height / 2;
-  const root = el.getRootNode();
-  const hit = (root instanceof ShadowRoot ? root : el.ownerDocument).elementFromPoint(x, y);
-  if (hit !== el && !(hit && el.contains(hit))) return { ok: false, reason: "obscured" };
-  let inFrame = false;
-  try { inFrame = window.top !== window; } catch (error) { inFrame = true; }
-  if (!inFrame) {
-    const topHit = document.elementFromPoint(x, y);
-    let node = el;
-    let accepts = false;
-    while (node) {
-      if (node === topHit) { accepts = true; break; }
-      if (node.parentElement) node = node.parentElement;
-      else {
-        const owner = node.getRootNode();
-        node = owner instanceof ShadowRoot ? owner.host : null;
-      }
-    }
-    return { ok: true, covered: !accepts, x, y, pageX: x, pageY: y };
+const CONTAINS_FN = `function(hit) {
+  for (let node = hit; node; node = node.parentNode || (node instanceof ShadowRoot ? node.host : null)) {
+    if (node === this) return true;
   }
-  try {
-    const frame = window.frameElement;
-    if (!frame) return { ok: true, covered: false, x, y, pageX: x, pageY: y };
-    const frameRect = frame.getBoundingClientRect();
-    const pageX = frameRect.left + frame.clientLeft + x;
-    const pageY = frameRect.top + frame.clientTop + y;
-    const topHit = window.parent.document.elementFromPoint(pageX, pageY);
-    const covered = !!topHit && topHit !== frame && !frame.contains(topHit);
-    return { ok: true, covered, x, y, pageX, pageY };
-  } catch (error) {
-    return { ok: true, covered: false, x, y, pageX: x, pageY: y };
-  }
+  return false;
 }`;
 
 const SELECT_TEXT_FN = `function() {
@@ -219,6 +231,14 @@ const READ_VALUE_FN = `function() {
   if (typeof el.value === "string") return el.value;
   return el.textContent || "";
 }`;
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function arrayNumbers(value: unknown): number[] {
+  return arrayValue(value).map(Number).filter(Number.isFinite);
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

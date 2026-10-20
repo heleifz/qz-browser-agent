@@ -7,14 +7,18 @@ import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
 const PORT = 8133;
+const SIBLING_PORT = 8134;
 
 function pageHtml() {
   return `<!doctype html><title>snapshot fixtures</title>
     <button id="decoy" onclick="window.__clicks.push('decoy')">Decoy</button>
     <open-host></open-host>
     <closed-host></closed-host>
+    <div style="position:relative;width:200px"><covered-host></covered-host>
+      <div id="overlay" onclick="window.__clicks.push('overlay')" style="position:absolute;inset:0;background:#fff8"></div></div>
     <iframe id="same" src="http://localhost:${PORT}/same.html" width="420" height="70"></iframe>
     <iframe id="cross" src="http://127.0.0.1:${PORT}/cross.html" width="420" height="70"></iframe>
+    <iframe id="sibling" src="http://localhost:${SIBLING_PORT}/sibling.html" width="420" height="70"></iframe>
     <div style="height:2200px"></div>
     <button id="below" onclick="window.__clicks.push('below')">Below fold</button>
     <script>
@@ -23,6 +27,11 @@ function pageHtml() {
         const root = this.attachShadow({ mode: "open" });
         root.innerHTML = '<input aria-label="Shadow field"><button>Open shadow action</button>';
         root.querySelector("button").onclick = () => window.__clicks.push("open");
+      } });
+      customElements.define("covered-host", class extends HTMLElement { connectedCallback() {
+        const root = this.attachShadow({ mode: "open" });
+        root.innerHTML = '<button>Covered shadow action</button>';
+        root.querySelector("button").onclick = () => window.__clicks.push("covered");
       } });
       customElements.define("closed-host", class extends HTMLElement { connectedCallback() {
         const root = this.attachShadow({ mode: "closed" });
@@ -44,13 +53,17 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     "/cross.html": frameHtml("Cross frame action", "Cross frame field"),
     "/moved.html": frameHtml("Moved frame action", "Moved frame field"),
     "/returned.html": frameHtml("Returned frame action", "Returned frame field"),
+    "/sibling.html": frameHtml("Sibling origin action", "Sibling origin field"),
   };
   const server = http.createServer((request, response) => {
     const body = pages[new URL(request.url, "http://localhost").pathname];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html" });
     response.end(body || "");
   });
+  // Another port is a cross-origin frame that still shares the page's site and process.
+  const siblingServer = http.createServer(server.listeners("request")[0]);
   await new Promise(resolve => server.listen(PORT, resolve));
+  await new Promise(resolve => siblingServer.listen(SIBLING_PORT, resolve));
   const directory = await mkdtemp(join(tmpdir(), "qz-snapshot-fixtures-"));
   let browser;
   try {
@@ -116,6 +129,7 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
       || await browser.waitForEvent("page");
     await page.waitForSelector("#decoy");
     await page.frameLocator("#cross").locator("button").waitFor();
+    await page.frameLocator("#sibling").locator("button").waitFor();
 
     const ax = await call("get_ax_tree", { tabId });
     expect(ax.error, JSON.stringify(ax)).toBeUndefined();
@@ -147,7 +161,12 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     const cross = await click("Cross frame action");
     expect(cross.error, JSON.stringify(cross)).toBeUndefined();
     expect(cross.frameId).toBeTruthy();
+    const covered = await click("Covered shadow action");
+    expect(covered.code, JSON.stringify(covered)).toBe("ELEMENT_OBSCURED");
+    const sibling = await click("Sibling origin action");
+    expect(sibling.error, JSON.stringify(sibling)).toBeUndefined();
     expect(await page.evaluate(() => window.__clicks)).toEqual(["closed", "open"]);
+    expect(await page.frameLocator("#sibling").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Sibling origin action");
     expect(await page.frameLocator("#same").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Same frame action");
     expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Cross frame action");
 
@@ -161,6 +180,9 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     expect(await page.locator("open-host").evaluate(host => host.shadowRoot.querySelector("input").value)).toBe("shadow value");
     expect(await page.frameLocator("#same").locator("#field").inputValue()).toBe("same value");
     expect(await page.frameLocator("#cross").locator("#field").inputValue()).toBe("cross value");
+    const siblingFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Sibling origin field"), action: "fill", value: "sibling value" });
+    expect(siblingFill.error, JSON.stringify(siblingFill)).toBeUndefined();
+    expect(await page.frameLocator("#sibling").locator("#field").inputValue()).toBe("sibling value");
 
     const navigateCross = async (url, label) => {
       await page.locator("#cross").evaluate((frame, src) => { frame.src = src; }, url);
@@ -179,5 +201,6 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     await browser?.close();
     await rm(directory, { recursive: true, force: true });
     server.close();
+    siblingServer.close();
   }
 });
