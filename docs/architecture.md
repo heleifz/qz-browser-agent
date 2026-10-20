@@ -4,6 +4,7 @@
 
 https://github.com/user-attachments/assets/1a51c1ad-0952-4798-94ae-8a4df68cfc39
 
+<img width="371" height="825" alt="截屏2026-10-21 00 08 06" src="https://github.com/user-attachments/assets/1a363d0b-0eed-4a0a-9d3a-1fbda076c848" />
 
 
 qz is a Manifest V3 Chrome extension. Background owns task state and persistence; Side Panel owns
