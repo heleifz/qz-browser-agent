@@ -4,6 +4,7 @@ import type { createCdpRuntime } from './cdp-runtime.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
+  frameId?: string; oopif?: boolean; remoteAction?: boolean;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -12,7 +13,9 @@ interface ElementRuntimeHost {
   makeSessionTabTargetError(code: string, details: Record<string, unknown>): Error;
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
+  subscribeDebuggerEvents?: (tabId: number, listener: (method: string, params: Record<string, unknown>) => void) => () => void;
 }
+import { sessionForFrame } from "./frame-sessions.js";
 import { elementPageFunction } from "./page-scripts.js";
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
@@ -26,6 +29,7 @@ export function createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
+  subscribeDebuggerEvents,
 }: ElementRuntimeHost) {
 // ---------------------------------------------------------------------------
 // Page snapshot element refs
@@ -161,7 +165,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
 
   cleanupElementRefs();
-  const ref = elementRefRegistry.get(requestedUid);
+  let ref = elementRefRegistry.get(requestedUid);
   if (!ref) {
     throw new ToolExecutionError(
       "STALE_ELEMENT_UID",
@@ -230,19 +234,33 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
 
-  let resolvedSelector = requestedSelector || ref.selector || "";
-  if (!resolvedSelector && ref.backendNodeId) {
-    resolvedSelector = await selectorFromBackendNode(resolvedTabId, ref.backendNodeId, context);
-    if (resolvedSelector) {
-      elementRefRegistry.set(requestedUid, {
-        ...ref,
-        selector: resolvedSelector,
-        createdAt: Date.now(),
-      });
+  let resolvedSelector = requestedSelector || "";
+  let remoteAction = ref.remoteAction === true;
+  if (ref.backendNodeId) {
+    const located = await locateBackendElement(resolvedTabId, ref, context);
+    if (!located || located.error) {
+      throw new ToolExecutionError(
+        "STALE_ELEMENT_UID",
+        `Element target is stale or unknown: uid:${requestedUid}. ${located?.error || "Take a fresh get_ax_tree snapshot, then retry with a new target."}`,
+        { target: elementTargetForUid(requestedUid), reason: located?.error },
+      );
     }
+    remoteAction = located.remote;
+    if (located.selector) resolvedSelector = located.selector;
+    elementRefRegistry.set(requestedUid, {
+      ...ref,
+      selector: resolvedSelector,
+      remoteAction,
+      frameId: located.frameId || ref.frameId,
+      oopif: located.oopif || ref.oopif,
+      createdAt: Date.now(),
+    });
+    ref = elementRefRegistry.get(requestedUid) || ref;
+  } else {
+    resolvedSelector = resolvedSelector || ref.selector || "";
   }
 
-  if (!resolvedSelector && !allowBackendOnly) {
+  if (!resolvedSelector && !remoteAction && !allowBackendOnly) {
     throw new ToolExecutionError(
       "UID_SELECTOR_UNAVAILABLE",
       `Element target cannot be resolved to a CSS selector: uid:${requestedUid}`,
@@ -272,6 +290,78 @@ function normalizeElementUid(uid: unknown) {
   if (elementRefRegistry.has(value)) return value;
   const match = value.match(/\bt\d+_[a-z0-9]+_\d+\b/i);
   return match ? match[0] : value;
+}
+
+const BACKEND_LOCATOR_FN = `function() {
+  const el = this instanceof Element ? this : this instanceof Node ? this.parentElement : null;
+  if (!el || !el.isConnected) return { missing: true };
+  const root = el.getRootNode();
+  let inFrame = false;
+  try { inFrame = window.top !== window; } catch (error) { inFrame = true; }
+  if (root instanceof ShadowRoot || inFrame) return { remote: true };
+  const escape = (value) => (window.CSS && CSS.escape) ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => "\\\\" + ch);
+  const parts = [];
+  let node = el;
+  while (node && node.nodeType === 1 && parts.length < 12) {
+    let part = node.localName || "";
+    if (!part) break;
+    if (node.id) { parts.unshift((parts.length ? part : "") + "#" + escape(node.id)); break; }
+    const parent = node.parentElement;
+    if (parent) {
+      const localName = node.localName;
+      const siblings = Array.from(parent.children).filter((child) => child.localName === localName);
+      if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(node) + 1) + ")";
+    }
+    parts.unshift(part);
+    node = parent;
+  }
+  const selector = parts.join(" > ");
+  let unique = false;
+  try {
+    const matches = selector ? document.querySelectorAll(selector) : [];
+    unique = matches.length === 1 && matches[0] === el;
+  } catch (error) { unique = false; }
+  return { remote: !unique, selector: unique ? selector : "" };
+}`;
+
+async function locateBackendElement(tabId: number, ref: ElementReference, context: ToolContext) {
+  try {
+    return await withDebugger(tabId, async (_target, send) => {
+      const frameId = String(ref.frameId || "");
+      const oopif = ref.oopif === true;
+      let sessionId: string | undefined;
+      if (oopif) {
+        if (!subscribeDebuggerEvents) return { remote: true, selector: "", frameId, oopif, error: "no debugger events" };
+        sessionId = await sessionForFrame(tabId, send, listener => subscribeDebuggerEvents!(tabId, listener), frameId);
+        if (!sessionId) return { remote: true, selector: "", frameId, oopif, error: `no session for frame ${frameId}` };
+      }
+      let resolved: Record<string, unknown>;
+      try {
+        resolved = record(await send("DOM.resolveNode", { backendNodeId: ref.backendNodeId }, sessionId));
+      } catch (error) {
+        return { remote: true, selector: "", frameId, oopif, error: error instanceof Error ? error.message : String(error) };
+      }
+      const objectId = String(record(resolved.object).objectId || "");
+      if (!objectId) return { remote: true, selector: "", frameId, oopif, error: "resolveNode returned no object" };
+      if (frameId || oopif) return { remote: true, selector: "", frameId, oopif };
+      const evaluated = record(await send("Runtime.callFunctionOn", {
+        objectId,
+        returnByValue: true,
+        functionDeclaration: BACKEND_LOCATOR_FN,
+      }, sessionId));
+      const value = record(record(evaluated.result).value);
+      if (value.missing === true) return { remote: true, selector: "", frameId, oopif, error: "node is not connected" };
+      return {
+        remote: value.remote === true || oopif || !!frameId,
+        selector: value.remote === true || oopif || frameId ? "" : String(value.selector || ""),
+        frameId,
+        oopif,
+      };
+    }, context);
+  } catch (err) {
+    if (isCdpFallbackForbiddenError(err)) throw err;
+    return { remote: true, selector: "", frameId: String(ref.frameId || ""), oopif: ref.oopif === true, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 async function backendNodeIdForSelector(tabId: number, selector: string, context: ToolContext = {}) {

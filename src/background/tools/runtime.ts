@@ -1241,6 +1241,7 @@ const {
   sendCdp,
   evaluateCdpScript,
   withDebugger,
+  subscribeDebuggerEvents,
   withTemporaryDebugger,
   getDebuggerConnectionId,
   setDebuggerRetention,
@@ -1329,6 +1330,7 @@ const elementRuntime = createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
+  subscribeDebuggerEvents,
 });
 const { isUidElementTarget } = elementRuntime;
 
@@ -1366,7 +1368,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
-  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
+  sendToContent, sendCdp, withDebugger, subscribeDebuggerEvents, getDebuggerConnectionId, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,
   publishSkillRegistryChange, summarizeToolArgsForTrace,

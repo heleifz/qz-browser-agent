@@ -1,4 +1,5 @@
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
+import { forgetTabFrames } from "./frame-sessions.js";
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
   tabId: number; target: chrome.debugger.Debuggee; ownerKey: string; ownerKind: CdpOwner['kind'];
@@ -13,6 +14,10 @@ interface CdpState {
 }
 interface DebuggerApi {
   onDetach?: { addListener(listener: (source: chrome.debugger.Debuggee, reason: string) => void): void };
+  onEvent?: {
+    addListener(listener: (source: chrome.debugger.Debuggee, method: string, params?: object) => void): void;
+    removeListener(listener: (source: chrome.debugger.Debuggee, method: string, params?: object) => void): void;
+  };
   attach(target: chrome.debugger.Debuggee, version: string): Promise<void>;
   detach(target: chrome.debugger.Debuggee): Promise<void>;
   sendCommand(target: chrome.debugger.Debuggee, method: string, params?: object): Promise<unknown>;
@@ -26,7 +31,7 @@ interface CdpHost {
   authorizeRunTab?: ((access: RunAccess & { tabId: number }) => Promise<unknown>) | null;
   debuggerApi?: DebuggerApi;
 }
-export type CdpCommand = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+export type CdpCommand = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Physical connections may outlive a run; permission to send commands never does. */
 export function createCdpRuntime({
@@ -47,6 +52,7 @@ export function createCdpRuntime({
     if (!state) return;
     state.attached = false;
     state.attachPromise = null;
+    forgetTabFrames(tabId);
     if (reason === "canceled_by_user" && state.recoveryPromise) state.restore = null;
     if (!state.releasing && reason === "target_closed" && state.retained && state.restore && !state.recoveryPromise) {
       // A target can disappear during navigation while its tab survives. Restore only
@@ -262,7 +268,7 @@ export function createCdpRuntime({
     check();
     const result = await fn(
       state.target,
-      (method, params = {}) => sendForState(state, method, params, check),
+      (method, params = {}, sessionId?: string) => sendForState(state, method, params, check, sessionId),
     );
     check();
     return result;
@@ -452,11 +458,24 @@ export function createCdpRuntime({
     };
   }
 
-  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}) {
+  function subscribeDebuggerEvents(tabId: number, listener: (method: string, params: Record<string, unknown>) => void) {
+    const events = debuggerApi.onEvent;
+    if (!events) return () => {};
+    const wrapped = (source: chrome.debugger.Debuggee, method: string, params?: object) => {
+      if (Number(source?.tabId) !== tabId) return;
+      const body = params && typeof params === "object" ? params as Record<string, unknown> : {};
+      listener(method, body);
+    };
+    events.addListener(wrapped);
+    return () => events.removeListener(wrapped);
+  }
+
+  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId?: string) {
     assertStateActive(state);
     check();
+    const target = sessionId ? { ...state.target, sessionId } as chrome.debugger.Debuggee : state.target;
     try {
-      const result = await debuggerApi.sendCommand(state.target, method, params);
+      const result = await debuggerApi.sendCommand(target, method, params);
       assertStateActive(state);
       check();
       return result;
@@ -490,6 +509,7 @@ export function createCdpRuntime({
     sendCdp,
     evaluateCdpScript,
     withDebugger,
+    subscribeDebuggerEvents,
     withTemporaryDebugger,
     releaseRun,
     releaseSession,

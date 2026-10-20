@@ -1,7 +1,8 @@
 import type { ToolContext } from "../background.js";
 import type { ElementReference } from "../../background/tools/element-runtime.js";
 export type { ElementReference } from "../../background/tools/element-runtime.js";
-export type CdpCommand = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+export type CdpCommand = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+export type DebuggerEventListener = (method: string, params: Record<string, unknown>) => void;
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Run identity is checked by the host before accessing a debugger lease. */
 export interface BrowserDebugger {
@@ -32,6 +33,7 @@ export { createCdpKeyboard, primaryModifierForContext } from "../../background/t
 export { createCdpTouch } from "../../background/tools/cdp-touch.js";
 export type { MappedKey } from "../../background/tools/cdp-keyboard.js";
 export { isCdpFallbackForbiddenError } from "../../background/tools/cdp-runtime.js";
+export { collectSnapshotInputs, discoverFrames, sessionForFrame } from "../../background/tools/frame-sessions.js";
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";

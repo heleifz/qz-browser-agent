@@ -59,6 +59,7 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   readonly matchBlockedUrl: (url?: unknown, guardrails?: unknown) => GuardrailDecision | null;
   readonly sendCdp: BrowserDebugger["sendCdp"];
   readonly withDebugger: BrowserDebugger["withDebugger"];
+  readonly subscribeDebuggerEvents: (tabId: number, listener: (method: string, params: Record<string, unknown>) => void) => () => void;
   /** Current package-provided page metadata; reads state without attaching or navigating. */
   readonly getPageContext: (tabId: number) => Readonly<Record<string, string | number | boolean>>;
   /** Inspect connection identity without attaching; release only this run's lease after failed setup. */

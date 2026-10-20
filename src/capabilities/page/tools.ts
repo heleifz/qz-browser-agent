@@ -7,13 +7,14 @@ import type { PageState, PreparedNavigation } from "#sdk/background/browser";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
-  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getPageContext" | "getTabPageState" | "pageStateDelta"
+  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "subscribeDebuggerEvents" | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { isCdpFallbackForbiddenError } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
+import { actOnRemoteElement } from "./remote-element.js";
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
@@ -35,6 +36,7 @@ export function registerPageElementTools({
   clickNotReadyResult,
   sendCdp,
   withDebugger,
+  subscribeDebuggerEvents,
   getPageContext,
 }: PageElementHost) {
 async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>): Promise<ElementReply> {
@@ -217,6 +219,19 @@ registerTool({
     const selector = ref.selector;
     index = ref.index;
     const resolvedTarget = ref.target || elementTargetForSelector(selector);
+    if (ref.ref?.remoteAction && ref.ref.backendNodeId && tabId) {
+      return actOnRemoteElement({
+        tabId,
+        target: resolvedTarget,
+        selector,
+        index,
+        uid: ref.uid || undefined,
+        action: normalizedAction,
+        value: String(value ?? ""),
+        submit: submit === true,
+        ref: ref.ref,
+      }, { withDebugger, subscribeDebuggerEvents, context });
+    }
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
 

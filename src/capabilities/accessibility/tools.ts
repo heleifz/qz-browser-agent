@@ -2,18 +2,15 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
+import { collectSnapshotInputs } from "#sdk/background/browser";
+import { buildPageSnapshot, type SnapshotDisplayNode } from "./snapshot-tree.js";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
-  | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
+  | "sendToContent" | "withDebugger" | "subscribeDebuggerEvents"> & Pick<ToolExtensionAPI["element"],
   "makeSnapshotId" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
   | "backendNodeIdForSelector" | "elementTargetGrammar">;
-interface AxValue { value?: unknown }
-interface AxNode {
-  nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
-  role?: AxValue; name?: AxValue; description?: AxValue; value?: AxValue;
-  properties?: { name?: string; value?: AxValue }[];
-}
 interface SnapshotContext { tabId: number; snapshotId: string; sessionId?: string; pageUrl?: string }
+type DisplayNode = SnapshotDisplayNode;
 
 /** Registers the compact accessibility-tree snapshot tool. */
 export function registerAccessibilityTools({
@@ -28,187 +25,12 @@ export function registerAccessibilityTools({
   makeSessionTabTargetError,
   sendToContent,
   withDebugger,
+  subscribeDebuggerEvents,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
 }: AccessibilityHost) {
-type CompactNode = ReturnType<typeof compactAxNode>;
-interface SemanticNode { compact: CompactNode; depth: number; parent: SemanticNode | null; children: SemanticNode[] }
-type DisplayNode = { uid: string; target: string; depth: number; nodeId: string; parentUid?: string; truncated?: boolean } & Partial<CompactNode>;
-function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", rootBackendNodeId = 0, maxDepth = Infinity }: SnapshotContext & { limit: number; rootBackendNodeId?: number; maxDepth?: number }) {
-  const nodeMap = new Map<string, AxNode>();
-  for (const node of rawNodes || []) {
-    if (node?.nodeId) nodeMap.set(node.nodeId, node);
-  }
-
-  const defaultRoots = [...nodeMap.values()].filter(node => !node.parentId || !nodeMap.has(node.parentId));
-  let roots = defaultRoots;
-  let rootFound = true;
-  if (rootBackendNodeId) {
-    const requestedRoot = [...nodeMap.values()].find(node => Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId));
-    roots = requestedRoot ? [requestedRoot] : [];
-    rootFound = !!requestedRoot;
-  }
-  const semanticRoots: SemanticNode[] = [];
-  const semanticNodes: SemanticNode[] = [];
-
-  const buildSemanticTree = (rawNode: AxNode | undefined, depth: number, parentNode: SemanticNode | null): void => {
-    if (!rawNode) return;
-    const compact = compactAxNode(rawNode);
-    const keep = shouldKeepAxNode(compact, depth);
-    let nextDepth = depth;
-    let nextParentNode = parentNode;
-
-    if (keep) {
-      const semanticNode: SemanticNode = {
-        compact,
-        depth,
-        parent: parentNode,
-        children: [],
-      };
-      semanticNodes.push(semanticNode);
-      if (parentNode) {
-        parentNode.children.push(semanticNode);
-      } else {
-        semanticRoots.push(semanticNode);
-      }
-      nextDepth = depth + 1;
-      nextParentNode = semanticNode;
-    }
-
-    if (nextDepth >= maxDepth) return;
-    for (const childId of rawNode.childIds || []) {
-      buildSemanticTree(nodeMap.get(childId), nextDepth, nextParentNode);
-    }
-  };
-
-  for (const root of roots) buildSemanticTree(root, 0, null);
-
-  const includedNodes = selectSemanticNodesByBreadth(semanticRoots, limit);
-  const displayNodes: DisplayNode[] = [];
-  let counter = 0;
-  const emitDisplayNode = (semanticNode: SemanticNode, parentUid: string | null): void => {
-    if (!includedNodes.has(semanticNode)) return;
-    const compact = semanticNode.compact;
-    const uid = `${snapshotId}_${counter++}`;
-    const item: DisplayNode = {
-      uid,
-      target: elementTargetForUid(uid),
-      depth: semanticNode.depth,
-      nodeId: compact.nodeId,
-    };
-    if (parentUid) item.parentUid = parentUid;
-    if (compact.backendNodeId) item.backendNodeId = compact.backendNodeId;
-    if (compact.role) item.role = compact.role;
-    if (compact.name) item.name = compact.name;
-    if (compact.value) item.value = compact.value;
-    if (compact.description) item.description = compact.description;
-    if (compact.url) item.url = compact.url;
-    if (compact.flags?.length) item.flags = compact.flags;
-    if (compact.ignored) item.ignored = true;
-    if (semanticNode.children.some(child => !includedNodes.has(child))) item.truncated = true;
-    displayNodes.push(item);
-    registerElementRef({
-      uid,
-      tabId,
-      sessionId,
-      pageUrl,
-      backendNodeId: item.backendNodeId,
-      role: item.role,
-      name: item.name,
-      url: item.url,
-      snapshotId,
-    });
-    for (const child of semanticNode.children) emitDisplayNode(child, uid);
-  };
-
-  for (const root of semanticRoots) emitDisplayNode(root, null);
-
-  const lines = displayNodes.map(formatSnapshotLine);
-  const truncatedNodeCount = Math.max(0, semanticNodes.length - displayNodes.length);
-  return {
-    snapshot: lines.join("\n"),
-    nodes: displayNodes,
-    nodeCount: rawNodes?.length || 0,
-    semanticNodeCount: semanticNodes.length,
-    returnedNodeCount: displayNodes.length,
-    truncatedNodeCount,
-    outlineTruncated: truncatedNodeCount > 0,
-    rootFound,
-  };
-}
-
-function selectSemanticNodesByBreadth(roots: SemanticNode[], limit: number) {
-  const maxNodes = Math.max(0, Number(limit) || 0);
-  const included = new Set<SemanticNode>();
-  const queue = Array.isArray(roots) ? roots.slice() : [];
-  for (let index = 0; index < queue.length && included.size < maxNodes; index += 1) {
-    const node = queue[index];
-    if (!node || included.has(node)) continue;
-    included.add(node);
-    for (const child of node.children || []) queue.push(child);
-  }
-  return included;
-}
-
-function compactAxNode(node: AxNode) {
-  const props = axPropertiesToObject(node.properties || []);
-  return {
-    nodeId: node.nodeId,
-    backendNodeId: node.backendDOMNodeId,
-    ignored: !!node.ignored,
-    role: cleanAxValue(node.role?.value),
-    name: cleanAxValue(node.name?.value),
-    description: cleanAxValue(node.description?.value),
-    value: cleanAxValue(node.value?.value),
-    url: cleanAxValue(props.url),
-    flags: ["focused", "disabled", "expanded", "checked", "selected", "editable", "readonly", "required"]
-      .map(key => formatAxFlag(key, props[key]))
-      .filter(Boolean),
-  };
-}
-
-function axPropertiesToObject(properties: NonNullable<AxNode["properties"]>) {
-  const out: Record<string, unknown> = {};
-  for (const prop of properties || []) {
-    if (!prop?.name) continue;
-    out[prop.name] = prop.value?.value;
-  }
-  return out;
-}
-
 function cleanAxValue(value: unknown) {
   if (value == null) return "";
   return String(value).replace(/\s+/g, " ").trim();
-}
-
-function formatAxFlag(key: string, value: unknown) {
-  if (value == null) return "";
-  if (key === "expanded") return value ? "expanded" : "collapsed";
-  if (key === "checked") return value === true ? "checked" : value === false ? "unchecked" : String(value);
-  if (value === false) return "";
-  return value === true ? key : `${key}=${cleanAxValue(value)}`;
-}
-
-function shouldKeepAxNode(node: CompactNode, depth: number) {
-  if (!node) return false;
-  if (depth === 0) return true;
-  if (node.ignored) return false;
-  const role = String(node.role || "");
-  const hasContent = !!(node.name || node.value || node.description || node.url || node.flags?.length);
-  if ((role === "none" || role === "generic") && !hasContent) return false;
-  if (!role && !hasContent) return false;
-  return true;
-}
-
-function formatSnapshotLine(node: DisplayNode) {
-  const target = node.target || elementTargetForUid(node.uid);
-  const attrs = target ? [`target=${target}`] : [];
-  if (node.role) attrs.push(node.role);
-  if (node.name) attrs.push(`"${truncateInline(node.name, 90)}"`);
-  if (node.value && node.value !== node.name) attrs.push(`value="${truncateInline(node.value, 80)}"`);
-  if (node.url) attrs.push(`url="${truncateInline(node.url, 120)}"`);
-  for (const flag of node.flags || []) attrs.push(flag);
-  if (node.truncated) attrs.push("(truncated)");
-  return `${"  ".repeat(Math.max(0, Number(node.depth) || 0))}${attrs.join(" ")}`;
 }
 
 function truncateInline(value: unknown, max: number) {
@@ -372,14 +194,16 @@ registerTool({
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
+      scope: { type: "string", enum: ["viewport", "page"], description: toolT("getAxTreeScope") },
     },
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40, scope = "viewport" }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
+    const snapshotScope = scope === "page" ? "page" : "viewport";
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(root || "root").trim() || "root";
@@ -387,6 +211,7 @@ registerTool({
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
     let rootBackendNodeId = 0;
+    let rootFrameId = "";
 
     if (requestedRoot !== "root") {
       const rootRef = await resolveElementReference(tabId, { target: requestedRoot, allowBackendOnly: true }, context);
@@ -394,6 +219,7 @@ registerTool({
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";
       rootBackendNodeId = Number(rootRef.ref?.backendNodeId || 0);
+      rootFrameId = String(rootRef.ref?.frameId || "");
       if (!rootBackendNodeId && overviewSelector && targetTabId) {
         rootBackendNodeId = await backendNodeIdForSelector(targetTabId, overviewSelector, context);
       }
@@ -432,17 +258,44 @@ registerTool({
     const pageUrl = String(overview?.url || "").trim();
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
-      const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
-      const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      return buildAccessibilitySnapshot(nodes, {
-        tabId: targetTabId!,
+      const subscribe = (listener: (method: string, params: Record<string, unknown>) => void) =>
+        subscribeDebuggerEvents ? subscribeDebuggerEvents(targetTabId!, listener) : () => {};
+      const inputs = await collectSnapshotInputs(targetTabId!, send, subscribe, fetchDepth);
+      const built = buildPageSnapshot(inputs.sources as unknown as Parameters<typeof buildPageSnapshot>[0], {
         snapshotId,
         limit: snapshotLimit,
-        sessionId,
-        pageUrl,
-        rootBackendNodeId,
         maxDepth: axDepth,
+        scope: snapshotScope,
+        viewport: {
+          width: Number((overview?.viewport as { width?: number } | undefined)?.width) || inputs.viewport.width,
+          height: Number((overview?.viewport as { height?: number } | undefined)?.height) || inputs.viewport.height,
+        },
+        boxes: inputs.boxes,
+        rootBackendNodeId: rootBackendNodeId || undefined,
+        rootFrameId: rootFrameId || undefined,
+        subtree: requestedRoot !== "root",
       });
+      for (const node of built.nodes) {
+        registerElementRef({
+          uid: node.uid,
+          tabId: targetTabId!,
+          sessionId,
+          pageUrl,
+          backendNodeId: node.backendNodeId,
+          frameId: node.frameId,
+          oopif: node.oopif,
+          role: node.role,
+          name: node.name,
+          url: node.url,
+          snapshotId,
+        });
+      }
+      return { ...built, frames: inputs.frames.map((frame, index) => ({
+        index: index + 1,
+        frameId: frame.frameId,
+        oopif: frame.oopif,
+        url: frame.url,
+      })) };
     }, context);
 
     const actions = attachSnapshotRefsToActions(overview?.actions || [], ax.nodes, {
@@ -463,7 +316,12 @@ registerTool({
       nodeCount: ax.nodeCount,
       semanticNodeCount: ax.semanticNodeCount,
       returnedNodeCount: ax.returnedNodeCount,
+      truncatedNodeCount: ax.truncatedNodeCount,
       outlineTruncated: ax.outlineTruncated,
+      scope: ax.scope,
+      offscreenAbove: ax.offscreenAbove,
+      offscreenBelow: ax.offscreenBelow,
+      frames: ax.frames,
       snapshot: ax.snapshot,
       headings: compactAxHeadingsForModel(overview?.headings || []),
       actions: compactAxActionsForModel(actions),
