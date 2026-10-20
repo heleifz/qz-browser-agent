@@ -1,5 +1,11 @@
 # Architecture
 
+
+
+https://github.com/user-attachments/assets/1a51c1ad-0952-4798-94ae-8a4df68cfc39
+
+
+
 qz is a Manifest V3 Chrome extension. Background owns task state and persistence; Side Panel owns
 presentation. Chrome contexts communicate through explicit protocols. The optional [MCP
 bridge](../services/mcp-bridge/README.md) exposes extension operations to external clients.
