@@ -161,6 +161,8 @@ function assertAxTreeCompactContract() {
   assert.doesNotMatch(resolveToolDefinition("act_on_screen").description, /iframe/, "act_on_screen should not offer a second way into iframe content");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
+  assert.equal(resolveToolDefinition("get_ax_tree").parameters.properties.actionsLimit, undefined, "get_ax_tree should not offer an actions list limit");
+  assert.doesNotMatch(block, /actionsLimit/, "get_ax_tree source should not accept actionsLimit");
   assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
   assert.match(resolveToolDefinition("get_ax_tree").description, /BFS/, "get_ax_tree should document the breadth-first budget");
   assert.match(resolveToolDefinition("get_ax_tree").description, /frame=/, "get_ax_tree should document frame indexes");

@@ -23,10 +23,6 @@ const messages = defineMessages("accessibility-tools", {
     "zh-CN": "snapshot 最多返回节点行数，默认 120，范围 20-300；按 BFS 分配预算，输出仍为树形顺序，截断分支标记 (truncated)",
     en: "Maximum number of snapshot node lines. Default: 120; range: 20–300. Allocates the budget breadth-first, retains tree order, and marks omitted branches with (truncated).",
   },
-  getAxTreeActionsLimit: {
-    "zh-CN": "可操作元素最多返回数量，默认 40，范围 5-80",
-    en: "Maximum number of actionable elements. Default: 40; range: 5–80.",
-  },
 });
 
 export const toolT = createTranslator(messages);

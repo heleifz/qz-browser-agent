@@ -464,15 +464,15 @@ registerTool({
       root: { type: "string", description: toolT("getAxTreeRoot") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
-      actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
     },
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", depth = 16, limit = 120 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
-    const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
+    // The side panel and snapshot-line notes share this cap. The model has no actions list to size.
+    const overviewActionLimit = 40;
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(root || "root").trim() || "root";
@@ -512,7 +512,7 @@ registerTool({
     let overview: PageOverview;
     try {
       const result = await sendToContent(targetTabId, "pageOverview", {
-        limit: actionMax,
+        limit: overviewActionLimit,
         selector: overviewSelector || "body",
       });
       if (!isPageOverview(result)) throw new ToolExecutionError("PAGE_OVERVIEW_FAILED", t("pageOverviewResponseIsInvalid"));
