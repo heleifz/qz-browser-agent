@@ -2,9 +2,9 @@
 
 <img width="583" height="684" alt="image (1)" src="https://github.com/user-attachments/assets/e99e044a-6697-4ec5-80c4-9c89d9735004" />
 
-<img width="1437" height="912" alt="image" src="https://github.com/user-attachments/assets/5d9dc574-d1cf-4d5c-bcd3-9ea6ad49c111" />
+<img width="480" height="743" alt="image (3)" src="https://github.com/user-attachments/assets/34e1241d-37db-4369-87fb-19a44883e8d8" />
 
-<img width="1437" height="912" alt="image" src="https://github.com/user-attachments/assets/daabc105-f656-4e6b-9a28-24fbe455b07a" />
+<img width="907" height="672" alt="截屏2026-10-21 14 29 49" src="https://github.com/user-attachments/assets/d27378da-18cc-413b-af3d-36e7b04ea917" />
 
 
 https://github.com/user-attachments/assets/1a51c1ad-0952-4798-94ae-8a4df68cfc39
