@@ -187,4 +187,14 @@ const cyclic = await page([
 ]);
 assert.match(cyclic.result.snapshot, /button "Still here"/, "a cyclic accessibility tree still renders");
 
+const repeated = await page([
+  axNode("root", "RootWebArea", "Page", { backend: 1, childIds: ["save", "note"] }),
+  axNode("save", "button", "Save", { parentId: "root", backend: 2, childIds: ["label"] }),
+  axNode("label", "StaticText", "Save", { parentId: "save", backend: 3 }),
+  axNode("note", "generic", "", { parentId: "root", backend: 4, childIds: ["copy"] }),
+  axNode("copy", "StaticText", "Only this sentence", { parentId: "note", backend: 5 }),
+]);
+assert.equal(repeated.result.snapshot.split("\n").filter(line => line.includes('"Save"')).length, 1, "a text node that repeats its parent is omitted");
+assert.match(repeated.result.snapshot, /StaticText "Only this sentence"/, "text that is not already on a parent stays");
+
 console.log("existing snapshot walker keeps its budget and gains frame trees");

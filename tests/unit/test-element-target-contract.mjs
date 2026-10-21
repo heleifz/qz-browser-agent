@@ -101,10 +101,9 @@ async function assertPromptAndUiUseTarget() {
   };
   const original = structuredClone(result);
   const projected = registry.get("get_ax_tree").model.projectResult(result);
-  assert.equal(projected.actions[0].target, "uid:button-1", "registered AX projection preserves actionable target");
-  assert.equal(Object.hasOwn(projected.actions[0], "uid"), false, "model actions do not expose bare uid");
+  assert.equal(Object.hasOwn(projected, "actions"), false, "the model snapshot does not repeat controls in an actions list");
   assert.equal(Object.hasOwn(projected, "nodes"), false, "the full AX tree stays outside model results");
-  assert.equal(projected.snapshotId, "snapshot-1");
+  assert.equal(Object.hasOwn(projected, "snapshotId"), false, "snapshot ids stay on the UI result");
   assert.deepEqual(result, original, "model projection must preserve the UI's complete result");
   const requests = [];
   const agent = new Agent("ax-model-projection", createTestAgentOptions({
@@ -122,7 +121,7 @@ async function assertPromptAndUiUseTarget() {
   }));
   await agent.prompt("Inspect available actions", {});
   const modelResult = JSON.parse(requests[1].find(message => message.role === "tool").content);
-  assert.deepEqual(modelResult, { snapshotId: "snapshot-1", actions: [{ target: "uid:button-1", role: "button", name: "Continue", text: "Continue" }] },
+  assert.deepEqual(modelResult, {},
     "Agent applies the registered projection and strips chat-only display and diagnostic fields");
   assert.deepEqual(result, original, "Agent sanitization must not modify the UI result");
   assert.match(browserOperationsRenderer, /data\.target \|\| args\.target/, "tool renderer should display target first");
@@ -153,7 +152,8 @@ function assertElementActionRoutingContract() {
 
 function assertAxTreeCompactContract() {
   const block = toolBlock("get_ax_tree");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /actions\(target\/role\/type\/name\/text\/value\/placeholder\/href\/state\/rect\)/, "get_ax_tree should preserve useful action fields including input type");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /不另列 actions/, "get_ax_tree should keep controls on the snapshot line");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /files=/, "get_ax_tree should put file-input state on the snapshot line");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
   assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
@@ -177,7 +177,7 @@ function assertAxTreeCompactContract() {
   assert.match(block, /graftFrameNodes\(/, "get_ax_tree should attach frame trees before the existing walker");
   assert.doesNotMatch(block, /scope = "viewport"/, "get_ax_tree should keep the whole fetched tree");
   assert.match(block, /selector: overviewSelector \|\| "body"/, "get_ax_tree actions/headings should be scoped to the requested root");
-  assert.match(block, /actions: compactAxActionsForModel\(actions\)/, "get_ax_tree should compact actions before returning to the model");
+  assert.match(block, /compactAxActionsForModel\(actions\)/, "get_ax_tree should compact action fields before writing them onto snapshot lines");
   assert.match(block, /headings: compactAxHeadingsForModel/, "get_ax_tree should compact headings before returning to the model");
   assert.match(block, /canvases: compactAxCanvasesForModel/, "get_ax_tree should compact canvas summaries before returning to the model");
   assert.doesNotMatch(block, /nodes: ax\.nodes/, "get_ax_tree should not return the full node array");

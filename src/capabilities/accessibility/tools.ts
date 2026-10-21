@@ -116,7 +116,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (!current || seen.has(current.raw.nodeId) || current.rawDepth > 400) continue;
     seen.add(current.raw.nodeId);
     const compact = compactAxNode(current.raw);
-    const keep = shouldKeepAxNode(compact, current.depth);
+    const keep = shouldKeepAxNode(compact, current.depth, current.parent?.compact.name || "");
     let nextDepth = current.depth;
     let nextParent = current.parent;
     if (keep) {
@@ -243,14 +243,19 @@ function formatAxFlag(key: string, value: unknown) {
   return value === true ? key : `${key}=${cleanAxValue(value)}`;
 }
 
-function shouldKeepAxNode(node: CompactNode, depth: number) {
+const NOISE_ROLES = new Set(["InlineTextBox", "LineBreak", "ListMarker", "presentation"]);
+
+function shouldKeepAxNode(node: CompactNode, depth: number, parentName = "") {
   if (!node) return false;
   if (depth === 0) return true;
   if (node.ignored) return false;
   const role = String(node.role || "");
-  const hasContent = !!(node.name || node.value || node.description || node.url || node.flags?.length);
-  if ((role === "none" || role === "generic") && !hasContent) return false;
-  if (!role && !hasContent) return false;
+  if (NOISE_ROLES.has(role)) return false;
+  const name = node.name || "";
+  const hasOwn = !!((node.value && node.value !== name) || node.url || node.flags?.length);
+  const repeatsParent = !!name && name === parentName;
+  if ((role === "none" || role === "generic" || role === "StaticText") && !hasOwn && (!name || repeatsParent)) return false;
+  if (!role && !name && !hasOwn) return false;
   return true;
 }
 
@@ -271,6 +276,35 @@ function formatSnapshotLine(node: DisplayNode, frameIndex: Map<string, number>) 
 function truncateInline(value: unknown, max: number) {
   const text = cleanAxValue(value);
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** Fields the accessibility line does not carry: placeholder, file-input state, and offscreen. */
+function annotateSnapshotLines(snapshot: string, actions: Array<Record<string, unknown>>) {
+  const extras = new Map<string, string>();
+  for (const action of actions) {
+    const target = String(action.target || "");
+    if (!target) continue;
+    const bits: string[] = [];
+    const placeholder = String(action.placeholder || "");
+    if (placeholder && placeholder !== String(action.name || "")) bits.push(`placeholder="${truncateInline(placeholder, 80)}"`);
+    if (String(action.type || "") === "file") {
+      if (action.accept) bits.push(`accept="${truncateInline(action.accept, 80)}"`);
+      if (action.multiple) bits.push("multiple");
+      const count = Number(action.selectedFileCount);
+      if (Number.isFinite(count)) bits.push(`files=${count}`);
+    }
+    if (action.inViewport === false) bits.push("offscreen");
+    if (bits.length) extras.set(target, bits.join(" "));
+  }
+  if (!extras.size) return snapshot;
+  return snapshot.split("\n").map(line => {
+    const target = line.match(/target=(uid:\S+)/)?.[1] || "";
+    const extra = extras.get(target);
+    if (!extra) return line;
+    const truncated = line.endsWith(" (truncated)");
+    const body = truncated ? line.slice(0, -" (truncated)".length) : line;
+    return `${body} ${extra}${truncated ? " (truncated)" : ""}`;
+  }).join("\n");
 }
 
 /** Page overview actions come from the main document, so only its nodes may lend them a uid. */
@@ -543,6 +577,7 @@ registerTool({
       pageUrl,
       loaderId: ax.mainLoaderId,
     });
+    const modelActions = compactAxActionsForModel(actions);
     return {
       tabId: targetTabId,
       title: overview?.title,
@@ -558,9 +593,9 @@ registerTool({
       truncatedNodeCount: ax.truncatedNodeCount,
       outlineTruncated: ax.outlineTruncated,
       frames: ax.frames,
-      snapshot: ax.snapshot,
+      snapshot: annotateSnapshotLines(ax.snapshot, modelActions),
       headings: compactAxHeadingsForModel(overview?.headings || []),
-      actions: compactAxActionsForModel(actions),
+      actions: modelActions,
       canvases: compactAxCanvasesForModel(overview?.canvases || []),
       pageOverviewError: overview?.error ? {
         error: overview.error,
@@ -573,25 +608,28 @@ registerTool({
 
 }
 
-/** The model gets actionable fields; UI diagnostics remain in the original result. */
+/** One tree for the model. Counts, headings, and the action list stay on the UI result. */
 function projectAxResultForModel(result: unknown): unknown {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const { nodes, ...out } = result as Record<string, unknown>;
-  if (Array.isArray(out.actions)) out.actions = out.actions.map((action: Record<string, unknown>) => ({
-    target: action.target,
-    selector: action.selector,
-    role: action.role,
-    name: action.name,
-    text: action.text,
-    value: action.value,
-    placeholder: action.placeholder,
-    href: action.href,
-    disabled: action.disabled,
-    editable: action.editable,
-    inViewport: action.inViewport,
-  }));
+  const source = result as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of ["tabId", "title", "url", "viewport", "snapshot", "canvases", "pageOverviewError"] as const) {
+    if (source[key] != null && source[key] !== "") out[key] = source[key];
+  }
+  if (source.root && source.root !== "root") out.root = source.root;
+  if (source.rootFound === false) out.rootFound = false;
+  if (source.outlineTruncated === true || Number(source.truncatedNodeCount) > 0) out.truncated = true;
+  if (Array.isArray(source.frames)) {
+    const frames = source.frames.map(frame => {
+      const item = frame && typeof frame === "object" ? frame as Record<string, unknown> : {};
+      const next: Record<string, unknown> = {};
+      if (item.index != null) next.index = item.index;
+      if (item.url) next.url = item.url;
+      return next;
+    }).filter(frame => Object.keys(frame).length > 0);
+    if (frames.length) out.frames = frames;
+  }
   return out;
 }
-
 
 export default ((host) => { registerAccessibilityTools({ ...host, ...host.element }); }) satisfies ToolExtension;
