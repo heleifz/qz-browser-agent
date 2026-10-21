@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { discoverFrames, forgetTabFrames, resolveFramePath } from "../../src/background/tools/frame-sessions.ts";
+import { discoverFrames, forgetTabFrames } from "../../src/background/tools/frame-sessions.ts";
 
 const listeners = new Set();
 const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener); };
@@ -57,22 +57,6 @@ const second = await discoverFrames(7, send, subscribe);
 assert.equal(second.frames.length, 3, "a repeated discovery keeps frames Chrome announced earlier");
 assert.equal(autoAttached.length, 3, "auto-attach is configured once per session and debugger attachment");
 
-const deep = await resolveFramePath(7, send, subscribe, "oopif-c");
-assert.deepEqual(deep, {
-  frameId: "oopif-c",
-  sessionId: "session-c",
-  loaderId: "oopif-c-doc",
-  oopif: true,
-  owners: [
-    { backendNodeId: 51, sessionId: "session-a", boundary: true },
-    { backendNodeId: 40, sessionId: undefined, boundary: true },
-  ],
-});
-const inner = await resolveFramePath(7, send, subscribe, "inner-a");
-assert.equal(inner.sessionId, "session-a", "a same-process child of a cross-process frame uses that frame's session");
-assert.deepEqual(inner.owners.map(owner => owner.boundary), [false, true]);
-assert.equal((await resolveFramePath(7, send, subscribe, "")).owners.length, 0, "the main document has no owners");
-
 live.delete("oopif-a");
 live.delete("oopif-c");
 live.set("oopif-b", "session-b");
@@ -80,10 +64,8 @@ emit("Target.detachedFromTarget", { sessionId: "session-a" });
 emit("Target.detachedFromTarget", { sessionId: "session-c" });
 emit("Target.attachedToTarget", { sessionId: "session-b", targetInfo: { type: "iframe", targetId: "oopif-b" } });
 const navigated = await discoverFrames(7, send, subscribe);
-assert.deepEqual(navigated.frames.map(frame => frame.frameId), ["oopif-b"], "frames created after discovery are tracked");
-assert.equal((await resolveFramePath(7, send, subscribe, "oopif-b"))?.sessionId, "session-b");
-assert.equal(await resolveFramePath(7, send, subscribe, "oopif-a"), null, "a detached frame no longer resolves");
-assert.equal(await resolveFramePath(7, send, subscribe, "oopif-c"), null, "a frame below a detached frame no longer resolves");
+assert.deepEqual(navigated.frames.map(frame => [frame.frameId, frame.sessionId]), [["oopif-b", "session-b"]], "frames created after discovery are tracked");
+assert.equal(navigated.frames.some(frame => frame.frameId === "oopif-a" || frame.frameId === "oopif-c"), false, "a detached frame and its children leave the tree");
 
 forgetTabFrames(7);
 assert.equal(listeners.size, 0, "forgetting a tab releases its debugger event listener");

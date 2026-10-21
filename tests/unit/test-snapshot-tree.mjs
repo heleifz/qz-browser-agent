@@ -101,10 +101,9 @@ const framed = await page([
   axNode("frame", "Iframe", "Guest", { parentId: "root", backend: 9 }),
 ], { frames: true });
 assert.match(framed.result.snapshot, /button "Inside frame" frame=1/);
-const inner = framed.refs.find(ref => ref.name === "Inside frame");
-assert.equal(inner.frameId, "child");
-assert.equal(inner.oopif, true);
-assert.equal(inner.backendNodeId, 1, "a frame-local backend id stays distinct from the top document");
+const inside = framed.result.snapshot.split("\n").find(line => line.includes("Inside frame"));
+assert.doesNotMatch(inside, /target=/, "iframe content is readable and has no actionable target");
+assert.equal(framed.refs.find(ref => ref.name === "Inside frame"), undefined);
 
 // Page > cross-process "outer" > same-process "inner" and cross-process "deep"; the same name appears at every level.
 const nestedSend = async (method, params = {}, sessionId) => {
@@ -156,29 +155,31 @@ const lineIndex = text => lines.findIndex(line => line.includes(text));
 assert.ok(lineIndex('Iframe "Inner"') < lineIndex('RootWebArea "Inner doc"'), "a same-process child of a cross-process frame hangs under its host");
 assert.ok(lineIndex('Iframe "Deep"') < lineIndex('button "Deep send"'), "a cross-process grandchild hangs under its host in the parent frame");
 assert.match(lines[lineIndex('button "Deep send"')], /^ {6,}/, "the grandchild is indented below its host");
-const deepRef = nested.refs.find(ref => ref.name === "Deep send");
-assert.deepEqual([deepRef.frameId, deepRef.loaderId, deepRef.oopif], ["deep", "L-deep", true]);
-const innerSend = nested.refs.find(ref => ref.name === "Send" && ref.frameId === "inner");
-assert.deepEqual([innerSend.loaderId, innerSend.oopif], ["L-inner", true]);
+const deepLine = lines[lineIndex('button "Deep send"')];
+assert.match(deepLine, /frame=3/);
+assert.doesNotMatch(deepLine, /target=/);
+assert.equal(nested.refs.find(ref => ref.frameId), undefined, "iframe nodes are not registered as targets");
 assert.equal(nested.refs.find(ref => ref.name === "Publish")?.loaderId, "L-main", "main-document refs carry the page document");
 const actionRef = nested.refs.filter(ref => ref.selector === "#send").at(-1);
 assert.deepEqual([actionRef.frameId, actionRef.backendNodeId, actionRef.loaderId], [undefined, undefined, undefined],
   "a top-level action never adopts a same-named frame node");
-const frameSend = nested.refs.filter(ref => ref.name === "Send" && ref.frameId === "outer");
-assert.equal(frameSend.length, 1, "the frame node keeps its own uid and identity");
+assert.equal(nested.refs.filter(ref => ref.name === "Send" && ref.selector !== "#send").length, 0,
+  "same-named controls inside frames get no target");
 assert.deepEqual(nested.result.frames.map(frame => [frame.index, frame.frameId, frame.parentFrameId, frame.oopif]).sort(), [
   [1, "outer", "main", true], [2, "inner", "outer", true], [3, "deep", "outer", true],
 ]);
 
 const scoped = await run(nestedSend, { root: "uid:frame-host" }, {
   actions: sendAction,
-  resolved: { tabId: 8, target: "uid:frame-host", selector: "", index: 0, ref: { backendNodeId: 5, frameId: "outer", remoteAction: true } },
+  resolved: { tabId: 8, target: "uid:frame-host", selector: "", index: 0, ref: { backendNodeId: 9, remoteAction: true } },
 });
-assert.deepEqual(scoped.result.actions, [], "a frame root does not list top-level actions");
+assert.deepEqual(scoped.result.actions, [], "an iframe element root does not list top-level actions");
 assert.deepEqual(scoped.result.headings, []);
 assert.match(scoped.result.snapshot, /RootWebArea "Inner doc"/);
-assert.doesNotMatch(scoped.result.snapshot, /Outer doc|Deep send/, "the subtree stays inside the requested frame host");
-assert.ok(scoped.refs.every(ref => ref.frameId === "inner" || ref.frameId === "outer"), "no top-level ref is registered for a frame subtree");
+assert.match(scoped.result.snapshot, /button "Deep send"/);
+assert.doesNotMatch(scoped.result.snapshot, /button "Publish"/, "the subtree stays inside the iframe element");
+assert.ok(scoped.result.snapshot.split("\n").filter(line => /frame=\d+/.test(line)).every(line => !/target=/.test(line)));
+assert.ok(scoped.refs.every(ref => !ref.frameId), "a frame subtree registers no iframe content");
 
 const cyclic = await page([
   axNode("root", "RootWebArea", "Cycle", { backend: 1, childIds: ["loop"] }),

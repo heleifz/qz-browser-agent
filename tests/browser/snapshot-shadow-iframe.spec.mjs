@@ -140,7 +140,7 @@ function frameHtml(label, field) {
   </form>`;
 }
 
-test("snapshots include shadow and frame content and act on the named target", async () => {
+test("snapshots include shadow targets and read-only frame content", async () => {
   test.setTimeout(120_000);
   const pages = {
     "/": pageHtml(),
@@ -177,41 +177,34 @@ test("snapshots include shadow and frame content and act on the named target", a
     expect(ax.frames.some(frame => frame.oopif === true)).toBe(true);
     expect(ax.offscreenBelow).toBeUndefined();
 
-    const uid = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`))?.match(/target=(uid:\S+)/)?.[1];
+    const lineFor = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`));
+    const uid = (snapshot, label) => lineFor(snapshot, label)?.match(/target=(uid:\S+)/)?.[1];
+    for (const label of ["Same frame action", "Cross frame action", "Sibling origin action", "Same frame field", "Cross frame field"]) {
+      const line = lineFor(ax.snapshot, label);
+      expect(line, label).toMatch(/frame=\d+/);
+      expect(line, label).not.toMatch(/target=/);
+    }
+    expect(ax.frames.every(frame => frame.url)).toBe(true);
     const click = async (label) => call("act_on_element", { tabId, target: uid(ax.snapshot, label), action: "click" });
     const closed = await click("Closed shadow action");
     expect(closed.error, JSON.stringify(closed)).toBeUndefined();
     expect(closed.method).toBe("backend-node");
     const open = await click("Open shadow action");
     expect(open.error, JSON.stringify(open)).toBeUndefined();
-    const same = await click("Same frame action");
-    expect(same.error, JSON.stringify(same)).toBeUndefined();
-    expect(same.frameId).toBeTruthy();
-    const cross = await click("Cross frame action");
-    expect(cross.error, JSON.stringify(cross)).toBeUndefined();
-    expect(cross.frameId).toBeTruthy();
     const covered = await click("Covered shadow action");
     expect(covered.code, JSON.stringify(covered)).toBe("ELEMENT_OBSCURED");
-    const sibling = await click("Sibling origin action");
-    expect(sibling.error, JSON.stringify(sibling)).toBeUndefined();
     expect(await page.evaluate(() => window.__clicks)).toEqual(["closed", "open"]);
-    expect(await page.frameLocator("#sibling").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Sibling origin action");
-    expect(await page.frameLocator("#same").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Same frame action");
-    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Cross frame action");
+    expect(await page.frameLocator("#sibling").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked || "")).toBe("");
+    expect(await page.frameLocator("#same").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked || "")).toBe("");
+    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked || "")).toBe("");
 
     const shadowFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shadow field"), action: "fill", value: "shadow value" });
     expect(shadowFill.error, JSON.stringify(shadowFill)).toBeUndefined();
     expect(shadowFill.value).toBe("shadow value");
-    const sameFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Same frame field"), action: "fill", value: "same value" });
-    expect(sameFill.error, JSON.stringify(sameFill)).toBeUndefined();
-    const crossFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "fill", value: "cross value" });
-    expect(crossFill.error, JSON.stringify(crossFill)).toBeUndefined();
     expect(await page.locator("open-host").evaluate(host => host.shadowRoot.querySelector("input").value)).toBe("shadow value");
-    expect(await page.frameLocator("#same").locator("#field").inputValue()).toBe("same value");
-    expect(await page.frameLocator("#cross").locator("#field").inputValue()).toBe("cross value");
-    const siblingFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Sibling origin field"), action: "fill", value: "sibling value" });
-    expect(siblingFill.error, JSON.stringify(siblingFill)).toBeUndefined();
-    expect(await page.frameLocator("#sibling").locator("#field").inputValue()).toBe("sibling value");
+    expect(await page.frameLocator("#same").locator("#field").inputValue()).toBe("");
+    expect(await page.frameLocator("#cross").locator("#field").inputValue()).toBe("");
+    expect(await page.frameLocator("#sibling").locator("#field").inputValue()).toBe("");
 
     const closedChoice = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed choice"), action: "select", value: "beta" });
     expect(closedChoice.error, JSON.stringify(closedChoice)).toBeUndefined();
@@ -222,28 +215,6 @@ test("snapshots include shadow and frame content and act on the named target", a
     expect(closedAgree.error, JSON.stringify(closedAgree)).toBeUndefined();
     expect(closedAgree.checked).toBe(true);
     expect(await page.evaluate(() => window.__closedChecked)).toBe(true);
-
-    const clicksBeforePress = await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clickCount || 0);
-    const submitted = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "press", key: "Enter" });
-    expect(submitted.error, JSON.stringify(submitted)).toBeUndefined();
-    expect(submitted.method).toBe("backend-node");
-    expect(submitted.clickDispatched).toBe(false);
-    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__submitted)).toBe("cross value");
-    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clickCount || 0)).toBe(clicksBeforePress);
-    const frameScroll = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "scroll" });
-    expect(frameScroll.code, JSON.stringify(frameScroll)).toBe("IFRAME_SCROLL_UNAVAILABLE");
-    expect(frameScroll.scrolledTo).toBeUndefined();
-    const badKey = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "press", key: "Foo+A" });
-    expect(badKey.code, JSON.stringify(badKey)).toBe("INVALID_ARGUMENTS");
-
-    await page.locator("#cross").evaluate((frame, src) => { frame.src = src; }, `http://127.0.0.1:${PORT}/leave.html`);
-    await page.frameLocator("#cross").locator("input").waitFor();
-    const leaving = await call("get_ax_tree", { tabId });
-    const left = await call("act_on_element", { tabId, target: uid(leaving.snapshot, "Leave field"), action: "press", key: "Enter" });
-    expect(left.error, JSON.stringify(left)).toBeUndefined();
-    expect(left.pressed).toBe(true);
-    expect(left.code).toBeUndefined();
-    await expect.poll(() => page.frames().some(frame => frame.url().includes("/landed.html"))).toBe(true);
 
     const sharedPress = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared field two"), action: "press", key: "q" });
     expect(sharedPress.error, JSON.stringify(sharedPress)).toBeUndefined();
@@ -267,13 +238,13 @@ test("snapshots include shadow and frame content and act on the named target", a
       return call("get_ax_tree", { tabId });
     };
     const inProcess = await navigateCross(`http://localhost:${PORT}/moved.html`, "Moved frame action");
-    expect(inProcess.snapshot).toContain("Moved frame action");
+    expect(lineFor(inProcess.snapshot, "Moved frame action")).toMatch(/frame=\d+/);
+    expect(lineFor(inProcess.snapshot, "Moved frame action")).not.toMatch(/target=/);
     const outOfProcess = await navigateCross(`http://127.0.0.1:${PORT}/returned.html`, "Returned frame action");
-    expect(outOfProcess.snapshot).toContain("Returned frame action");
+    expect(lineFor(outOfProcess.snapshot, "Returned frame action")).toMatch(/frame=\d+/);
+    expect(lineFor(outOfProcess.snapshot, "Returned frame action")).not.toMatch(/target=/);
     expect(outOfProcess.frames.some(frame => frame.oopif === true)).toBe(true);
-    const returned = await call("act_on_element", { tabId, target: uid(outOfProcess.snapshot, "Returned frame action"), action: "click" });
-    expect(returned.error, JSON.stringify(returned)).toBeUndefined();
-    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked)).toBe("Returned frame action");
+    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clicked || "")).toBe("");
   } finally {
     await fixture.close();
   }
@@ -353,7 +324,7 @@ function nestedPages() {
   };
 }
 
-test("nested frames keep their own targets, document identity, and native action semantics", async () => {
+test("nested frames stay readable without targets while shadow actions keep native semantics", async () => {
   test.setTimeout(180_000);
   const fixture = await launchFixture([NESTED_PORT], nestedPages(), `${L}/`);
   try {
@@ -367,8 +338,11 @@ test("nested frames keep their own targets, document identity, and native action
 
     const ax = await call("get_ax_tree", { tabId, limit: 300 });
     expect(ax.error, JSON.stringify(ax)).toBeUndefined();
+    const lineFor = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`));
     for (const label of ["Deep send", "Deep message", "Inner send", "Same leaf send", "Covered send", "Deep agree"]) {
-      expect(ax.snapshot, label).toContain(`"${label}"`);
+      const line = lineFor(ax.snapshot, label);
+      expect(line, label).toMatch(/frame=\d+/);
+      expect(line, label).not.toMatch(/target=/);
     }
     const outerFrame = ax.frames.find(item => item.url?.endsWith("/outer.html"));
     const deepFrame = ax.frames.find(item => item.url?.endsWith("/deep.html"));
@@ -376,31 +350,11 @@ test("nested frames keep their own targets, document identity, and native action
     expect(deepFrame?.parentFrameId, JSON.stringify(ax.frames)).toBe(outerFrame?.frameId);
     expect(innerFrame?.parentFrameId).toBe(outerFrame?.frameId);
     expect(deepFrame.oopif && innerFrame.oopif).toBe(true);
+    expect(ax.frames.every(frame => frame.url)).toBe(true);
     const act = (snapshot, label, action, extra = {}, runId) => call("act_on_element", { tabId, target: uidFor(snapshot, label), action, ...extra }, runId);
     const ok = result => expect(result.error, JSON.stringify(result)).toBeUndefined();
 
-    // Consecutive fills and clicks through a cross-process frame inside a cross-process frame, a same-process
-    // child of a cross-process frame, and same-origin frames nested in the page process.
-    ok(await act(ax.snapshot, "Deep message", "fill", { value: "deep 1" }));
-    ok(await act(ax.snapshot, "Deep send", "click"));
-    ok(await act(ax.snapshot, "Inner message", "fill", { value: "inner 1" }));
-    ok(await act(ax.snapshot, "Inner send", "click"));
-    ok(await act(ax.snapshot, "Same leaf message", "fill", { value: "leaf 1" }));
-    ok(await act(ax.snapshot, "Same leaf send", "click"));
-    ok(await call("act_on_element", { tabId, target: "css:#bottom", action: "click" }));
-    // Hit testing below the fold must account for the scrolled document.
-    ok(await act(ax.snapshot, "Bottom shadow action", "click"));
-    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-    ok(await act(ax.snapshot, "Deep message", "fill", { value: "deep 2" }));
-    ok(await act(ax.snapshot, "Deep send", "click"));
-    expect(await fieldValue("/deep.html", "Deep message")).toBe("deep 2");
-    expect(await fieldValue("/inner.html", "Inner message")).toBe("inner 1");
-    expect(await fieldValue("/same-leaf.html", "Same leaf message")).toBe("leaf 1");
-    expect(await frameLog("/deep.html")).toEqual(["Deep send", "Deep send"]);
-    expect(await frameLog("/inner.html")).toEqual(["Inner send"]);
-    expect(await frameLog("/same-leaf.html")).toEqual(["Same leaf send"]);
-
-    // A frame subtree lists only its own controls, and its same-named button stays the frame's button.
+    // The iframe element itself is in the parent page, so its target reads the embedded tree and still offers no inner target.
     const outer = await call("get_ax_tree", { tabId, root: uidFor(ax.snapshot, "Outer frame"), limit: 300 });
     expect(outer.error, JSON.stringify(outer)).toBeUndefined();
     expect(outer.actions).toEqual([]);
@@ -408,22 +362,21 @@ test("nested frames keep their own targets, document identity, and native action
     expect(outer.snapshot).toContain('"Deep send"');
     expect(outer.snapshot).not.toContain("Bottom action");
     expect(outer.snapshot).not.toContain("Guarded field");
-    ok(await act(outer.snapshot, "Send", "click"));
-    ok(await act(outer.snapshot, "Message", "fill", { value: "outer value" }));
-    expect(await frameLog("/outer.html")).toEqual(["Outer send"]);
-    expect(await fieldValue("/outer.html", "Message")).toBe("outer value");
+    expect(outer.snapshot.split("\n").filter(line => /frame=\d+/.test(line)).every(line => !line.includes("target="))).toBe(true);
+
+    ok(await call("act_on_element", { tabId, target: "css:#bottom", action: "click" }));
+    // Hit testing below the fold must account for the scrolled document.
+    ok(await act(ax.snapshot, "Bottom shadow action", "click"));
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    expect(await frameLog("/deep.html")).toEqual([]);
+    expect(await frameLog("/inner.html")).toEqual([]);
+    expect(await frameLog("/same-leaf.html")).toEqual([]);
+    expect(await frameLog("/covered.html")).toEqual([]);
+    expect(await fieldValue("/deep.html", "Deep message")).toBe("");
+    expect(await fieldValue("/outer.html", "Message")).toBe("");
     expect(await page.evaluate(() => window.__log)).toEqual(["bottom", "bottom shadow"]);
     expect(await page.locator('input[aria-label="Message"]').inputValue()).toBe("");
 
-    const covered = await act(ax.snapshot, "Covered send", "click");
-    expect(covered.code, JSON.stringify(covered)).toBe("ELEMENT_OBSCURED");
-    expect(await frameLog("/covered.html")).toEqual([]);
-    expect(await page.evaluate(() => window.__log)).toEqual(["bottom", "bottom shadow"]);
-
-    const inspectedFrame = await call("inspect_element", { tabId, target: uidFor(ax.snapshot, "Deep message") });
-    expect(inspectedFrame.error, JSON.stringify(inspectedFrame)).toBeUndefined();
-    expect(inspectedFrame).toMatchObject({ tag: "input", value: "deep 2", name: "Deep message", frameId: deepFrame.frameId, oopif: true, method: "backend-node" });
-    expect(inspectedFrame.clickablePoint).toBeTruthy();
     const inspectedShadow = await call("inspect_element", { tabId, target: uidFor(ax.snapshot, "Readonly field") });
     expect(inspectedShadow.error, JSON.stringify(inspectedShadow)).toBeUndefined();
     expect(inspectedShadow).toMatchObject({ tag: "input", readonly: true, value: "keep", inShadowRoot: true, shadowMode: "closed" });
@@ -449,35 +402,30 @@ test("nested frames keep their own targets, document identity, and native action
     ok(styled);
     expect(styled.clickedLabel).toBe(true);
     expect(await page.evaluate(() => window.__qz.querySelector('[aria-label="Styled agree"]').checked)).toBe(true);
-    const deepAgree = await act(ax.snapshot, "Deep agree", "check");
-    ok(deepAgree);
-    expect(deepAgree.clickedLabel).toBe(true);
-    expect(await frameLog("/deep.html")).toEqual(["Deep send", "Deep send", "deep agree true"]);
+    expect(await frameLog("/deep.html")).toEqual([]);
     expect(await page.evaluate(() => window.__log)).toEqual(["bottom", "bottom shadow", "trusted true"]);
 
-    // A later run reattaches the debugger and rebuilds frame sessions for a still-valid uid.
+    // A later run reattaches the debugger and can still act on a shadow target.
     await worker.evaluate(() => snapshotFixtures.releaseRunCdp("fixture", "fixture-run"));
-    ok(await act(ax.snapshot, "Deep message", "fill", { value: "after release" }, "fixture-run-2"));
-    ok(await act(ax.snapshot, "Inner send", "click", {}, "fixture-run-2"));
-    expect(await fieldValue("/deep.html", "Deep message")).toBe("after release");
-    expect(await frameLog("/inner.html")).toEqual(["Inner send", "Inner send"]);
+    ok(await act(ax.snapshot, "Bottom shadow action", "click", {}, "fixture-run-2"));
+    expect(await page.evaluate(() => window.__log.filter(item => item === "bottom shadow").length)).toBe(2);
 
-    // A navigated frame invalidates its old uids instead of acting on the new document.
+    // Navigating an iframe changes what the next snapshot can read, and nothing writes into the new document.
     await frame("/outer.html").locator("#deep").evaluate((element, src) => { element.src = src; }, `${B}/deep2.html`);
     await frame("/outer.html").locator("#inner").evaluate((element, src) => { element.src = src; }, `${A}/inner2.html`);
     await expect.poll(() => !!frame("/deep2.html") && !!frame("/inner2.html")).toBe(true);
     await frame("/deep2.html").locator("button").waitFor();
     await frame("/inner2.html").locator("button").waitFor();
-    for (const [label, action] of [["Deep message", "fill"], ["Deep send", "click"], ["Inner message", "fill"], ["Deep agree", "check"]]) {
-      const stale = await act(ax.snapshot, label, action, { value: "stale" }, "fixture-run-2");
-      expect(stale.code, `${label}: ${JSON.stringify(stale)}`).toMatch(/^STALE_ELEMENT_UID/);
+    const fresh = await call("get_ax_tree", { tabId, limit: 300 }, "fixture-run-2");
+    expect(fresh.error, JSON.stringify(fresh)).toBeUndefined();
+    for (const label of ["Deep message", "Deep send", "Inner message", "Deep agree"]) {
+      const line = lineFor(fresh.snapshot, label);
+      expect(line, label).toMatch(/frame=\d+/);
+      expect(line, label).not.toMatch(/target=/);
     }
     expect(await fieldValue("/deep2.html", "Deep message")).toBe("");
     expect(await fieldValue("/inner2.html", "Inner message")).toBe("");
     expect(await frameLog("/deep2.html")).toEqual([]);
-    const fresh = await call("get_ax_tree", { tabId, limit: 300 }, "fixture-run-2");
-    ok(await act(fresh.snapshot, "Deep message", "fill", { value: "fresh" }, "fixture-run-2"));
-    expect(await fieldValue("/deep2.html", "Deep message")).toBe("fresh");
 
     // Remote clicks keep link policy: blocked links are refused before input, allowed links report navigation.
     await worker.evaluate(() => chrome.storage.local.set({ securityGuardrails: { blockedDomains: ["blocked.test"] } }));

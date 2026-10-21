@@ -1,10 +1,8 @@
 import type { ToolContext, ToolErrorConstructor } from "#sdk/background";
-import type { CdpCommand, ElementReference, FramePath } from "#sdk/background/browser";
-import { createCdpKeyboard, elementPageFunction, resolveFramePath } from "#sdk/background/browser";
+import type { CdpCommand, ElementReference } from "#sdk/background/browser";
+import { createCdpKeyboard, elementPageFunction } from "#sdk/background/browser";
 
 type Send = CdpCommand;
-type Subscribe = (tabId: number, listener: (method: string, params: Record<string, unknown>) => void) => () => void;
-
 export interface RemoteActionRequest {
   tabId: number;
   target: string;
@@ -26,24 +24,21 @@ export interface RemoteClickNavigation {
 
 interface RemoteDeps {
   withDebugger: (tabId: number, fn: (target: chrome.debugger.Debuggee, send: Send) => Promise<unknown>, context?: Record<string, unknown>) => Promise<unknown>;
-  subscribeDebuggerEvents?: Subscribe;
   ToolExecutionError: ToolErrorConstructor;
   context?: Record<string, unknown>;
 }
 
-/** A backend node resolved in the document and target session that own it. */
+/** A backend node in the main document, including one inside a shadow root. */
 interface RemoteTarget {
   send: Send;
   objectId: string;
   backendNodeId: number;
-  path: FramePath;
-  sessionId?: string;
 }
 
 type Identity = Record<string, unknown>;
 type Point = { x: number; y: number };
 
-/** Act on a shadow, frame, or non-unique light-DOM node through its backend node. */
+/** Act on a shadow or non-unique light-DOM node through its backend node. */
 export async function actOnRemoteElement(input: RemoteActionRequest, deps: RemoteDeps & { navigation?: RemoteClickNavigation }) {
   const identity = {
     action: input.action,
@@ -52,7 +47,6 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: Remot
     uid: input.uid,
     index: input.index,
     tabId: input.tabId,
-    frameId: input.ref.frameId,
   };
   if (!Number(input.ref.backendNodeId || 0)) {
     return { ...identity, error: "Element has no backend node. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
@@ -60,17 +54,10 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: Remot
   const click = { dispatched: false, prepared: null as unknown };
   try {
     const result = await deps.withDebugger(input.tabId, async (_target, send) => {
-      const target = await locateRemote(send, input.tabId, input.ref, deps);
+      const target = await locateRemote(send, input.ref);
       if ("code" in target) return { ...identity, ...target };
-      if (input.action === "scroll" && target.path.oopif) {
-        return {
-          ...identity,
-          error: "Scroll cannot confirm visibility inside a cross-process iframe.",
-          code: "IFRAME_SCROLL_UNAVAILABLE",
-        };
-      }
       if (input.action === "click") {
-        const outcome = await clickElement(target, identity, input.ref, deps);
+        const outcome = await clickElement(target, identity, deps);
         click.dispatched = outcome.dispatched;
         click.prepared = outcome.prepared;
         return outcome.result;
@@ -91,28 +78,26 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: Remot
   }
 }
 
-/** Inspect a node that has no top-level selector, reading it in its own frame. */
+/** Inspect a node that has no top-level selector. */
 export async function inspectRemoteElement(input: { tabId: number; target: string; uid?: string; ref: ElementReference }, deps: RemoteDeps) {
-  const identity = { tabId: input.tabId, target: input.target, uid: input.uid, frameId: input.ref.frameId };
+  const identity = { tabId: input.tabId, target: input.target, uid: input.uid };
   try {
     return await deps.withDebugger(input.tabId, async (_target, send) => {
-      const target = await locateRemote(send, input.tabId, input.ref, deps);
+      const target = await locateRemote(send, input.ref);
       if ("code" in target) return { ...identity, ...target };
       const details = record(await evaluate(target, elementPageFunction("inspect")));
       if (details.error) return { ...identity, error: String(details.error), code: "STALE_ELEMENT_UID" };
       const ax = arrayValue(record(await target.send("Accessibility.getPartialAXTree", {
         backendNodeId: target.backendNodeId,
         fetchRelatives: false,
-      }, target.sessionId).catch(() => ({}))).nodes).map(record)[0] || {};
-      const local = await quadCenter(target, target.backendNodeId);
-      const point = local ? await toPagePoint(target, local) : null;
-      const covered = point ? !(await hitsTarget(target, point, local!, CONTAINS_FN)) : false;
+      }).catch(() => ({}))).nodes).map(record)[0] || {};
+      const point = await quadCenter(target, target.backendNodeId);
+      const covered = point ? !(await hitsTarget(target, point, CONTAINS_FN)) : false;
       return {
         ...identity,
         ...details,
         role: String(record(ax.role).value || ""),
         name: String(record(ax.name).value || ""),
-        oopif: target.path.oopif || undefined,
         clickablePoint: point ? { x: Math.round(point.x), y: Math.round(point.y) } : null,
         state: { focused: details.focused === true, clickablePointReachable: !!point && !covered, obscuredAtCenter: covered },
         method: "backend-node",
@@ -124,29 +109,23 @@ export async function inspectRemoteElement(input: { tabId: number; target: strin
   }
 }
 
-async function locateRemote(send: Send, tabId: number, ref: ElementReference, deps: RemoteDeps): Promise<RemoteTarget | { error: string; code: string }> {
-  const backendNodeId = Number(ref.backendNodeId || 0);
-  const frameId = String(ref.frameId || "");
-  let path: FramePath | null = { frameId: "", loaderId: "", oopif: false, owners: [] };
-  if (frameId) {
-    path = await resolveFramePath(tabId, send, listener => {
-      if (!deps.subscribeDebuggerEvents) throw new Error("Frame sessions are unavailable");
-      return deps.subscribeDebuggerEvents(tabId, listener);
-    }, frameId);
-    if (!path) return { error: "The frame for this element is gone. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
-    if (ref.loaderId && path.loaderId !== ref.loaderId) {
-      return { error: "The frame for this element has navigated. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
-    }
+async function locateRemote(send: Send, ref: ElementReference): Promise<RemoteTarget | { error: string; code: string }> {
+  if (ref.frameId) {
+    return {
+      error: "This target is inside an iframe. get_ax_tree lists that content without a target. Open the frame URL with navigate/open_tab when the embedded page works on its own; otherwise state the limit and stop.",
+      code: "FRAME_CONTENT_READONLY",
+    };
   }
-  const objectId = await resolveObject(send, backendNodeId, path.sessionId);
-  const target = { send, objectId, backendNodeId, path, sessionId: path.sessionId };
+  const backendNodeId = Number(ref.backendNodeId || 0);
+  const objectId = await resolveObject(send, backendNodeId);
+  const target = { send, objectId, backendNodeId };
   if (!objectId || (await evaluate(target, CONNECTED_FN)) !== true) {
     return { error: "Element node is gone. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
   }
   return target;
 }
 
-async function clickElement(target: RemoteTarget, identity: Identity, ref: ElementReference, deps: RemoteDeps & { navigation?: RemoteClickNavigation }) {
+async function clickElement(target: RemoteTarget, identity: Identity, deps: RemoteDeps & { navigation?: RemoteClickNavigation }) {
   const href = String(await evaluate(target, LINK_HREF_FN) || "");
   const reachable = async () => {
     await scrollIntoView(target, target.backendNodeId);
@@ -168,7 +147,7 @@ async function clickElement(target: RemoteTarget, identity: Identity, ref: Eleme
   return {
     dispatched: true,
     prepared,
-    result: { ...identity, clickDispatched: true, method: "backend-node", frameId: ref.frameId, ...(href ? { href } : {}) },
+    result: { ...identity, clickDispatched: true, method: "backend-node", ...(href ? { href } : {}) },
   };
 }
 
@@ -185,19 +164,19 @@ async function fillElement(target: RemoteTarget, input: RemoteActionRequest, ide
   const point = await pagePoint(host, host.backendNodeId, CONTAINS_FN);
   if (!point) return { ...identity, error: "Element is not visible.", code: "ELEMENT_NOT_VISIBLE" };
   if (point.covered) return { ...identity, error: "Another element covers this target.", code: "ELEMENT_OBSCURED" };
-  await target.send("DOM.focus", { objectId: hostId }, target.sessionId);
+  await target.send("DOM.focus", { objectId: hostId });
   // A page may move focus while the target gains it; text is only typed where focus and selection are verified.
   const prepared = record(await evaluate(host, SELECT_CONTENTS_FN));
-  if (prepared.focused !== true || !(await ownersFocused(target))) {
+  if (prepared.focused !== true) {
     return { ...identity, error: "Element did not keep focus.", code: "ELEMENT_FOCUS_FAILED", filled: false };
   }
   if (prepared.selected !== true) {
     return { ...identity, error: "Element contents could not be selected.", code: "ELEMENT_SELECTION_FAILED", filled: false };
   }
-  if (input.value) await target.send("Input.insertText", { text: input.value }, target.sessionId);
+  if (input.value) await target.send("Input.insertText", { text: input.value });
   else {
-    await target.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 }, target.sessionId);
-    await target.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 }, target.sessionId);
+    await target.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
+    await target.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 });
   }
   const actual = String(await evaluate(host, READ_VALUE_FN) ?? "");
   const expected = input.value.replace(/\r\n?/g, "\n");
@@ -208,8 +187,8 @@ async function fillElement(target: RemoteTarget, input: RemoteActionRequest, ide
     if (record(await evaluate(host, FOCUS_FN)).focused !== true) {
       return { ...identity, error: "Element lost focus before submit.", code: "ELEMENT_FOCUS_FAILED", filled: true, value: actual, submitDispatched: false };
     }
-    await target.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" }, target.sessionId);
-    await target.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }, target.sessionId);
+    await target.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+    await target.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   }
   return { ...identity, filled: true, value: actual, method: "backend-node", submitDispatched: input.submit };
 }
@@ -221,11 +200,11 @@ async function pressElement(target: RemoteTarget, input: RemoteActionRequest, id
   }
   const keyboard = createCdpKeyboard({
     ToolExecutionError: deps.ToolExecutionError,
-    sendCdp: (_tabId, method, params) => target.send(method, params, target.sessionId),
+    sendCdp: (_tabId, method, params) => target.send(method, params),
   });
   const mapped = keyboard.normalize(pressedKey);
-  await target.send("DOM.focus", { backendNodeId: target.backendNodeId }, target.sessionId);
-  if (record(await evaluate(target, FOCUS_FN)).focused !== true || !(await ownersFocused(target))) {
+  await target.send("DOM.focus", { backendNodeId: target.backendNodeId });
+  if (record(await evaluate(target, FOCUS_FN)).focused !== true) {
     return { ...identity, error: "Element did not take focus.", code: "ELEMENT_FOCUS_FAILED", clickDispatched: false };
   }
   const before = record(await evaluate(target, READ_STATE_FN));
@@ -291,10 +270,8 @@ async function checkElement(target: RemoteTarget, input: RemoteActionRequest, id
       : await labelPoints(candidate);
     for (const local of locals) {
       sawBox = true;
-      const page = await toPagePoint(candidate, local);
-      if (!page) continue;
-      if (await hitsTarget(candidate, page, local, SAFE_CHECK_HIT_FN, control)) {
-        point = { ...page, covered: false };
+      if (await hitsTarget(candidate, local, SAFE_CHECK_HIT_FN, control)) {
+        point = { ...local, covered: false };
         clickedLabel = index >= 0;
         break;
       }
@@ -315,7 +292,7 @@ async function checkElement(target: RemoteTarget, input: RemoteActionRequest, id
 
 async function scrollElement(target: RemoteTarget, identity: Identity) {
   try {
-    await target.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: target.backendNodeId }, target.sessionId);
+    await target.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: target.backendNodeId });
   } catch { /* A node without a layout box still gets the element scroll below. */ }
   let place = record(await evaluate(target, VIEWPORT_FN));
   if (place.inView !== true) {
@@ -328,24 +305,8 @@ async function scrollElement(target: RemoteTarget, identity: Identity) {
   return { ...identity, scrolledTo: true, method: "backend-node", element: place };
 }
 
-/** Every iframe element between the target's document and the page must hold focus in its own document. */
-async function ownersFocused(target: RemoteTarget) {
-  for (const owner of target.path.owners) {
-    const objectId = await resolveObject(target.send, owner.backendNodeId, owner.sessionId);
-    if (!objectId) return false;
-    const focused = record(await evaluate({ ...target, objectId, sessionId: owner.sessionId }, FOCUS_FN));
-    if (focused.focused !== true) return false;
-  }
-  return true;
-}
-
 async function scrollIntoView(target: RemoteTarget, backendNodeId: number) {
-  for (const owner of [...target.path.owners].reverse()) {
-    try {
-      await target.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: owner.backendNodeId }, owner.sessionId);
-    } catch { /* The owner may have no layout box; the hit test decides visibility. */ }
-  }
-  await target.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }, target.sessionId);
+  await target.send("DOM.scrollIntoViewIfNeeded", { backendNodeId });
 }
 
 async function dispatchClick(send: Send, point: Point) {
@@ -367,58 +328,17 @@ function isTextField(state: Record<string, unknown>) {
 }
 
 async function pagePoint(target: RemoteTarget, backendNodeId: number, accepts: string) {
-  const local = await quadCenter(target, backendNodeId);
-  if (!local) return null;
-  const page = await toPagePoint(target, local);
-  if (!page) return null;
-  return { ...page, covered: !(await hitsTarget(target, page, local, accepts)) };
+  const point = await quadCenter(target, backendNodeId);
+  if (!point) return null;
+  return { ...point, covered: !(await hitsTarget(target, point, accepts)) };
 }
 
-/** Content quads start at the target's local root; each cross-process iframe adds its content-box origin. */
-async function toPagePoint(target: RemoteTarget, local: Point) {
-  let x = local.x;
-  let y = local.y;
-  for (const owner of target.path.owners) {
-    if (!owner.boundary) continue;
-    const origin = await contentOrigin(target.send, owner.backendNodeId, owner.sessionId);
-    if (!origin) return null;
-    x += origin.x;
-    y += origin.y;
-  }
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-async function contentOrigin(send: Send, backendNodeId: number, sessionId?: string) {
+/** The hit at the point must be the target or a descendant. Quads are viewport coordinates; hit testing uses document coordinates. */
+async function hitsTarget(target: RemoteTarget, point: Point, accepts: string, extra?: string) {
   try {
-    const content = arrayNumbers(record(record(await send("DOM.getBoxModel", { backendNodeId }, sessionId)).model).content);
-    return content.length >= 2 ? { x: content[0], y: content[1] } : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Walks the dispatched point from the page into the target's document: each cross-process
- * level must hit the next iframe element, and the innermost hit must satisfy `accepts`.
- */
-async function hitsTarget(target: RemoteTarget, page: Point, local: Point, accepts: string, extra?: string) {
-  try {
-    const boundaries = target.path.owners.filter(owner => owner.boundary).reverse();
-    let point = { ...page };
-    let sessionId: string | undefined;
-    for (let index = 0; index < boundaries.length; index += 1) {
-      const owner = boundaries[index];
-      const hit = await nodeAt(target.send, point, sessionId);
-      if (hit !== owner.backendNodeId) return false;
-      const origin = await contentOrigin(target.send, owner.backendNodeId, owner.sessionId);
-      if (!origin) return false;
-      point = { x: point.x - origin.x, y: point.y - origin.y };
-      sessionId = boundaries[index + 1]?.sessionId ?? target.sessionId;
-    }
-    if (boundaries.length && (Math.abs(point.x - local.x) > 1 || Math.abs(point.y - local.y) > 1)) return false;
-    const hitId = await nodeAt(target.send, point, sessionId);
+    const hitId = await nodeAt(target.send, point);
     if (!hitId) return false;
-    const hitObject = await resolveObject(target.send, hitId, target.sessionId);
+    const hitObject = await resolveObject(target.send, hitId);
     if (!hitObject) return false;
     const args = [{ objectId: hitObject }, ...(extra ? [{ objectId: extra }] : [])];
     const evaluated = record(await target.send("Runtime.callFunctionOn", {
@@ -426,21 +346,20 @@ async function hitsTarget(target: RemoteTarget, page: Point, local: Point, accep
       returnByValue: true,
       arguments: args,
       functionDeclaration: accepts,
-    }, target.sessionId));
+    }));
     return record(evaluated.result).value === true;
   } catch {
     return false;
   }
 }
 
-/** Quads are viewport coordinates, but hit testing takes document coordinates of the session's local root. */
-async function nodeAt(send: Send, point: Point, sessionId?: string) {
-  const scroll = record(record(await send("Page.getLayoutMetrics", {}, sessionId)).cssLayoutViewport);
+async function nodeAt(send: Send, point: Point) {
+  const scroll = record(record(await send("Page.getLayoutMetrics")).cssLayoutViewport);
   const hit = record(await send("DOM.getNodeForLocation", {
     x: Math.round(point.x + Number(scroll.pageX || 0)),
     y: Math.round(point.y + Number(scroll.pageY || 0)),
     ignorePointerEventsNone: true,
-  }, sessionId));
+  }));
   return Number(hit.backendNodeId || 0);
 }
 
@@ -448,7 +367,7 @@ async function nodeAt(send: Send, point: Point, sessionId?: string) {
 async function quadCenter(target: RemoteTarget, backendNodeId: number) {
   let quads: unknown[];
   try {
-    quads = arrayValue(record(await target.send("DOM.getContentQuads", { backendNodeId }, target.sessionId)).quads);
+    quads = arrayValue(record(await target.send("DOM.getContentQuads", { backendNodeId })).quads);
   } catch {
     return null;
   }
@@ -464,7 +383,7 @@ async function quadCenter(target: RemoteTarget, backendNodeId: number) {
 async function labelPoints(label: RemoteTarget) {
   let quads: number[][];
   try {
-    quads = arrayValue(record(await label.send("DOM.getContentQuads", { backendNodeId: label.backendNodeId }, label.sessionId)).quads)
+    quads = arrayValue(record(await label.send("DOM.getContentQuads", { backendNodeId: label.backendNodeId })).quads)
       .map(arrayNumbers).filter(points => points.length >= 8);
   } catch {
     return [];
@@ -486,9 +405,9 @@ function quadArea(points: number[]) {
   return Math.abs(area) / 2;
 }
 
-async function resolveObject(send: Send, backendNodeId: number, sessionId?: string) {
+async function resolveObject(send: Send, backendNodeId: number) {
   try {
-    const resolved = record(await send("DOM.resolveNode", { backendNodeId }, sessionId));
+    const resolved = record(await send("DOM.resolveNode", { backendNodeId }));
     return String(record(resolved.object).objectId || "");
   } catch {
     return "";
@@ -497,7 +416,7 @@ async function resolveObject(send: Send, backendNodeId: number, sessionId?: stri
 
 async function backendIdFor(target: RemoteTarget, objectId: string) {
   try {
-    return Number(record(record(await target.send("DOM.describeNode", { objectId }, target.sessionId)).node).backendNodeId || 0);
+    return Number(record(record(await target.send("DOM.describeNode", { objectId })).node).backendNodeId || 0);
   } catch {
     return 0;
   }
@@ -507,11 +426,11 @@ async function backendIdFor(target: RemoteTarget, objectId: string) {
 async function objectFor(target: RemoteTarget, expression: string, args?: unknown[]) {
   const payload: Record<string, unknown> = { objectId: target.objectId, functionDeclaration: expression };
   if (args) payload.arguments = args.map(value => ({ value }));
-  const result = record(record(await target.send("Runtime.callFunctionOn", payload, target.sessionId)).result);
+  const result = record(record(await target.send("Runtime.callFunctionOn", payload)).result);
   return result.subtype === "node" ? String(result.objectId || "") : "";
 }
 
-async function evaluate(target: Pick<RemoteTarget, "send" | "objectId" | "sessionId">, expression: string, args?: unknown[], awaitPromise = false) {
+async function evaluate(target: Pick<RemoteTarget, "send" | "objectId">, expression: string, args?: unknown[], awaitPromise = false) {
   const payload: Record<string, unknown> = {
     objectId: target.objectId,
     returnByValue: true,
@@ -519,7 +438,7 @@ async function evaluate(target: Pick<RemoteTarget, "send" | "objectId" | "sessio
   };
   if (args) payload.arguments = args.map(value => ({ value }));
   if (awaitPromise) payload.awaitPromise = true;
-  const evaluated = record(await target.send("Runtime.callFunctionOn", payload, target.sessionId));
+  const evaluated = record(await target.send("Runtime.callFunctionOn", payload));
   return record(evaluated.result).value;
 }
 

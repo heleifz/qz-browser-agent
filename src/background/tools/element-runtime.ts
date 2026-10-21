@@ -4,7 +4,7 @@ import type { createCdpRuntime } from './cdp-runtime.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  /** Frame and document identity; a backend id is only meaningful within that document. */
+  /** Main-document identity for a backend id. frameId marks iframe content, which is read-only. */
   frameId?: string; loaderId?: string; oopif?: boolean; remoteAction?: boolean;
   [field: string]: unknown;
 }
@@ -14,9 +14,7 @@ interface ElementRuntimeHost {
   makeSessionTabTargetError(code: string, details: Record<string, unknown>): Error;
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
-  subscribeDebuggerEvents?: (tabId: number, listener: (method: string, params: Record<string, unknown>) => void) => () => void;
 }
-import { resolveFramePath } from "./frame-sessions.js";
 import { elementPageFunction } from "./page-scripts.js";
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
@@ -30,7 +28,6 @@ export function createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
-  subscribeDebuggerEvents,
 }: ElementRuntimeHost) {
 // ---------------------------------------------------------------------------
 // Page snapshot element refs
@@ -237,8 +234,19 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
 
   let resolvedSelector = requestedSelector || "";
   let remoteAction = ref.remoteAction === true;
+  if (String(ref.frameId || "")) {
+    throw new ToolExecutionError("FRAME_CONTENT_READONLY", t("frameContentReadOnly"), {
+      target: elementTargetForUid(requestedUid),
+      frameId: ref.frameId,
+    });
+  }
   if (ref.backendNodeId) {
     const located = await locateBackendElement(resolvedTabId, ref, context);
+    if (located && "inFrame" in located && located.inFrame === true) {
+      throw new ToolExecutionError("FRAME_CONTENT_READONLY", t("frameContentReadOnly"), {
+        target: elementTargetForUid(requestedUid),
+      });
+    }
     if (!located || located.error) {
       throw new ToolExecutionError(
         "STALE_ELEMENT_UID",
@@ -252,8 +260,6 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       ...ref,
       selector: resolvedSelector,
       remoteAction,
-      frameId: located.frameId || ref.frameId,
-      oopif: located.oopif,
       createdAt: Date.now(),
     });
     ref = elementRefRegistry.get(requestedUid) || ref;
@@ -296,10 +302,11 @@ function normalizeElementUid(uid: unknown) {
 const BACKEND_LOCATOR_FN = `function() {
   const el = this instanceof Element ? this : this instanceof Node ? this.parentElement : null;
   if (!el || !el.isConnected) return { missing: true };
-  const root = el.getRootNode();
   let inFrame = false;
   try { inFrame = window.top !== window; } catch (error) { inFrame = true; }
-  if (root instanceof ShadowRoot || inFrame) return { remote: true };
+  if (inFrame) return { inFrame: true };
+  const root = el.getRootNode();
+  if (root instanceof ShadowRoot) return { remote: true };
   const escape = (value) => (window.CSS && CSS.escape) ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => "\\\\" + ch);
   const parts = [];
   let node = el;
@@ -328,49 +335,38 @@ const BACKEND_LOCATOR_FN = `function() {
 async function locateBackendElement(tabId: number, ref: ElementReference, context: ToolContext) {
   try {
     return await withDebugger(tabId, async (_target, send) => {
-      const frameId = String(ref.frameId || "");
-      let oopif = ref.oopif === true;
-      let sessionId: string | undefined;
       let loaderId = "";
-      if (frameId) {
-        if (!subscribeDebuggerEvents) return { remote: true, selector: "", frameId, oopif, error: "no debugger events" };
-        const path = await resolveFramePath(tabId, send, listener => subscribeDebuggerEvents!(tabId, listener), frameId);
-        if (!path) return { remote: true, selector: "", frameId, oopif, error: `frame ${frameId} is gone` };
-        sessionId = path.sessionId;
-        oopif = path.oopif;
-        loaderId = path.loaderId;
-      } else if (ref.loaderId) {
+      if (ref.loaderId) {
         loaderId = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
       }
       // A navigated document can reuse backend ids from a fresh renderer counter.
       if (ref.loaderId && loaderId !== ref.loaderId) {
-        return { remote: true, selector: "", frameId, oopif, error: frameId ? "the frame has navigated" : "the page has navigated" };
+        return { remote: true, selector: "", error: "the page has navigated" };
       }
       let resolved: Record<string, unknown>;
       try {
-        resolved = record(await send("DOM.resolveNode", { backendNodeId: ref.backendNodeId }, sessionId));
+        resolved = record(await send("DOM.resolveNode", { backendNodeId: ref.backendNodeId }));
       } catch (error) {
-        return { remote: true, selector: "", frameId, oopif, error: error instanceof Error ? error.message : String(error) };
+        return { remote: true, selector: "", error: error instanceof Error ? error.message : String(error) };
       }
       const objectId = String(record(resolved.object).objectId || "");
-      if (!objectId) return { remote: true, selector: "", frameId, oopif, error: "resolveNode returned no object" };
+      if (!objectId) return { remote: true, selector: "", error: "resolveNode returned no object" };
       const evaluated = record(await send("Runtime.callFunctionOn", {
         objectId,
         returnByValue: true,
         functionDeclaration: BACKEND_LOCATOR_FN,
-      }, sessionId));
+      }));
       const value = record(record(evaluated.result).value);
-      if (value.missing === true) return { remote: true, selector: "", frameId, oopif, error: "node is not connected" };
+      if (value.inFrame === true) return { inFrame: true, remote: false, selector: "" };
+      if (value.missing === true) return { remote: true, selector: "", error: "node is not connected" };
       return {
-        remote: value.remote === true || oopif || !!frameId,
-        selector: value.remote === true || oopif || frameId ? "" : String(value.selector || ""),
-        frameId,
-        oopif,
+        remote: value.remote === true,
+        selector: value.remote === true ? "" : String(value.selector || ""),
       };
     }, context);
   } catch (err) {
     if (isCdpFallbackForbiddenError(err)) throw err;
-    return { remote: true, selector: "", frameId: String(ref.frameId || ""), oopif: ref.oopif === true, error: err instanceof Error ? err.message : String(err) };
+    return { remote: true, selector: "", error: err instanceof Error ? err.message : String(err) };
   }
 }
 

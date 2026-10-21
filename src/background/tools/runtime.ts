@@ -1330,7 +1330,6 @@ const elementRuntime = createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
-  subscribeDebuggerEvents,
 });
 const { isUidElementTarget } = elementRuntime;
 

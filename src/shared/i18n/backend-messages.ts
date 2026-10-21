@@ -406,6 +406,7 @@ export const backendMessages = defineMessages("backend", {
   "toolError.NO_NORMAL_BROWSER_WINDOW.message": {"zh-CN": "没有可用的普通浏览器窗口，请先打开一个 Chrome 窗口后重试。", "en": "Open a regular Chrome window and try again."},
   "toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": {"zh-CN": "Git 发布目标不可用", "en": "Git publishing target unavailable"},
   "toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": {"zh-CN": "Git 发布的二进制资源无效", "en": "Invalid binary resource for Git publishing"},
+  "toolError.FRAME_CONTENT_READONLY.label": {"zh-CN": "iframe 内容只读", "en": "Iframe content is read-only"},
   "toolError.STALE_ELEMENT_UID.label": {"zh-CN": "元素引用已过期", "en": "Element reference has expired"},
   "toolError.STALE_ELEMENT_UID.message": {"zh-CN": "元素 target 已过期或不存在，请重新获取页面结构后再试。", "en": "The element target has expired or does not exist. Get the page structure again."},
   "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": {"zh-CN": "页面已变化，元素引用过期", "en": "Page changed; element reference expired"},

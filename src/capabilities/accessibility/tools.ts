@@ -141,19 +141,18 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   const emitDisplayNode = (semanticNode: SemanticNode, parentUid: string | null): void => {
     if (!includedNodes.has(semanticNode)) return;
     const compact = semanticNode.compact;
-    const uid = `${snapshotId}_${counter++}`;
+    // Iframe content is context only. It keeps frame= and gets no target the model could act on.
+    const inFrame = !!compact.frameId;
+    const uid = inFrame ? "" : `${snapshotId}_${counter++}`;
     const item: DisplayNode = {
       uid,
-      target: elementTargetForUid(uid),
+      target: inFrame ? "" : elementTargetForUid(uid),
       depth: semanticNode.depth,
       nodeId: compact.nodeId,
     };
     if (parentUid) item.parentUid = parentUid;
     if (compact.backendNodeId) item.backendNodeId = compact.backendNodeId;
-    if (compact.frameId) {
-      item.frameId = compact.frameId;
-      if (compact.oopif) item.oopif = true;
-    }
+    if (inFrame) item.frameId = compact.frameId;
     if (compact.role) item.role = compact.role;
     if (compact.name) item.name = compact.name;
     if (compact.value) item.value = compact.value;
@@ -163,21 +162,21 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (compact.ignored) item.ignored = true;
     if (semanticNode.children.some(child => !includedNodes.has(child))) item.truncated = true;
     displayNodes.push(item);
-    registerElementRef({
-      uid,
-      tabId,
-      sessionId,
-      pageUrl,
-      backendNodeId: item.backendNodeId,
-      frameId: item.frameId,
-      loaderId: compact.loaderId || undefined,
-      oopif: item.oopif,
-      role: item.role,
-      name: item.name,
-      url: item.url,
-      snapshotId,
-    });
-    for (const child of semanticNode.children) emitDisplayNode(child, uid);
+    if (!inFrame) {
+      registerElementRef({
+        uid,
+        tabId,
+        sessionId,
+        pageUrl,
+        backendNodeId: item.backendNodeId,
+        loaderId: compact.loaderId || undefined,
+        role: item.role,
+        name: item.name,
+        url: item.url,
+        snapshotId,
+      });
+    }
+    for (const child of semanticNode.children) emitDisplayNode(child, inFrame ? parentUid : uid);
   };
   for (const root of semanticRoots) emitDisplayNode(root, null);
   const lines = displayNodes.map(node => formatSnapshotLine(node, frameIndex));
@@ -256,7 +255,7 @@ function shouldKeepAxNode(node: CompactNode, depth: number) {
 }
 
 function formatSnapshotLine(node: DisplayNode, frameIndex: Map<string, number>) {
-  const target = node.target || elementTargetForUid(node.uid);
+  const target = node.target || (node.uid ? elementTargetForUid(node.uid) : "");
   const attrs = target ? [`target=${target}`] : [];
   if (node.role) attrs.push(node.role);
   if (node.name) attrs.push(`"${truncateInline(node.name, 90)}"`);

@@ -72,6 +72,21 @@ await assert.rejects(
   error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
 );
 
+runtime.registerElementRef({
+  uid: "t5_ax_frame",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/other",
+  backendNodeId: 40,
+  frameId: "child-frame",
+});
+currentUrl = "https://example.test/other";
+await assert.rejects(
+  runtime.resolveElementReference(5, { target: "uid:t5_ax_frame" }, { sessionId: "session-a" }),
+  error => error?.code === "FRAME_CONTENT_READONLY" && /navigate\/open_tab/.test(error.message) && !/screenshot/.test(error.message),
+  "an iframe target is refused before any debugger command",
+);
+
 assert.equal(runtime.isUidElementTarget("uid:t5_ax_1"), true);
 assert.equal(runtime.elementTargetForSelector("#save"), "css:#save");
 

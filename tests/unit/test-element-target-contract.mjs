@@ -161,6 +161,12 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
   assert.match(resolveToolDefinition("get_ax_tree").description, /BFS/, "get_ax_tree should document the breadth-first budget");
   assert.match(resolveToolDefinition("get_ax_tree").description, /frame=/, "get_ax_tree should document frame indexes");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /没有 target/, "get_ax_tree should say iframe lines have no target");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /navigate\/open_tab/, "get_ax_tree should send iframe interaction to the frame URL");
+  assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /操作 iframe 内容请用 screenshot/, "get_ax_tree should not send text models to screenshot for iframe content");
+  assert.match(resolveToolDefinition("act_on_element").description, /不能操作 iframe/, "act_on_element should refuse iframe content");
+  assert.doesNotMatch(resolveToolDefinition("act_on_element").description, /screenshot/, "act_on_element should not offer screenshot as the iframe fallback");
+  assert.match(resolveToolDefinition("inspect_element").description, /不能检查 iframe/, "inspect_element should refuse iframe content");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated\)/, "get_ax_tree should document truncated branch markers");
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, allowBackendOnly: true \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");

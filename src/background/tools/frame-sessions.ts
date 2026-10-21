@@ -146,44 +146,7 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: Subsc
   return { mainFrameId, mainLoaderId: String(tree.frame?.loaderId || ""), frames: [...frames.values()] };
 }
 
-export interface FrameOwner {
-  backendNodeId: number;
-  /** Session of the document that contains the iframe element. */
-  sessionId?: string;
-  /** The owned frame roots a child target, whose coordinates start at the frame's viewport. */
-  boundary: boolean;
-}
-
-export interface FramePath {
-  frameId: string;
-  sessionId?: string;
-  loaderId: string;
-  oopif: boolean;
-  /** Iframe elements from the innermost frame outward to the main document. */
-  owners: FrameOwner[];
-}
-
-/** Resolves a frame to its owning session and owner chain; `null` when the frame is gone or detached. */
-export async function resolveFramePath(tabId: number, send: Send, subscribe: Subscribe, frameId = ""): Promise<FramePath | null> {
-  const discovered = await discoverFrames(tabId, send, subscribe);
-  if (!frameId || frameId === discovered.mainFrameId) {
-    return { frameId: discovered.mainFrameId, loaderId: discovered.mainLoaderId, oopif: false, owners: [] };
-  }
-  const byId = new Map(discovered.frames.map(frame => [frame.frameId, frame]));
-  const frame = byId.get(frameId);
-  if (!frame) return null;
-  const owners: FrameOwner[] = [];
-  for (let current: DiscoveredFrame | undefined = frame; current; current = byId.get(current.parentFrameId || "")) {
-    if (!current.iframeBackendNodeId || owners.length > MAX_FRAME_DEPTH) return null;
-    const parentSession = current.parentFrameId === discovered.mainFrameId ? undefined : byId.get(current.parentFrameId || "")?.sessionId;
-    owners.push({ backendNodeId: current.iframeBackendNodeId, sessionId: parentSession, boundary: current.oopif });
-    if (current.parentFrameId === discovered.mainFrameId) {
-      return { frameId, sessionId: frame.sessionId, loaderId: frame.loaderId || "", oopif: frame.oopif || !!frame.sessionId, owners };
-    }
-  }
-  return null;
-}
-
+/** Reads each frame's accessibility tree for a read-only snapshot. Actions stay in the main document. */
 export async function collectSnapshotInputs(tabId: number, send: Send, subscribe: Subscribe, depth: number): Promise<{
   mainFrameId: string;
   sources: SnapshotFrameSource[];

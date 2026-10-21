@@ -33,8 +33,7 @@ export { createCdpKeyboard, primaryModifierForContext } from "../../background/t
 export { createCdpTouch } from "../../background/tools/cdp-touch.js";
 export type { MappedKey } from "../../background/tools/cdp-keyboard.js";
 export { isCdpFallbackForbiddenError } from "../../background/tools/cdp-runtime.js";
-export { collectSnapshotInputs, discoverFrames, resolveFramePath } from "../../background/tools/frame-sessions.js";
-export type { FrameOwner, FramePath } from "../../background/tools/frame-sessions.js";
+export { collectSnapshotInputs, discoverFrames } from "../../background/tools/frame-sessions.js";
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";

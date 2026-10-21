@@ -7,7 +7,7 @@ import type { PageState, PreparedNavigation } from "#sdk/background/browser";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
-  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "subscribeDebuggerEvents" | "getPageContext" | "getTabPageState" | "pageStateDelta"
+  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription">;
@@ -36,7 +36,6 @@ export function registerPageElementTools({
   clickNotReadyResult,
   sendCdp,
   withDebugger,
-  subscribeDebuggerEvents,
   getPageContext,
 }: PageElementHost) {
 async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>): Promise<ElementReply> {
@@ -155,7 +154,7 @@ registerTool({
     const ref = await resolveElementReference(tabId, { target, index }, context);
     if (ref.ref?.remoteAction && ref.ref.backendNodeId && ref.tabId) {
       return inspectRemoteElement({ tabId: ref.tabId, target: ref.target || target, uid: ref.uid || undefined, ref: ref.ref },
-        { withDebugger, subscribeDebuggerEvents, ToolExecutionError, context });
+        { withDebugger, ToolExecutionError, context });
     }
     const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index });
     return {
@@ -241,7 +240,6 @@ registerTool({
         ref: ref.ref,
       }, {
         withDebugger,
-        subscribeDebuggerEvents,
         ToolExecutionError,
         context,
         navigation: {
