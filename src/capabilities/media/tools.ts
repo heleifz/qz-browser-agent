@@ -38,7 +38,7 @@ interface ElementScreenshot extends Screenshot { target?: string; selector?: str
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || record(error).error || error || "");
-import { elementPageFunction } from "#sdk/background/browser";
+import { elementPageFunction, withBoundElement } from "#sdk/background/browser";
 import { requireToolFields } from "#sdk/background/tools";
 import { rasterizeSvg } from "./image-conversion.js";
 import {
@@ -329,8 +329,29 @@ registerTool({
     });
     if (result?.error) return result;
     const snapshotId = makeSnapshotId(target.tabId);
-    const images = (result.images || [])
-      .slice(0, clampNumber(limit, 1, 1000, 100))
+    const listedImages = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
+    let imageDocumentLoaderId = "";
+    const imageBackendIds = listedImages.map(() => 0);
+    try {
+      await withDebugger(target.tabId, async (_debugTarget, send) => {
+        const tree = record(await send("Page.getFrameTree"));
+        imageDocumentLoaderId = String(record(record(tree.frameTree).frame).loaderId || "");
+        const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
+        const documentNodeId = Number(record(root.root).nodeId || 0);
+        for (let rank = 0; rank < listedImages.length; rank += 1) {
+          const selector = String(listedImages[rank]?.selector || "");
+          if (!documentNodeId || !selector || selector.startsWith("shadow:")) continue;
+          try {
+            const queried = record(await send("DOM.querySelector", { nodeId: documentNodeId, selector }));
+            const nodeId = Number(queried.nodeId || 0);
+            if (!nodeId) continue;
+            const described = record(await send("DOM.describeNode", { nodeId }));
+            imageBackendIds[rank] = Number(record(described.node).backendNodeId || record(described.node).backendDOMNodeId || 0);
+          } catch { /* This image keeps its selector inside the same document only. */ }
+        }
+      }, context);
+    } catch { /* A page without a debugger session still lists images. */ }
+    const images = listedImages
       .map((item, rank) => {
         const uid = `${snapshotId}_img_${rank + 1}`;
         registerElementRef({
@@ -344,6 +365,8 @@ registerTool({
           name: item.alt || item.title || "",
           imageSrc: item.currentSrc || item.src || "",
           imageIndex: item.index,
+          loaderId: imageDocumentLoaderId || undefined,
+          backendNodeId: imageBackendIds[rank] || undefined,
           source: "list_images",
         });
         return imageDiscoveryResultItem(item, elementTargetForUid(uid));
@@ -370,6 +393,31 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
   }, context);
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
+  }
+  if (ref.ref?.backendNodeId) {
+    const info = await withBoundElement({ ToolExecutionError, withDebugger }, {
+      tabId: ref.tabId,
+      backendNodeId: Number(ref.ref.backendNodeId),
+      loaderId: ref.ref.loaderId ? String(ref.ref.loaderId) : "",
+      frameId: ref.ref.frameId ? String(ref.ref.frameId) : "",
+      target: ref.target || selectedTarget,
+    }, context, node => node.call({ action: "image" }));
+    if (info.error || info.missing) {
+      throw new ToolExecutionError(String(info.code || "STALE_ELEMENT_UID"), String(info.error || "Element node was replaced. Take a fresh get_ax_tree snapshot, then retry with a new target."), {
+        target: selectedTarget,
+      });
+    }
+    const expectedSrc = String(ref.ref.imageSrc || "").trim();
+    const currentSrc = String(info.currentSrc || info.src || "").trim();
+    assertSelectedImageSource({ target: selectedTarget, expectedSrc }, currentSrc);
+    return {
+      ...info,
+      target: ref.target || selectedTarget,
+      originalIndex: ref.ref.imageIndex,
+      sourceKind: "page",
+      tabId: ref.tabId,
+      expectedSrc: currentSrc,
+    };
   }
   const listed = await sendToContent(ref.tabId!, "listImageElements", {
     selector: ref.selector,
@@ -676,7 +724,18 @@ registerTool({
     }
 
     const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
-    const canvasResult = ref.selector
+    const nodeImage = ref.ref?.backendNodeId
+      ? await withBoundElement({ ToolExecutionError, withDebugger }, {
+        tabId: ref.tabId,
+        backendNodeId: Number(ref.ref.backendNodeId),
+        loaderId: ref.ref.loaderId ? String(ref.ref.loaderId) : "",
+        frameId: ref.ref.frameId ? String(ref.ref.frameId) : "",
+        target: ref.target,
+      }, context, node => node.call({ action: "image" }))
+      : null;
+    const canvasResult = (nodeImage
+      ? (nodeImage.error ? nodeImage : { ...nodeImage, method: "node" })
+      : ref.selector
       ? await sendToContent(ref.tabId!, "readImageElement", {
         selector: ref.selector,
         index: ref.index,
@@ -694,7 +753,10 @@ registerTool({
 	          tabId: ref.tabId,
 	          backendNodeId: ref.ref?.backendNodeId,
 	        },
-	      };
+	      }) as {
+        dataUrl?: string; selector?: string; method?: string; src?: string; currentSrc?: string;
+        error?: string; code?: string; index?: number; details?: { src?: string };
+      };
 
     if (canvasResult?.dataUrl) {
 	      return buildReadImageResult({
@@ -1614,14 +1676,9 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
   let selectorError: unknown = null;
 
   if (ref?.ref?.backendNodeId) {
-    try {
-      boundsInfo = await getElementScreenshotBoundsFromRuntime(tabId, ref.ref.backendNodeId, context);
-    } catch (err) {
-      runtimeError = err;
-    }
-  }
-
-  if (!boundsInfo && ref?.selector) {
+    // The UID names this node. A failed resolve must not search for a different element by selector.
+    boundsInfo = await getElementScreenshotBoundsFromRuntime(tabId, ref.ref.backendNodeId, ref.ref.loaderId, context);
+  } else if (ref?.selector) {
     try {
       const contentBounds = await sendToContent(tabId, "getElementScreenshotBounds", {
         selector: ref.selector,
@@ -1719,19 +1776,15 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
   };
 }
 
-async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeId: number, context: ToolContext = {}) {
-  return await withDebugger(tabId, async (_target, send) => {
-    const resolved = record(await send("DOM.resolveNode", { backendNodeId }));
-    const objectId = record(resolved.object).objectId;
-    if (!objectId) {
-      throw new ToolExecutionError("ELEMENT_RESOLVE_FAILED", t("cannotResolveElementNodeForScreenshot"), {
-        tabId,
-        backendNodeId,
-      });
-    }
-
-    const evaluated = await send("Runtime.callFunctionOn", {
-      objectId,
+async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeId: number, loaderId: unknown, context: ToolContext = {}) {
+  return await withBoundElement({ ToolExecutionError, withDebugger }, {
+    tabId,
+    backendNodeId,
+    loaderId: loaderId ? String(loaderId) : "",
+    target: `uid-backend:${backendNodeId}`,
+  }, context, async (node) => {
+    const evaluated = await node.send("Runtime.callFunctionOn", {
+      objectId: node.objectId,
       returnByValue: true,
       functionDeclaration: elementPageFunction("bounds"),
     });
@@ -1754,7 +1807,7 @@ async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeI
       rect: value.rect,
       viewport: value.viewport,
     };
-  }, context);
+  });
 }
 
 async function getElementScreenshotBoundsFromCdp(tabId: number, backendNodeId: number, context: ToolContext = {}) {

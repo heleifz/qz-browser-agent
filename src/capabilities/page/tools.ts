@@ -12,7 +12,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { isCdpFallbackForbiddenError } from "#sdk/background/browser";
+import { isCdpFallbackForbiddenError, bindingFromTarget, withBoundElement, hitBelongsToNode } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
@@ -150,14 +150,14 @@ registerTool({
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "", index = 0 }, _signal, context = {}) => {
-    const ref = await resolveElementReference(tabId, { target, index }, context);
-    const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index });
+    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
+    const inspection = await withBoundElement({ ToolExecutionError, withDebugger }, bindingFromTarget(ref), context, node => node.call({ action: "inspect" }));
     return {
       ...inspection,
       tabId: ref.tabId,
       target: ref.target || elementTargetForRef(inspection) || elementTargetForSelector(ref.selector),
       uid: ref.uid || undefined,
-      selector: inspection?.selector || ref.selector,
+      selector: ref.selector || undefined,
     };
   },
 });
@@ -193,9 +193,12 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: args => String(args.action || "").trim().toLowerCase() === "click" ? { defaultMs: 1800000, maxMs: 7200000 } : { defaultMs: 20000, maxMs: 120000 },
-  execute: async ({ tabId, target = "", index = 0, action, value = "", key = "", submit = false }, _signal, context = {}) => {
+  execute: async ({ tabId, target = "", index = 0, action, value = "", key = "", submit = false }, signal, context = {}) => {
     const normalizedAction = String(action || "").trim().toLowerCase();
     const allowed = new Set(["click", "fill", "press", "select", "check", "uncheck", "scroll"]);
+    if (normalizedAction === "press" && !String(key || value || "").trim()) {
+      return { error: "key is required for press action", code: "MISSING_KEY", inputDispatched: false, action: "press" };
+    }
     if (!allowed.has(normalizedAction)) {
       return {
         error: `Unsupported act_on_element action: ${action}`,
@@ -212,309 +215,182 @@ registerTool({
       };
     }
 
-    const ref = await resolveElementReference(tabId, { target, index }, context);
+    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
     tabId = ref.tabId;
-    const selector = ref.selector;
-    index = ref.index;
-    const resolvedTarget = ref.target || elementTargetForSelector(selector);
+    const binding = bindingFromTarget({ ...ref, index: ref.index });
+    const resolvedTarget = ref.target || elementTargetForSelector(binding.selector || "");
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
-    if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
+    if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, action });
+    const identity = { action: normalizedAction, target: resolvedTarget, uid: ref.uid || undefined, index: ref.index, tabId };
+    const unknownAfterInput = (error: unknown) => ({
+      ...identity,
+      inputDispatched: true,
+      code: "INPUT_RESULT_UNKNOWN",
+      error: "Input was already dispatched and the result is unknown. Do not send it again. Take a fresh get_ax_tree snapshot, then retry with a new target.",
+      cause: error instanceof Error ? error.message : String(error),
+    });
 
-    const inspected = await sendToContent(tabId, "inspectElement", { selector, index });
-    if (inspected.error) return withElementActionHelp(inspected, normalizedAction);
+    return withBoundElement({ ToolExecutionError, withDebugger }, binding, context, async (node) => {
+      const assertActive = () => {
+        if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), identity);
+      };
+      assertActive();
 
-    if (normalizedAction === "click") {
-      const pageBefore = await getTabPageState(tabId);
-      const securityGuardrails = await getSecurityGuardrails();
-      let current = inspected;
-      let pointSelector = selector;
-      let pointIndex = index;
-      let resolved: ElementReply | null = null;
-
-      if (!clickPointReady(current)) {
-        const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector, index, block: "center" });
-        if (scrolled.error) return withElementActionHelp(scrolled, normalizedAction);
-        current = scrolled;
+      if (normalizedAction === "scroll") {
+        const scrolled = await node.call({ action: "scroll" });
+        if (scrolled.error) return withElementActionHelp(scrolled as ElementReply, normalizedAction);
+        return { ...identity, scrolledTo: true, method: "node", element: scrolled };
       }
 
-      if (!clickPointReady(current)) {
-        resolved = await sendToContent(tabId, "resolveClickTarget", { selector, index });
-        if (resolved.error) return withElementActionHelp(resolved, normalizedAction);
-        if (resolved.navigateUrl) {
-          const preparedNavigation = await prepareKnownPageNavigation({
-            url: resolved.navigateUrl,
-            pageBefore,
-            guardrails: securityGuardrails,
-            context,
-            signal: _signal,
-            toolName: "act_on_element",
-            toolArgs: toolArgsForUpdates,
-            tabId,
-            source: "resolved_href",
-          });
-          const navigationUrl = preparedNavigation?.url || resolved.navigateUrl;
-          await chrome.tabs.update(tabId, { url: navigationUrl });
-          const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
-          return {
-            action: "click",
-            target: resolvedTarget,
-            selector,
-            uid: ref.uid || undefined,
-            index,
-            tabId,
-            clickDispatched: false,
-            navigated: pageDelta.urlChanged,
-            method: "href_navigation",
-            href: navigationUrl,
-            ...pageDelta,
-            ...(observedNavigation ? { observedNavigation } : {}),
-            element: resolved.element || current,
-            originalElement: inspected,
-          };
-        }
-        // A shadow target must keep its shadow path. A light-DOM selector built inside the root matches a different element.
-        if (resolved.resolvedSelector && !(String(selector).startsWith("shadow:") && !String(resolved.resolvedSelector).startsWith("shadow:"))) {
-          const resolvedInspection = await sendToContent(tabId, "scrollElementIntoView", {
-            selector: resolved.resolvedSelector,
-            index: 0,
-            block: "center",
-          });
-          if (!resolvedInspection.error) {
-            current = resolvedInspection;
-            pointSelector = resolved.resolvedSelector;
-            pointIndex = 0;
+      if (normalizedAction === "select") {
+        const selected = await node.call({ action: "select", value: String(value || "") });
+        if (selected.error) return withElementActionHelp(selected as ElementReply, normalizedAction);
+        return { ...identity, ...selected, method: "node" };
+      }
+
+      if (normalizedAction === "fill") {
+        const pageBefore = submit ? await getTabPageState(tabId) : null;
+        const guardrails = submit ? await getSecurityGuardrails() : null;
+        const prepared = await node.call({ action: "prepareFill", value: String(value ?? "") });
+        assertActive();
+        if (prepared.error) return withElementActionHelp(prepared as ElementReply, normalizedAction);
+        let dispatched = false;
+        try {
+          if (prepared.fillMode === "content") {
+            dispatched = true;
+            const filled = await node.call({ action: "fillRich", value: String(value ?? "") });
+            if (filled.error) return unknownAfterInput(filled.error);
+          } else if (value) {
+            dispatched = true;
+            await node.send("Input.insertText", { text: String(value) });
+          } else {
+            dispatched = true;
+            await keyboard.press(tabId, "Backspace", context);
           }
-        } else if (resolved.clickablePoint) {
-          current = {
-            ...current,
-            clickablePoint: resolved.clickablePoint,
-            href: resolved.href || current.href,
-          };
+          assertActive();
+          const actual = await node.call({ action: "readState" });
+          if (actual.error || actual.missing) return unknownAfterInput(actual.error || "node missing after input");
+          const equivalentText = (text: string) => prepared.contentEditable ? text.replace(/\u00a0/g, " ") : text;
+          const expected = String(value ?? "").replace(/\r\n?/g, "\n");
+          if (prepared.fillMode === "text" && (typeof actual.value !== "string" || equivalentText(actual.value) !== equivalentText(expected))) {
+            return { ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
+              filled: false, inputDispatched: true, value: actual.value, submitDispatched: false, element: actual };
+          }
+          if (submit) {
+            if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
+              filled: true, inputDispatched: true, value: actual.value, submitDispatched: false, element: actual };
+            await keyboard.press(tabId, "Enter", context);
+          }
+          const navigation = pageBefore && guardrails
+            ? await observeElementNavigation(tabId, pageBefore, null, guardrails) : null;
+          return { ...identity, filled: true, value: actual.value, submitDispatched: submit, method: prepared.fillMode === "text" ? "cdp" : "node", element: actual,
+            ...(navigation ? { ...navigation.pageDelta, navigated: navigation.pageDelta.urlChanged,
+              ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
+        } catch (error) {
+          if (isCdpFallbackForbiddenError(error) && !dispatched) throw error;
+          if (dispatched) return unknownAfterInput(error);
+          throw error;
         }
       }
 
-      if (!clickPointReady(current)) {
+      const pointing = normalizedAction === "check" || normalizedAction === "uncheck" ? "checkPlan" : "clickPlan";
+      const desired = normalizedAction === "check";
+      if (normalizedAction === "check" || normalizedAction === "uncheck") {
+        const inspected = await node.call({ action: "inspect" });
+        if (inspected.tag !== "input" || !["checkbox", "radio"].includes(String(inspected.type))) {
+          return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: inspected };
+        }
+        if (inspected.checked === desired) return { ...identity, checked: desired, changed: false, element: inspected };
+        if (inspected.type === "radio" && !desired) {
+          return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
+        }
+      }
+
+      const pageBefore = normalizedAction === "click" ? await getTabPageState(tabId) : null;
+      const securityGuardrails = normalizedAction === "click" ? await getSecurityGuardrails() : null;
+      const plan = await node.call({ action: pointing });
+      if (plan.navigateUrl && normalizedAction === "click" && pageBefore && securityGuardrails) {
+        const preparedNavigation = await prepareKnownPageNavigation({
+          url: String(plan.navigateUrl),
+          pageBefore,
+          guardrails: securityGuardrails,
+          context,
+          signal,
+          toolName: "act_on_element",
+          toolArgs: toolArgsForUpdates,
+          tabId,
+          source: "resolved_href",
+        });
+        const navigationUrl = preparedNavigation?.url || String(plan.navigateUrl);
+        await chrome.tabs.update(tabId, { url: navigationUrl });
+        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
+        return { ...identity, clickDispatched: false, navigated: pageDelta.urlChanged, method: "href_navigation", href: navigationUrl, ...pageDelta,
+          ...(observedNavigation ? { observedNavigation } : {}), element: plan };
+      }
+      if (!clickPointReady(plan as ElementReply)) {
         return clickNotReadyResult({
           target: resolvedTarget,
-          selector,
-          index,
-          inspection: current,
-          originalInspection: inspected,
-          resolved,
+          selector: binding.selector || resolvedTarget,
+          index: ref.index,
+          inspection: plan as ElementReply,
+          originalInspection: plan as ElementReply,
+          resolved: null,
         });
       }
-
-      const point = current.clickablePoint;
-      const preparedNavigation = await prepareKnownPageNavigation({
-        url: current.href || resolved?.href || "",
-        pageBefore,
-        guardrails: securityGuardrails,
-        context,
-        signal: _signal,
-        toolName: "act_on_element",
-        toolArgs: toolArgsForUpdates,
-        tabId,
-        source: "href",
-      });
-      let touchInput = false;
+      const point = (plan as ElementReply & { clickablePoint: { x: number; y: number } }).clickablePoint;
+      assertActive();
+      const cdpHit = await hitBelongsToNode(node.send, node.objectId, point);
+      const pageHit = cdpHit ? null : await node.call({ action: "containsPoint", value: `${point.x},${point.y}` });
+      const closedShadow = plan.inShadowRoot === true && plan.shadowMode === "closed";
+      if (closedShadow ? !cdpHit : !cdpHit && pageHit?.ok !== true) {
+        return { ...identity, error: "Element is covered by another element", code: "ELEMENT_OBSCURED", element: plan, inputDispatched: false };
+      }
+      let dispatched = false;
       try {
-        await withDebugger(tabId, async (_target, send) => {
-          touchInput = getPageContext(tabId).pageMode === "mobile";
-          if (touchInput) { await touch(send, point, { signal: _signal }); return; }
-          await send("Input.dispatchMouseEvent", {
-            type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
-          });
-          await send("Input.dispatchMouseEvent", {
-            type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
-          });
-        }, context);
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
-        return {
-          action: "click",
-          target: resolvedTarget,
-          selector,
-          uid: ref.uid || undefined,
-          index,
+        const preparedNavigation = pageBefore && securityGuardrails ? await prepareKnownPageNavigation({
+          url: String(plan.href || ""),
+          pageBefore,
+          guardrails: securityGuardrails,
+          context,
+          signal,
+          toolName: "act_on_element",
+          toolArgs: toolArgsForUpdates,
           tabId,
-          clickDispatched: true,
-          navigated: pageDelta.urlChanged,
-          method: pointSelector !== selector ? "cdp_resolved" : "cdp",
-          href: current.href || resolved?.href || undefined,
-          clickedSelector: pointSelector,
-          clickedIndex: pointIndex,
-          ...pageDelta,
-          ...(observedNavigation ? { observedNavigation } : {}),
-          element: current,
-          originalElement: current !== inspected ? inspected : undefined,
-        };
-      } catch (err) {
-        if (touchInput || isCdpFallbackForbiddenError(err)) throw err;
-        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit });
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails);
-        return {
-          ...fallback,
-          target: resolvedTarget,
-          selector,
-          uid: ref.uid || undefined,
-          index,
-          tabId,
-          clickDispatched: fallback.error ? false : Boolean(fallback.clicked || fallback.navigated),
-          navigated: Boolean(fallback.navigated) || pageDelta.urlChanged,
-          method: fallback.error ? "content_failed" : "content_fallback",
-          cdpError: err instanceof Error ? err.message : String(err),
-          ...pageDelta,
-          ...(observedNavigation ? { observedNavigation } : {}),
-        };
-      }
-    }
-
-    const identity = { action: normalizedAction, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId };
-    const assertActive = () => {
-      if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), identity);
-    };
-    if (normalizedAction === "fill") {
-      assertActive();
-      const pageBefore = submit ? await getTabPageState(tabId) : null;
-      const guardrails = submit ? await getSecurityGuardrails() : null;
-      return withDebugger(tabId, async (_target, send) => {
-        assertActive();
-        const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value });
-        assertActive();
-        if (prepared.error) return withElementActionHelp(prepared, normalizedAction);
-        // Preparation may resolve an inherited contenteditable child to its editing host.
-        const field = prepared.selector ? { selector: prepared.selector, index: 0 } : { selector, index };
-        const textInput = prepared.fillMode === "text";
-        const inputKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_tabId, method, params) => {
-          if (params.type !== "keyUp") assertActive();
-          return send(method, params);
-        } });
-        let fill: unknown;
-        if (textInput) {
-          if (value) await send("Input.insertText", { text: value });
-          else await inputKeyboard.press(tabId, "Backspace", context);
-        } else {
-          // Rich-text paragraphs and non-keyboard fields retain their specialized writer.
-          const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value, submit: false });
-          if (result.error) return withElementActionHelp(result, normalizedAction);
-          fill = result.fill;
-        }
-        assertActive();
-        const actual = await sendToContent(tabId, "readElementActionState", field);
-        assertActive();
-        if (actual.error) return withElementActionHelp(actual, normalizedAction);
-        // Chromium uses NBSP to preserve boundary spaces in contenteditable text.
-        const equivalentText = (text: string) => prepared.contentEditable ? text.replace(/\u00a0/g, " ") : text;
-        if (textInput && (typeof actual.value !== "string"
-          || equivalentText(actual.value) !== equivalentText(value.replace(/\r\n?/g, "\n")))) {
-          return { ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
-            filled: false, value: actual.value, submitDispatched: false, element: actual };
-        }
-        if (submit) {
-          if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
-            filled: true, value: actual.value, submitDispatched: false, element: actual };
-          // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
-          await inputKeyboard.press(tabId, "Enter", context);
-          assertActive();
-        }
-        const navigation = pageBefore && guardrails
-          ? await observeElementNavigation(tabId, pageBefore, null, guardrails) : null;
-        assertActive();
-        return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
-          method: textInput ? "cdp" : "content", element: actual,
-          ...(navigation ? { ...navigation.pageDelta, navigated: navigation.pageDelta.urlChanged,
-            ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
-      }, context);
-    }
-
-    if (normalizedAction === "check" || normalizedAction === "uncheck") {
-      assertActive();
-      const desired = normalizedAction === "check";
-      if (inspected.tag !== "input" || !["checkbox", "radio"].includes(String(inspected.type))) {
-        return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: inspected };
-      }
-      if (inspected.checked === desired) return { ...identity, checked: desired, changed: false, element: inspected };
-      if (inspected.type === "radio" && !desired) {
-        return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
-      }
-      return withDebugger(tabId, async (_target, send) => {
-        assertActive();
-        const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index });
-        assertActive();
-        if (current.error) return withElementActionHelp(current, normalizedAction);
-        if (current.tag !== "input" || current.type !== inspected.type) {
-          return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: current };
-        }
-        if (current.checked === desired) return { ...identity, checked: desired, changed: false, element: current };
-        const clickTarget = !current.disabled && isElementReply(current.element) ? current.element : current;
-        if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
-          inspection: clickTarget, originalInspection: current, resolved: null });
-        const point = clickTarget.clickablePoint;
+          source: "href",
+        }) : null;
         if (getPageContext(tabId).pageMode === "mobile") {
-          await touch(send, point, { signal: _signal });
+          dispatched = true;
+          await touch(node.send, point, { signal });
         } else {
-          let released = false;
-          try {
-            await send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
-            assertActive();
-            await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
-            released = true;
-          } finally {
-            if (!released) {
-              // Release a possibly held button outside the control without completing its click.
-              try { await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: -1, y: -1, button: "left", clickCount: 1 }); } catch { /* The run may have lost its lease. */ }
-            }
+          await node.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+          dispatched = true;
+          assertActive();
+          await node.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+        }
+        if (normalizedAction === "press") {
+          const pressedKey = key || value;
+          if (!pressedKey) return { ...identity, error: "key is required for press action", code: "MISSING_KEY", inputDispatched: true, element: plan };
+          await keyboard.press(tabId, keyboard.normalize(String(pressedKey)), context);
+          return { ...identity, key: pressedKey, pressed: true, method: "cdp", element: plan, inputDispatched: true };
+        }
+        if (normalizedAction === "check" || normalizedAction === "uncheck") {
+          const actual = await node.call({ action: "readState" });
+          if (actual.checked !== desired) {
+            return { ...identity, error: t("elementCheckStateMismatch"), code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, inputDispatched: true, element: actual };
           }
+          return { ...identity, checked: desired, changed: true, method: "cdp", element: actual, inputDispatched: true };
         }
-        assertActive();
-        const actual = await sendToContent(tabId, "readElementActionState", { selector, index });
-        assertActive();
-        if (actual.error) return withElementActionHelp(actual, normalizedAction);
-        if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...identity, error: t("elementCheckStateMismatch"),
-          code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, element: actual };
-        return { ...identity, checked: desired, changed: true, method: "cdp", element: actual };
-      }, context);
-    }
-
-    if (normalizedAction === "press") {
-      const pressedKey = key || value;
-      if (!pressedKey) {
-        return {
-          error: "key is required for press action",
-          code: "MISSING_KEY",
-          details: { target: resolvedTarget, selector, index, action: "press", examples: [{ key: "Enter" }, { key: "Escape" }, { key: "Tab" }] },
-          element: inspected,
-        };
+        const observed = pageBefore && securityGuardrails
+          ? await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails) : null;
+        return { ...identity, clickDispatched: true, method: "cdp", href: plan.href || undefined, element: plan,
+          ...(observed ? { ...observed.pageDelta, navigated: observed.pageDelta.urlChanged,
+            ...(observed.observedNavigation ? { observedNavigation: observed.observedNavigation } : {}) } : {}) };
+      } catch (error) {
+        if (isCdpFallbackForbiddenError(error) && !dispatched) throw error;
+        if (dispatched) return unknownAfterInput(error);
+        return { ...identity, error: error instanceof Error ? error.message : String(error), code: "ELEMENT_ACTION_FAILED", inputDispatched: false, element: plan };
       }
-      const preparedKey = keyboard.normalize(pressedKey);
-      try {
-        if (inspected.clickablePoint) {
-          await sendCdp(tabId, "Input.dispatchMouseEvent", {
-            type: "mousePressed", x: inspected.clickablePoint.x, y: inspected.clickablePoint.y, button: "left", clickCount: 1,
-          }, context);
-          await sendCdp(tabId, "Input.dispatchMouseEvent", {
-            type: "mouseReleased", x: inspected.clickablePoint.x, y: inspected.clickablePoint.y, button: "left", clickCount: 1,
-          }, context);
-        }
-        await keyboard.press(tabId, preparedKey, context);
-        return { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", element: inspected };
-      } catch (err) {
-        if (isCdpFallbackForbiddenError(err)) throw err;
-        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit });
-        return { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };
-      }
-    }
-
-    const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit });
-    return {
-      ...fallback,
-      target: resolvedTarget,
-      selector,
-      uid: ref.uid || undefined,
-      index,
-      tabId,
-      method: fallback.error ? "content_failed" : "content",
-      element: fallback.element || inspected,
-    };
+    });
   },
 });
 
@@ -544,14 +420,9 @@ registerTool({
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ tabId, direction = "down", pixels = 500, target = "", index = 0 }, _signal, context = {}) => {
     if (!String(target || "").trim()) return sendToContent(tabId, "scrollPage", { direction, pixels });
-    const ref = await resolveElementReference(tabId, { target, index }, context);
-    return {
-      ...await sendToContent(ref.tabId, "scrollPage", { direction, pixels, selector: ref.selector }),
-      tabId: ref.tabId,
-      target: ref.target,
-      selector: ref.selector,
-      index: ref.index,
-    };
+    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
+    const scrolled = await withBoundElement({ ToolExecutionError, withDebugger }, bindingFromTarget(ref), context, node => node.call({ action: "scroll" }));
+    return { ...scrolled, tabId: ref.tabId, target: ref.target, uid: ref.uid || undefined, index: ref.index, direction, pixels };
   },
 });
 

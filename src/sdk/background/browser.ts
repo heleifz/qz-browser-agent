@@ -37,4 +37,5 @@ export { collectSnapshotInputs, discoverFrames } from "../../background/tools/fr
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
+export { bindingFromTarget, withBoundElement, hitBelongsToNode } from "../../background/tools/element-node.js";
 export { isRunScriptInnerTargetArgs, resolveRunScriptTargetTabId } from "../../background/tools/script-policy.js";

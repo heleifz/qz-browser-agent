@@ -59,9 +59,10 @@ assert.doesNotMatch(
 assert.match(READING_CAPABILITY_PROTOCOL, /^### 视觉读取协议\n- 需要分析页面中的某张图片时/m, "visual reading protocol should include its title");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。/, "visual actions should select observation tools by tab ownership");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 有可靠 target 时，使用 act_on_element。/, "visual actions should route reliable targets to element actions");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 主文档里的 Canvas，或主文档中没有 target 的控件，调用 screenshot/, "visual actions should reserve screenshots for main-document controls");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /带 frame= 且没有 target 的行只阅读/, "visual actions should keep iframe lines read-only");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /不要对这些行使用 screenshot 或 act_on_screen/, "visual actions should not click iframe lines by coordinate");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot/, "visual actions should use a screenshot when a control has no target");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /带 frame= 且没有 target 的行不能传给 act_on_element/, "visual actions should keep iframe lines off element targets");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /依赖父页面时，用 screenshot 和 act_on_screen/, "visual actions should click parent-dependent iframe content by screenshot coordinates");
+assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /不要对这些行使用 screenshot 或 act_on_screen/, "visual actions should not forbid screenshot coordinates on iframe lines");
 assert.match(TEXT_ONLY_PAGE_ACTION_RULE, /带 frame= 且没有 target 的行只阅读/, "text-only actions should keep iframe lines read-only");
 assert.doesNotMatch(TEXT_ONLY_PAGE_ACTION_RULE, /screenshot|act_on_screen/, "text-only iframe guidance should not name vision tools");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /页面结构发生变化或 target 失效时，重新从第 1 步开始/, "visual actions should restart discovery after structural changes");

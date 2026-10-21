@@ -236,7 +236,7 @@ for (const mode of ["desktop", "mobile"]) {
       expect(spaced.value.replace(/\u00a0/g, " ")).toBe(spacedText);
       expect(events(spacedState, "rich", "input").length).toBeGreaterThan(0);
       expect(events(spacedState, "rich", "input").every(event => event.trusted)).toBe(true);
-      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toMatchObject({ filled: true, method: "content" });
+      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toMatchObject({ filled: true, method: "node" });
       expect((await h.state()).values.rich.split(/\n+/)).toEqual(["第一段", "第二段"]);
 
       const mismatch = await h.act("uppercase", "fill", { value: "mixed", submit: true });

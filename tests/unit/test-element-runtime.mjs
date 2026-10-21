@@ -87,6 +87,21 @@ await assert.rejects(
   "an iframe target is refused before any debugger command",
 );
 
+runtime.registerElementRef({
+  uid: "t5_ax_node",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/other",
+  backendNodeId: 9,
+  loaderId: "doc-1",
+  selector: "#replaced",
+});
+const bound = await runtime.resolveElementReference(5, { target: "uid:t5_ax_node" }, { sessionId: "session-a" });
+assert.equal(bound.selector, "", "a backend node is not converted into a selector");
+assert.equal(bound.ref.backendNodeId, 9);
+assert.equal(bound.ref.loaderId, "doc-1");
+assert.equal(bound.ref.selector, "#replaced", "the stored selector remains unused history");
+
 assert.equal(runtime.isUidElementTarget("uid:t5_ax_1"), true);
 assert.equal(runtime.elementTargetForSelector("#save"), "css:#save");
 

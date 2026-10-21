@@ -129,7 +129,7 @@ async function assertPromptAndUiUseTarget() {
 }
 
 function assertElementActionClickContract() {
-  assert.match(tools, /scrollElementIntoView/, "act_on_element should scroll before clicking offscreen targets");
+  assert.match(read("src/content/page-scripts/element.ts"), /scrollIntoView\(\{ behavior: "instant", block: "center"/, "node actions should scroll the resolved element before measuring a click point");
   assert.match(tools, /function clickPointReady\(inspection = \{\}\)/, "act_on_element should validate click readiness");
   assert.match(tools, /clickablePointInViewport/, "click readiness should check viewport-safe points");
   assert.match(tools, /clickDispatched: true/, "click result should expose clickDispatched");
@@ -140,10 +140,11 @@ function assertElementActionClickContract() {
 }
 
 function assertElementActionRoutingContract() {
-  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: normalizedAction/, "act_on_element should not let element actions overwrite the content message route");
-  assert.match(tools, /sendToContent\(tabId, "prepareElementFill"/, "fill should prepare the resolved editing surface before trusted input");
-  assert.match(tools, /sendToContent\(tabId, "readElementActionState"/, "element mutations should read back the page's actual state");
-  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: "press"/, "press fallback should use the elementAction payload field");
+  assert.match(pageElementTools, /withBoundElement\(\{ ToolExecutionError, withDebugger \}, binding/, "element actions should run on the resolved DOM node");
+  assert.match(pageElementTools, /INPUT_RESULT_UNKNOWN/, "input that was already sent should not be replayed after a later failure");
+  assert.doesNotMatch(pageElementTools, /elementAction: normalizedAction/, "a UID action should not fall back to a second DOM click");
+  assert.match(elementRuntime, /if \(ref\.backendNodeId\) \{[\s\S]{0,180}selector: ""/, "a backend node should be returned without a selector");
+  assert.doesNotMatch(elementRuntime, /function selectorFromBackendNode/, "UID resolution should not build a selector from a backend node");
   assert.match(contentScript, /actOnElement\(\{ selector, index = 0, action, elementAction = ""/, "content actOnElement should read an explicit elementAction payload");
   assert.match(contentScript, /const op = String\(elementAction \|\| action \|\| ""\)\.trim\(\)/, "content actOnElement should keep direct handler compatibility");
   assert.match(contentScript, /if \(op === "select"\)/, "content actOnElement should support native select");
@@ -343,9 +344,10 @@ function assertScreenActionContract() {
   assert.match(screenActionRuntime, /for \(let index = 0; index < prepared\.repeat; index \+= 1\)/, "scroll repeat should stay one bounded atomic screen action");
   assert.match(screenActionRuntime, /viewportChange: describeViewportChange\(current, actionStateAfter\)/, "screen actions should report observed viewport movement on every result path");
   assert.match(actionBlock, /"long_press"[^\n]*requireToolFields\("act_on_screen", args, \["x",\s*"y"\]/, "long press should require coordinates before reaching the runtime");
-  assert.match(prompt, /主文档里的 Canvas，或主文档中没有 target 的控件，调用 screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for main-document visual controls");
-  assert.match(prompt, /带 frame= 且没有 target 的行只阅读/, "the prompt should keep iframe lines read-only");
-  assert.match(prompt, /不要对这些行使用 screenshot 或 act_on_screen/, "the prompt should not route iframe lines through screen coordinates");
+  assert.match(prompt, /目标位于 Canvas 或没有可靠 target 时，调用 screenshot\(\{actionable:true\}\)/, "the prompt should use a screenshot when a control has no target");
+  assert.match(prompt, /带 frame= 且没有 target 的行不能传给 act_on_element/, "the prompt should keep iframe lines off element targets");
+  assert.match(prompt, /依赖父页面时，用 screenshot 和 act_on_screen/, "the prompt should click parent-dependent iframe content by screenshot coordinates");
+  assert.doesNotMatch(prompt, /不要对这些行使用 screenshot 或 act_on_screen/, "the prompt should not forbid screenshot coordinates on iframe lines");
   assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");

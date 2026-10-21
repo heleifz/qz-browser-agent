@@ -208,7 +208,7 @@ test("snapshots include shadow targets and read-only frame content", async () =>
 
     const closedChoice = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed choice"), action: "select", value: "beta" });
     expect(closedChoice.error, JSON.stringify(closedChoice)).toBeUndefined();
-    expect(closedChoice.method).toBe("content");
+    expect(closedChoice.method).toBe("node");
     expect(closedChoice.selected).toBe("beta");
     expect(await page.evaluate(() => window.__closedChoice)).toBe("beta");
     const closedAgree = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed agree"), action: "check" });
@@ -223,7 +223,7 @@ test("snapshots include shadow targets and read-only frame content", async () =>
     expect(await page.evaluate(() => [...document.querySelectorAll("#shared-field")].map(field => field.value))).toEqual(["", "q"]);
     const sharedSelect = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared choice two"), action: "select", value: "two" });
     expect(sharedSelect.error, JSON.stringify(sharedSelect)).toBeUndefined();
-    expect(sharedSelect.method).toBe("content");
+    expect(sharedSelect.method).toBe("node");
     expect(sharedSelect.selected).toBe("two");
     expect(await page.evaluate(() => [...document.querySelectorAll("#shared-select")].map(field => field.value))).toEqual(["one", "two"]);
 
@@ -451,6 +451,49 @@ test("nested frames stay readable without targets while shadow actions keep nati
     expect(wrapped.href).toBe(`${L}/landed.html`);
     expect(wrapped.navigated).toBe(true);
     await expect.poll(() => page.url()).toBe(`${L}/landed.html`);
+  } finally {
+    await fixture.close();
+  }
+});
+
+const AMBIGUOUS_PORT = 8136;
+
+test("uid actions hit the resolved node and expire when the document is replaced", async () => {
+  test.setTimeout(180_000);
+  const pages = {
+    "/": `<!doctype html><title>node identity</title>
+      <choice-host></choice-host>
+      <button class="twin" onclick="window.__log.push('first')">First twin</button>
+      <button class="twin" onclick="window.__log.push('second')">Second twin</button>
+      <script>
+        window.__log = [];
+        customElements.define("choice-host", class extends HTMLElement { connectedCallback() {
+          const root = this.attachShadow({ mode: "open" });
+          root.innerHTML = "<header><div><button>Header</button></div></header><div><button>Buy</button></div>";
+          root.querySelector("header button").onclick = () => window.__log.push("header");
+          root.querySelectorAll("button")[1].onclick = () => window.__log.push("buy");
+        } });
+      </script>`,
+  };
+  const fixture = await launchFixture([AMBIGUOUS_PORT], pages, `http://localhost:${AMBIGUOUS_PORT}/`);
+  try {
+    const { call, page, tabId } = fixture;
+    await page.waitForSelector("choice-host");
+    const ax = await call("get_ax_tree", { tabId, limit: 200 });
+    expect(ax.error, JSON.stringify(ax)).toBeUndefined();
+    const uid = (label) => ax.snapshot.split("\n").find(line => line.includes(`"${label}"`))?.match(/target=(uid:\S+)/)?.[1];
+    const buy = await call("act_on_element", { tabId, target: uid("Buy"), action: "click" });
+    expect(buy.error, JSON.stringify(buy)).toBeUndefined();
+    expect(await page.evaluate(() => window.__log.at(-1))).toBe("buy");
+    const second = await call("act_on_element", { tabId, target: "css:button.twin", index: 1, action: "click" });
+    expect(second.error, JSON.stringify(second)).toBeUndefined();
+    expect(await page.evaluate(() => window.__log.at(-1))).toBe("second");
+    await page.reload();
+    await page.waitForSelector("choice-host");
+    const stale = await call("act_on_element", { tabId, target: uid("Buy"), action: "click" });
+    expect(stale.code, JSON.stringify(stale)).toBe("STALE_ELEMENT_UID");
+    expect(stale.error).toMatch(/get_ax_tree|page structure/i);
+    expect(await page.evaluate(() => window.__log.includes("header") || window.__log.includes("buy"))).toBe(false);
   } finally {
     await fixture.close();
   }
