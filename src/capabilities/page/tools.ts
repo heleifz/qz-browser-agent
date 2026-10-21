@@ -228,9 +228,10 @@ registerTool({
         uid: ref.uid || undefined,
         action: normalizedAction,
         value: String(value ?? ""),
+        key: String(key ?? ""),
         submit: submit === true,
         ref: ref.ref,
-      }, { withDebugger, subscribeDebuggerEvents, context });
+      }, { withDebugger, subscribeDebuggerEvents, ToolExecutionError, context });
     }
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });

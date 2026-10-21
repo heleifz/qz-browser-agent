@@ -1,5 +1,6 @@
+import type { ToolContext, ToolErrorConstructor } from "#sdk/background";
 import type { CdpCommand } from "#sdk/background/browser";
-import { sessionForFrame } from "#sdk/background/browser";
+import { createCdpKeyboard, sessionForFrame } from "#sdk/background/browser";
 import type { ElementReference } from "#sdk/background/browser";
 
 type Send = CdpCommand;
@@ -13,14 +14,16 @@ export interface RemoteActionRequest {
   uid?: string;
   action: string;
   value: string;
+  key: string;
   submit: boolean;
   ref: ElementReference;
 }
 
-/** Click and fill a shadow or frame element through its backend node, never through a document selector. */
+/** Act on a shadow, frame, or non-unique light-DOM node through its backend node. */
 export async function actOnRemoteElement(input: RemoteActionRequest, deps: {
   withDebugger: (tabId: number, fn: (target: chrome.debugger.Debuggee, send: Send) => Promise<unknown>, context?: Record<string, unknown>) => Promise<unknown>;
   subscribeDebuggerEvents?: Subscribe;
+  ToolExecutionError: ToolErrorConstructor;
   context?: Record<string, unknown>;
 }) {
   const identity = {
@@ -32,13 +35,6 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: {
     tabId: input.tabId,
     frameId: input.ref.frameId,
   };
-  if (input.action !== "click" && input.action !== "fill") {
-    return {
-      ...identity,
-      error: `Action ${input.action} is not available for a shadow or frame target. Use click or fill.`,
-      code: "REMOTE_ELEMENT_ACTION_UNSUPPORTED",
-    };
-  }
   const backendNodeId = Number(input.ref.backendNodeId || 0);
   if (!backendNodeId) {
     return { ...identity, error: "Element has no backend node. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
@@ -58,8 +54,13 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: {
       if (!objectId) {
         return { ...identity, error: "Element node is gone. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
       }
+      if (input.action === "click") return clickElement(send, objectId, backendNodeId, sessionId, identity);
       if (input.action === "fill") return fillElement(send, objectId, backendNodeId, sessionId, input, identity);
-      return clickElement(send, objectId, backendNodeId, sessionId, identity);
+      if (input.action === "press") return pressElement(send, objectId, backendNodeId, sessionId, input, identity, deps);
+      if (input.action === "select") return selectElement(send, objectId, sessionId, input, identity);
+      if (input.action === "check" || input.action === "uncheck") return checkElement(send, objectId, sessionId, input, identity);
+      if (input.action === "scroll") return scrollElement(send, objectId, backendNodeId, sessionId, identity);
+      return { ...identity, error: `Unsupported act_on_element action: ${input.action}`, code: "UNSUPPORTED_ELEMENT_ACTION" };
     }, deps.context);
   } catch (error) {
     const code = String((error as { code?: string })?.code || "");
@@ -101,6 +102,92 @@ async function fillElement(send: Send, objectId: string, backendNodeId: number, 
     await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }, sessionId);
   }
   return { ...identity, filled: true, value: actual, method: "backend-node", submitDispatched: input.submit, frameId: identity.frameId };
+}
+
+async function pressElement(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined, input: RemoteActionRequest, identity: Record<string, unknown>, deps: {
+  ToolExecutionError: ToolErrorConstructor;
+  context?: Record<string, unknown>;
+}) {
+  const pressedKey = input.key || input.value;
+  if (!pressedKey) {
+    return { ...identity, error: "key is required for press action", code: "MISSING_KEY" };
+  }
+  const keyboard = createCdpKeyboard({
+    ToolExecutionError: deps.ToolExecutionError,
+    sendCdp: (_tabId, method, params) => send(method, params, sessionId),
+  });
+  const mapped = keyboard.normalize(pressedKey);
+  if (!(await focusElement(send, objectId, backendNodeId, sessionId))) {
+    return { ...identity, error: "Element did not take focus.", code: "ELEMENT_FOCUS_FAILED", clickDispatched: false };
+  }
+  const before = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  await keyboard.press(input.tabId, mapped, (deps.context || {}) as ToolContext);
+  const after = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  const insertsText = mapped.text.length === 1 && mapped.text !== "\r" && isTextField(before);
+  if (insertsText && String(after.value ?? "") === String(before.value ?? "")) {
+    return { ...identity, error: "Pressed key did not change the field.", code: "ELEMENT_VALUE_MISMATCH", pressed: false, key: pressedKey, value: after.value, clickDispatched: false };
+  }
+  return { ...identity, key: pressedKey, pressed: true, method: "backend-node", clickDispatched: false, value: after.value, element: after };
+}
+
+async function selectElement(send: Send, objectId: string, sessionId: string | undefined, input: RemoteActionRequest, identity: Record<string, unknown>) {
+  const selected = record(await evaluate(send, objectId, SELECT_OPTION_FN, sessionId, [input.value]));
+  if (selected.ok !== true) {
+    const code = selected.reason === "missing" ? "OPTION_NOT_FOUND" : "NOT_SELECT_ELEMENT";
+    const error = code === "OPTION_NOT_FOUND" ? "No option matched that value or label." : "Element is not a select.";
+    return { ...identity, error, code, options: selected.options };
+  }
+  const actual = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  if (actual.selected !== selected.selected) {
+    return { ...identity, error: "Selected value did not stick.", code: "ELEMENT_VALUE_MISMATCH", selected: actual.selected };
+  }
+  return { ...identity, selected: actual.selected, selectedLabel: actual.selectedLabel, method: "backend-node" };
+}
+
+async function checkElement(send: Send, objectId: string, sessionId: string | undefined, input: RemoteActionRequest, identity: Record<string, unknown>) {
+  const desired = input.action === "check";
+  const changed = record(await evaluate(send, objectId, SET_CHECKED_FN, sessionId, [desired]));
+  if (changed.reason === "radio-uncheck") {
+    return { ...identity, error: "A radio button cannot be unchecked.", code: "ELEMENT_CHECK_STATE_MISMATCH" };
+  }
+  if (changed.reason === "disabled") {
+    return { ...identity, error: "Element is disabled.", code: "ELEMENT_DISABLED" };
+  }
+  if (changed.reason === "not-checkable") {
+    return { ...identity, error: "Element is not a checkbox or radio button.", code: "NOT_CHECKABLE_ELEMENT" };
+  }
+  const actual = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  if (actual.checked !== desired) {
+    return { ...identity, error: "Check state did not stick.", code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked };
+  }
+  return { ...identity, checked: desired, changed: changed.changed === true, method: "backend-node" };
+}
+
+async function scrollElement(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined, identity: Record<string, unknown>) {
+  try {
+    await send("DOM.scrollIntoViewIfNeeded", { backendNodeId }, sessionId);
+  } catch { /* A node without a layout box still gets the element scroll below. */ }
+  let place = record(await evaluate(send, objectId, VIEWPORT_FN, sessionId));
+  if (place.inView !== true) {
+    await evaluate(send, objectId, SCROLL_FN, sessionId);
+    place = record(await evaluate(send, objectId, VIEWPORT_FN, sessionId));
+  }
+  if (place.inView !== true) {
+    return { ...identity, error: "Element is not visible.", code: "ELEMENT_NOT_VISIBLE" };
+  }
+  return { ...identity, scrolledTo: true, method: "backend-node", element: place };
+}
+
+async function focusElement(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined) {
+  await send("DOM.focus", { backendNodeId }, sessionId);
+  return record(await evaluate(send, objectId, FOCUS_FN, sessionId)).focused === true;
+}
+
+function isTextField(state: Record<string, unknown>) {
+  if (state.tag === "textarea") return true;
+  if (state.tag !== "input") return false;
+  const type = String(state.type || "text").toLowerCase();
+  return ["text", "search", "email", "password", "tel", "url", "number", ""].includes(type);
 }
 
 async function pagePoint(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined) {
@@ -194,12 +281,14 @@ async function resolveObject(send: Send, backendNodeId: number, sessionId?: stri
   }
 }
 
-async function evaluate(send: Send, objectId: string, expression: string, sessionId?: string) {
-  const evaluated = record(await send("Runtime.callFunctionOn", {
+async function evaluate(send: Send, objectId: string, expression: string, sessionId?: string, args?: unknown[]) {
+  const payload: Record<string, unknown> = {
     objectId,
     returnByValue: true,
     functionDeclaration: expression,
-  }, sessionId));
+  };
+  if (args) payload.arguments = args.map(value => ({ value }));
+  const evaluated = record(await send("Runtime.callFunctionOn", payload, sessionId));
   return record(evaluated.result).value;
 }
 
@@ -230,6 +319,78 @@ const READ_VALUE_FN = `function() {
   if (!el) return "";
   if (typeof el.value === "string") return el.value;
   return el.textContent || "";
+}`;
+
+const FOCUS_FN = `function() {
+  const el = this;
+  if (!el) return { focused: false };
+  const root = el.getRootNode();
+  const active = root instanceof ShadowRoot ? root.activeElement : el.ownerDocument.activeElement;
+  return { focused: active === el };
+}`;
+
+const READ_STATE_FN = `function() {
+  const el = this;
+  if (!el) return {};
+  const selected = el instanceof HTMLSelectElement ? el.options[el.selectedIndex] : null;
+  return {
+    tag: el.localName || "",
+    type: el.type || "",
+    value: typeof el.value === "string" ? el.value : "",
+    checked: "checked" in el ? !!el.checked : undefined,
+    selected: el instanceof HTMLSelectElement ? el.value : "",
+    selectedLabel: selected ? String(selected.label || "").trim() : "",
+  };
+}`;
+
+const SELECT_OPTION_FN = `function(raw) {
+  const el = this;
+  if (!(el instanceof HTMLSelectElement)) return { ok: false, reason: "not-select", tag: el && el.localName };
+  const rawWanted = String(raw ?? "");
+  const labelWanted = rawWanted.trim();
+  const options = Array.from(el.options);
+  let matchIndex = options.findIndex(option => option.value === rawWanted);
+  if (matchIndex < 0 && labelWanted) matchIndex = options.findIndex(option => String(option.label || "").trim() === labelWanted);
+  if (matchIndex < 0) return {
+    ok: false,
+    reason: "missing",
+    options: options.slice(0, 20).map(option => ({ value: option.value, label: String(option.label || "").trim() })),
+  };
+  el.selectedIndex = matchIndex;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return { ok: true, selected: options[matchIndex].value };
+}`;
+
+const SET_CHECKED_FN = `function(desired) {
+  const el = this;
+  if (!(el instanceof HTMLInputElement) || (el.type !== "checkbox" && el.type !== "radio")) {
+    return { ok: false, reason: "not-checkable" };
+  }
+  if (el.disabled) return { ok: false, reason: "disabled" };
+  if (el.type === "radio" && desired !== true) return { ok: false, reason: "radio-uncheck" };
+  const before = el.checked;
+  if (before !== desired) {
+    el.checked = desired;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return { ok: el.checked === desired, checked: el.checked, changed: before !== el.checked };
+}`;
+
+const VIEWPORT_FN = `function() {
+  const el = this;
+  if (!el || !el.getBoundingClientRect) return { inView: false };
+  const rect = el.getBoundingClientRect();
+  const view = el.ownerDocument.defaultView;
+  const inView = rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0
+    && rect.top < view.innerHeight && rect.left < view.innerWidth;
+  return { inView, top: rect.top, left: rect.left };
+}`;
+
+const SCROLL_FN = `function() {
+  if (this && this.scrollIntoView) this.scrollIntoView({ block: "center", inline: "center" });
+  return true;
 }`;
 
 function arrayValue(value: unknown): unknown[] {

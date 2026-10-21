@@ -12,6 +12,10 @@ const SIBLING_PORT = 8134;
 function pageHtml() {
   return `<!doctype html><title>snapshot fixtures</title>
     <button id="decoy" onclick="window.__clicks.push('decoy')">Decoy</button>
+    <input id="shared-field" aria-label="Shared field one" onclick="window.__dupClicks=(window.__dupClicks||0)+1">
+    <input id="shared-field" aria-label="Shared field two" onclick="window.__dupClicks=(window.__dupClicks||0)+1">
+    <select id="shared-select" aria-label="Shared choice one"><option value="one">One</option><option value="two">Two</option></select>
+    <select id="shared-select" aria-label="Shared choice two"><option value="one">One</option><option value="two">Two</option></select>
     <open-host></open-host>
     <closed-host></closed-host>
     <div style="position:relative;width:200px"><covered-host></covered-host>
@@ -35,14 +39,19 @@ function pageHtml() {
       } });
       customElements.define("closed-host", class extends HTMLElement { connectedCallback() {
         const root = this.attachShadow({ mode: "closed" });
-        root.innerHTML = '<button>Closed shadow action</button>';
+        root.innerHTML = '<button>Closed shadow action</button><select aria-label="Closed choice"><option value="alpha">Alpha</option><option value="beta">Beta</option></select><input type="checkbox" aria-label="Closed agree">';
         root.querySelector("button").onclick = () => window.__clicks.push("closed");
+        root.querySelector("select").onchange = () => { window.__closedChoice = root.querySelector("select").value; };
+        root.querySelector("input").onchange = () => { window.__closedChecked = root.querySelector("input").checked; };
       } });
     </script>`;
 }
 
 function frameHtml(label, field) {
-  return `<!doctype html><button onclick="window.__clicked='${label}'">${label}</button><input id="field" aria-label="${field}">`;
+  return `<!doctype html><form onsubmit="event.preventDefault(); window.__submitted=document.querySelector('#field').value">
+    <button type="button" onclick="window.__clicked='${label}'; window.__clickCount=(window.__clickCount||0)+1">${label}</button>
+    <input id="field" aria-label="${field}">
+  </form>`;
 }
 
 test("snapshots include shadow and frame content and act on the named target", async () => {
@@ -136,6 +145,10 @@ test("snapshots include shadow and frame content and act on the named target", a
     expect(ax.snapshot, JSON.stringify(ax)).toContain("Shadow field");
     expect(ax.snapshot).toContain("Open shadow action");
     expect(ax.snapshot).toContain("Closed shadow action");
+    expect(ax.snapshot).toContain("Closed choice");
+    expect(ax.snapshot).toContain("Closed agree");
+    expect(ax.snapshot).toContain("Shared field two");
+    expect(ax.snapshot).toContain("Shared choice two");
     expect(ax.snapshot).toContain("Same frame action");
     expect(ax.snapshot).toContain("Cross frame action");
     expect(ax.snapshot).toContain("Sibling origin action");
@@ -179,6 +192,40 @@ test("snapshots include shadow and frame content and act on the named target", a
     const siblingFill = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Sibling origin field"), action: "fill", value: "sibling value" });
     expect(siblingFill.error, JSON.stringify(siblingFill)).toBeUndefined();
     expect(await page.frameLocator("#sibling").locator("#field").inputValue()).toBe("sibling value");
+
+    const closedChoice = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed choice"), action: "select", value: "beta" });
+    expect(closedChoice.error, JSON.stringify(closedChoice)).toBeUndefined();
+    expect(closedChoice.method).toBe("backend-node");
+    expect(closedChoice.selected).toBe("beta");
+    expect(await page.evaluate(() => window.__closedChoice)).toBe("beta");
+    const closedAgree = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed agree"), action: "check" });
+    expect(closedAgree.error, JSON.stringify(closedAgree)).toBeUndefined();
+    expect(closedAgree.checked).toBe(true);
+    expect(await page.evaluate(() => window.__closedChecked)).toBe(true);
+
+    const clicksBeforePress = await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clickCount || 0);
+    const submitted = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "press", key: "Enter" });
+    expect(submitted.error, JSON.stringify(submitted)).toBeUndefined();
+    expect(submitted.method).toBe("backend-node");
+    expect(submitted.clickDispatched).toBe(false);
+    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__submitted)).toBe("cross value");
+    expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clickCount || 0)).toBe(clicksBeforePress);
+
+    const sharedPress = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared field two"), action: "press", key: "q" });
+    expect(sharedPress.error, JSON.stringify(sharedPress)).toBeUndefined();
+    expect(sharedPress.method).toBe("backend-node");
+    expect(sharedPress.clickDispatched).toBe(false);
+    expect(await page.evaluate(() => window.__dupClicks || 0)).toBe(0);
+    expect(await page.evaluate(() => [...document.querySelectorAll("#shared-field")].map(field => field.value))).toEqual(["", "q"]);
+    const sharedSelect = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared choice two"), action: "select", value: "two" });
+    expect(sharedSelect.error, JSON.stringify(sharedSelect)).toBeUndefined();
+    expect(sharedSelect.method).toBe("backend-node");
+    expect(sharedSelect.selected).toBe("two");
+    expect(await page.evaluate(() => [...document.querySelectorAll("#shared-select")].map(field => field.value))).toEqual(["one", "two"]);
+
+    const decoyPress = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Decoy"), action: "press", key: "Enter" });
+    expect(decoyPress.method, JSON.stringify(decoyPress)).toBe("cdp");
+    expect(await page.evaluate(() => window.__clicks.at(-1))).toBe("decoy");
 
     const navigateCross = async (url, label) => {
       await page.locator("#cross").evaluate((frame, src) => { frame.src = src; }, url);
