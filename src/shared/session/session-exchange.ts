@@ -87,7 +87,7 @@ export function createSessionExchangePayload({
       title: normalizeTitle(session?.title),
       createdAt: String(session?.createdAt || ""),
       updatedAt: String(session?.updatedAt || ""),
-      conversation: normalized.conversation,
+      conversation: projectExchangeConversation(normalized.conversation),
       transcript: resolvedTranscript,
     },
     runtime: {
@@ -150,7 +150,7 @@ export function normalizeSessionExchangePayload(input: unknown) {
       title: normalizeTitle(sourceSession.title),
       createdAt: String(sourceSession.createdAt || ""),
       updatedAt: String(sourceSession.updatedAt || ""),
-      conversation: normalized.conversation,
+      conversation: projectExchangeConversation(normalized.conversation),
       transcript,
     },
     runtime: {
@@ -330,6 +330,48 @@ export function normalizePortableSessionOwnedTab(input: unknown): PortableSessio
   } catch (_error) {
     return null;
   }
+}
+
+function projectExchangeConversation(conversation: Conversation | null) {
+  if (!conversation || !Array.isArray(conversation.entries)) return conversation;
+  const removedParents = new Map<unknown, unknown>();
+  const entries = [];
+  for (const entry of conversation.entries) {
+    const message = projectExchangeMessage(entry?.message);
+    if (!message) {
+      if (entry?.id) removedParents.set(entry.id, entry.parentId ?? null);
+      continue;
+    }
+    entries.push({ ...entry, message });
+  }
+  if (!removedParents.size) return { ...conversation, entries };
+
+  const resolveParent = (parentId: unknown) => {
+    let resolved = parentId;
+    const seen = new Set();
+    while (resolved && removedParents.has(resolved) && !seen.has(resolved)) {
+      seen.add(resolved);
+      resolved = removedParents.get(resolved) ?? null;
+    }
+    return resolved;
+  };
+  return {
+    ...conversation,
+    entries: entries.map(entry => ({
+      ...entry,
+      parentId: resolveParent(entry.parentId ?? null),
+    })),
+  };
+}
+
+function projectExchangeMessage(message: unknown) {
+  const source = asRecord(message);
+  if (!source || source.role !== "assistant") return message;
+  const projected: Record<string, unknown> = { role: "assistant" };
+  if (typeof source.content === "string" && source.content) projected.content = source.content;
+  if (Array.isArray(source.tool_calls) && source.tool_calls.length) projected.tool_calls = source.tool_calls;
+  if (typeof source.trim === "boolean") projected.trim = source.trim;
+  return projected.content || projected.tool_calls ? projected : null;
 }
 
 export function normalizePortableSessionOwnedTabs(values: unknown, legacyWorkingTab: unknown = null) {

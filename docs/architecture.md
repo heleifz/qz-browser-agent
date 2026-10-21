@@ -312,9 +312,12 @@ Heavy UI libraries load on demand and update the instance that requested them.
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a
 standalone [export runtime](../src/sidepanel/features/export/session-export-runtime.ts). Text and
-tables work offline; formulas use deferred MathJax from a CDN. Import restores safe URLs into newly
-owned, inactive tabs. See [design system](design-system.md) and [localization](localization.md) for
-export presentation.
+tables work offline; formulas use deferred MathJax from a CDN. The embedded exchange record keeps the transcript types the page renders (`user`, `assistant`,
+`thinking`, `tool`, `wait`, `note`, `error`, `compact`, `run-status`). Unknown transcript types and
+system prompts are omitted. Assistant messages keep visible text and tool calls; provider replay
+state and usage accounting stay in the local Session and are not written into the file. Import
+restores safe URLs into newly owned, inactive tabs. See [design system](design-system.md) and
+[localization](localization.md) for export presentation.
 
 ## Build and source boundaries
 
