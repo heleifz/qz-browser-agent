@@ -14,7 +14,6 @@ type PageElementHost = Pick<ToolExtensionAPI,
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { isCdpFallbackForbiddenError } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
-import { actOnRemoteElement, inspectRemoteElement } from "./remote-element.js";
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
@@ -152,10 +151,6 @@ registerTool({
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "", index = 0 }, _signal, context = {}) => {
     const ref = await resolveElementReference(tabId, { target, index }, context);
-    if (ref.ref?.remoteAction && ref.ref.backendNodeId && ref.tabId) {
-      return inspectRemoteElement({ tabId: ref.tabId, target: ref.target || target, uid: ref.uid || undefined, ref: ref.ref },
-        { withDebugger, ToolExecutionError, context });
-    }
     const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index });
     return {
       ...inspection,
@@ -223,42 +218,6 @@ registerTool({
     index = ref.index;
     const resolvedTarget = ref.target || elementTargetForSelector(selector);
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
-    if (ref.ref?.remoteAction && ref.ref.backendNodeId && tabId) {
-      const remoteTabId = tabId;
-      let pageBefore: PageState = { url: "", title: "" };
-      let guardrails: SecurityGuardrails | null = null;
-      return actOnRemoteElement({
-        tabId: remoteTabId,
-        target: resolvedTarget,
-        selector,
-        index,
-        uid: ref.uid || undefined,
-        action: normalizedAction,
-        value: String(value ?? ""),
-        key: String(key ?? ""),
-        submit: submit === true,
-        ref: ref.ref,
-      }, {
-        withDebugger,
-        ToolExecutionError,
-        context,
-        navigation: {
-          prepare: async href => {
-            pageBefore = await getTabPageState(remoteTabId);
-            guardrails = await getSecurityGuardrails();
-            return prepareKnownPageNavigation({
-              url: href, pageBefore, guardrails, context, signal: _signal,
-              toolName: "act_on_element", toolArgs: toolArgsForUpdates, tabId: remoteTabId, source: "href",
-            });
-          },
-          observe: async prepared => {
-            if (!guardrails) return {};
-            const { pageDelta, observedNavigation } = await observeElementNavigation(remoteTabId, pageBefore, prepared as PreparedNavigation | null, guardrails);
-            return { navigated: pageDelta.urlChanged, ...pageDelta, ...(observedNavigation ? { observedNavigation } : {}) };
-          },
-        },
-      });
-    }
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index });
@@ -313,7 +272,8 @@ registerTool({
             originalElement: inspected,
           };
         }
-        if (resolved.resolvedSelector) {
+        // A shadow target must keep its shadow path. A light-DOM selector built inside the root matches a different element.
+        if (resolved.resolvedSelector && !(String(selector).startsWith("shadow:") && !String(resolved.resolvedSelector).startsWith("shadow:"))) {
           const resolvedInspection = await sendToContent(tabId, "scrollElementIntoView", {
             selector: resolved.resolvedSelector,
             index: 0,

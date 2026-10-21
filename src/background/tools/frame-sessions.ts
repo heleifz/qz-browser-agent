@@ -15,14 +15,13 @@ type Subscribe = (listener: DebuggerListener) => () => void;
 interface TrackedTab {
   /** Child target id, which equals its root frame id, mapped to the flat child session. */
   sessions: Map<string, string>;
-  /** Sessions, with "" for the page, whose own cross-process children are auto-attached. */
-  autoAttached: Set<string>;
+  /** The page target is auto-attached once per debugger attachment. */
+  attached: boolean;
   stop: () => void;
 }
 
 const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true };
 const ATTACH_SETTLE_MS = 150;
-const MAX_FRAME_DEPTH = 8;
 
 // Chrome announces each auto-attached frame target once per debugger attachment, so the
 // listener lives until the attachment ends rather than for one discovery call.
@@ -46,18 +45,17 @@ function trackTab(tabId: number, subscribe: Subscribe) {
       if (info.type === "iframe" && typeof info.targetId === "string") sessions.set(info.targetId, sessionId);
     } else if (method === "Target.detachedFromTarget") {
       for (const [frameId, current] of sessions) if (current === sessionId) sessions.delete(frameId);
-      autoAttached.delete(sessionId);
     }
   });
-  const tracked = { sessions, autoAttached, stop };
+  const tracked = { sessions, attached: false, stop };
   trackedTabs.set(tabId, tracked);
   return tracked;
 }
 
 export interface DiscoveredFrame {
   frameId: string;
-  /** The frame is the root of its own child target. */
-  oopif: boolean;
+  /** The frame is the root document of a child target. */
+  targetRoot: boolean;
   parentFrameId?: string;
   /** The iframe element in the parent frame's document. */
   iframeBackendNodeId?: number;
@@ -73,9 +71,9 @@ interface FrameTreeNode {
 }
 
 /**
- * Lists every frame below the main frame with the target session that owns it.
- * Same-process frames come from each target's frame tree; cross-process frames
- * arrive through flat auto-attach, which each child target needs for its own children.
+ * Lists frames the page target can see.
+ * Same-process frames come from each target's frame tree. One auto-attach on the page
+ * reports cross-process frames directly under the page; frames inside those are not attached.
  */
 export async function discoverFrames(tabId: number, send: Send, subscribe: Subscribe): Promise<{
   mainFrameId: string;
@@ -83,15 +81,11 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: Subsc
   frames: DiscoveredFrame[];
 }> {
   const tracked = trackTab(tabId, subscribe);
-  for (let level = 0; level < MAX_FRAME_DEPTH; level += 1) {
-    const pending = ["", ...tracked.sessions.values()].filter(sessionId => !tracked.autoAttached.has(sessionId));
-    if (!pending.length) break;
-    for (const sessionId of pending) {
-      tracked.autoAttached.add(sessionId);
-      try {
-        await send("Target.setAutoAttach", AUTO_ATTACH, sessionId || undefined);
-      } catch { /* A target that cannot auto-attach still exposes its same-process frames. */ }
-    }
+  if (!tracked.attached) {
+    tracked.attached = true;
+    try {
+      await send("Target.setAutoAttach", AUTO_ATTACH);
+    } catch { /* The page target still exposes its same-process frames. */ }
     // Existing frame targets are reported on the debugger event stream after the command returns.
     await new Promise(resolve => setTimeout(resolve, ATTACH_SETTLE_MS));
   }
@@ -105,7 +99,7 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: Subsc
     if (parentId) {
       frames.set(frameId, {
         frameId,
-        oopif: root,
+        targetRoot: root,
         parentFrameId: parentId,
         sessionId,
         loaderId: node.frame?.loaderId,
@@ -122,7 +116,6 @@ export async function discoverFrames(tabId: number, send: Send, subscribe: Subsc
       childTree = record(record(await send("Page.getFrameTree", {}, sessionId)).frameTree) as FrameTreeNode;
     } catch {
       tracked.sessions.delete(targetId);
-      tracked.autoAttached.delete(sessionId);
       continue;
     }
     const frameId = String(childTree.frame?.id || "");
@@ -162,7 +155,7 @@ export async function collectSnapshotInputs(tabId: number, send: Send, subscribe
   }];
   for (const frame of discovered.frames) {
     try {
-      const params = frame.oopif ? { depth } : { depth, frameId: frame.frameId };
+      const params = frame.targetRoot ? { depth } : { depth, frameId: frame.frameId };
       const ax = record(await send("Accessibility.getFullAXTree", params, frame.sessionId));
       sources.push({
         frameId: frame.frameId,

@@ -305,31 +305,52 @@ const BACKEND_LOCATOR_FN = `function() {
   let inFrame = false;
   try { inFrame = window.top !== window; } catch (error) { inFrame = true; }
   if (inFrame) return { inFrame: true };
-  const root = el.getRootNode();
-  if (root instanceof ShadowRoot) return { remote: true };
   const escape = (value) => (window.CSS && CSS.escape) ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => "\\\\" + ch);
-  const parts = [];
-  let node = el;
-  while (node && node.nodeType === 1 && parts.length < 12) {
-    let part = node.localName || "";
-    if (!part) break;
-    if (node.id) { parts.unshift((parts.length ? part : "") + "#" + escape(node.id)); break; }
-    const parent = node.parentElement;
-    if (parent) {
-      const localName = node.localName;
-      const siblings = Array.from(parent.children).filter((child) => child.localName === localName);
-      if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(node) + 1) + ")";
+  const selectorWithin = (node) => {
+    const parts = [];
+    let current = node;
+    while (current && current.nodeType === 1 && parts.length < 8) {
+      let part = current.localName || "";
+      if (!part) break;
+      const root = current.getRootNode();
+      if (current.id) {
+        const id = "#" + escape(current.id);
+        try {
+          const owner = root instanceof ShadowRoot ? root : document;
+          if (owner.querySelectorAll(id).length === 1) { parts.unshift(id); break; }
+        } catch (error) { /* Keep the structural path when the id is not a valid selector. */ }
+      }
+      const parent = current.parentElement;
+      const container = parent || (current.parentNode instanceof ShadowRoot ? current.parentNode : null);
+      if (container && container.children) {
+        const localName = current.localName;
+        const siblings = Array.from(container.children).filter((child) => child.localName === localName);
+        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+      }
+      parts.unshift(part);
+      if (!parent || parent.getRootNode() !== root) break;
+      current = parent;
     }
-    parts.unshift(part);
-    node = parent;
+    return parts.join(" > ");
+  };
+  const steps = [];
+  let node = el;
+  while (node && node.nodeType === 1 && steps.length < 6) {
+    const step = selectorWithin(node);
+    if (!step) return { missing: true };
+    steps.unshift(step);
+    const root = node.getRootNode();
+    if (!(root instanceof ShadowRoot)) break;
+    node = root.host;
   }
-  const selector = parts.join(" > ");
+  if (el.getRootNode() instanceof ShadowRoot) return { shadowPath: steps.join(" >>> ") };
+  const selector = steps[0] || "";
   let unique = false;
   try {
     const matches = selector ? document.querySelectorAll(selector) : [];
     unique = matches.length === 1 && matches[0] === el;
   } catch (error) { unique = false; }
-  return { remote: !unique, selector: unique ? selector : "" };
+  return unique ? { selector } : { missing: true };
 }`;
 
 async function locateBackendElement(tabId: number, ref: ElementReference, context: ToolContext) {
@@ -358,11 +379,11 @@ async function locateBackendElement(tabId: number, ref: ElementReference, contex
       }));
       const value = record(record(evaluated.result).value);
       if (value.inFrame === true) return { inFrame: true, remote: false, selector: "" };
-      if (value.missing === true) return { remote: true, selector: "", error: "node is not connected" };
-      return {
-        remote: value.remote === true,
-        selector: value.remote === true ? "" : String(value.selector || ""),
-      };
+      if (typeof value.shadowPath === "string" && value.shadowPath) {
+        return { remote: false, selector: `shadow:${value.shadowPath}` };
+      }
+      if (value.missing === true || !value.selector) return { remote: false, selector: "", error: "node is not connected" };
+      return { remote: false, selector: String(value.selector) };
     }, context);
   } catch (err) {
     if (isCdpFallbackForbiddenError(err)) throw err;

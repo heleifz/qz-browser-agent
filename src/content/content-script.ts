@@ -759,6 +759,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         elements: [],
       };
     }
+    if (selector.startsWith("shadow:")) {
+      const element = queryShadowPath(selector.slice("shadow:".length).split(" >>> "));
+      if (!element) {
+        return {
+          error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { selector }),
+          elements: [],
+        };
+      }
+      return { elements: [element] };
+    }
     const locator = parseElementLocator(selector);
     if (locator.type === "text") {
       return { elements: findElementsByText(locator.value), locator: locator.type };
@@ -1959,7 +1969,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         || (target.isContentEditable && !hasLineBreaks(value)) ? "text" : "content";
       target.scrollIntoView({ behavior: "instant", block: "center" });
       target.focus({ preventScroll: true });
-      if (!target.isConnected || document.activeElement !== target) {
+      if (!target.isConnected || deepActiveElement() !== target) {
         return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus", getElementSummary(target));
       }
       if (fillMode === "text") {
@@ -1968,7 +1978,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         } else if (!selectEditableContents(target)) {
           return toolError("ELEMENT_SELECTION_FAILED", "Element contents could not be selected", getElementSummary(target));
         }
-        if (!target.isConnected || document.activeElement !== target) {
+        if (!target.isConnected || deepActiveElement() !== target) {
           return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus while selecting its contents", getElementSummary(target));
         }
       }
@@ -1993,7 +2003,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return {
         ...getElementSummary(el),
         value: getElementValue(el, true),
-        focused: document.activeElement === el,
+        focused: deepActiveElement() === el,
         checked: "checked" in el ? !!el.checked : undefined,
       };
     },
@@ -2007,20 +2017,26 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
       if (isDisabled(el)) return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
       const labels = [...(el.labels || [])].filter(label => label.control === el);
+      const ancestor = el.closest("label");
+      if (ancestor && !labels.includes(ancestor)) labels.push(ancestor);
       for (const candidate of [el, ...labels]) {
+        if (!isVisible(candidate)) continue;
         candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
-        const inspection = getElementInspection(candidate);
-        const point = inspection.clickablePoint;
-        if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
-        let hit = point && document.elementFromPoint(point.x, point.y);
-        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
-        // Label activation excludes nested links and other independent controls.
-        while (hit && hit !== candidate && hit !== el) {
-          if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
-          hit = hit.parentElement;
+        for (const point of controlPoints(candidate)) {
+          if (!pointInViewport(point)) continue;
+          const hit = topElementAt(point.x, point.y);
+          if (!hit || hitsIndependentControl(hit, candidate, el)) continue;
+          if (hit !== candidate && hit !== el && !composedContains(candidate, hit) && !composedContains(el, hit)) continue;
+          const inspection = getElementInspection(candidate);
+          return {
+            ...getElementInspection(el),
+            element: {
+              ...inspection,
+              clickablePoint: point,
+              state: { ...inspection.state, obscuredAtCenter: false, clickablePointInViewport: true },
+            },
+          };
         }
-        if (hit !== candidate && hit !== el) continue;
-        return { ...getElementInspection(el), element: inspection };
       }
       return getElementInspection(el);
     },
@@ -2466,15 +2482,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function clickablePointFor(el: Element) {
     if (!isVisible(el)) return null;
-    const rects = [...el.getClientRects()]
-      .filter(rect => rect.width > 0 && rect.height > 0)
-      .sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    const rect = rects[0];
-    if (!rect) return null;
-    return {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-    };
+    return clientPoint(el);
   }
 
   function getElementSummary(el: Element) {
@@ -2502,9 +2510,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         w: Math.round(rect.width),
         h: Math.round(rect.height),
       },
-      clickablePoint: rect.width > 0 && rect.height > 0
-        ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
-        : null,
+      clickablePoint: clientPoint(el),
     };
     if (isFileInput) {
       summary.accept = String(el.accept || "");
@@ -2518,12 +2524,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementInspection(el: Element, meta: object = {}) {
     const summary = getElementSummary(el);
+    const root = el.getRootNode();
     return {
       ...summary,
       ...meta,
+      ...(root instanceof ShadowRoot ? { inShadowRoot: true, shadowMode: root.mode } : {}),
+      ...(isReadOnly(el) ? { readonly: true } : {}),
       attrs: getElementAttrs(el),
       state: {
-        focused: document.activeElement === el,
+        focused: deepActiveElement() === el,
         inViewport: isInViewport(el),
         clickablePointInViewport: pointInViewport(summary.clickablePoint),
         obscuredAtCenter: isObscuredAtCenter(el),
@@ -2793,13 +2802,101 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return point.x >= 0 && point.y >= 0 && point.x <= window.innerWidth && point.y <= window.innerHeight;
   }
 
+  function openShadow(element: Element): ShadowRoot | null {
+    if (!(element instanceof HTMLElement)) return element.shadowRoot || null;
+    return chrome.dom?.openOrClosedShadowRoot(element) || element.shadowRoot || null;
+  }
+
+  function queryShadowPath(steps: string[]) {
+    let scope: ParentNode = document;
+    let element: Element | null = null;
+    for (const step of steps) {
+      const selector = step.trim();
+      if (!selector) return null;
+      element = scope.querySelector(selector);
+      if (!element) return null;
+      scope = openShadow(element) || element;
+    }
+    return element;
+  }
+
+  function deepActiveElement() {
+    let node = document.activeElement;
+    const seen = new Set<Element>();
+    while (node && !seen.has(node)) {
+      seen.add(node);
+      const inner = openShadow(node)?.activeElement || null;
+      if (!inner || inner === node) break;
+      node = inner;
+    }
+    return node;
+  }
+
+  function composedParent(node: Node): Element | null {
+    if (node instanceof Element && node.parentElement) return node.parentElement;
+    const root = node.getRootNode();
+    return root instanceof ShadowRoot ? root.host : null;
+  }
+
+  function composedContains(ancestor: Element, node: Element) {
+    let current: Node | null = node;
+    const seen = new Set<Node>();
+    while (current && !seen.has(current)) {
+      if (current === ancestor) return true;
+      seen.add(current);
+      current = composedParent(current);
+    }
+    return false;
+  }
+
+  function topElementAt(x: number, y: number) {
+    let hit = document.elementFromPoint(x, y);
+    const seen = new Set<Element>();
+    while (hit && !seen.has(hit)) {
+      seen.add(hit);
+      const inner = openShadow(hit)?.elementFromPoint(x, y) || null;
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  }
+
+  function clientPoint(el: Element) {
+    const rects = [...el.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+    const rect = rects.find(item => item.width > 1 && item.height > 1) || rects[0];
+    if (!rect) return null;
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+  }
+
+  function controlPoints(el: Element) {
+    return [...el.getClientRects()]
+      .filter(rect => rect.width > 0 && rect.height > 0)
+      .flatMap(rect => {
+        const y = Math.round(rect.top + rect.height / 2);
+        const inset = Math.min(6, rect.width / 3);
+        return [rect.left + inset, rect.left + rect.width / 2, rect.right - inset]
+          .map(x => ({ x: Math.round(x), y }));
+      });
+  }
+
+  function hitsIndependentControl(hit: Element, candidate: Element, control: Element) {
+    let node: Element | null = hit;
+    const seen = new Set<Element>();
+    while (node && node !== candidate && node !== control && !seen.has(node)) {
+      seen.add(node);
+      if (node.matches("a[href], area[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) {
+        return true;
+      }
+      node = composedParent(node);
+    }
+    return false;
+  }
+
   function isObscuredAtCenter(el: Element) {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height) return false;
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const top = document.elementFromPoint(x, y);
-    return !!top && top !== el && !el.contains(top);
+    const point = clientPoint(el);
+    if (!point) return false;
+    const top = topElementAt(point.x, point.y);
+    return !!top && top !== el && !composedContains(el, top);
   }
 
   function isDisabled(el: Element) {
@@ -2860,7 +2957,48 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
    * Build an absolute CSS selector for an element.
    * Example: "#app > div.container:nth-child(1) > div.list:nth-child(3) > span.list-title"
    */
+  function selectorWithin(node: Element) {
+    const parts: string[] = [];
+    let current: Element | null = node;
+    while (current && parts.length < 8) {
+      let part = current.localName || current.tagName.toLowerCase();
+      const root = current.getRootNode();
+      if (current.id) {
+        const id = `#${cssEscapeIdent(current.id)}`;
+        const owner: ParentNode = root instanceof ShadowRoot ? root : document;
+        if (owner.querySelectorAll(id).length === 1) {
+          parts.unshift(id);
+          break;
+        }
+      }
+      const container: ParentNode | null = current.parentElement
+        || (current.parentNode instanceof ShadowRoot ? current.parentNode : null);
+      if (container) {
+        const localName = current.localName;
+        const siblings = [...container.children].filter(child => child.localName === localName);
+        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      const parent: Element | null = current.parentElement;
+      if (!parent || parent.getRootNode() !== root) break;
+      current = parent;
+    }
+    return parts.join(" > ");
+  }
+
   function getAbsoluteSelector(el: Element) {
+    if (el.getRootNode() instanceof ShadowRoot) {
+      const steps: string[] = [];
+      let node: Element | null = el;
+      while (node && steps.length < 6) {
+        const step = selectorWithin(node);
+        if (step) steps.unshift(step);
+        const root = node.getRootNode();
+        if (!(root instanceof ShadowRoot)) break;
+        node = root.host;
+      }
+      return `shadow:${steps.join(" >>> ")}`;
+    }
     const parts = [];
     let current: Element | null = el;
     while (current && current !== document.documentElement) {

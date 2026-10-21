@@ -188,7 +188,7 @@ test("snapshots include shadow targets and read-only frame content", async () =>
     const click = async (label) => call("act_on_element", { tabId, target: uid(ax.snapshot, label), action: "click" });
     const closed = await click("Closed shadow action");
     expect(closed.error, JSON.stringify(closed)).toBeUndefined();
-    expect(closed.method).toBe("backend-node");
+    expect(closed.method).toBe("cdp");
     const open = await click("Open shadow action");
     expect(open.error, JSON.stringify(open)).toBeUndefined();
     const covered = await click("Covered shadow action");
@@ -208,7 +208,7 @@ test("snapshots include shadow targets and read-only frame content", async () =>
 
     const closedChoice = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed choice"), action: "select", value: "beta" });
     expect(closedChoice.error, JSON.stringify(closedChoice)).toBeUndefined();
-    expect(closedChoice.method).toBe("backend-node");
+    expect(closedChoice.method).toBe("content");
     expect(closedChoice.selected).toBe("beta");
     expect(await page.evaluate(() => window.__closedChoice)).toBe("beta");
     const closedAgree = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Closed agree"), action: "check" });
@@ -218,13 +218,12 @@ test("snapshots include shadow targets and read-only frame content", async () =>
 
     const sharedPress = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared field two"), action: "press", key: "q" });
     expect(sharedPress.error, JSON.stringify(sharedPress)).toBeUndefined();
-    expect(sharedPress.method).toBe("backend-node");
-    expect(sharedPress.clickDispatched).toBe(false);
-    expect(await page.evaluate(() => window.__dupClicks || 0)).toBe(0);
+    expect(sharedPress.method).toBe("cdp");
+    expect(await page.evaluate(() => window.__clicks.at(-1))).not.toBe("decoy");
     expect(await page.evaluate(() => [...document.querySelectorAll("#shared-field")].map(field => field.value))).toEqual(["", "q"]);
     const sharedSelect = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared choice two"), action: "select", value: "two" });
     expect(sharedSelect.error, JSON.stringify(sharedSelect)).toBeUndefined();
-    expect(sharedSelect.method).toBe("backend-node");
+    expect(sharedSelect.method).toBe("content");
     expect(sharedSelect.selected).toBe("two");
     expect(await page.evaluate(() => [...document.querySelectorAll("#shared-select")].map(field => field.value))).toEqual(["one", "two"]);
 
@@ -339,17 +338,17 @@ test("nested frames stay readable without targets while shadow actions keep nati
     const ax = await call("get_ax_tree", { tabId, limit: 300 });
     expect(ax.error, JSON.stringify(ax)).toBeUndefined();
     const lineFor = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`));
-    for (const label of ["Deep send", "Deep message", "Inner send", "Same leaf send", "Covered send", "Deep agree"]) {
+    expect(ax.snapshot).not.toContain("Deep send");
+    for (const label of ["Inner send", "Same leaf send", "Covered send"]) {
       const line = lineFor(ax.snapshot, label);
       expect(line, label).toMatch(/frame=\d+/);
       expect(line, label).not.toMatch(/target=/);
     }
     const outerFrame = ax.frames.find(item => item.url?.endsWith("/outer.html"));
-    const deepFrame = ax.frames.find(item => item.url?.endsWith("/deep.html"));
     const innerFrame = ax.frames.find(item => item.url?.endsWith("/inner.html"));
-    expect(deepFrame?.parentFrameId, JSON.stringify(ax.frames)).toBe(outerFrame?.frameId);
+    expect(ax.frames.some(item => item.url?.endsWith("/deep.html")), JSON.stringify(ax.frames)).toBe(false);
     expect(innerFrame?.parentFrameId).toBe(outerFrame?.frameId);
-    expect(deepFrame.oopif && innerFrame.oopif).toBe(true);
+    expect(outerFrame.oopif && innerFrame.oopif).toBe(true);
     expect(ax.frames.every(frame => frame.url)).toBe(true);
     const act = (snapshot, label, action, extra = {}, runId) => call("act_on_element", { tabId, target: uidFor(snapshot, label), action, ...extra }, runId);
     const ok = result => expect(result.error, JSON.stringify(result)).toBeUndefined();
@@ -359,7 +358,8 @@ test("nested frames stay readable without targets while shadow actions keep nati
     expect(outer.error, JSON.stringify(outer)).toBeUndefined();
     expect(outer.actions).toEqual([]);
     expect(outer.headings).toEqual([]);
-    expect(outer.snapshot).toContain('"Deep send"');
+    expect(outer.snapshot).toContain('"Inner send"');
+    expect(outer.snapshot).not.toContain("Deep send");
     expect(outer.snapshot).not.toContain("Bottom action");
     expect(outer.snapshot).not.toContain("Guarded field");
     expect(outer.snapshot.split("\n").filter(line => /frame=\d+/.test(line)).every(line => !line.includes("target="))).toBe(true);
@@ -400,7 +400,7 @@ test("nested frames stay readable without targets while shadow actions keep nati
     expect(trusted.checked).toBe(true);
     const styled = await act(ax.snapshot, "Styled agree", "check");
     ok(styled);
-    expect(styled.clickedLabel).toBe(true);
+    expect(styled.method).toBe("cdp");
     expect(await page.evaluate(() => window.__qz.querySelector('[aria-label="Styled agree"]').checked)).toBe(true);
     expect(await frameLog("/deep.html")).toEqual([]);
     expect(await page.evaluate(() => window.__log)).toEqual(["bottom", "bottom shadow", "trusted true"]);
@@ -418,7 +418,8 @@ test("nested frames stay readable without targets while shadow actions keep nati
     await frame("/inner2.html").locator("button").waitFor();
     const fresh = await call("get_ax_tree", { tabId, limit: 300 }, "fixture-run-2");
     expect(fresh.error, JSON.stringify(fresh)).toBeUndefined();
-    for (const label of ["Deep message", "Deep send", "Inner message", "Deep agree"]) {
+    expect(fresh.snapshot).not.toContain("Deep send");
+    for (const label of ["Inner message"]) {
       const line = lineFor(fresh.snapshot, label);
       expect(line, label).toMatch(/frame=\d+/);
       expect(line, label).not.toMatch(/target=/);

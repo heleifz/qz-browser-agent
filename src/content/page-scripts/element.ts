@@ -28,50 +28,6 @@ export function selector(value: unknown): string {
   const element = value instanceof Element ? value : value instanceof Node ? value.parentElement : null;
   return element ? elementSelector(element, { includeRoot: true, maxParts: 12, ancestorIdTag: true }) : '';
 }
-/** Reads a node in its own document, including closed shadow roots and frames a selector cannot reach. */
-export function inspect(value: unknown) {
-  const el = value instanceof Element ? value : value instanceof Node ? value.parentElement : null;
-  if (!el || !el.isConnected) return { error: 'Element is not connected' };
-  const root = el.getRootNode();
-  const active = root instanceof ShadowRoot || root instanceof Document ? root.activeElement : null;
-  const rect = el.getBoundingClientRect();
-  const style = getComputedStyle(el);
-  const attrs: Record<string, string> = {};
-  for (const name of ['id', 'class', 'name', 'type', 'role', 'aria-label', 'placeholder', 'title', 'href', 'data-testid']) {
-    const attr = el.getAttribute(name);
-    if (attr) attrs[name] = attr.slice(0, 240);
-  }
-  let link: Element | null = null;
-  for (let node: Node | null = el; node; node = node.parentNode || (node instanceof ShadowRoot ? node.host : null)) {
-    if (node instanceof HTMLAnchorElement || node instanceof HTMLAreaElement) {
-      if (node.hasAttribute('href')) { link = node; break; }
-    }
-  }
-  const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el : null;
-  const form = field?.form || el.closest('form');
-  const parentText = el.parentElement?.textContent?.trim().replace(/\s+/g, ' ').slice(0, 300) || '';
-  return {
-    tag: el.localName,
-    type: el.getAttribute('type') || '',
-    text: el.textContent?.trim().replace(/\s+/g, ' ').slice(0, 160) || '',
-    value: field ? field.value : '',
-    placeholder: el.getAttribute('placeholder') || '',
-    href: link ? (link as HTMLAnchorElement).href : '',
-    visible: rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0,
-    disabled: el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true',
-    readonly: (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) ? el.readOnly : el.getAttribute('aria-readonly') === 'true',
-    editable: (el instanceof HTMLInputElement && el.type !== 'file') || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
-      || (el instanceof HTMLElement && el.isContentEditable),
-    checked: el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined,
-    focused: active === el,
-    inShadowRoot: root instanceof ShadowRoot,
-    shadowMode: root instanceof ShadowRoot ? root.mode : undefined,
-    attrs,
-    form: form ? { action: form.getAttribute('action') || '', method: form.getAttribute('method') || 'get' } : null,
-    nearbyText: parentText,
-    frameRect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
-  };
-}
 export function bounds(value: unknown) {
   if (!(value instanceof Element)) return { error: 'Resolved node is not an Element' };
   const rect = value.getBoundingClientRect();

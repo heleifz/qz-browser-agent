@@ -42,20 +42,20 @@ async function send(method, params = {}, sessionId) {
 
 const first = await discoverFrames(7, send, subscribe);
 assert.deepEqual(
-  first.frames.map(frame => [frame.frameId, frame.oopif, frame.sessionId, frame.parentFrameId, frame.iframeBackendNodeId]).sort(),
+  first.frames.map(frame => [frame.frameId, frame.targetRoot, frame.sessionId, frame.parentFrameId, frame.iframeBackendNodeId]).sort(),
   [
     ["inner-a", false, "session-a", "oopif-a", 50],
     ["oopif-a", true, "session-a", "main", 40],
-    ["oopif-c", true, "session-c", "oopif-a", 51],
   ],
-  "nested frames keep their owning session, parent frame, and owner in the parent's document",
+  "one cross-process frame keeps its same-process child; a frame inside that child target is not attached",
 );
+assert.equal(first.frames.some(frame => frame.frameId === "oopif-c"), false);
 assert.equal(first.mainLoaderId, "main-doc");
-assert.deepEqual(autoAttached, ["page", "session-a", "session-c"], "each child target auto-attaches its own cross-process children");
+assert.deepEqual(autoAttached, ["page"], "auto-attach runs once, on the page target");
 
 const second = await discoverFrames(7, send, subscribe);
-assert.equal(second.frames.length, 3, "a repeated discovery keeps frames Chrome announced earlier");
-assert.equal(autoAttached.length, 3, "auto-attach is configured once per session and debugger attachment");
+assert.equal(second.frames.length, 2, "a repeated discovery keeps frames Chrome announced earlier");
+assert.equal(autoAttached.length, 1, "auto-attach is configured once per debugger attachment");
 
 live.delete("oopif-a");
 live.delete("oopif-c");

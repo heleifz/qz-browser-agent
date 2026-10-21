@@ -153,11 +153,10 @@ const nested = await run(nestedSend, {}, { actions: sendAction });
 const lines = nested.result.snapshot.split("\n");
 const lineIndex = text => lines.findIndex(line => line.includes(text));
 assert.ok(lineIndex('Iframe "Inner"') < lineIndex('RootWebArea "Inner doc"'), "a same-process child of a cross-process frame hangs under its host");
-assert.ok(lineIndex('Iframe "Deep"') < lineIndex('button "Deep send"'), "a cross-process grandchild hangs under its host in the parent frame");
-assert.match(lines[lineIndex('button "Deep send"')], /^ {6,}/, "the grandchild is indented below its host");
-const deepLine = lines[lineIndex('button "Deep send"')];
-assert.match(deepLine, /frame=3/);
-assert.doesNotMatch(deepLine, /target=/);
+assert.equal(lineIndex('button "Deep send"'), -1, "a cross-process frame inside another cross-process frame is not attached");
+const innerLine = lines[lineIndex('button "Send"')];
+assert.match(innerLine, /frame=/);
+assert.doesNotMatch(innerLine, /target=/);
 assert.equal(nested.refs.find(ref => ref.frameId), undefined, "iframe nodes are not registered as targets");
 assert.equal(nested.refs.find(ref => ref.name === "Publish")?.loaderId, "L-main", "main-document refs carry the page document");
 const actionRef = nested.refs.filter(ref => ref.selector === "#send").at(-1);
@@ -166,7 +165,7 @@ assert.deepEqual([actionRef.frameId, actionRef.backendNodeId, actionRef.loaderId
 assert.equal(nested.refs.filter(ref => ref.name === "Send" && ref.selector !== "#send").length, 0,
   "same-named controls inside frames get no target");
 assert.deepEqual(nested.result.frames.map(frame => [frame.index, frame.frameId, frame.parentFrameId, frame.oopif]).sort(), [
-  [1, "outer", "main", true], [2, "inner", "outer", true], [3, "deep", "outer", true],
+  [1, "outer", "main", true], [2, "inner", "outer", true],
 ]);
 
 const scoped = await run(nestedSend, { root: "uid:frame-host" }, {
@@ -176,7 +175,7 @@ const scoped = await run(nestedSend, { root: "uid:frame-host" }, {
 assert.deepEqual(scoped.result.actions, [], "an iframe element root does not list top-level actions");
 assert.deepEqual(scoped.result.headings, []);
 assert.match(scoped.result.snapshot, /RootWebArea "Inner doc"/);
-assert.match(scoped.result.snapshot, /button "Deep send"/);
+assert.doesNotMatch(scoped.result.snapshot, /button "Deep send"/);
 assert.doesNotMatch(scoped.result.snapshot, /button "Publish"/, "the subtree stays inside the iframe element");
 assert.ok(scoped.result.snapshot.split("\n").filter(line => /frame=\d+/.test(line)).every(line => !/target=/.test(line)));
 assert.ok(scoped.refs.every(ref => !ref.frameId), "a frame subtree registers no iframe content");
