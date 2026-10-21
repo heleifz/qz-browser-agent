@@ -320,3 +320,38 @@ for (const mode of ["desktop", "mobile"]) {
     } finally { await h.close(); }
   });
 }
+
+test("httpbin pizza radios check through the wrapped label", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><title>pizza</title>
+      <form method="post" action="/post">
+        <fieldset>
+          <legend> Pizza Size </legend>
+          <p><label> <input type=radio name=size value="small"> Small </label></p>
+          <p><label> <input type=radio name=size value="medium"> Medium </label></p>
+          <p><label> <input type=radio name=size value="large"> Large </label></p>
+        </fieldset>
+        <fieldset>
+          <legend> Pizza Toppings </legend>
+          <p><label> <input type=checkbox name="topping" value="bacon"> Bacon </label></p>
+          <p><label> <input type=checkbox name="topping" value="onion"> Onion </label></p>
+        </fieldset>
+      </form>`);
+    const call = (target, action) => h.worker.evaluate(
+      ({ target, action }) => elementHarness.call("act_on_element", { target, action }),
+      { target, action },
+    );
+    const large = await call('css:input[name="size"][value="large"]', "check");
+    const checks = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll("input")].map(el => [el.value || el.name, el.checked])));
+    expect(large, JSON.stringify({ large, checks })).toMatchObject({ checked: true, changed: true, method: "cdp" });
+    expect(checks).toMatchObject({ small: false, medium: false, large: true });
+    const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
+    const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
+    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
+    expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
+    const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
+    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true });
+  } finally { await h.close(); }
+});
