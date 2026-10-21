@@ -62,6 +62,8 @@ test("snapshots include shadow and frame content and act on the named target", a
     "/cross.html": frameHtml("Cross frame action", "Cross frame field"),
     "/moved.html": frameHtml("Moved frame action", "Moved frame field"),
     "/returned.html": frameHtml("Returned frame action", "Returned frame field"),
+    "/leave.html": `<!doctype html><form action="/landed.html"><input aria-label="Leave field" name="q"></form>`,
+    "/landed.html": `<!doctype html><title>landed</title><p>Left the frame</p>`,
     "/sibling.html": frameHtml("Sibling origin action", "Sibling origin field"),
   };
   const server = http.createServer((request, response) => {
@@ -210,6 +212,20 @@ test("snapshots include shadow and frame content and act on the named target", a
     expect(submitted.clickDispatched).toBe(false);
     expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__submitted)).toBe("cross value");
     expect(await page.frameLocator("#cross").locator("button").evaluate(button => button.ownerDocument.defaultView.__clickCount || 0)).toBe(clicksBeforePress);
+    const frameScroll = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "scroll" });
+    expect(frameScroll.code, JSON.stringify(frameScroll)).toBe("IFRAME_SCROLL_UNAVAILABLE");
+    expect(frameScroll.scrolledTo).toBeUndefined();
+    const badKey = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Cross frame field"), action: "press", key: "Foo+A" });
+    expect(badKey.code, JSON.stringify(badKey)).toBe("INVALID_ARGUMENTS");
+
+    await page.locator("#cross").evaluate((frame, src) => { frame.src = src; }, `http://127.0.0.1:${PORT}/leave.html`);
+    await page.frameLocator("#cross").locator("input").waitFor();
+    const leaving = await call("get_ax_tree", { tabId });
+    const left = await call("act_on_element", { tabId, target: uid(leaving.snapshot, "Leave field"), action: "press", key: "Enter" });
+    expect(left.error, JSON.stringify(left)).toBeUndefined();
+    expect(left.pressed).toBe(true);
+    expect(left.code).toBeUndefined();
+    await expect.poll(() => page.frames().some(frame => frame.url().includes("/landed.html"))).toBe(true);
 
     const sharedPress = await call("act_on_element", { tabId, target: uid(ax.snapshot, "Shared field two"), action: "press", key: "q" });
     expect(sharedPress.error, JSON.stringify(sharedPress)).toBeUndefined();

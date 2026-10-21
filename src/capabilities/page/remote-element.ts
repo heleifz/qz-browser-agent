@@ -39,6 +39,13 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: {
   if (!backendNodeId) {
     return { ...identity, error: "Element has no backend node. Take a fresh snapshot.", code: "STALE_ELEMENT_UID" };
   }
+  if (input.action === "scroll" && input.ref.oopif) {
+    return {
+      ...identity,
+      error: "Scroll cannot confirm visibility inside a cross-process iframe.",
+      code: "IFRAME_SCROLL_UNAVAILABLE",
+    };
+  }
   try {
     return await deps.withDebugger(input.tabId, async (_target, send) => {
       const sessionId = input.ref.oopif
@@ -64,7 +71,7 @@ export async function actOnRemoteElement(input: RemoteActionRequest, deps: {
     }, deps.context);
   } catch (error) {
     const code = String((error as { code?: string })?.code || "");
-    if (code.startsWith("SESSION_TAB_") || code === "CDP_RUN_RELEASED" || code === "CDP_RUN_CONTEXT_REQUIRED" || code === "OPERATION_ABORTED" || code === "SECURITY_GUARDRAIL_BLOCKED") throw error;
+    if (code === "INVALID_ARGUMENTS" || code.startsWith("SESSION_TAB_") || code === "CDP_RUN_RELEASED" || code === "CDP_RUN_CONTEXT_REQUIRED" || code === "OPERATION_ABORTED" || code === "SECURITY_GUARDRAIL_BLOCKED") throw error;
     return { ...identity, error: error instanceof Error ? error.message : String(error), code: "REMOTE_ELEMENT_ACTION_FAILED" };
   }
 }
@@ -121,8 +128,19 @@ async function pressElement(send: Send, objectId: string, backendNodeId: number,
     return { ...identity, error: "Element did not take focus.", code: "ELEMENT_FOCUS_FAILED", clickDispatched: false };
   }
   const before = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
-  await keyboard.press(input.tabId, mapped, (deps.context || {}) as ToolContext);
-  const after = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  try {
+    await keyboard.press(input.tabId, mapped, (deps.context || {}) as ToolContext);
+  } catch (error) {
+    if (!readLostToNavigation(error)) throw error;
+    return { ...identity, key: pressedKey, pressed: true, method: "backend-node", clickDispatched: false, navigated: true };
+  }
+  let after: Record<string, unknown>;
+  try {
+    after = record(await evaluate(send, objectId, READ_STATE_FN, sessionId));
+  } catch (error) {
+    if (!readLostToNavigation(error)) throw error;
+    return { ...identity, key: pressedKey, pressed: true, method: "backend-node", clickDispatched: false, navigated: true };
+  }
   const insertsText = mapped.text.length === 1 && mapped.text !== "\r" && isTextField(before);
   if (insertsText && String(after.value ?? "") === String(before.value ?? "")) {
     return { ...identity, error: "Pressed key did not change the field.", code: "ELEMENT_VALUE_MISMATCH", pressed: false, key: pressedKey, value: after.value, clickDispatched: false };
@@ -181,6 +199,11 @@ async function scrollElement(send: Send, objectId: string, backendNodeId: number
 async function focusElement(send: Send, objectId: string, backendNodeId: number, sessionId: string | undefined) {
   await send("DOM.focus", { backendNodeId }, sessionId);
   return record(await evaluate(send, objectId, FOCUS_FN, sessionId)).focused === true;
+}
+
+function readLostToNavigation(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /navigat|context was destroyed|Cannot find context|Session with given id not found|No session with given id|target closed|detached while/i.test(message);
 }
 
 function isTextField(state: Record<string, unknown>) {
