@@ -331,7 +331,7 @@ registerTool({
       let delivered = false;
       try {
         await withDebugger(tabId, async (_target, send) => {
-          await ensurePageSurface(tabId, send, context);
+          await ensurePageSurface(tabId, send);
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex });
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
           if (!clickPointReady(current)) return;
@@ -471,7 +471,7 @@ registerTool({
       }
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
-        await ensurePageSurface(tabId, send, context);
+        await ensurePageSurface(tabId, send);
         const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index });
         assertActive();
         if (current.error) return withElementActionHelp(current, normalizedAction);
@@ -526,7 +526,7 @@ registerTool({
         let delivered = !inspected.clickablePoint;
         if (inspected.clickablePoint) {
           await withDebugger(tabId, async (_target, send) => {
-            await ensurePageSurface(tabId, send, context);
+            await ensurePageSurface(tabId, send);
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index });
             const point = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
             if (!point) return;
