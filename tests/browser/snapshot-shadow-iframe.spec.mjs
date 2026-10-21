@@ -45,7 +45,7 @@ function frameHtml(label, field) {
   return `<!doctype html><button onclick="window.__clicked='${label}'">${label}</button><input id="field" aria-label="${field}">`;
 }
 
-test("viewport snapshots recover offscreen content and act inside shadow and frames", async () => {
+test("snapshots include shadow and frame content and act on the named target", async () => {
   test.setTimeout(120_000);
   const pages = {
     "/": pageHtml(),
@@ -138,15 +138,11 @@ test("viewport snapshots recover offscreen content and act inside shadow and fra
     expect(ax.snapshot).toContain("Closed shadow action");
     expect(ax.snapshot).toContain("Same frame action");
     expect(ax.snapshot).toContain("Cross frame action");
-    expect(ax.snapshot).not.toContain("Below fold");
-    expect(ax.offscreenBelow).toBeGreaterThan(0);
+    expect(ax.snapshot).toContain("Sibling origin action");
+    expect(ax.snapshot).toContain("Below fold");
     expect(ax.frames.length).toBeGreaterThan(0);
     expect(ax.frames.some(frame => frame.oopif === true)).toBe(true);
-
-    const full = await call("get_ax_tree", { tabId, scope: "page", limit: 300 });
-    expect(full.snapshot).toContain("Below fold");
-    expect(full.snapshot).toContain("Cross frame action");
-    expect(full.frames.some(frame => frame.oopif === true)).toBe(true);
+    expect(ax.offscreenBelow).toBeUndefined();
 
     const uid = (snapshot, label) => snapshot.split("\n").find(line => line.includes(`"${label}"`))?.match(/target=(uid:\S+)/)?.[1];
     const click = async (label) => call("act_on_element", { tabId, target: uid(ax.snapshot, label), action: "click" });

@@ -125,7 +125,7 @@ ${TOOL_CALLING_CONTRACT}
 - 需要打开网页、读页面、点击、输入、截图、采集图片、执行页面脚本或验证页面状态时使用。
 
 ### 必须流程
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。复杂页面需要局部细节时，把 snapshot/actions 中的 target 作为 root 传给 get_ax_tree 展开当前任务页面的子树，不要反复全页读取。默认快照只含当前视口；offscreenAbove 或 offscreenBelow 大于 0 时，用 get_ax_tree({scope:"page"}) 取回视口外内容，或滚动后再取快照。
+1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。复杂页面需要局部细节时，把 snapshot/actions 中的 target 作为 root 传给 get_ax_tree 展开当前任务页面的子树，不要反复全页读取。
 2. 读正文、列表或表格优先 read_article，并显式传 limit，建议 4000-8000。长文按 hasMore/nextOffset 继续分页读取。要读某一章节时，使用 outline 条目的 offset/endOffset/charCount 再调用 read_article。
 3. 目标不明确时用 find_elements 或 inspect_element。read_article 返回的 sourceSelector 可作为 read_dom 的 selector 读取对应 DOM 结构。
 4. read_dom 只用于验证原始 HTML/DOM 行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。

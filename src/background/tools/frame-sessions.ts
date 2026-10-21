@@ -8,14 +8,6 @@ export interface SnapshotFrameSource {
   nodes: Record<string, unknown>[];
 }
 
-export interface LayoutBox {
-  frameId: string;
-  backendNodeId: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
 type DebuggerListener = (method: string, params: Record<string, unknown>) => void;
 
 interface TrackedTab {
@@ -148,30 +140,9 @@ export async function sessionForFrame(tabId: number, send: Send, subscribe: (lis
 export async function collectSnapshotInputs(tabId: number, send: Send, subscribe: (listener: DebuggerListener) => () => void, depth: number): Promise<{
   mainFrameId: string;
   sources: SnapshotFrameSource[];
-  boxes: LayoutBox[];
-  viewport: { width: number; height: number };
   frames: DiscoveredFrame[];
 }> {
   const discovered = await discoverFrames(tabId, send, subscribe);
-  const viewport = await readViewport(send);
-  const read = await readBoxes(send);
-  const boxes = read.boxes;
-  for (const box of boxes) {
-    if (!box.frameId) box.frameId = discovered.mainFrameId;
-  }
-  for (const frame of discovered.frames) {
-    if (frame.oopif && frame.sessionId) {
-      boxes.push(...(await readBoxes(send, frame.sessionId)).boxes);
-    }
-    const origin = await iframeContentOrigin(send, frame);
-    if (!origin) continue;
-    for (const box of boxes) {
-      if (box.frameId === frame.frameId) {
-        box.x += origin.x;
-        box.y += origin.y;
-      }
-    }
-  }
   const main = record(await send("Accessibility.getFullAXTree", { depth }));
   const sources: SnapshotFrameSource[] = [{
     frameId: discovered.mainFrameId,
@@ -192,79 +163,7 @@ export async function collectSnapshotInputs(tabId: number, send: Send, subscribe
       });
     } catch { /* Skip a frame whose accessibility tree is unavailable. */ }
   }
-  return { mainFrameId: discovered.mainFrameId, sources, boxes, viewport, frames: discovered.frames };
-}
-
-async function readViewport(send: Send) {
-  try {
-    const evaluated = record(await send("Runtime.evaluate", {
-      expression: "({width: window.innerWidth, height: window.innerHeight})",
-      returnByValue: true,
-    }));
-    const value = record(record(evaluated.result).value);
-    const width = Number(value.width);
-    const height = Number(value.height);
-    if (width > 0 && height > 0) return { width, height };
-  } catch { /* Fall through to a desktop-sized viewport. */ }
-  return { width: 1280, height: 800 };
-}
-
-async function readBoxes(send: Send, sessionId?: string): Promise<{ boxes: LayoutBox[]; error?: string; documents: number }> {
-  let snapshot: Record<string, unknown>;
-  try {
-    snapshot = record(await send("DOMSnapshot.captureSnapshot", { computedStyles: [] }, sessionId));
-  } catch (error) {
-    return { boxes: [], documents: 0, error: error instanceof Error ? error.message : String(error) };
-  }
-  const boxes: LayoutBox[] = [];
-  const documents = arrayRecord(snapshot.documents);
-  const strings = Array.isArray(snapshot.strings) ? snapshot.strings.map(item => String(item)) : [];
-  for (const document of documents) {
-    const doc = record(document);
-    const frameId = snapshotString(doc.frameId, strings);
-    const scrollX = Number(doc.scrollOffsetX || 0);
-    const scrollY = Number(doc.scrollOffsetY || 0);
-    const nodes = record(doc.nodes);
-    const backendIds = Array.isArray(nodes.backendNodeId) ? nodes.backendNodeId : [];
-    const layout = record(doc.layout);
-    const nodeIndex = Array.isArray(layout.nodeIndex) ? layout.nodeIndex : [];
-    const bounds = Array.isArray(layout.bounds) ? layout.bounds : [];
-    nodeIndex.forEach((rawIndex, index) => {
-      const backendNodeId = Number(backendIds[Number(rawIndex)] || 0);
-      const bound = bounds[index];
-      if (!backendNodeId || !Array.isArray(bound) || bound.length < 4) return;
-      const [x, y, w, h] = bound.map(Number);
-      if (![x, y, w, h].every(Number.isFinite)) return;
-      boxes.push({ frameId, backendNodeId, x: x - scrollX, y: y - scrollY, w, h });
-    });
-  }
-  return { boxes, documents: documents.length, error: boxes.length ? undefined : `empty snapshot keys=${Object.keys(snapshot).join(",")}` };
-}
-
-async function iframeContentOrigin(send: Send, frame: DiscoveredFrame) {
-  if (!frame.iframeBackendNodeId) return null;
-  try {
-    const resolved = record(await send("DOM.resolveNode", { backendNodeId: frame.iframeBackendNodeId }));
-    const objectId = String(record(resolved.object).objectId || "");
-    if (!objectId) return null;
-    const evaluated = record(await send("Runtime.callFunctionOn", {
-      objectId,
-      returnByValue: true,
-      functionDeclaration: "function(){ const rect = this.getBoundingClientRect(); return { x: rect.left + this.clientLeft, y: rect.top + this.clientTop }; }",
-    }));
-    const value = record(record(evaluated.result).value);
-    const x = Number(value.x);
-    const y = Number(value.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    return { x, y };
-  } catch {
-    return null;
-  }
-}
-
-function snapshotString(value: unknown, strings: string[]) {
-  if (typeof value === "number" && strings[value]) return strings[value];
-  return typeof value === "string" ? value : "";
+  return { mainFrameId: discovered.mainFrameId, sources, frames: discovered.frames };
 }
 
 function record(value: unknown): Record<string, unknown> {

@@ -194,16 +194,14 @@ registerTool({
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
-      scope: { type: "string", enum: ["viewport", "page"], description: toolT("getAxTreeScope") },
     },
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40, scope = "viewport" }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
-    const snapshotScope = scope === "page" ? "page" : "viewport";
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(root || "root").trim() || "root";
@@ -265,15 +263,8 @@ registerTool({
         snapshotId,
         limit: snapshotLimit,
         maxDepth: axDepth,
-        scope: snapshotScope,
-        viewport: {
-          width: Number((overview?.viewport as { width?: number } | undefined)?.width) || inputs.viewport.width,
-          height: Number((overview?.viewport as { height?: number } | undefined)?.height) || inputs.viewport.height,
-        },
-        boxes: inputs.boxes,
         rootBackendNodeId: rootBackendNodeId || undefined,
         rootFrameId: rootFrameId || undefined,
-        subtree: requestedRoot !== "root",
       });
       for (const node of built.nodes) {
         registerElementRef({
@@ -318,9 +309,6 @@ registerTool({
       returnedNodeCount: ax.returnedNodeCount,
       truncatedNodeCount: ax.truncatedNodeCount,
       outlineTruncated: ax.outlineTruncated,
-      scope: ax.scope,
-      offscreenAbove: ax.offscreenAbove,
-      offscreenBelow: ax.offscreenBelow,
       frames: ax.frames,
       snapshot: ax.snapshot,
       headings: compactAxHeadingsForModel(overview?.headings || []),
