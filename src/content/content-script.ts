@@ -7,6 +7,7 @@ import { gfm } from "turndown-plugin-gfm";
 import { finder, attr as finderAttribute } from "@medv/finder";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
+import { describeElement } from './page-scripts/element.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -37,7 +38,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-09-23-image-capture-identity";
+  const QZ_CONTENT_VERSION = "2026-10-21-shadow-selector";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -2957,47 +2958,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
    * Build an absolute CSS selector for an element.
    * Example: "#app > div.container:nth-child(1) > div.list:nth-child(3) > span.list-title"
    */
-  function selectorWithin(node: Element) {
-    const parts: string[] = [];
-    let current: Element | null = node;
-    while (current && parts.length < 8) {
-      let part = current.localName || current.tagName.toLowerCase();
-      const root = current.getRootNode();
-      if (current.id) {
-        const id = `#${cssEscapeIdent(current.id)}`;
-        const owner: ParentNode = root instanceof ShadowRoot ? root : document;
-        if (owner.querySelectorAll(id).length === 1) {
-          parts.unshift(id);
-          break;
-        }
-      }
-      const container: ParentNode | null = current.parentElement
-        || (current.parentNode instanceof ShadowRoot ? current.parentNode : null);
-      if (container) {
-        const localName = current.localName;
-        const siblings = [...container.children].filter(child => child.localName === localName);
-        if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(current) + 1})`;
-      }
-      parts.unshift(part);
-      const parent: Element | null = current.parentElement;
-      if (!parent || parent.getRootNode() !== root) break;
-      current = parent;
-    }
-    return parts.join(" > ");
-  }
-
   function getAbsoluteSelector(el: Element) {
     if (el.getRootNode() instanceof ShadowRoot) {
-      const steps: string[] = [];
-      let node: Element | null = el;
-      while (node && steps.length < 6) {
-        const step = selectorWithin(node);
-        if (step) steps.unshift(step);
-        const root = node.getRootNode();
-        if (!(root instanceof ShadowRoot)) break;
-        node = root.host;
-      }
-      return `shadow:${steps.join(" >>> ")}`;
+      const described = describeElement(el);
+      return "shadowPath" in described && described.shadowPath ? `shadow:${described.shadowPath}` : "";
     }
     const parts = [];
     let current: Element | null = el;

@@ -83,6 +83,7 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "Ouvrez une fenêtre Chrome classique et réessayez.",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Destination de publication Git indisponible",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Ressource binaire invalide pour la publication Git",
+  "backend.toolError.FRAME_CONTENT_READONLY.label": "Le contenu de l’iframe est en lecture seule",
   "backend.toolError.STALE_ELEMENT_UID.label": "La référence de l’élément a expiré",
   "backend.toolError.STALE_ELEMENT_UID.message": "L’élément cible a expiré ou n’existe pas. Récupérez à nouveau la structure de la page.",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "La page a changé ; la référence de l’élément a expiré",

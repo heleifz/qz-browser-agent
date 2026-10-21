@@ -155,7 +155,10 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /不另列 actions/, "get_ax_tree should keep controls on the snapshot line");
   assert.match(resolveToolDefinition("get_ax_tree").description, /files=/, "get_ax_tree should put file-input state on the snapshot line");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /rect 是页面 CSS 位置，不是截图像素/, "get_ax_tree should distinguish CSS canvas positions from image pixels");
+  assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /screenshot/, "get_ax_tree should not send any model to screenshot");
+  assert.doesNotMatch(resolveToolDefinition("screenshot").description, /iframe/, "screenshot should not offer a second way into iframe content");
+  assert.doesNotMatch(resolveToolDefinition("act_on_screen").description, /iframe/, "act_on_screen should not offer a second way into iframe content");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
   assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
@@ -338,7 +341,9 @@ function assertScreenActionContract() {
   assert.match(screenActionRuntime, /for \(let index = 0; index < prepared\.repeat; index \+= 1\)/, "scroll repeat should stay one bounded atomic screen action");
   assert.match(screenActionRuntime, /viewportChange: describeViewportChange\(current, actionStateAfter\)/, "screen actions should report observed viewport movement on every result path");
   assert.match(actionBlock, /"long_press"[^\n]*requireToolFields\("act_on_screen", args, \["x",\s*"y"\]/, "long press should require coordinates before reaching the runtime");
-  assert.match(prompt, /没有可靠 target.*screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
+  assert.match(prompt, /主文档里的 Canvas，或主文档中没有 target 的控件，调用 screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for main-document visual controls");
+  assert.match(prompt, /带 frame= 且没有 target 的行只阅读/, "the prompt should keep iframe lines read-only");
+  assert.match(prompt, /不要对这些行使用 screenshot 或 act_on_screen/, "the prompt should not route iframe lines through screen coordinates");
   assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");

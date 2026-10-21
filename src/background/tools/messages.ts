@@ -12,8 +12,8 @@ const messages = defineMessages("tool-runtime", {
     en: "Machine-readable element reference: {grammar}. element_uid must be a uid returned by get_ax_tree/find_elements/list_images; css_selector must match the current page via querySelector/querySelectorAll. Examples: {examples}. Do not pass button text, page titles, URLs, or natural-language descriptions.",
   },
   frameContentReadOnly: {
-    "zh-CN": "这个 target 在 iframe 内，不能用 act_on_element 或 inspect_element。get_ax_tree 里带 frame= 的行没有 target，文本已经在行内。嵌入页能独立打开时用 navigate/open_tab 打开 frame 的 url；否则说明限制后停止。",
-    en: "This target is inside an iframe and cannot be used with act_on_element or inspect_element. Lines marked frame= in get_ax_tree have no target; their text is already on the line. Open the frame URL with navigate/open_tab when the embedded page works on its own; otherwise state the limit and stop.",
+    "zh-CN": "这个 target 在 iframe 内，不能用 act_on_element 或 inspect_element。带 frame= 且没有 target 的行只阅读。嵌入页能独立打开时用 navigate/open_tab 打开该 url；依赖父页面时说明限制后停止。",
+    en: "This target is inside an iframe and cannot be used with act_on_element or inspect_element. Lines marked frame= have no target and are read-only. When the embedded page works on its own, open that url with navigate/open_tab. When it depends on the parent page, state that limit and stop.",
   },
   nextPageSelector: { "zh-CN": "下一页", en: "Next page" },
   commentSelector: { "zh-CN": "评论", en: "Comment" },

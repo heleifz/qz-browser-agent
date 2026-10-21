@@ -83,6 +83,7 @@
   "backend.toolError.NO_NORMAL_BROWSER_WINDOW.message": "通常の Chrome ウィンドウを開いて再試行してください。",
   "backend.toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": "Git の公開先が利用できません",
   "backend.toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": "Git 公開用のバイナリリソースが無効です",
+  "backend.toolError.FRAME_CONTENT_READONLY.label": "iframe の内容は読み取り専用",
   "backend.toolError.STALE_ELEMENT_UID.label": "要素の参照が無効になりました",
   "backend.toolError.STALE_ELEMENT_UID.message": "対象要素が無効になったか存在しません。ページ構造を取得し直してください。",
   "backend.toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": "ページが変わり、要素の参照が無効になりました",

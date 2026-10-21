@@ -47,7 +47,8 @@ export const VISION_READING_RULE = "- 需要分析页面中的某张图片时，
 export const VISUAL_SCREEN_ACTION_RULE = `页面操作指南：
 1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。
 2. 有可靠 target 时，使用 act_on_element。
-3. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot({actionable:true})，再把返回图片上的原始像素坐标交给 act_on_screen，范围见 coordinateSpace.width/height。
+3. 主文档里的 Canvas，或主文档中没有 target 的控件，调用 screenshot({actionable:true})，再把返回图片上的原始像素坐标交给 act_on_screen，范围见 coordinateSpace.width/height。
+- 带 frame= 且没有 target 的行只阅读。嵌入页能独立打开时用 navigate/open_tab 打开该 url；依赖父页面时说明限制后停止。不要对这些行使用 screenshot 或 act_on_screen。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。
 - 每次 act_on_screen 都必须显式填写 returnScreenshot：需要让模型观察结果时传 true；已验证序列中的中间动作传 false。只有 true 才产生观察截图；false 在坐标空间仍有效时沿用原依据。run_script 会返回内部最后一次 screenshot 或 act_on_screen(returnScreenshot:true) 的图片。viewportChange 只记录浏览器视口是否变化，页面应用产生的效果由页面截图确认；coordinateBasisReady 为 false 时重新观察。
 - 不带 x/y 的 press 直接向当前焦点发送按键，不依赖输入截图；只有需要确认按键后的视觉结果时才传 returnScreenshot:true。
@@ -59,6 +60,7 @@ export const TEXT_ONLY_PAGE_ACTION_RULE = `页面操作指南：
 1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabId。
 2. 有可靠 target 时，使用 act_on_element。
 3. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位；仍无法定位就说明限制，不进行视觉猜测操作。
+- 带 frame= 且没有 target 的行只阅读。嵌入页能独立打开时用 navigate/open_tab 打开该 url；依赖父页面时说明限制后停止。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。`;
 
 export const READING_CAPABILITY_PROTOCOL = `### 视觉读取协议

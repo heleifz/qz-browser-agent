@@ -113,7 +113,7 @@ assert.equal(runtime.getModelPolicy('load_skill').preserveResult, true);
 assert.equal(runtime.getModelPolicy('read_image').imagePrompt, runtime.getModelPolicy('read_image_asset').imagePrompt);
 const ax = { nodes: [{ raw: true }], actions: [{ target: 'uid:1', name: 'Go', rect: { x: 1 }, internal: true }], snapshot: 'Go' };
 assert.deepEqual(JSON.parse(JSON.stringify(runtime.getModelPolicy('get_ax_tree').projectResult(ax))), {
-  actions: [{ target: 'uid:1', name: 'Go' }], snapshot: 'Go',
+  snapshot: 'Go',
 });
 assert.equal(ax.actions[0].internal, true, 'model projection must leave the UI result untouched');
 const siteEffect = [{ type: 'context.siteChanged' }];

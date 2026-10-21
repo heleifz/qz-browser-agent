@@ -5,7 +5,7 @@ export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
   /** Main-document identity for a backend id. frameId marks iframe content, which is read-only. */
-  frameId?: string; loaderId?: string; oopif?: boolean; remoteAction?: boolean;
+  frameId?: string; loaderId?: string; oopif?: boolean;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -233,7 +233,6 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
 
   let resolvedSelector = requestedSelector || "";
-  let remoteAction = ref.remoteAction === true;
   if (String(ref.frameId || "")) {
     throw new ToolExecutionError("FRAME_CONTENT_READONLY", t("frameContentReadOnly"), {
       target: elementTargetForUid(requestedUid),
@@ -242,24 +241,22 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   if (ref.backendNodeId) {
     const located = await locateBackendElement(resolvedTabId, ref, context);
-    if (located && "inFrame" in located && located.inFrame === true) {
+    if (located?.inFrame === true) {
       throw new ToolExecutionError("FRAME_CONTENT_READONLY", t("frameContentReadOnly"), {
         target: elementTargetForUid(requestedUid),
       });
     }
-    if (!located || located.error) {
+    if (!located?.selector || located.error) {
       throw new ToolExecutionError(
         "STALE_ELEMENT_UID",
         `Element target is stale or unknown: uid:${requestedUid}. ${located?.error || "Take a fresh get_ax_tree snapshot, then retry with a new target."}`,
         { target: elementTargetForUid(requestedUid), reason: located?.error },
       );
     }
-    remoteAction = located.remote;
-    if (located.selector) resolvedSelector = located.selector;
+    resolvedSelector = located.selector;
     elementRefRegistry.set(requestedUid, {
       ...ref,
       selector: resolvedSelector,
-      remoteAction,
       createdAt: Date.now(),
     });
     ref = elementRefRegistry.get(requestedUid) || ref;
@@ -267,7 +264,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     resolvedSelector = resolvedSelector || ref.selector || "";
   }
 
-  if (!resolvedSelector && !remoteAction && !allowBackendOnly) {
+  if (!resolvedSelector && !allowBackendOnly) {
     throw new ToolExecutionError(
       "UID_SELECTOR_UNAVAILABLE",
       `Element target cannot be resolved to a CSS selector: uid:${requestedUid}`,
@@ -299,60 +296,6 @@ function normalizeElementUid(uid: unknown) {
   return match ? match[0] : value;
 }
 
-const BACKEND_LOCATOR_FN = `function() {
-  const el = this instanceof Element ? this : this instanceof Node ? this.parentElement : null;
-  if (!el || !el.isConnected) return { missing: true };
-  let inFrame = false;
-  try { inFrame = window.top !== window; } catch (error) { inFrame = true; }
-  if (inFrame) return { inFrame: true };
-  const escape = (value) => (window.CSS && CSS.escape) ? CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, (ch) => "\\\\" + ch);
-  const selectorWithin = (node) => {
-    const parts = [];
-    let current = node;
-    while (current && current.nodeType === 1 && parts.length < 8) {
-      let part = current.localName || "";
-      if (!part) break;
-      const root = current.getRootNode();
-      if (current.id) {
-        const id = "#" + escape(current.id);
-        try {
-          const owner = root instanceof ShadowRoot ? root : document;
-          if (owner.querySelectorAll(id).length === 1) { parts.unshift(id); break; }
-        } catch (error) { /* Keep the structural path when the id is not a valid selector. */ }
-      }
-      const parent = current.parentElement;
-      const container = parent || (current.parentNode instanceof ShadowRoot ? current.parentNode : null);
-      if (container && container.children) {
-        const localName = current.localName;
-        const siblings = Array.from(container.children).filter((child) => child.localName === localName);
-        if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
-      }
-      parts.unshift(part);
-      if (!parent || parent.getRootNode() !== root) break;
-      current = parent;
-    }
-    return parts.join(" > ");
-  };
-  const steps = [];
-  let node = el;
-  while (node && node.nodeType === 1 && steps.length < 6) {
-    const step = selectorWithin(node);
-    if (!step) return { missing: true };
-    steps.unshift(step);
-    const root = node.getRootNode();
-    if (!(root instanceof ShadowRoot)) break;
-    node = root.host;
-  }
-  if (el.getRootNode() instanceof ShadowRoot) return { shadowPath: steps.join(" >>> ") };
-  const selector = steps[0] || "";
-  let unique = false;
-  try {
-    const matches = selector ? document.querySelectorAll(selector) : [];
-    unique = matches.length === 1 && matches[0] === el;
-  } catch (error) { unique = false; }
-  return unique ? { selector } : { missing: true };
-}`;
-
 async function locateBackendElement(tabId: number, ref: ElementReference, context: ToolContext) {
   try {
     return await withDebugger(tabId, async (_target, send) => {
@@ -362,32 +305,30 @@ async function locateBackendElement(tabId: number, ref: ElementReference, contex
       }
       // A navigated document can reuse backend ids from a fresh renderer counter.
       if (ref.loaderId && loaderId !== ref.loaderId) {
-        return { remote: true, selector: "", error: "the page has navigated" };
+        return { error: "the page has navigated" };
       }
       let resolved: Record<string, unknown>;
       try {
         resolved = record(await send("DOM.resolveNode", { backendNodeId: ref.backendNodeId }));
       } catch (error) {
-        return { remote: true, selector: "", error: error instanceof Error ? error.message : String(error) };
+        return { error: error instanceof Error ? error.message : String(error) };
       }
       const objectId = String(record(resolved.object).objectId || "");
-      if (!objectId) return { remote: true, selector: "", error: "resolveNode returned no object" };
+      if (!objectId) return { error: "resolveNode returned no object" };
       const evaluated = record(await send("Runtime.callFunctionOn", {
         objectId,
         returnByValue: true,
-        functionDeclaration: BACKEND_LOCATOR_FN,
+        functionDeclaration: elementPageFunction("locate"),
       }));
       const value = record(record(evaluated.result).value);
-      if (value.inFrame === true) return { inFrame: true, remote: false, selector: "" };
-      if (typeof value.shadowPath === "string" && value.shadowPath) {
-        return { remote: false, selector: `shadow:${value.shadowPath}` };
-      }
-      if (value.missing === true || !value.selector) return { remote: false, selector: "", error: "node is not connected" };
-      return { remote: false, selector: String(value.selector) };
+      if (value.inFrame === true) return { inFrame: true };
+      if (typeof value.shadowPath === "string" && value.shadowPath) return { selector: `shadow:${value.shadowPath}` };
+      if (typeof value.selector === "string" && value.selector) return { selector: value.selector };
+      return { error: value.ambiguous === true ? "node has no unique selector" : "node is not connected" };
     }, context);
   } catch (err) {
     if (isCdpFallbackForbiddenError(err)) throw err;
-    return { remote: true, selector: "", error: err instanceof Error ? err.message : String(err) };
+    return { error: err instanceof Error ? err.message : String(err) };
   }
 }
 

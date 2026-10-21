@@ -36,7 +36,6 @@ function trackTab(tabId: number, subscribe: Subscribe) {
   const existing = trackedTabs.get(tabId);
   if (existing) return existing;
   const sessions = new Map<string, string>();
-  const autoAttached = new Set<string>();
   const stop = subscribe((method, params) => {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     if (!sessionId) return;

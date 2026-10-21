@@ -42,7 +42,7 @@ async function run(send, args = {}, options = {}) {
   const refs = [];
   const definition = hostFor(send, refs, options);
   const result = await definition.execute({ tabId: 8, ...args }, null, { sessionId: "owner", runId: "run" });
-  return { result, refs };
+  return { result, refs, definition };
 }
 
 const page = async (nodes, { frames = false } = {}) => {
@@ -170,7 +170,7 @@ assert.deepEqual(nested.result.frames.map(frame => [frame.index, frame.frameId, 
 
 const scoped = await run(nestedSend, { root: "uid:frame-host" }, {
   actions: sendAction,
-  resolved: { tabId: 8, target: "uid:frame-host", selector: "", index: 0, ref: { backendNodeId: 9, remoteAction: true } },
+  resolved: { tabId: 8, target: "uid:frame-host", selector: "", index: 0, ref: { backendNodeId: 9 } },
 });
 assert.deepEqual(scoped.result.actions, [], "an iframe element root does not list top-level actions");
 assert.deepEqual(scoped.result.headings, []);
@@ -196,5 +196,37 @@ const repeated = await page([
 ]);
 assert.equal(repeated.result.snapshot.split("\n").filter(line => line.includes('"Save"')).length, 1, "a text node that repeats its parent is omitted");
 assert.match(repeated.result.snapshot, /StaticText "Only this sentence"/, "text that is not already on a parent stays");
+
+const noted = await run(async (method) => {
+  if (method === "Target.setAutoAttach" || method === "DOM.getFrameOwner") return method === "DOM.getFrameOwner" ? { backendNodeId: 0 } : {};
+  if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" }, childFrames: [] } };
+  if (method === "Accessibility.getFullAXTree") return { nodes: [
+    axNode("root", "RootWebArea", "Form", { backend: 1, childIds: ["email", "upload", "noise", "break"] }),
+    axNode("email", "textbox", "Email", { parentId: "root", backend: 2 }),
+    axNode("upload", "button", "Upload", { parentId: "root", backend: 3 }),
+    axNode("noise", "InlineTextBox", "Email", { parentId: "root", backend: 4 }),
+    axNode("break", "LineBreak", "", { parentId: "root", backend: 5 }),
+  ] };
+  return {};
+}, {}, { actions: [
+  { role: "textbox", name: "Email", placeholder: "name@example.com", inViewport: false, selector: "input" },
+  { role: "button", name: "Upload", type: "file", accept: ".png", multiple: true, selectedFileCount: 0, selector: "input[type=file]" },
+] });
+assert.doesNotMatch(noted.result.snapshot, /InlineTextBox|LineBreak/, "noise roles stay out of the snapshot");
+assert.match(noted.result.snapshot, /textbox "Email"[^\n]*placeholder="name@example.com"/);
+assert.match(noted.result.snapshot, /textbox "Email"[^\n]*offscreen/);
+assert.match(noted.result.snapshot, /button "Upload"[^\n]*accept="\.png" multiple files=0/);
+const model = noted.definition.model.projectResult(noted.result);
+assert.equal(model.snapshot, noted.result.snapshot, "the model receives the annotated snapshot");
+for (const key of ["actions", "headings", "snapshotId", "nodeCount", "semanticNodeCount", "returnedNodeCount", "truncatedNodeCount", "outlineTruncated", "depth"]) {
+  assert.equal(Object.hasOwn(model, key), false, `${key} stays on the UI result`);
+}
+assert.equal(model.truncated, undefined, "a complete small tree does not advertise truncation");
+const frameModel = nested.definition.model.projectResult(nested.result);
+assert.deepEqual(frameModel.frames.map(frame => frame.index), nested.result.frames.map(frame => frame.index));
+assert.ok(frameModel.frames.every(frame => frame.frameId == null && frame.oopif == null && frame.parentFrameId == null));
+const limitedModel = limited.definition.model.projectResult(limited.result);
+assert.equal(limitedModel.truncated, true, "a budget-cut tree tells the model it was truncated");
+assert.equal(Object.hasOwn(limitedModel, "outlineTruncated"), false);
 
 console.log("existing snapshot walker keeps its budget and gains frame trees");

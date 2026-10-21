@@ -47,7 +47,8 @@ export const VISION_READING_RULE = "- To analyze an image on a page, obtain its 
 export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
 1. Inspect the target page first. For a page owned by this task, use get_ax_tree({root:"root"}). For a page owned by another task that permits read-only access, use read_article, find_elements, or list_images with an explicit tabId.
 2. When you have a reliable target, use act_on_element.
-3. For Canvas content or an element without a reliable target, call screenshot({actionable:true}), then pass the image's original pixel coordinates to act_on_screen. The bounds are coordinateSpace.width/height.
+3. For a Canvas in the main document, or a main-document control without a target, call screenshot({actionable:true}), then pass the image's original pixel coordinates to act_on_screen. The bounds are coordinateSpace.width/height.
+- Lines marked frame= have no target and are read-only. Do not use screenshot or act_on_screen on those lines. When the embedded page works on its own, open that url with navigate/open_tab. When it depends on the parent page, state the limit and stop.
 - If page structure changes or a target becomes invalid, restart at step 1.
 - Every act_on_screen call must explicitly set returnScreenshot. Use true when the model needs to inspect the result; use false for an intermediate action in a verified sequence. Only true produces an observation image. With false, the existing coordinate basis remains usable while its coordinate space is valid. run_script returns the last image produced internally by screenshot or act_on_screen(returnScreenshot:true). viewportChange reports browser viewport changes only; inspect a screenshot to confirm the effects within the page. Observe again if coordinateBasisReady is false.
 - A press without x/y sends a key to the current focus and does not depend on an input screenshot. Set returnScreenshot:true only when you need to inspect the visual result.
@@ -59,6 +60,7 @@ export const TEXT_ONLY_PAGE_ACTION_RULE = `Page interaction:
 1. Inspect the target page first. For a page owned by this task, use get_ax_tree({root:"root"}). For a page owned by another task that permits read-only access, use read_article, find_elements, or list_images with an explicit tabId.
 2. When you have a reliable target, use act_on_element.
 3. Without a reliable target, continue locating it with find_elements, inspect_element, or page-reading tools. If you still cannot locate it, explain the limitation; do not guess visual actions.
+- Lines marked frame= have no target and are read-only. When the embedded page works on its own, open that url with navigate/open_tab. When it depends on the parent page, state the limit and stop.
 - If page structure changes or a target becomes invalid, restart at step 1.`;
 
 export const READING_CAPABILITY_PROTOCOL = `### Visual inspection protocol
