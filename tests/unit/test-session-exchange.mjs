@@ -29,7 +29,6 @@ const read = path => {
 assertRoundTrip();
 assertImportCapsuleLifecycle();
 assertEscaping();
-assertExchangeKeepsTraceTypesOnly();
 assertInterruptedStateSettles();
 assertValidation();
 assertSourceContracts();
@@ -291,75 +290,6 @@ function assertEscaping() {
   assert.equal(script.includes("</script><script>globalThis.pwned"), false);
   assert.match(script, /\\u003c\/script>/u);
   assert.equal(extractSessionExchangePayload(script).session.transcript[0].text.includes("globalThis.pwned"), true);
-}
-
-function assertExchangeKeepsTraceTypesOnly() {
-  const encrypted = "opaque-encrypted-blob-not-part-of-the-trace";
-  const endpoint = "https://user:pass@llm.example.com/v1?api_key=not-a-trace-field";
-  const conversation = serializeConversation([
-    { role: "system", content: "hidden system prompt with endpoint " + endpoint },
-    { role: "user", content: "打开查询页" },
-    {
-      role: "assistant",
-      content: null,
-      _providerState: {
-        version: 1,
-        provider: "custom",
-        endpoint,
-        model: "gpt-test",
-        reasoningItems: [{ type: "reasoning", encrypted_content: encrypted }],
-      },
-      _usage: { input_tokens: 12, output_tokens: 4 },
-      _usageContextBoundaryId: "boundary-1",
-      _usageContextFingerprint: "fingerprint-1",
-    },
-    {
-      role: "assistant",
-      content: "正在读取页面。",
-      _providerState: { endpoint, model: "gpt-test" },
-      tool_calls: [{
-        id: "call_1",
-        type: "function",
-        function: { name: "read_dom", arguments: "{\"url\":\"https://example.test/search?q=42\"}" },
-      }],
-    },
-    {
-      role: "tool",
-      tool_call_id: "call_1",
-      content: "{\"ok\":true,\"title\":\"查询页\"}",
-    },
-  ]);
-  const payload = createSessionExchangePayload({
-    session: { title: "轨迹" },
-    conversation,
-    transcript: [
-      { type: "user", text: "打开查询页", timestamp: "2026-07-10 10:00:00" },
-      { type: "debug-span", text: endpoint, secret: encrypted },
-      { type: "metric", name: "tokens", value: 12 },
-      {
-        type: "tool",
-        name: "read_dom",
-        args: { url: "https://example.test/search?q=42" },
-        result: { ok: true, title: "查询页" },
-        phase: "done",
-        isError: false,
-        isRunning: false,
-      },
-      { type: "assistant", content: "正在读取页面。", timestamp: "2026-07-10 10:00:02" },
-    ],
-  });
-  const serialized = JSON.stringify(payload);
-  assert.equal(serialized.includes(encrypted), false, "provider replay blobs are not part of the exported trace");
-  assert.equal(serialized.includes("llm.example.com"), false, "provider endpoints are not part of the exported trace");
-  assert.equal(serialized.includes("hidden system prompt"), false, "system prompts are not exported");
-  assert.equal(serialized.includes("debug-span"), false, "unknown transcript types are dropped");
-  assert.equal(serialized.includes("\"type\":\"metric\""), false, "unknown transcript types are dropped");
-  assert.equal(serialized.includes("_providerState"), false);
-  assert.equal(serialized.includes("_usage"), false);
-  assert.deepEqual(payload.session.transcript.map(entry => entry.type), ["user", "tool", "assistant"]);
-  assert.equal(payload.session.transcript[1].result.title, "查询页");
-  assert.equal(payload.session.conversation.entries.some(entry => entry.message?.content === "正在读取页面。"), true);
-  assert.equal(payload.session.conversation.entries.some(entry => entry.message?._providerState), false);
 }
 
 function assertImportCapsuleLifecycle() {

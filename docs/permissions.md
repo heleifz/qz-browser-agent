@@ -12,7 +12,7 @@ browser and connects to the model providers, websites, Skills, and MCP services 
 | Bookmarks and browsing history | Read by their tools after Chrome grants access. Results used by a task are sent to the model service. |
 | Location | Coordinates, accuracy, and timestamp are returned by `get_location` after first-use consent and sent to the model service for local information. |
 | Model, Skill, and MCP credentials | Stored in your browser profile and used to authenticate requests to the corresponding configured services. |
-| Screen recordings and exports | Created on request and saved locally. HTML conversation exports keep the visible trace. Provider replay state, usage accounting, system prompts, and unrecognized transcript types stay in the local Session and are not written into the file. Page text, tool results, and screenshots in the task may still include personal content; review files before sharing. |
+| Screen recordings and exports | Created on request and saved locally. You choose whether to share the saved files. |
 
 Skills can send task data to their configured services. Connected external agents receive tool
 results and task data through MCP. Websites receive the requests, form submissions, and files
