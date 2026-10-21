@@ -13,7 +13,7 @@ interface AxNode {
   nodeId: string; parentId?: string; childIds?: string[]; backendDOMNodeId?: number; ignored?: boolean;
   role?: AxValue; name?: AxValue; description?: AxValue; value?: AxValue;
   properties?: { name?: string; value?: AxValue }[];
-  frameId?: string; oopif?: boolean;
+  frameId?: string; oopif?: boolean; loaderId?: string;
 }
 interface SnapshotContext { tabId: number; snapshotId: string; sessionId?: string; pageUrl?: string }
 
@@ -42,29 +42,41 @@ type CompactNode = ReturnType<typeof compactAxNode>;
 interface SemanticNode { compact: CompactNode; depth: number; parent: SemanticNode | null; children: SemanticNode[] }
 type DisplayNode = { uid: string; target: string; depth: number; nodeId: string; parentUid?: string; truncated?: boolean } & Partial<CompactNode>;
 
-/** Hang each frame tree under its iframe host, then let the existing snapshot walk read one node list. */
-function graftFrameNodes(mainNodes: AxNode[], frames: { frameId: string; oopif?: boolean; iframeBackendNodeId?: number; nodes: AxNode[] }[]) {
-  const nodes = (mainNodes || []).map(node => ({ ...node, childIds: [...(node.childIds || [])] }));
+interface FrameNodes { frameId: string; oopif?: boolean; parentFrameId?: string; iframeBackendNodeId?: number; loaderId?: string; nodes: AxNode[] }
+
+/** Hang each frame tree under its iframe host in the parent frame, then let the existing snapshot walk read one node list. */
+function graftFrameNodes(mainNodes: AxNode[], frames: FrameNodes[], { mainFrameId = "", mainLoaderId = "" } = {}) {
+  const nodes: AxNode[] = (mainNodes || []).map(node => ({
+    ...node,
+    childIds: [...(node.childIds || [])],
+    ...(mainLoaderId ? { loaderId: mainLoaderId } : {}),
+  }));
   const frameIndex = new Map<string, number>();
-  let nextFrame = 1;
+  const grafted: { frame: FrameNodes; nodes: AxNode[] }[] = [];
   for (const frame of frames) {
     const frameNodes = (frame.nodes || []).filter(node => node?.nodeId);
-    if (!frame.frameId || !frameNodes.length) continue;
-    const frameNumber = nextFrame++;
+    if (!frame.frameId || !frameNodes.length || frameIndex.has(frame.frameId)) continue;
+    const frameNumber = frameIndex.size + 1;
     frameIndex.set(frame.frameId, frameNumber);
     const mapId = (id: string) => `${frameNumber}:${id}`;
-    const rewritten = frameNodes.map(node => ({
+    grafted.push({ frame, nodes: frameNodes.map(node => ({
       ...node,
       nodeId: mapId(node.nodeId),
       parentId: node.parentId ? mapId(node.parentId) : undefined,
       childIds: (node.childIds || []).map(mapId),
       frameId: frame.frameId,
       oopif: frame.oopif === true,
-    }));
-    const present = new Set(rewritten.map(node => node.nodeId));
-    const roots = rewritten.filter(node => !node.parentId || !present.has(node.parentId));
+      loaderId: frame.loaderId,
+    })) });
+  }
+  // Hosts are found after every frame is rewritten, so a child frame may precede its parent.
+  for (const { frame, nodes: frameNodes } of grafted) {
+    const present = new Set(frameNodes.map(node => node.nodeId));
+    const roots = frameNodes.filter(node => !node.parentId || !present.has(node.parentId));
+    const parentFrame = frame.parentFrameId && frame.parentFrameId !== mainFrameId ? frame.parentFrameId : "";
+    const hostCandidates = parentFrame ? grafted.find(item => item.frame.frameId === parentFrame)?.nodes || [] : nodes;
     const host = frame.iframeBackendNodeId
-      ? nodes.find(node => !node.frameId && Number(node.backendDOMNodeId || 0) === frame.iframeBackendNodeId)
+      ? hostCandidates.find(node => Number(node.backendDOMNodeId || 0) === frame.iframeBackendNodeId)
       : undefined;
     if (host) {
       host.childIds = [...(host.childIds || []), ...roots.map(node => node.nodeId)];
@@ -72,8 +84,8 @@ function graftFrameNodes(mainNodes: AxNode[], frames: { frameId: string; oopif?:
     } else {
       for (const root of roots) root.parentId = undefined;
     }
-    nodes.push(...rewritten);
   }
+  for (const item of grafted) nodes.push(...item.nodes);
   return { nodes, frameIndex };
 }
 
@@ -87,7 +99,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   if (rootBackendNodeId) {
     const requestedRoot = [...nodeMap.values()].find(node =>
       Number(node?.backendDOMNodeId || 0) === Number(rootBackendNodeId)
-      && (!rootFrameId || node.frameId === rootFrameId));
+      && (node.frameId || "") === rootFrameId);
     roots = requestedRoot ? [requestedRoot] : [];
     rootFound = !!requestedRoot;
   }
@@ -158,6 +170,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
       pageUrl,
       backendNodeId: item.backendNodeId,
       frameId: item.frameId,
+      loaderId: compact.loaderId || undefined,
       oopif: item.oopif,
       role: item.role,
       name: item.name,
@@ -210,6 +223,7 @@ function compactAxNode(node: AxNode) {
       .filter(Boolean),
     frameId: node.frameId || "",
     oopif: node.oopif === true,
+    loaderId: node.loaderId || "",
   };
 }
 
@@ -260,8 +274,9 @@ function truncateInline(value: unknown, max: number) {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
-function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { tabId, snapshotId, sessionId = "", pageUrl = "" }: SnapshotContext) {
-  const candidates = Array.isArray(nodes) ? nodes : [];
+/** Page overview actions come from the main document, so only its nodes may lend them a uid. */
+function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { tabId, snapshotId, sessionId = "", pageUrl = "", loaderId = "" }: SnapshotContext & { loaderId?: string }) {
+  const candidates = (Array.isArray(nodes) ? nodes : []).filter(node => !node.frameId);
   const used = new Set<string>();
   return (Array.isArray(actions) ? actions : []).map((action, index) => {
     const matched = findBestActionNode(action, candidates, used);
@@ -276,6 +291,7 @@ function attachSnapshotRefsToActions(actions: Action[], nodes: DisplayNode[], { 
       selector: next.selector,
       index: 0,
       backendNodeId: matched?.backendNodeId,
+      loaderId: matched?.backendNodeId && loaderId ? loaderId : undefined,
       role: next.role || matched?.role,
       name: next.name || next.text || matched?.name,
       url: next.href || matched?.url,
@@ -475,20 +491,28 @@ registerTool({
       };
     }
 
+    // A shadow or frame root has no CSS scope, so the document-wide overview would leak top-level controls.
+    if (requestedRoot !== "root" && !overviewSelector) {
+      overview = { ...overview, actions: [], headings: [], canvases: [] };
+    }
     const pageUrl = String(overview?.url || "").trim();
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const subscribe = (listener: (method: string, params: Record<string, unknown>) => void) =>
         subscribeDebuggerEvents ? subscribeDebuggerEvents(targetTabId!, listener) : () => {};
       const inputs = await collectSnapshotInputs(targetTabId!, send, subscribe, fetchDepth);
+      const mainLoaderId = String(inputs.sources[0]?.loaderId || "");
       const grafted = graftFrameNodes(
         (inputs.sources[0]?.nodes || []) as unknown as AxNode[],
         inputs.sources.slice(1).map(source => ({
           frameId: source.frameId,
           oopif: source.oopif,
+          parentFrameId: source.parentFrameId,
           iframeBackendNodeId: source.iframeBackendNodeId,
+          loaderId: source.loaderId,
           nodes: source.nodes as unknown as AxNode[],
         })),
+        { mainFrameId: inputs.mainFrameId, mainLoaderId },
       );
       const built = buildAccessibilitySnapshot(grafted.nodes, {
         tabId: targetTabId!,
@@ -501,12 +525,16 @@ registerTool({
         maxDepth: axDepth,
         frameIndex: grafted.frameIndex,
       });
-      return { ...built, frames: inputs.frames.map((frame, index) => ({
-        index: index + 1,
-        frameId: frame.frameId,
-        oopif: frame.oopif,
-        url: frame.url,
-      })) };
+      const frames = inputs.frames
+        .filter(frame => grafted.frameIndex.has(frame.frameId))
+        .map(frame => ({
+          index: grafted.frameIndex.get(frame.frameId),
+          frameId: frame.frameId,
+          parentFrameId: frame.parentFrameId,
+          oopif: !!frame.sessionId,
+          url: frame.url,
+        }));
+      return { ...built, frames, mainLoaderId };
     }, context);
 
     const actions = attachSnapshotRefsToActions(overview?.actions || [], ax.nodes, {
@@ -514,6 +542,7 @@ registerTool({
       snapshotId,
       sessionId,
       pageUrl,
+      loaderId: ax.mainLoaderId,
     });
     return {
       tabId: targetTabId,

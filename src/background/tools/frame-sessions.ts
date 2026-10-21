@@ -5,18 +5,26 @@ export interface SnapshotFrameSource {
   oopif?: boolean;
   parentFrameId?: string;
   iframeBackendNodeId?: number;
+  loaderId?: string;
   nodes: Record<string, unknown>[];
 }
 
 type DebuggerListener = (method: string, params: Record<string, unknown>) => void;
+type Subscribe = (listener: DebuggerListener) => () => void;
 
 interface TrackedTab {
-  /** OOPIF target id, which equals its frame id, mapped to the flat child session. */
+  /** Child target id, which equals its root frame id, mapped to the flat child session. */
   sessions: Map<string, string>;
+  /** Sessions, with "" for the page, whose own cross-process children are auto-attached. */
+  autoAttached: Set<string>;
   stop: () => void;
 }
 
-// Chrome announces each auto-attached OOPIF once per debugger attachment, so the
+const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true };
+const ATTACH_SETTLE_MS = 150;
+const MAX_FRAME_DEPTH = 8;
+
+// Chrome announces each auto-attached frame target once per debugger attachment, so the
 // listener lives until the attachment ends rather than for one discovery call.
 const trackedTabs = new Map<number, TrackedTab>();
 
@@ -25,10 +33,11 @@ export function forgetTabFrames(tabId: number) {
   trackedTabs.delete(tabId);
 }
 
-function trackTab(tabId: number, subscribe: (listener: DebuggerListener) => () => void) {
+function trackTab(tabId: number, subscribe: Subscribe) {
   const existing = trackedTabs.get(tabId);
-  if (existing) return { tracked: existing, fresh: false };
+  if (existing) return existing;
   const sessions = new Map<string, string>();
+  const autoAttached = new Set<string>();
   const stop = subscribe((method, params) => {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     if (!sessionId) return;
@@ -37,107 +46,145 @@ function trackTab(tabId: number, subscribe: (listener: DebuggerListener) => () =
       if (info.type === "iframe" && typeof info.targetId === "string") sessions.set(info.targetId, sessionId);
     } else if (method === "Target.detachedFromTarget") {
       for (const [frameId, current] of sessions) if (current === sessionId) sessions.delete(frameId);
+      autoAttached.delete(sessionId);
     }
   });
-  const tracked = { sessions, stop };
+  const tracked = { sessions, autoAttached, stop };
   trackedTabs.set(tabId, tracked);
-  return { tracked, fresh: true };
+  return tracked;
 }
 
 export interface DiscoveredFrame {
   frameId: string;
+  /** The frame is the root of its own child target. */
   oopif: boolean;
   parentFrameId?: string;
+  /** The iframe element in the parent frame's document. */
   iframeBackendNodeId?: number;
+  /** Target session that owns this frame's document; absent for the page target. */
   sessionId?: string;
+  loaderId?: string;
   url?: string;
 }
 
 interface FrameTreeNode {
-  frame?: { id?: string; url?: string };
+  frame?: { id?: string; parentId?: string; loaderId?: string; url?: string };
   childFrames?: FrameTreeNode[];
 }
 
-/** Same-process frames come from the page frame tree. Cross-process frames arrive through flat auto-attach. */
-export async function discoverFrames(tabId: number, send: Send, subscribe: (listener: DebuggerListener) => () => void): Promise<{
+/**
+ * Lists every frame below the main frame with the target session that owns it.
+ * Same-process frames come from each target's frame tree; cross-process frames
+ * arrive through flat auto-attach, which each child target needs for its own children.
+ */
+export async function discoverFrames(tabId: number, send: Send, subscribe: Subscribe): Promise<{
   mainFrameId: string;
+  mainLoaderId: string;
   frames: DiscoveredFrame[];
 }> {
-  const { tracked, fresh } = trackTab(tabId, subscribe);
-  if (fresh) {
-    try {
-      await send("Target.setAutoAttach", {
-        autoAttach: true,
-        waitForDebuggerOnStart: false,
-        flatten: true,
-      });
-      // Existing iframe targets are reported on the debugger event stream after the command returns.
-      await new Promise(resolve => setTimeout(resolve, 150));
-    } catch {
-      // A target that cannot auto-attach still exposes same-process frames.
+  const tracked = trackTab(tabId, subscribe);
+  for (let level = 0; level < MAX_FRAME_DEPTH; level += 1) {
+    const pending = ["", ...tracked.sessions.values()].filter(sessionId => !tracked.autoAttached.has(sessionId));
+    if (!pending.length) break;
+    for (const sessionId of pending) {
+      tracked.autoAttached.add(sessionId);
+      try {
+        await send("Target.setAutoAttach", AUTO_ATTACH, sessionId || undefined);
+      } catch { /* A target that cannot auto-attach still exposes its same-process frames. */ }
     }
+    // Existing frame targets are reported on the debugger event stream after the command returns.
+    await new Promise(resolve => setTimeout(resolve, ATTACH_SETTLE_MS));
   }
 
-  const tree = record(await send("Page.getFrameTree"));
-  const frameTree = record(tree.frameTree) as FrameTreeNode;
-  const mainFrameId = String(frameTree.frame?.id || "");
-  const frames: DiscoveredFrame[] = [];
-  const known = new Set<string>();
-  const walk = (node: FrameTreeNode | undefined, parentId?: string) => {
-    const frameId = String(node?.frame?.id || "");
-    if (!node || !frameId) return;
+  const tree = record(record(await send("Page.getFrameTree")).frameTree) as FrameTreeNode;
+  const mainFrameId = String(tree.frame?.id || "");
+  const frames = new Map<string, DiscoveredFrame>();
+  const walk = (node: FrameTreeNode, sessionId: string | undefined, parentId: string | undefined, root: boolean) => {
+    const frameId = String(node.frame?.id || "");
+    if (!frameId) return;
     if (parentId) {
-      known.add(frameId);
-      frames.push({ frameId, oopif: false, parentFrameId: parentId, url: node.frame?.url });
+      frames.set(frameId, {
+        frameId,
+        oopif: root,
+        parentFrameId: parentId,
+        sessionId,
+        loaderId: node.frame?.loaderId,
+        url: node.frame?.url,
+      });
     }
-    for (const child of node.childFrames || []) walk(child, frameId);
+    for (const child of node.childFrames || []) walk(child, sessionId, frameId, false);
   };
-  walk(frameTree);
+  walk(tree, undefined, undefined, false);
 
   for (const [targetId, sessionId] of [...tracked.sessions]) {
+    let childTree: FrameTreeNode;
     try {
-      const childTree = record(record(await send("Page.getFrameTree", {}, sessionId)).frameTree) as FrameTreeNode;
-      const frameId = String(childTree.frame?.id || "");
-      if (!frameId || known.has(frameId)) continue;
-      known.add(frameId);
-      let iframeBackendNodeId = 0;
-      try {
-        iframeBackendNodeId = Number(record(await send("DOM.getFrameOwner", { frameId })).backendNodeId || 0);
-      } catch { /* The owner can sit in another process. */ }
-      if (frameId !== targetId) {
-        tracked.sessions.delete(targetId);
-        tracked.sessions.set(frameId, sessionId);
-      }
-      frames.push({
-        frameId,
-        oopif: true,
-        sessionId,
-        iframeBackendNodeId: iframeBackendNodeId || undefined,
-        url: childTree.frame?.url,
-      });
+      childTree = record(record(await send("Page.getFrameTree", {}, sessionId)).frameTree) as FrameTreeNode;
     } catch {
       tracked.sessions.delete(targetId);
+      tracked.autoAttached.delete(sessionId);
+      continue;
     }
+    const frameId = String(childTree.frame?.id || "");
+    if (!frameId) continue;
+    if (frameId !== targetId) {
+      tracked.sessions.delete(targetId);
+      tracked.sessions.set(frameId, sessionId);
+    }
+    walk(childTree, sessionId, String(childTree.frame?.parentId || "") || mainFrameId, true);
   }
 
-  for (const frame of frames) {
-    if (frame.oopif || frame.iframeBackendNodeId) continue;
+  // The owner element lives in the parent frame's document, so ask the target that owns the parent.
+  for (const frame of frames.values()) {
+    const parentSession = frame.parentFrameId === mainFrameId ? undefined : frames.get(frame.parentFrameId || "")?.sessionId;
+    if (frame.parentFrameId !== mainFrameId && !frames.has(frame.parentFrameId || "")) continue;
     try {
-      frame.iframeBackendNodeId = Number(record(await send("DOM.getFrameOwner", { frameId: frame.frameId })).backendNodeId || 0) || undefined;
+      const owner = record(await send("DOM.getFrameOwner", { frameId: frame.frameId }, parentSession));
+      frame.iframeBackendNodeId = Number(owner.backendNodeId || 0) || undefined;
     } catch { /* Owner lookup is best-effort; the frame tree is still usable. */ }
   }
-  return { mainFrameId, frames };
+  return { mainFrameId, mainLoaderId: String(tree.frame?.loaderId || ""), frames: [...frames.values()] };
 }
 
-export async function sessionForFrame(tabId: number, send: Send, subscribe: (listener: DebuggerListener) => () => void, frameId: string) {
-  if (!frameId) return undefined;
-  const cached = trackedTabs.get(tabId)?.sessions.get(frameId);
-  if (cached) return cached;
+export interface FrameOwner {
+  backendNodeId: number;
+  /** Session of the document that contains the iframe element. */
+  sessionId?: string;
+  /** The owned frame roots a child target, whose coordinates start at the frame's viewport. */
+  boundary: boolean;
+}
+
+export interface FramePath {
+  frameId: string;
+  sessionId?: string;
+  loaderId: string;
+  oopif: boolean;
+  /** Iframe elements from the innermost frame outward to the main document. */
+  owners: FrameOwner[];
+}
+
+/** Resolves a frame to its owning session and owner chain; `null` when the frame is gone or detached. */
+export async function resolveFramePath(tabId: number, send: Send, subscribe: Subscribe, frameId = ""): Promise<FramePath | null> {
   const discovered = await discoverFrames(tabId, send, subscribe);
-  return discovered.frames.find(frame => frame.oopif && frame.frameId === frameId)?.sessionId;
+  if (!frameId || frameId === discovered.mainFrameId) {
+    return { frameId: discovered.mainFrameId, loaderId: discovered.mainLoaderId, oopif: false, owners: [] };
+  }
+  const byId = new Map(discovered.frames.map(frame => [frame.frameId, frame]));
+  const frame = byId.get(frameId);
+  if (!frame) return null;
+  const owners: FrameOwner[] = [];
+  for (let current: DiscoveredFrame | undefined = frame; current; current = byId.get(current.parentFrameId || "")) {
+    if (!current.iframeBackendNodeId || owners.length > MAX_FRAME_DEPTH) return null;
+    const parentSession = current.parentFrameId === discovered.mainFrameId ? undefined : byId.get(current.parentFrameId || "")?.sessionId;
+    owners.push({ backendNodeId: current.iframeBackendNodeId, sessionId: parentSession, boundary: current.oopif });
+    if (current.parentFrameId === discovered.mainFrameId) {
+      return { frameId, sessionId: frame.sessionId, loaderId: frame.loaderId || "", oopif: frame.oopif || !!frame.sessionId, owners };
+    }
+  }
+  return null;
 }
 
-export async function collectSnapshotInputs(tabId: number, send: Send, subscribe: (listener: DebuggerListener) => () => void, depth: number): Promise<{
+export async function collectSnapshotInputs(tabId: number, send: Send, subscribe: Subscribe, depth: number): Promise<{
   mainFrameId: string;
   sources: SnapshotFrameSource[];
   frames: DiscoveredFrame[];
@@ -147,18 +194,19 @@ export async function collectSnapshotInputs(tabId: number, send: Send, subscribe
   const sources: SnapshotFrameSource[] = [{
     frameId: discovered.mainFrameId,
     oopif: false,
+    loaderId: discovered.mainLoaderId,
     nodes: arrayRecord(main.nodes),
   }];
   for (const frame of discovered.frames) {
     try {
-      const ax = frame.oopif
-        ? record(await send("Accessibility.getFullAXTree", { depth }, frame.sessionId))
-        : record(await send("Accessibility.getFullAXTree", { depth, frameId: frame.frameId }));
+      const params = frame.oopif ? { depth } : { depth, frameId: frame.frameId };
+      const ax = record(await send("Accessibility.getFullAXTree", params, frame.sessionId));
       sources.push({
         frameId: frame.frameId,
-        oopif: frame.oopif,
+        oopif: !!frame.sessionId,
         parentFrameId: frame.parentFrameId || discovered.mainFrameId,
         iframeBackendNodeId: frame.iframeBackendNodeId,
+        loaderId: frame.loaderId,
         nodes: arrayRecord(ax.nodes),
       });
     } catch { /* Skip a frame whose accessibility tree is unavailable. */ }

@@ -14,7 +14,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { isCdpFallbackForbiddenError } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
-import { actOnRemoteElement } from "./remote-element.js";
+import { actOnRemoteElement, inspectRemoteElement } from "./remote-element.js";
 
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
@@ -153,6 +153,10 @@ registerTool({
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "", index = 0 }, _signal, context = {}) => {
     const ref = await resolveElementReference(tabId, { target, index }, context);
+    if (ref.ref?.remoteAction && ref.ref.backendNodeId && ref.tabId) {
+      return inspectRemoteElement({ tabId: ref.tabId, target: ref.target || target, uid: ref.uid || undefined, ref: ref.ref },
+        { withDebugger, subscribeDebuggerEvents, ToolExecutionError, context });
+    }
     const inspection = await sendToContent(ref.tabId, "inspectElement", { selector: ref.selector, index: ref.index });
     return {
       ...inspection,
@@ -219,9 +223,13 @@ registerTool({
     const selector = ref.selector;
     index = ref.index;
     const resolvedTarget = ref.target || elementTargetForSelector(selector);
+    const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (ref.ref?.remoteAction && ref.ref.backendNodeId && tabId) {
+      const remoteTabId = tabId;
+      let pageBefore: PageState = { url: "", title: "" };
+      let guardrails: SecurityGuardrails | null = null;
       return actOnRemoteElement({
-        tabId,
+        tabId: remoteTabId,
         target: resolvedTarget,
         selector,
         index,
@@ -231,9 +239,28 @@ registerTool({
         key: String(key ?? ""),
         submit: submit === true,
         ref: ref.ref,
-      }, { withDebugger, subscribeDebuggerEvents, ToolExecutionError, context });
+      }, {
+        withDebugger,
+        subscribeDebuggerEvents,
+        ToolExecutionError,
+        context,
+        navigation: {
+          prepare: async href => {
+            pageBefore = await getTabPageState(remoteTabId);
+            guardrails = await getSecurityGuardrails();
+            return prepareKnownPageNavigation({
+              url: href, pageBefore, guardrails, context, signal: _signal,
+              toolName: "act_on_element", toolArgs: toolArgsForUpdates, tabId: remoteTabId, source: "href",
+            });
+          },
+          observe: async prepared => {
+            if (!guardrails) return {};
+            const { pageDelta, observedNavigation } = await observeElementNavigation(remoteTabId, pageBefore, prepared as PreparedNavigation | null, guardrails);
+            return { navigated: pageDelta.urlChanged, ...pageDelta, ...(observedNavigation ? { observedNavigation } : {}) };
+          },
+        },
+      });
     }
-    const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index });

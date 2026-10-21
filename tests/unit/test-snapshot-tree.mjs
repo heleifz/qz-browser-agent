@@ -14,7 +14,7 @@ function axNode(nodeId, role, name, extra = {}) {
   };
 }
 
-function hostFor(send, refs) {
+function hostFor(send, refs, { resolved, actions = [] } = {}) {
   let definition;
   registerAccessibilityTools({
     registerTool: value => { definition = value; },
@@ -23,10 +23,10 @@ function hostFor(send, refs) {
     makeSnapshotId: () => "snapshot",
     elementTargetForUid: uid => `uid:${uid}`,
     registerElementRef: ref => refs.push(ref),
-    resolveElementReference: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
+    resolveElementReference: async () => resolved || ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
     backendNodeIdForSelector: async () => 0,
     makeSessionTabTargetError: code => new ToolExecutionError(code, code),
-    sendToContent: async () => ({ title: "Page", url: "https://example.com/", actions: [], headings: [], canvases: [] }),
+    sendToContent: async () => ({ title: "Page", url: "https://example.com/", actions, headings: [{ level: 1, text: "Top heading" }], canvases: [] }),
     subscribeDebuggerEvents: (_tabId, listener) => {
       hostFor.listener = listener;
       return () => { hostFor.listener = null; };
@@ -37,10 +37,10 @@ function hostFor(send, refs) {
   return definition;
 }
 
-async function run(send, args = {}) {
+async function run(send, args = {}, options = {}) {
   forgetTabFrames(8);
   const refs = [];
-  const definition = hostFor(send, refs);
+  const definition = hostFor(send, refs, options);
   const result = await definition.execute({ tabId: 8, ...args }, null, { sessionId: "owner", runId: "run" });
   return { result, refs };
 }
@@ -105,6 +105,80 @@ const inner = framed.refs.find(ref => ref.name === "Inside frame");
 assert.equal(inner.frameId, "child");
 assert.equal(inner.oopif, true);
 assert.equal(inner.backendNodeId, 1, "a frame-local backend id stays distinct from the top document");
+
+// Page > cross-process "outer" > same-process "inner" and cross-process "deep"; the same name appears at every level.
+const nestedSend = async (method, params = {}, sessionId) => {
+  if (method === "Target.setAutoAttach") {
+    if (!sessionId) hostFor.listener?.("Target.attachedToTarget", { sessionId: "s-outer", targetInfo: { type: "iframe", targetId: "outer" } });
+    if (sessionId === "s-outer") hostFor.listener?.("Target.attachedToTarget", { sessionId: "s-deep", targetInfo: { type: "iframe", targetId: "deep" } });
+    return {};
+  }
+  if (method === "Page.getFrameTree") {
+    if (!sessionId) return { frameTree: { frame: { id: "main", loaderId: "L-main" } } };
+    if (sessionId === "s-outer") return { frameTree: {
+      frame: { id: "outer", parentId: "main", loaderId: "L-outer" },
+      childFrames: [{ frame: { id: "inner", parentId: "outer", loaderId: "L-inner" } }],
+    } };
+    return { frameTree: { frame: { id: "deep", parentId: "outer", loaderId: "L-deep" } } };
+  }
+  if (method === "DOM.getFrameOwner") {
+    const owner = { "main:outer": 9, "s-outer:inner": 5, "s-outer:deep": 6 }[`${sessionId || "main"}:${params.frameId}`];
+    if (!owner) throw new Error("Frame with the given id does not belong to the target.");
+    return { backendNodeId: owner };
+  }
+  if (method === "Accessibility.getFullAXTree") {
+    if (!sessionId) return { nodes: [
+      axNode("root", "RootWebArea", "Host", { backend: 1, childIds: ["send", "frame"] }),
+      axNode("send", "button", "Publish", { parentId: "root", backend: 2 }),
+      axNode("frame", "Iframe", "Outer", { parentId: "root", backend: 9 }),
+    ] };
+    if (sessionId === "s-outer" && params.frameId === "inner") return { nodes: [
+      axNode("iroot", "RootWebArea", "Inner doc", { backend: 1, childIds: ["ibtn"] }),
+      axNode("ibtn", "button", "Send", { parentId: "iroot", backend: 2 }),
+    ] };
+    if (sessionId === "s-outer") return { nodes: [
+      axNode("oroot", "RootWebArea", "Outer doc", { backend: 1, childIds: ["obtn", "ihost", "dhost"] }),
+      axNode("obtn", "button", "Send", { parentId: "oroot", backend: 2 }),
+      axNode("ihost", "Iframe", "Inner", { parentId: "oroot", backend: 5 }),
+      axNode("dhost", "Iframe", "Deep", { parentId: "oroot", backend: 6 }),
+    ] };
+    return { nodes: [
+      axNode("droot", "RootWebArea", "Deep doc", { backend: 1, childIds: ["dbtn"] }),
+      axNode("dbtn", "button", "Deep send", { parentId: "droot", backend: 2 }),
+    ] };
+  }
+  return {};
+};
+const sendAction = [{ role: "button", name: "Send", selector: "#send" }];
+const nested = await run(nestedSend, {}, { actions: sendAction });
+const lines = nested.result.snapshot.split("\n");
+const lineIndex = text => lines.findIndex(line => line.includes(text));
+assert.ok(lineIndex('Iframe "Inner"') < lineIndex('RootWebArea "Inner doc"'), "a same-process child of a cross-process frame hangs under its host");
+assert.ok(lineIndex('Iframe "Deep"') < lineIndex('button "Deep send"'), "a cross-process grandchild hangs under its host in the parent frame");
+assert.match(lines[lineIndex('button "Deep send"')], /^ {6,}/, "the grandchild is indented below its host");
+const deepRef = nested.refs.find(ref => ref.name === "Deep send");
+assert.deepEqual([deepRef.frameId, deepRef.loaderId, deepRef.oopif], ["deep", "L-deep", true]);
+const innerSend = nested.refs.find(ref => ref.name === "Send" && ref.frameId === "inner");
+assert.deepEqual([innerSend.loaderId, innerSend.oopif], ["L-inner", true]);
+assert.equal(nested.refs.find(ref => ref.name === "Publish")?.loaderId, "L-main", "main-document refs carry the page document");
+const actionRef = nested.refs.filter(ref => ref.selector === "#send").at(-1);
+assert.deepEqual([actionRef.frameId, actionRef.backendNodeId, actionRef.loaderId], [undefined, undefined, undefined],
+  "a top-level action never adopts a same-named frame node");
+const frameSend = nested.refs.filter(ref => ref.name === "Send" && ref.frameId === "outer");
+assert.equal(frameSend.length, 1, "the frame node keeps its own uid and identity");
+assert.deepEqual(nested.result.frames.map(frame => [frame.index, frame.frameId, frame.parentFrameId, frame.oopif]).sort(), [
+  [1, "outer", "main", true], [2, "inner", "outer", true], [3, "deep", "outer", true],
+]);
+
+const scoped = await run(nestedSend, { root: "uid:frame-host" }, {
+  actions: sendAction,
+  resolved: { tabId: 8, target: "uid:frame-host", selector: "", index: 0, ref: { backendNodeId: 5, frameId: "outer", remoteAction: true } },
+});
+assert.deepEqual(scoped.result.actions, [], "a frame root does not list top-level actions");
+assert.deepEqual(scoped.result.headings, []);
+assert.match(scoped.result.snapshot, /RootWebArea "Inner doc"/);
+assert.doesNotMatch(scoped.result.snapshot, /Outer doc|Deep send/, "the subtree stays inside the requested frame host");
+assert.ok(scoped.refs.every(ref => ref.frameId === "inner" || ref.frameId === "outer"), "no top-level ref is registered for a frame subtree");
 
 const cyclic = await page([
   axNode("root", "RootWebArea", "Cycle", { backend: 1, childIds: ["loop"] }),

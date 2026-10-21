@@ -4,7 +4,8 @@ import type { createCdpRuntime } from './cdp-runtime.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  frameId?: string; oopif?: boolean; remoteAction?: boolean;
+  /** Frame and document identity; a backend id is only meaningful within that document. */
+  frameId?: string; loaderId?: string; oopif?: boolean; remoteAction?: boolean;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -15,7 +16,7 @@ interface ElementRuntimeHost {
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   subscribeDebuggerEvents?: (tabId: number, listener: (method: string, params: Record<string, unknown>) => void) => () => void;
 }
-import { sessionForFrame } from "./frame-sessions.js";
+import { resolveFramePath } from "./frame-sessions.js";
 import { elementPageFunction } from "./page-scripts.js";
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
@@ -252,7 +253,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       selector: resolvedSelector,
       remoteAction,
       frameId: located.frameId || ref.frameId,
-      oopif: located.oopif || ref.oopif,
+      oopif: located.oopif,
       createdAt: Date.now(),
     });
     ref = elementRefRegistry.get(requestedUid) || ref;
@@ -328,12 +329,22 @@ async function locateBackendElement(tabId: number, ref: ElementReference, contex
   try {
     return await withDebugger(tabId, async (_target, send) => {
       const frameId = String(ref.frameId || "");
-      const oopif = ref.oopif === true;
+      let oopif = ref.oopif === true;
       let sessionId: string | undefined;
-      if (oopif) {
+      let loaderId = "";
+      if (frameId) {
         if (!subscribeDebuggerEvents) return { remote: true, selector: "", frameId, oopif, error: "no debugger events" };
-        sessionId = await sessionForFrame(tabId, send, listener => subscribeDebuggerEvents!(tabId, listener), frameId);
-        if (!sessionId) return { remote: true, selector: "", frameId, oopif, error: `no session for frame ${frameId}` };
+        const path = await resolveFramePath(tabId, send, listener => subscribeDebuggerEvents!(tabId, listener), frameId);
+        if (!path) return { remote: true, selector: "", frameId, oopif, error: `frame ${frameId} is gone` };
+        sessionId = path.sessionId;
+        oopif = path.oopif;
+        loaderId = path.loaderId;
+      } else if (ref.loaderId) {
+        loaderId = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
+      }
+      // A navigated document can reuse backend ids from a fresh renderer counter.
+      if (ref.loaderId && loaderId !== ref.loaderId) {
+        return { remote: true, selector: "", frameId, oopif, error: frameId ? "the frame has navigated" : "the page has navigated" };
       }
       let resolved: Record<string, unknown>;
       try {
@@ -343,7 +354,6 @@ async function locateBackendElement(tabId: number, ref: ElementReference, contex
       }
       const objectId = String(record(resolved.object).objectId || "");
       if (!objectId) return { remote: true, selector: "", frameId, oopif, error: "resolveNode returned no object" };
-      if (frameId || oopif) return { remote: true, selector: "", frameId, oopif };
       const evaluated = record(await send("Runtime.callFunctionOn", {
         objectId,
         returnByValue: true,
