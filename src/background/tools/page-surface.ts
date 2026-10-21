@@ -28,10 +28,8 @@ export async function ensurePageSurface(tabId: number, send: Send) {
   try {
     await send("Page.captureScreenshot", { format: "jpeg", quality: 1, fromSurface: true, captureBeyondViewport: false });
   } catch {
-    // The discarded frame only nudges layout.
+    // The discarded frame only nudges layout. The tab stays in the background.
   }
-  if (laidOut(await outerSize(tabId))) return;
-  try { await chrome.tabs.update(tabId, { active: true }); } catch { /* The tab may already be closing. */ }
 }
 
 /** Count trusted input on the live document. Null means the page could not be observed. */
