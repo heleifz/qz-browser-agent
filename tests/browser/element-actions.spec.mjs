@@ -352,6 +352,14 @@ test("httpbin pizza radios check through the wrapped label", async () => {
     expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
     expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
     const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
-    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true });
+    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
+    const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.id);
+    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("error");
+    const acted = await h.worker.evaluate((tabId) => elementHarness.call("act_on_screen", {
+      tabId, action: "click", x: 20, y: 20, returnScreenshot: false,
+    }, "run_script"), opened.id);
+    expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
   } finally { await h.close(); }
 });
