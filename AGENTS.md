@@ -136,7 +136,7 @@ loads the compiled extension from `dist/extension/`.
 
 ## Git and commits
 
-- Use `Lei He <heleifz@icloud.com>` as both author and committer.
+- Keep AI tools and assistant brands out of the author and committer name and email, including Cursor, Copilot, Claude, and ChatGPT.
 - Leave `Co-authored-by` trailers, Cursor signatures, and Cursor trailers out of commits.
 - Force-push only when the user explicitly asks.
 - Open a pull request only when the user explicitly asks. Pushing the working branch is enough.
