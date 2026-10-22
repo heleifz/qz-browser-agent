@@ -128,8 +128,10 @@ loads the compiled extension from `dist/extension/`.
 4. Add tests proportional to risk and type-check TypeScript. State, concurrency, persistence, and
    cross-context messages require failure and recovery coverage.
 5. Run the fast loop in [Commands and validation](#commands-and-validation). Focused checks satisfy
-   the minimum-verification table during iteration. Run full `npm run verify` once at the end of the
-   task, or when the user asks for it. Review the final status and diff.
+   the minimum-verification table during iteration. Finish an ordinary coding task, including
+   cloud-agent work, with `npm run verify:quick` and `QINGZHOU_PLAYWRIGHT_WORKERS` set to the
+   available core count. Reserve full `npm run verify` for packaging, releases, or when the user
+   asks for coverage gates. Review the final status and diff.
 6. Stage, commit, and push only when the task requires it or the user requests it. Publish or change
    tags only when the user requests it. Use reversible Git operations and preserve unrelated work.
    Author, trailer, and pull-request limits are in [Git and commits](#git-and-commits).
@@ -157,13 +159,16 @@ During implementation, never run full `npm run verify` on every change. Use this
    paths or suite command labels when a spec file list is the wrong selector.
 
 The table below is the minimum bar for the change. Focused checks from that table satisfy it during
-iteration, including the E2E, release, visual, or service rows when the change calls for them. Full
-`npm run verify` runs every unattended suite and the coverage gates. Run it once at the end of the
-task, or when the user asks for it. That run is the final gate.
+iteration, including the E2E, release, visual, or service rows when the change calls for them.
 
-For the final verify, and for any full browser run, set `QINGZHOU_PLAYWRIGHT_WORKERS` to the
-available core count (`$(nproc)` on Linux). The default worker count is
-`ceil(availableParallelism() / 3)`, capped at 4. An explicit value is clamped to 1-16.
+At the end of an ordinary coding task, including cloud-agent work, run `npm run verify:quick`.
+That script is `npm run typecheck && npm test -- --all` and omits `--coverage`. Set
+`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux) for that run and
+for any full browser run. The default worker count is `ceil(availableParallelism() / 3)`, capped
+at 4. An explicit value is clamped to 1-16.
+
+Reserve `npm run verify` for packaging, releases, and an explicit request for coverage gates. It
+runs the same type check and suites with `--coverage`.
 
 The runner stops at the first failing command. When a known baseline failure would stop the run
 before later suites finish, run each unfinished suite on its own (`npm test -- e2e`,
