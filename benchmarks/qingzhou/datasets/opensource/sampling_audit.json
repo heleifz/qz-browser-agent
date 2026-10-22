@@ -1,7 +1,7 @@
 {
   "seed": 20261023,
-  "revised_at_asia_shanghai": "2026-10-23T04:37:29+08:00",
-  "revision": "v0.2.3-medicare-httpbin-replace",
+  "revised_at_asia_shanghai": "2026-10-23T05:04:13+08:00",
+  "revision": "v0.2.4-shadowdom-slot-gold",
   "website_source": {
     "kind": "public_third_party_mirror",
     "files": "raw/Online_Mind2Web.public_mirror.json",
@@ -171,6 +171,19 @@
     {
       "id": "self:skill-books-first5",
       "reason": "v0.2.1: tighten create/reuse prompts — write SHORT Skill first, title+price only, forbid repeated load_skill (mitigate intermittent context_overflow)"
+    },
+    {
+      "id": "self:shadowdom-001",
+      "at": "2026-10-23T05:04:13+08:00",
+      "reason": "v0.2.3 gold required 'My default text' from <template> default slot, but both <my-paragraph> instances fill the slot so that default is not rendered. Agent correctly returned visible slotted text; gold was stale. Rewrote prompt+must_include to visible lines: \"Let's have some different text!\" + \"In a list!\".",
+      "from_must_include": [
+        "Let's have some different text!",
+        "My default text"
+      ],
+      "to_must_include": [
+        "Let's have some different text!",
+        "In a list!"
+      ]
     }
   ],
   "url_probe_asia_shanghai": "2026-10-23T02:49:00+08:00",

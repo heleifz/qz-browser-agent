@@ -1,8 +1,8 @@
 {
   "name": "qingzhou-eval-v0.1",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "created": "2026-10-23",
-  "revised": "2026-10-23T04:37:29+08:00",
+  "revised": "2026-10-23T05:04:13+08:00",
   "seed": 20261023,
   "policy": {
     "curated_target": "~30",
@@ -184,22 +184,23 @@
       "source": "self",
       "core_task": "research",
       "difficulty": "medium",
-      "prompt": "Open the shadow DOM page. Read both lines of text rendered inside shadow roots. Quote both lines exactly in your final answer, one per line. Do not invent text.",
+      "prompt": "Open the shadow DOM demo page. Read the visible text that appears inside the custom elements (shadow DOM + slots). Quote every distinct visible text line exactly in your final answer, one per line. Do not invent text. Note: template default slot text that is overridden by a filled slot is NOT visible.",
       "start_url": "https://the-internet.herokuapp.com/shadowdom",
       "judge": "rule",
       "timeout_s": 180,
       "tags": [
+        "difficulty:medium",
         "extraction",
         "shadow_dom",
-        "difficulty:medium"
+        "slot_override"
       ],
       "success_criteria": {
         "type": "must_include",
         "must_include": [
           "Let's have some different text!",
-          "My default text"
+          "In a list!"
         ],
-        "notes": "Shadow-root text; both lines required."
+        "notes": "Page (verified 2026-10-23): first <my-paragraph> shows slotted \"Let's have some different text!\"; second shows list items including \"In a list!\". Template default \"My default text\" is overridden and must NOT be required."
       },
       "locale": "en",
       "requires_login": false,
