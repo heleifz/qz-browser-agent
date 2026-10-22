@@ -1,0 +1,112 @@
+{
+  "provenance": {
+    "source_urls": [
+      "https://raw.githubusercontent.com/theredsix/abp-online-mind2web-results/HEAD/Online_Mind2Web.json",
+      "https://raw.githubusercontent.com/paper-submission-anoymous/webtactix/HEAD/webtactix/datasets/Online_Mind2Web.json"
+    ],
+    "sha256": "50d330ee9f347c5ae136e52421516590033b146df305ab091c5a36b199b14aa4",
+    "n_tasks": 300,
+    "note": "Public third-party mirrors of HF gated Online_Mind2Web.json (CC BY 4.0). Used only to recover website/reference_length/level when HF gated. Prefer official HF once access granted.",
+    "fetched_at_asia_shanghai": "2026-10-23T02:50:00+08:00"
+  },
+  "tasks": [
+    {
+      "task_id": "e24662008c3be5d56f986f232fcec447",
+      "confirmed_task": "Find the stock price for WWE over the last month.",
+      "website": "https://www.google.com/finance/",
+      "reference_length": 4,
+      "level": "easy"
+    },
+    {
+      "task_id": "b6d10e9bd19b4009a02dea0e98f4e1ae",
+      "confirmed_task": "Check the current standings for MLS on Fox Sports.",
+      "website": "https://www.foxsports.com/",
+      "reference_length": 4,
+      "level": "easy"
+    },
+    {
+      "task_id": "6ca20f1da01edeb49a7a42c816d8c6fe",
+      "confirmed_task": "Find the Eligibility to get the child benefit and How it works and how to claim",
+      "website": "https://www.gov.uk/",
+      "reference_length": 8,
+      "level": "medium"
+    },
+    {
+      "task_id": "5e1b8254c123c80178cc28e0afdb14f0_110325",
+      "confirmed_task": "Find a help page about “how presale works” on ticketmaster.",
+      "website": "https://ticketmaster.com/",
+      "reference_length": 4,
+      "level": "easy"
+    },
+    {
+      "task_id": "bc2ce7f206045dd2d322e5695a947219",
+      "confirmed_task": "Estimate the federal income tax I would owe on $158,500 of taxable income in ZIP code 97007, filing as single.",
+      "website": "https://smartasset.com/",
+      "reference_length": 6,
+      "level": "medium"
+    },
+    {
+      "task_id": "502e864440283214e0180645015f568b_110325",
+      "confirmed_task": "Check permit availability for a group of 4 in Brooks Camp, Katmai National Park for next Saturday.",
+      "website": "https://www.recreation.gov/",
+      "reference_length": 8,
+      "level": "medium"
+    },
+    {
+      "task_id": "3adeea7627f4343069f38adae40f73d0_110325",
+      "confirmed_task": "Within 25 Miles of 96817, find a nursing home that accepts medicare.",
+      "website": "https://medicare.gov",
+      "reference_length": 8,
+      "level": "medium"
+    },
+    {
+      "task_id": "c698ff3fc0f6cbce39947c597ab5749b_121425",
+      "confirmed_task": "Help me find a list of school activity events in New York for this month.",
+      "website": "https://www.eventbrite.com/",
+      "reference_length": 8,
+      "level": "medium"
+    },
+    {
+      "task_id": "eb2db4b769c145dbe6ba4f74f3e0de98",
+      "confirmed_task": "Find an energetic hairless dog with medium barking.",
+      "website": "https://www.akc.org/",
+      "reference_length": 10,
+      "level": "medium"
+    },
+    {
+      "task_id": "f2be37a9a60fbc25b6b11cf622d17352_110325",
+      "confirmed_task": "Find obedience trials in the state of New York in the next month.",
+      "website": "https://www.akc.org/",
+      "reference_length": 14,
+      "level": "hard"
+    },
+    {
+      "task_id": "d71be72aa25c3eab8eea47a0e60382e2",
+      "confirmed_task": "Find technical specs for the latest Macbook Air on Apple.",
+      "website": "https://www.apple.com/",
+      "reference_length": 4,
+      "level": "easy"
+    },
+    {
+      "task_id": "bf3b311cc8dce16d3de844f4b5875dfd",
+      "confirmed_task": "Compare Apple watches and  learn more about the ultra version on apple.",
+      "website": "https://www.apple.com/",
+      "reference_length": 4,
+      "level": "easy"
+    },
+    {
+      "task_id": "b4aa7315e31dfcdc52baf7771be260c9",
+      "confirmed_task": "Find the HGX H100 driver for Ubuntu 22.04 on AMD64 CPU.",
+      "website": "https://www.nvidia.com/",
+      "reference_length": 11,
+      "level": "hard"
+    },
+    {
+      "task_id": "71f8de1834599fba443f40dbbfab8edd",
+      "confirmed_task": "Search for papers related to reinforcement learning under the topics of computer science and mathematics on arxiv, with recent submission dates between September 2024 and January 2025.",
+      "website": "https://arxiv.org/",
+      "reference_length": 11,
+      "level": "hard"
+    }
+  ]
+}

@@ -1,9 +1,211 @@
 {
   "seed": 20261023,
-  "om_seed_offset": 20261024,
+  "revised_at_asia_shanghai": "2026-10-23T02:55:00+08:00",
+  "revision": "v0.1.1-full-audit",
+  "website_source": {
+    "kind": "public_third_party_mirror",
+    "files": "raw/Online_Mind2Web.public_mirror.json",
+    "meta": "raw/Online_Mind2Web.public_mirror.meta.json",
+    "note": "HF osunlp/Online-Mind2Web still gated; mirror used only for website/reference_length/level join. Prefer official HF when authorized."
+  },
+  "drops": [
+    {
+      "id": "om2w:20a460a8fe1971b84411c5b1e6ac4186",
+      "reason": "stubhub.com HTTP 403 from eval egress; events ephemeral"
+    },
+    {
+      "id": "om2w:23204728192da9f73197a613d9681c18",
+      "reason": "mayoclinic.org HTTP 403"
+    },
+    {
+      "id": "om2w:9586827ad04ee2362f4f0076bf0f0468",
+      "reason": "drugs.com HTTP 403"
+    },
+    {
+      "id": "om2w:bfa2de159be6978acf2702be31a2eeeb",
+      "reason": "united.com unreachable (000); interactive map fragile"
+    },
+    {
+      "id": "om2w:48c73f3f53e2611c4a1052457c1033db",
+      "reason": "new.mta.info flaky 403; EIS PDF long-horizon fragile for gate"
+    },
+    {
+      "id": "om2w:636b07af4dd97c1793733db1fd1b90b8",
+      "reason": "jcpenney.com unreachable (000)"
+    },
+    {
+      "id": "om2w:271b36efd4346721b5542488ff997042",
+      "reason": "bestbuy.com unreachable (000); open-box inventory ephemeral"
+    },
+    {
+      "id": "om2w:a7a73c8fa75441fc76df9746c327bdd6",
+      "reason": "thumbtack quotes highly location/price volatile; replaced by structured compare/research"
+    },
+    {
+      "id": "self:parallel-smoke-001",
+      "reason": "Replaced by harder form/batch/compare coverage; parallel is product infra smoke not a core-task pillar"
+    }
+  ],
+  "updates": [
+    {
+      "id": "om2w:5e1b8254c123c80178cc28e0afdb14f0",
+      "to": "om2w:5e1b8254c123c80178cc28e0afdb14f0_110325",
+      "reason": "OM2W refresh in mirror; updated Ticketmaster help"
+    },
+    {
+      "id": "om2w:502e864440283214e0180645015f568b",
+      "to": "om2w:502e864440283214e0180645015f568b_110325",
+      "reason": "OM2W refresh in mirror; recreation.gov; date relativized in OM update"
+    },
+    {
+      "id": "om2w:3adeea7627f4343069f38adae40f73d0",
+      "to": "om2w:3adeea7627f4343069f38adae40f73d0_110325",
+      "reason": "OM2W refresh in mirror; medicare.gov filters"
+    },
+    {
+      "id": "om2w:c698ff3fc0f6cbce39947c597ab5749b",
+      "to": "om2w:c698ff3fc0f6cbce39947c597ab5749b_121425",
+      "reason": "OM2W refresh in mirror; eventbrite; updated school events"
+    },
+    {
+      "id": "om2w:f2be37a9a60fbc25b6b11cf622d17352",
+      "to": "om2w:f2be37a9a60fbc25b6b11cf622d17352_110325",
+      "reason": "OM2W refresh in mirror; akc obedience; updated next month"
+    }
+  ],
+  "adds": [
+    {
+      "id": "om2w:d71be72aa25c3eab8eea47a0e60382e2",
+      "reason": "easy replace stubhub; apple.com MacBook Air specs",
+      "prompt": "Find technical specs for the latest Macbook Air on Apple."
+    },
+    {
+      "id": "om2w:bf3b311cc8dce16d3de844f4b5875dfd",
+      "reason": "easy/medium compare Apple Watch vs Ultra; fills compare gap",
+      "prompt": "Compare Apple watches and  learn more about the ultra version on apple."
+    },
+    {
+      "id": "om2w:b4aa7315e31dfcdc52baf7771be260c9",
+      "reason": "hard replace bestbuy; nvidia driver matrix",
+      "prompt": "Find the HGX H100 driver for Ubuntu 22.04 on AMD64 CPU."
+    },
+    {
+      "id": "om2w:71f8de1834599fba443f40dbbfab8edd",
+      "reason": "hard replace mayo/drugs; arxiv topic+date filter (range is historical, not rolling yesterday)",
+      "prompt": "Search for papers related to reinforcement learning under the topics of computer science and mathematics on arxiv, with recent submission dates between September 2024 and January 2025."
+    },
+    {
+      "id": "wv:Apple--2",
+      "reason": "Fill compare core_task; Apple.com reachable"
+    },
+    {
+      "id": "wv:GitHub--29",
+      "reason": "Fill compare core_task; pricing page stable"
+    },
+    {
+      "id": "self:form-inputs-hard-001",
+      "reason": "Hard multi-page form_fill gradient"
+    },
+    {
+      "id": "self:batch-pages-001",
+      "reason": "Hard batch_collect with pagination + structured columns"
+    },
+    {
+      "id": "self:compare-multi-001",
+      "reason": "True multi-source compare (was missing); hard research/compare"
+    }
+  ],
+  "rewrites": [
+    {
+      "id": "wv:ArXiv--23",
+      "reason": "Original asked count for \"yesterday\" — non-reproducible gold; rewritten to explicit live-count protocol.",
+      "from": "Determine how many articles with the keyword 'autonomous vehicles' were published in the 'Electrical Engineering and Systems Science' section of ArXiv yesterday.",
+      "to": "On arXiv, open the Electrical Engineering and Systems Science section search, query keyword 'autonomous vehicles', set the date filter or sort so you can report how many results show for submissions in the most recent complete UTC calendar day that has an index (use arXiv's own date UI). Report the count and the query URL. If the site has no per-day count, report the first-page result count for the keyword under eess and state that limitation."
+    },
+    {
+      "id": "wv:Google Search--2",
+      "reason": "Original \"latest news title\" is ephemeral; rewritten to stable entity facts via search.",
+      "from": "Search for the latest news title about the NBA team the Los Angeles Lakers.",
+      "to": "Using Google Search starting at google.com, find the official NBA team page or Wikipedia page for the Los Angeles Lakers and report: (1) the page title, (2) the official team website domain if shown, (3) the arena name listed on that page."
+    },
+    {
+      "id": "wv:ESPN--22",
+      "reason": "Original \"past week\" with no tolerance; rewritten to 14-day preference + top-three fallback.",
+      "from": "Find the latest Team transactions in the NBA within the past week.",
+      "to": "On ESPN, open NBA and find the Team Transactions (or Transactions) listing. Report three transactions shown on the page with team name and a short description. Prefer items dated within the last 14 days if the UI shows dates; otherwise report the top three listed and note the date labels."
+    },
+    {
+      "id": "self:shadowdom-001",
+      "reason": "Added exact must_include gold strings for objective rule judge"
+    },
+    {
+      "id": "self:skill-reuse-001a/b",
+      "reason": "Tightened success_criteria so Skill reuse is observable"
+    }
+  ],
+  "url_probe_asia_shanghai": "2026-10-23T02:49:00+08:00",
+  "url_probe_notes": "curl from box egress; 403/000 treated as unreliable for gate. Browser may still open some; we still replaced for gate stability.",
+  "final_counts": {
+    "total": 32,
+    "webvoyager": 8,
+    "online_mind2web": 14,
+    "self": 10,
+    "ready": 32,
+    "partial_or_pending": 0
+  },
+  "by_core_task": {
+    "research": 19,
+    "compare": 4,
+    "form_fill": 5,
+    "batch_collect": 2,
+    "skill_reuse": 2
+  },
+  "by_difficulty": {
+    "easy": 10,
+    "medium": 14,
+    "hard": 8
+  },
+  "picked_om2w_ids": [
+    "e24662008c3be5d56f986f232fcec447",
+    "b6d10e9bd19b4009a02dea0e98f4e1ae",
+    "6ca20f1da01edeb49a7a42c816d8c6fe",
+    "5e1b8254c123c80178cc28e0afdb14f0_110325",
+    "bc2ce7f206045dd2d322e5695a947219",
+    "502e864440283214e0180645015f568b_110325",
+    "3adeea7627f4343069f38adae40f73d0_110325",
+    "c698ff3fc0f6cbce39947c597ab5749b_121425",
+    "eb2db4b769c145dbe6ba4f74f3e0de98",
+    "f2be37a9a60fbc25b6b11cf622d17352_110325",
+    "d71be72aa25c3eab8eea47a0e60382e2",
+    "bf3b311cc8dce16d3de844f4b5875dfd",
+    "b4aa7315e31dfcdc52baf7771be260c9",
+    "71f8de1834599fba443f40dbbfab8edd"
+  ],
+  "picked_wv_ids": [
+    "GitHub--23",
+    "ArXiv--23",
+    "Google Search--2",
+    "Amazon--4",
+    "Coursera--29",
+    "ESPN--22",
+    "Apple--2",
+    "GitHub--29"
+  ],
+  "picked_self_ids": [
+    "self:form-login-001",
+    "self:form-controls-001",
+    "self:form-inputs-hard-001",
+    "self:iframe-001",
+    "self:shadowdom-001",
+    "self:batch-books-001",
+    "self:batch-pages-001",
+    "self:skill-reuse-001a",
+    "self:skill-reuse-001b",
+    "self:compare-multi-001"
+  ],
   "webvoyager": {
     "source_file": "raw/webvoyager.jsonl",
-    "skipped_sites": [
+    "skipped_sites_policy": [
       "Booking",
       "Google Flights",
       "Google Map"
@@ -14,61 +216,9 @@
       "Google Search--2",
       "Amazon--4",
       "Coursera--29",
-      "ESPN--22"
-    ],
-    "picked_sites": [
-      "GitHub",
-      "ArXiv",
-      "Google Search",
-      "Amazon",
-      "Coursera",
-      "ESPN"
-    ]
-  },
-  "online_mind2web": {
-    "source_file": "raw/human_label.json",
-    "hf_dataset": "osunlp/Online-Mind2Web",
-    "hf_status": "gated_401_without_auth",
-    "difficulty_proxy": "fraction of agents with human_label==1 among 0/1 labels",
-    "quota": {
-      "easy": 7,
-      "medium": 7,
-      "hard": 4
-    },
-    "picked_ids": [
-      "20a460a8fe1971b84411c5b1e6ac4186",
-      "e24662008c3be5d56f986f232fcec447",
-      "b6d10e9bd19b4009a02dea0e98f4e1ae",
-      "23204728192da9f73197a613d9681c18",
-      "9586827ad04ee2362f4f0076bf0f0468",
-      "6ca20f1da01edeb49a7a42c816d8c6fe",
-      "5e1b8254c123c80178cc28e0afdb14f0",
-      "bfa2de159be6978acf2702be31a2eeeb",
-      "bc2ce7f206045dd2d322e5695a947219",
-      "502e864440283214e0180645015f568b",
-      "48c73f3f53e2611c4a1052457c1033db",
-      "3adeea7627f4343069f38adae40f73d0",
-      "a7a73c8fa75441fc76df9746c327bdd6",
-      "c698ff3fc0f6cbce39947c597ab5749b",
-      "eb2db4b769c145dbe6ba4f74f3e0de98",
-      "636b07af4dd97c1793733db1fd1b90b8",
-      "271b36efd4346721b5542488ff997042",
-      "f2be37a9a60fbc25b6b11cf622d17352"
-    ],
-    "website_inferred": 0,
-    "website_missing": 18
-  },
-  "self": {
-    "count": 8,
-    "ids": [
-      "self:form-login-001",
-      "self:form-controls-001",
-      "self:iframe-001",
-      "self:shadowdom-001",
-      "self:batch-books-001",
-      "self:skill-reuse-001a",
-      "self:skill-reuse-001b",
-      "self:parallel-smoke-001"
+      "ESPN--22",
+      "Apple--2",
+      "GitHub--29"
     ]
   }
 }
