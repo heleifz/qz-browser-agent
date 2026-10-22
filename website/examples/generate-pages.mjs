@@ -429,18 +429,27 @@ function adaptSessionCss(panel, shell) {
   return `${adaptedPanel}\n${adaptedShell}\n`;
 }
 
+function replaceRequired(source, from, to) {
+  const found = source.split(from).length - 1;
+  if (found !== 1) {
+    throw new Error(`export runtime has ${found} occurrences of ${JSON.stringify(from)}; expected 1. The extension export runtime changed. Update adaptSessionScript, then regenerate the example pages.`);
+  }
+  return source.replace(from, to);
+}
+
 function adaptSessionScript(source) {
   source = source.trim();
   if (!source.startsWith("(()=>{") || !source.endsWith("})();")) throw new Error("unexpected export runtime");
-  const body = source
-    .slice("(()=>{".length, -"})();".length)
-    .replace('document.getElementById("qingzhou-export-messages")', 'root.getElementById("qingzhou-export-messages")')
-    .replace("document.body.appendChild", "root.appendChild")
-    .replace('document.addEventListener("click"', 'root.addEventListener("click"');
+  let body = source.slice("(()=>{".length, -"})();".length);
+  body = replaceRequired(body, 'document.getElementById("qingzhou-export-messages")', 'root.getElementById("qingzhou-export-messages")');
+  body = replaceRequired(body, "document.body.appendChild", "root.appendChild");
+  body = replaceRequired(body, 'document.addEventListener("click"', 'root.addEventListener("click"');
   if (body.includes("document.body") || body.includes('document.addEventListener("click"') || body.includes('document.getElementById("qingzhou-export-messages")')) {
-    throw new Error("export runtime was not scoped to the shadow root");
+    throw new Error("export runtime was not scoped to the shadow root. The extension export runtime changed. Update adaptSessionScript, then regenerate the example pages.");
   }
-  if (!body.includes('document.getElementById("qingzhou-session-cta")')) throw new Error("import placeholder lookup was removed");
+  if (!body.includes('document.getElementById("qingzhou-session-cta")')) {
+    throw new Error('export runtime is missing document.getElementById("qingzhou-session-cta"). The extension export runtime changed. Update adaptSessionScript, then regenerate the example pages.');
+  }
   return `export function mountSessionView(root) {${body}}\n`;
 }
 
