@@ -1,5 +1,14 @@
 # 状态与卡点（2026-10-23，v0.2.5；首轮全量基线已完成）
 
+## v0.3 抽样试跑（2026-10-22，5 题，Grok 4.7 @512k，-j1，--usage-poll 5）
+
+- **5/5 首跑通过**，单题 42–86s，合计成本 $0.16（下界）～$4.75（上界）。详见 [`baselines/2026-10-22-v0.3-pilot.md`](baselines/2026-10-22-v0.3-pilot.md)。
+- 转 ready：research-nobel-advisor-chain、compare-mortgage-two-calculators、form-demoqa-practice、batch-webscraper-load-more、skill-pkg-releases-cross-registry。其余 20 题仍为 draft（还没跑，不是因为失败）。
+- 金标零修改，DEMOQA modal 格式已实测确认。预算校准两处（表单类 35→45），难度下调两题（→medium）。
+- 轮询：不加 `--wait` 的 create 能拿到会话 ID；但运行中 contextUsage 为空，已改为采样 inputTokensEstimate 做中估。
+- 风险：区分度仍不足（agent 常用 run_script/JSON API 绕过 UI）。
+- Skill 差集：跑前 5 个 `qzb-*-bef4a7`，跑后只新增 `qzb-pkg-releases-e78736`（还在 product-expert 里，CLI 删不掉）。
+
 ## v0.3 草案（2026-10-22，未跑测）
 
 - 25 题 draft：research 6 · compare 6 · form_fill 5 · batch_collect 4 · skill_reuse 4；hard 20 / medium 5；自建 20 + 开源对照 5（OM2W 4、WV 1）；全部 rule 判（5 题带人工抽查）。

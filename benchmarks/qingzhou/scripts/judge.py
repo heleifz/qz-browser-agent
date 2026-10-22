@@ -123,8 +123,10 @@ def efficiency(task: dict, res: dict, tdir: Path) -> dict:
 def usage_summary(res: dict) -> dict:
     """Token/cost per task. Prefer cumulative samples (run_eval --usage-poll); else last-call only."""
     tot = {"prompt_tokens_last": 0, "completion_tokens_last": 0, "cost_usd_last_calls": 0.0,
-           "cost_usd_cum_lower": None, "cost_usd_cum_upper_est": None, "llm_calls_sampled": 0}
-    lower = upper = 0.0
+           "cost_usd_cum_lower": None, "cost_usd_cum_upper_est": None, "cost_usd_cum_mid_est": None,
+           "prompt_tokens_cum_est": None, "llm_calls_sampled": 0}
+    lower = upper = mid = 0.0
+    ptok = 0
     have_cum = False
     for st in res.get("stages") or []:
         u = st.get("usage") or {}
@@ -136,9 +138,12 @@ def usage_summary(res: dict) -> dict:
             have_cum = True
             lower += c.get("cost_usd_lower") or 0
             upper += c.get("cost_usd_upper_est") or 0
+            mid += c.get("cost_usd_mid_est") or 0
+            ptok += c.get("prompt_tokens_cum_est") or 0
             tot["llm_calls_sampled"] += c.get("calls_sampled") or 0
     if have_cum:
         tot["cost_usd_cum_lower"], tot["cost_usd_cum_upper_est"] = round(lower, 4), round(upper, 4)
+        tot["cost_usd_cum_mid_est"], tot["prompt_tokens_cum_est"] = round(mid, 4), ptok
     tot["cost_usd_last_calls"] = round(tot["cost_usd_last_calls"], 4)
     return tot
 
@@ -154,7 +159,7 @@ def skill_referenced(name: str, answer: str, transcript: list) -> bool:
         return True
     for m in transcript:
         blob = json.dumps(m, ensure_ascii=False).lower()
-        if m.get("type") == "tool" and (n in blob or ("skill" in (m.get("name") or "").lower() and n.split("-")[1] in blob)):
+        if m.get("type") == "tool" and (n in blob or ("skill" in (m.get("name") or "").lower() and (n.split("-")[1] if "-" in n else n) in blob)):
             return True
     return False
 
@@ -204,9 +209,14 @@ def judge_task(task: dict, res: dict, tdir: Path):
                     saved_named_base |= base in (str(m.get("args") or "") + str(m.get("result") or "")).lower()
         # v0.3: a lone *unrelated* new skill no longer counts (it may belong to a concurrent task).
         other = (not exists) and bool(other_names or (tool_saved and (not new or saved_named_base)))
+        # v0.3 (serialized skill tasks, -j1): the before/after `skills list` diff is authoritative —
+        # any new/updated non-builtin Skill counts as created, regardless of its name.
+        diff_created = bool(new) and bool(task.get("tags") and "v0.3" in task["tags"])
+        other = other or ((not exists) and diff_created)
         ans, tr = full_text(tdir / "stage1_reuse.json") if (tdir / "stage1_reuse.json").exists() else ("", [])
         gold_ok, det = check_text(crit["reuse"], ans)
-        ref = skill_referenced(name, ans, tr) or any(k.lower() in (ans or "").lower() for k in new)
+        ref = skill_referenced(name, ans, tr) or any(k.lower() in (ans or "").lower() for k in new) \
+            or any(skill_referenced(k, ans, tr) for k in new)
         out["detail"] = {"create_stage_status": created.get("status"), "skill_name": name, "skills_new_or_updated": new, "create_ok": exists or other,
                          "create_note": ("saved under a different/existing name: " + ",".join(other_names or new)) if other and (other_names or new) else ("create_skill reported saved but index shows no change" if other else ""),
                          "create_tool_saved": tool_saved, "reuse_gold_ok": gold_ok,
@@ -290,6 +300,7 @@ def main():
     if cum:
         cost["cost_usd_cum_lower_sum"] = round(sum(u["cost_usd_cum_lower"] for u in cum), 4)
         cost["cost_usd_cum_upper_est_sum"] = round(sum(u["cost_usd_cum_upper_est"] for u in cum), 4)
+        cost["cost_usd_cum_mid_est_sum"] = round(sum(u.get("cost_usd_cum_mid_est") or 0 for u in cum), 4)
         cost["tasks_with_cum_usage"] = len(cum)
     effs = [j["efficiency"] for j in judgments if j.get("efficiency")]
     if effs:

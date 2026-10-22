@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.0-draft"
+VERSION = "0.3.1-draft"
 VERIFIED = "2026-10-22"
 OM_LIC = "CC BY 4.0 Online-Mind2Web; website from public mirror (datasets/opensource/om2w_website_join.json)"
 WV_LIC = "Apache-2.0 (MinorJerry/WebVoyager)"
@@ -515,6 +515,37 @@ wv("Apple--2", "compare", "medium",
    budget={"max_tool_calls": 20, "max_elapsed_s": 240})
 
 
+# ---------------------------------------------------------------- pilot (2026-10-22) → ready
+PILOT_RUNS = {
+    "v03:form-demoqa-practice": "20261022-v03-pilot-demoqa",
+    "v03:batch-webscraper-load-more": "20261022-v03-pilot-loadmore",
+    "v03:research-nobel-advisor-chain": "20261022-v03-pilot-nobel",
+    "v03:compare-mortgage-two-calculators": "20261022-v03-pilot-mortgage",
+    "v03:skill-pkg-releases-cross-registry": "20261022-v03-pilot-skillpkg",
+}
+# Calibration from the pilot (see baselines/2026-10-22-v0.3-pilot.md):
+CALIBRATE = {
+    # two-site / many-field forms legitimately need ~36 calls; 35 flagged both as over budget
+    "v03:form-demoqa-practice": {"budget": {"max_tool_calls": 45}},
+    "v03:compare-mortgage-two-calculators": {"budget": {"max_tool_calls": 45}},
+    # solved in 43 s / 8 calls (one run_script clicks More until done) and 42 s / 12 calls → not hard
+    "v03:batch-webscraper-load-more": {"difficulty": "medium"},
+    "v03:skill-pkg-releases-cross-registry": {"difficulty": "medium"},
+}
+for _t in TASKS:
+    c = CALIBRATE.get(_t["id"])
+    if c:
+        if "budget" in c:
+            _t["budget"].update(c["budget"])
+        if "difficulty" in c:
+            _t["tags"] = [x for x in _t["tags"] if not x.startswith("difficulty:")] + [f"difficulty:{c['difficulty']}"]
+            _t["difficulty"] = c["difficulty"]
+        _t["calibrated"] = {k: v for k, v in c.items()}
+    if _t["id"] in PILOT_RUNS:
+        _t["status"] = "ready"
+        _t["pilot_run"] = PILOT_RUNS[_t["id"]]
+
+
 def main():
     out = ROOT / "datasets" / "v0.3"
     out.mkdir(parents=True, exist_ok=True)
@@ -532,7 +563,7 @@ def main():
         "supersedes_for_capability_score": "0.2.5 (kept as regression/smoke set)",
         "policy": {"parallel_max": 3, "skill_tasks_serialized": True, "single_model": True, "no_webarena": True,
                    "requires_login": False, "budgets_are_soft": True},
-        "counts": {"total": len(TASKS), "by_core_task": dict(core), "by_difficulty": dict(diff), "by_source": dict(src),
+        "counts": {"total": len(TASKS), "by_status": dict(Counter(t["status"] for t in TASKS)), "by_core_task": dict(core), "by_difficulty": dict(diff), "by_source": dict(src),
                    "by_judge": dict(Counter(t["judge"] for t in TASKS)),
                    "zh_prompts": sum(1 for t in TASKS if t["locale"] == "zh-CN"),
                    "temporal": sum(1 for t in TASKS if t.get("temporal"))},

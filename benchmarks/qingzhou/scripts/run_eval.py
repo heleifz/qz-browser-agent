@@ -15,9 +15,10 @@ Concurrency is clamped to <= 3. Judging is a separate step (scripts/judge.py).
 v0.3 additions (written 2026-10-22, NOT yet exercised against a live browser):
   --files datasets/v0.3/qingzhou_v03_draft.jsonl --include-not-ready   run the draft set
   --usage-poll 5   create without --wait, then `watch` while polling `show` every
-                   5 s; distinct contextUsage samples are summed into
-                   stage.usage_cum (lower bound of cumulative cost) plus an
-                   upper estimate (last-call cost x LLM turns). Off by default.
+                   5 s. Verified on the 2026-10-22 pilot: session id is returned,
+                   but qz leaves contextUsage empty until the turn ends, so the
+                   poller samples runtime.inputTokensEstimate + transcriptTotal and
+                   stage.usage_cum reports lower / mid_est / upper_est. Off by default.
   Skill (two-stage) tasks are serialized behind one lock even with -j 3, so
   `skills list` diffs cannot pick up another task's Skill.
 """
@@ -142,6 +143,15 @@ def _usage_of(shown):
     return ((snap.get("state") or {}).get("runtime") or {}).get("contextUsage") or {}
 
 
+def _progress_of(shown):
+    """Mid-run, qz leaves contextUsage empty (verified 2026-10-22) but exposes a context-size
+    estimate and the transcript length; sample those instead."""
+    snap = ((shown.get("data") or {}).get("result")) or {}
+    rt = ((snap.get("state") or {}).get("runtime") or {})
+    return {"t": round(time.time(), 1), "input_tokens_est": rt.get("inputTokensEstimate"),
+            "transcript_total": snap.get("transcriptTotal"), "status": snap.get("status")}
+
+
 def _create_polled(qz: QZ, prompt: str, timeout_s: int, title: str, poll_s: float):
     """create (no wait) -> watch in foreground, poll `show` in background for usage samples."""
     created = qz.run(["create", "-", "--title", title], timeout=120, stdin=prompt)
@@ -154,10 +164,14 @@ def _create_polled(qz: QZ, prompt: str, timeout_s: int, title: str, poll_s: floa
     def poller():
         last = None
         while not stop.wait(poll_s):
-            u = _usage_of(qz.run(["show", sid], timeout=60))
+            shown = qz.run(["show", sid], timeout=60)
+            u = _usage_of(shown)
+            pr = _progress_of(shown)
+            if pr.get("input_tokens_est") is not None:
+                samples.append({"kind": "progress", **pr})
             key = (u.get("prompt_tokens"), u.get("completion_tokens"), u.get("cost_in_usd_ticks"))
             if u and key != last:
-                samples.append({k: u.get(k) for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cost_in_usd_ticks"]})
+                samples.append({"kind": "usage", **{k: u.get(k) for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cost_in_usd_ticks"]}})
                 last = key
 
     th = threading.Thread(target=poller, daemon=True)
@@ -170,18 +184,35 @@ def _create_polled(qz: QZ, prompt: str, timeout_s: int, title: str, poll_s: floa
 
 
 def _usage_cum(samples, final_usage, transcript):
-    seq = list(samples)
+    prog = [x for x in samples if x.get("kind") == "progress"]
+    seq = [x for x in samples if x.get("kind") == "usage"]
     fk = (final_usage.get("prompt_tokens"), final_usage.get("completion_tokens"), final_usage.get("cost_in_usd_ticks"))
     if final_usage and (not seq or (seq[-1].get("prompt_tokens"), seq[-1].get("completion_tokens"), seq[-1].get("cost_in_usd_ticks")) != fk):
         seq.append(dict(final_usage))
     lower = sum((x.get("cost_in_usd_ticks") or 0) for x in seq) / 1e10
     turns = sum(1 for m in transcript or [] if m.get("type") in ("assistant", "tool"))  # >= LLM calls
     last_cost = (final_usage.get("cost_in_usd_ticks") or 0) / 1e10
-    return {"calls_sampled": len(seq), "llm_turns_est": turns,
+    # Integrate the context-size trajectory: each new transcript entry ~ one LLM call made at
+    # (roughly) the sampled context size. Price per prompt token taken from the final call.
+    est_prompt = 0
+    prev_n = 0
+    for x in prog:
+        n = x.get("transcript_total") or 0
+        est_prompt += max(0, n - prev_n) * (x.get("input_tokens_est") or 0)
+        prev_n = max(prev_n, n)
+    est_prompt += max(0, len(transcript or []) - prev_n) * (final_usage.get("prompt_tokens") or 0)
+    ppt = ((final_usage.get("cost_in_usd_ticks") or 0) / 1e10) / (final_usage.get("prompt_tokens") or 1)
+    cost_mid = est_prompt * ppt
+    upper_naive = max(lower, last_cost * turns)
+    cost_mid = min(max(cost_mid, lower), upper_naive)  # mid-run estimates can overshoot; clamp into [lower, upper]
+    return {"calls_sampled": len(seq), "llm_turns_est": turns, "progress_samples": len(prog),
+            "prompt_tokens_cum_est": est_prompt, "cost_usd_mid_est": round(cost_mid, 4),
             "prompt_tokens_sum_sampled": sum((x.get("prompt_tokens") or 0) for x in seq),
             "completion_tokens_sum_sampled": sum((x.get("completion_tokens") or 0) for x in seq),
-            "cost_usd_lower": round(lower, 4), "cost_usd_upper_est": round(max(lower, last_cost * turns), 4),
-            "method": "poll show; distinct contextUsage samples summed (misses calls between polls)"}
+            "cost_usd_lower": round(lower, 4), "cost_usd_upper_est": round(upper_naive, 4),
+            "method": ("lower = sum of distinct contextUsage samples (qz only fills contextUsage at the end, so usually = last call); "
+                       "mid = integral of mid-run inputTokensEstimate x transcript growth x last-call price, clamped; "
+                       "upper = last-call cost x (assistant+tool entries)")}
 
 
 def run_one_prompt(qz: QZ, prompt: str, timeout_s: int, title: str, usage_poll: float = 0):

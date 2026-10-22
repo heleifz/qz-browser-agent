@@ -1,0 +1,112 @@
+{
+ "rows": [
+  {
+   "id": "v03:research-nobel-advisor-chain",
+   "run": "20261022-v03-pilot-nobel",
+   "core": "research",
+   "verdict": "pass",
+   "elapsed_s": 60.74,
+   "tool_calls": 23,
+   "screenshots": 0,
+   "compacts": 0,
+   "over_budget": [],
+   "cost_lower": 0.0257,
+   "cost_mid": null,
+   "cost_upper": 0.8483,
+   "prompt_tokens_last": 47089,
+   "cost_mid_note": "run before mid-run progress sampling was added"
+  },
+  {
+   "id": "v03:compare-mortgage-two-calculators",
+   "run": "20261022-v03-pilot-mortgage",
+   "core": "compare",
+   "verdict": "pass",
+   "elapsed_s": 86.32,
+   "tool_calls": 36,
+   "screenshots": 0,
+   "compacts": 0,
+   "over_budget": [],
+   "cost_lower": 0.0414,
+   "cost_mid": 1.6495,
+   "cost_upper": 1.8644,
+   "prompt_tokens_last": 70428
+  },
+  {
+   "id": "v03:form-demoqa-practice",
+   "run": "20261022-v03-pilot-demoqa",
+   "core": "form_fill",
+   "verdict": "pass",
+   "elapsed_s": 72.1,
+   "tool_calls": 36,
+   "screenshots": 0,
+   "compacts": 0,
+   "over_budget": [],
+   "cost_lower": 0.0268,
+   "cost_mid": null,
+   "cost_upper": 1.2876,
+   "prompt_tokens_last": 49335,
+   "cost_mid_note": "run before mid-run progress sampling was added"
+  },
+  {
+   "id": "v03:batch-webscraper-load-more",
+   "run": "20261022-v03-pilot-loadmore",
+   "core": "batch_collect",
+   "verdict": "pass",
+   "elapsed_s": 43.37,
+   "tool_calls": 8,
+   "screenshots": 0,
+   "compacts": 0,
+   "over_budget": [],
+   "cost_lower": 0.0189,
+   "cost_mid": null,
+   "cost_upper": 0.2268,
+   "prompt_tokens_last": 35597,
+   "cost_mid_note": "run before mid-run progress sampling was added"
+  },
+  {
+   "id": "v03:skill-pkg-releases-cross-registry",
+   "run": "20261022-v03-pilot-skillpkg",
+   "core": "skill_reuse",
+   "verdict": "pass",
+   "elapsed_s": 42.12,
+   "tool_calls": 12,
+   "screenshots": 0,
+   "compacts": 0,
+   "over_budget": [],
+   "cost_lower": 0.043,
+   "cost_mid": 0.5272,
+   "cost_upper": 0.5272,
+   "prompt_tokens_last": 74856,
+   "cost_mid_note": "post-hoc clamp to upper (per stage 0.393+0.134)"
+  }
+ ],
+ "totals": {
+  "pass": 5,
+  "total": 5,
+  "elapsed_s_sum": 304.65,
+  "cost_usd_lower_sum": 0.1558,
+  "cost_usd_upper_est_sum": 4.7543
+ },
+ "meta": {
+  "dataset_version": "0.3.1-draft",
+  "client": "product-expert (0e2be1ce-94dc-4fd3-9454-22ccc922b999)",
+  "model": "grok-4.7",
+  "contextWindow": 512000,
+  "concurrency": 1,
+  "usage_poll_s": 5,
+  "date": "2026-10-22 19:23–19:31 America/New_York",
+  "git_head_before": "4f141a4",
+  "skill_diff": {
+   "before": [
+    "qzb-author-bio-bef4a7",
+    "qzb-books-first5-bef4a7",
+    "qzb-cat-cheapest-bef4a7",
+    "qzb-login-check-bef4a7",
+    "qzb-tag-quotes-bef4a7"
+   ],
+   "new_after": [
+    "qzb-pkg-releases-e78736"
+   ]
+  }
+ }
+}
