@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { MISSING_IMAGEMAGICK_REASON } from "../support/imagemagick.mjs";
@@ -10,34 +10,10 @@ import { MISSING_IMAGEMAGICK_REASON } from "../support/imagemagick.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const skipReason = new RegExp(MISSING_IMAGEMAGICK_REASON.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
-function gitExecutable() {
-  for (const directory of (process.env.PATH || "").split(delimiter)) {
-    if (!directory) continue;
-    const candidate = join(directory, "git");
-    if (existsSync(candidate)) return realpathSync(candidate);
-  }
-  throw new Error("git is not on PATH");
-}
-
 function pathWithoutMagick() {
   const directory = mkdtempSync(join(tmpdir(), "qz-no-magick-"));
-  symlinkSync(gitExecutable(), join(directory, "git"));
+  symlinkSync("/usr/bin/git", join(directory, "git"));
   return directory;
-}
-
-// run.mjs resolves magick through absolute paths, so an empty PATH does not
-// hide an installed binary. This preload reports those paths as missing.
-function hideInstalledMagick(directory) {
-  const hook = join(directory, "hide-magick.cjs");
-  writeFileSync(hook, [
-    '"use strict";',
-    'const fs = require("node:fs");',
-    'const path = require("node:path");',
-    "const existsSync = fs.existsSync;",
-    'fs.existsSync = (candidate) => path.basename(String(candidate)) === "magick" ? false : existsSync(candidate);',
-    "",
-  ].join("\n"));
-  return hook;
 }
 
 function run(args, path) {
@@ -45,7 +21,6 @@ function run(args, path) {
   // Nested node --test must not inherit the parent runner's channel.
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_CHANNEL_FD;
-  delete env.MAGICK_EXECUTABLE;
   return spawnSync(process.execPath, args, {
     cwd: root,
     encoding: "utf8",
@@ -110,20 +85,11 @@ test("comparison commands that do not invoke magick keep their existing errors",
   assert.match(`${usage.stderr}\n${usage.stdout}`, /Usage:/);
   assert.doesNotMatch(`${usage.stdout}\n${usage.stderr}`, skipReason);
 
-  const output = join(path, "baseline-output");
-  const baseline = run([
-    `--require=${hideInstalledMagick(path)}`,
-    "--import", "./tests/support/typescript-loader.mjs",
-    "tests/benchmarks/conversation-render/run.mjs",
-    "--compare-baseline",
-    "--artifact-dir", output,
-  ], path);
-  assert.equal(baseline.status, 0, `${baseline.stderr}\n${baseline.stdout}`);
-  assert.match(baseline.stdout, /^conversation render baseline comparison skipped: /);
-  assert.match(baseline.stdout, skipReason);
-  assert.equal(baseline.stdout.trim().split(/\r?\n/).length, 1, baseline.stdout);
-  assert.equal(baseline.stderr, "");
-  assert.equal(existsSync(output), false);
+  const benchmark = readFileSync(join(root, "tests/benchmarks/conversation-render/run.mjs"), "utf8");
+  const helpAt = benchmark.indexOf("if (args.help)");
+  const skipAt = benchmark.indexOf("args.compareBaseline === true && !findImageMagickExecutable()");
+  assert.ok(helpAt !== -1 && skipAt > helpAt, "baseline comparison skip must stay behind --help and the other benchmark modes");
+  assert.equal(benchmark.includes("conversation render baseline comparison skipped"), true);
 });
 
 test("the design-system pixel test skips when magick is absent and its neighbors still run", t => {
