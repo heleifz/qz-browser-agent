@@ -35,17 +35,24 @@ test("a replaced document is not counted as a missed click", async () => {
   runInPage = ({ func, args }) => func(...args);
   try {
     const page = installPage();
-    await armPageInputReceipt(7);
-    assert.equal(await readPageInputReceipt(7), 0);
+    const id = await armPageInputReceipt(7);
+    assert.equal(typeof id, "string");
+    assert.notEqual(id, "");
+    const op = () => page.document.__qzInputReceipts.ops[id];
+    assert.equal(op().n, 0);
     const pointerdown = page.listeners.find(item => item.type === "pointerdown");
     assert.equal(pointerdown.capture, true);
     pointerdown.listener({ isTrusted: false });
-    assert.equal(await readPageInputReceipt(7), 0);
+    assert.equal(op().n, 0);
     pointerdown.listener({ isTrusted: true });
-    assert.ok(await readPageInputReceipt(7) > 0);
+    assert.ok(op().n > 0);
+    const seen = await readPageInputReceipt(7, id);
+    assert.ok(seen > 0);
+    pointerdown.listener({ isTrusted: true });
+    assert.equal(await readPageInputReceipt(7, id), seen);
 
     const next = installPage();
-    assert.equal(await readPageInputReceipt(7), null);
+    assert.equal(await readPageInputReceipt(7, id), null);
     assert.equal(next.document.__qzInputReceiptBound, undefined);
   } finally {
     runInPage = null;
@@ -54,6 +61,35 @@ test("a replaced document is not counted as a missed click", async () => {
     delete globalThis.addEventListener;
   }
 });
+
+test("a delivered iframe is not cancelled by a top frame that saw nothing", async () => {
+  await withFrames([{ result: 0 }, { result: 2 }], async () => {
+    const id = await armPageInputReceipt(7);
+    assert.equal(await readPageInputReceipt(7, id), 2);
+  });
+});
+
+test("every frame at zero is a missed click, and an unreadable frame is not", async () => {
+  await withFrames([{ result: 0 }, { result: 0 }], async () => {
+    const id = await armPageInputReceipt(7);
+    assert.equal(await readPageInputReceipt(7, id), 0);
+  });
+  await withFrames([{ result: 0 }, { result: null }], async () => {
+    const id = await armPageInputReceipt(7);
+    assert.equal(await readPageInputReceipt(7, id), null);
+  });
+  await withFrames(async () => { throw new Error("frame gone"); }, async () => {
+    assert.equal(await armPageInputReceipt(7), "");
+    assert.equal(await readPageInputReceipt(7, "missing"), null);
+  });
+});
+
+async function withFrames(results, run) {
+  const original = chrome.scripting.executeScript;
+  chrome.scripting.executeScript = typeof results === "function" ? results : async () => results;
+  try { await run(); }
+  finally { chrome.scripting.executeScript = original; }
+}
 
 function installPage() {
   const listeners = [];
