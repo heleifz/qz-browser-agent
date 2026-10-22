@@ -1,7 +1,5 @@
 // Static, authored translations for the shared homepage DOM.
 // ogImage supplies both Open Graph and Twitter images.
-import { exampleCopy } from "./examples-i18n.js";
-
 export const translations = {
   "en": {
     "title": "qz — Open-source browser agent",
@@ -86,7 +84,22 @@ export const translations = {
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.",
-      ...exampleCopy.en.html
+      /* example-html:en:start */
+      "navExamples": "Examples",
+      "examplesTitle": "Watch it run once, then import it and run it yourself.",
+      "examplesLede": "Four session exports from 轻舟（qz）. Open one to see the result, download the file, and import it locally.",
+      "exampleDownload": "<span>Download the session and import it into qz</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "example-travel-title": "Three days in Hangzhou",
+      "example-travel-summary": "A Hangzhou itinerary, researched in parallel.",
+      "example-llm-compare-title": "Model comparison",
+      "example-llm-compare-summary": "A comparison across sites, saved as one table.",
+      "example-arxiv-title": "Paper table → Skill",
+      "example-arxiv-summary": "A paper table, saved as a Skill.",
+      "example-arxiv-first": "First run",
+      "example-arxiv-reuse": "A week later",
+      "example-github-weekly-title": "Open-source weekly",
+      "example-github-weekly-summary": "Several tabs read open-source projects at once, then deliver a weekly report."
+      /* example-html:en:end */
     },
     "attributes": {
       "description": {
@@ -189,7 +202,47 @@ export const translations = {
         "href": "./assets/screens/agent-en.png",
         "aria-label": "Enlarge the qz side panel"
       },
-      ...exampleCopy.en.attributes
+      /* example-attr:en:start */
+      "examplePlayButton": {
+        "aria-label": "Play"
+      },
+      "example-travel-description": {
+        "content": "A Hangzhou itinerary, researched in parallel."
+      },
+      "example-travel-cover": {
+        "alt": "Parallel tasks researching a Hangzhou itinerary"
+      },
+      "example-travel-media": {
+        "aria-label": "Parallel tasks researching a Hangzhou itinerary"
+      },
+      "example-llm-compare-description": {
+        "content": "A comparison across sites, saved as one table."
+      },
+      "example-llm-compare-cover": {
+        "alt": "Comparison table saved from several model pages"
+      },
+      "example-llm-compare-media": {
+        "alt": "Cover frame of the qz demo"
+      },
+      "example-arxiv-description": {
+        "content": "A paper table, saved as a Skill."
+      },
+      "example-arxiv-cover": {
+        "alt": "Paper table saved from a research run"
+      },
+      "example-arxiv-media": {
+        "alt": "Cover frame of the qz demo"
+      },
+      "example-github-weekly-description": {
+        "content": "Several tabs read open-source projects at once, then deliver a weekly report."
+      },
+      "example-github-weekly-cover": {
+        "alt": "Weekly report assembled from open-source projects"
+      },
+      "example-github-weekly-media": {
+        "alt": "Cover frame of the qz demo"
+      }
+      /* example-attr:en:end */
     }
   },
   "zh-CN": {
@@ -275,7 +328,22 @@ export const translations = {
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
-      ...exampleCopy["zh-CN"].html
+      /* example-html:zh:start */
+      "navExamples": "例子",
+      "examplesTitle": "看它干一遍，再导入自己跑",
+      "examplesLede": "四份来自轻舟（qz）的会话导出。打开看结果，下载文件，在本地导入。",
+      "exampleDownload": "<span>下载会话，导入轻舟</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "example-travel-title": "杭州三日游",
+      "example-travel-summary": "并行查出杭州行程",
+      "example-llm-compare-title": "模型对比表",
+      "example-llm-compare-summary": "多站对比落成一张表",
+      "example-arxiv-title": "论文表 → Skill",
+      "example-arxiv-summary": "论文表存成 Skill",
+      "example-arxiv-first": "第一次跑",
+      "example-arxiv-reuse": "一周后再用",
+      "example-github-weekly-title": "开源项目周报",
+      "example-github-weekly-summary": "多个 Tab 同时读开源项目，最后交一份周报"
+      /* example-html:zh:end */
     },
     "attributes": {
       "description": {
@@ -378,7 +446,47 @@ export const translations = {
         "href": "./assets/screens/agent-zh.png",
         "aria-label": "放大查看轻舟侧边栏"
       },
-      ...exampleCopy["zh-CN"].attributes
+      /* example-attr:zh:start */
+      "examplePlayButton": {
+        "aria-label": "播放"
+      },
+      "example-travel-description": {
+        "content": "并行查出杭州行程"
+      },
+      "example-travel-cover": {
+        "alt": "并行查询杭州行程的任务"
+      },
+      "example-travel-media": {
+        "aria-label": "并行查询杭州行程的任务"
+      },
+      "example-llm-compare-description": {
+        "content": "多站对比落成一张表"
+      },
+      "example-llm-compare-cover": {
+        "alt": "多站对比后落成的模型表"
+      },
+      "example-llm-compare-media": {
+        "alt": "轻舟演示的封面帧"
+      },
+      "example-arxiv-description": {
+        "content": "论文表存成 Skill"
+      },
+      "example-arxiv-cover": {
+        "alt": "检索结果里的论文表"
+      },
+      "example-arxiv-media": {
+        "alt": "轻舟演示的封面帧"
+      },
+      "example-github-weekly-description": {
+        "content": "多个 Tab 同时读开源项目，最后交一份周报"
+      },
+      "example-github-weekly-cover": {
+        "alt": "读完开源项目后交上的周报"
+      },
+      "example-github-weekly-media": {
+        "alt": "轻舟演示的封面帧"
+      }
+      /* example-attr:zh:end */
     }
   }
 };

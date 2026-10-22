@@ -48,11 +48,6 @@ path `/qz-browser-agent/`.
 - This site adds no analytics, cookies, external fonts, or third-party embeds. Its only browser
   storage is the visitor's language preference.
 
-## Examples
-
-Homepage cards and the four detail pages are generated from [`examples/catalog.js`](examples/catalog.js).
-Adding an example is one export file plus one catalog entry. See [examples/README.md](examples/README.md).
-
 ## GitHub Pages
 
 The deployment workflow uploads only `website/`, without building or testing the extension.
