@@ -96,6 +96,18 @@ function prepareTables(root) {
   });
 }
 
+function splitThreadScroll() {
+  for (const thread of document.querySelectorAll(".example-thread")) {
+    if (thread.querySelector(":scope > .example-thread-body")) continue;
+    const bar = thread.querySelector(":scope > .example-thread-bar");
+    if (!bar) continue;
+    const body = document.createElement("div");
+    body.className = "example-thread-body";
+    while (bar.nextSibling) body.append(bar.nextSibling);
+    thread.append(body);
+  }
+}
+
 function bindSessions() {
   for (const host of document.querySelectorAll("qz-session-view")) {
     if (!host.shadowRoot) continue;
@@ -134,6 +146,7 @@ function bindImport() {
 }
 
 bindMedia();
+splitThreadScroll();
 bindSessions();
 bindImport();
 syncTitle();
