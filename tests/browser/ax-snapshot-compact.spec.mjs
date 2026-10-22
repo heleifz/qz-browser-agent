@@ -112,7 +112,8 @@ test.describe("compact accessibility snapshot", () => {
       if (item.includes("StaticText")) expect(item).toMatch(/"[^"]+"|value=|\bchecked\b|\bdisabled\b|\beditable\b/);
     }
     expect(target(result.snapshot, "button", '"Save"')).toMatch(/^uid:t\d+\.[0-9a-z]{5,}\.\d+$/);
-    expect(line(result.snapshot, "Next page")).toMatch(/url="next"/);
+    expect(line(result.snapshot, "RootWebArea")).toMatch(/url="http:\/\/127\.0\.0\.1:\d+\/"/);
+    expect(line(result.snapshot, "Next page")).toMatch(/url="http:\/\/127\.0\.0\.1:\d+\/next"/);
     expect(line(result.snapshot, "External")).toContain('url="https://example.com/out"');
     const limited = await h.call("get_ax_tree", { limit: 20 });
     expect(limited.code, JSON.stringify(limited)).toBeUndefined();

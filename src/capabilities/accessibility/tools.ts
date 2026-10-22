@@ -158,7 +158,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
 
   for (const root of semanticRoots) emitDisplayNode(root, null);
 
-  const lines = displayNodes.map(node => formatSnapshotLine(node, pageUrl));
+  const lines = displayNodes.map(node => formatSnapshotLine(node));
   const truncatedNodeCount = Math.max(0, semanticNodes.length - displayNodes.length);
   return {
     snapshot: lines.join("\n"),
@@ -424,15 +424,14 @@ function shouldKeepAxNode(node: CompactNode, depth: number) {
   return true;
 }
 
-function formatSnapshotLine(node: DisplayNode, pageUrl = "") {
+function formatSnapshotLine(node: DisplayNode) {
   const target = node.target || elementTargetForUid(node.uid);
   const attrs = target ? [`target=${target}`] : [];
   if (node.role) attrs.push(node.role);
   if (node.name && !node.suppressName) attrs.push(`"${truncateInline(node.name, 90)}"`);
   if (node.value && node.value !== node.name) attrs.push(`value="${truncateInline(node.value, 80)}"`);
   if (node.placeholder) attrs.push(`placeholder="${truncateInline(node.placeholder, 80)}"`);
-  const url = node.url ? compactSameOriginUrl(node.url, pageUrl) : "";
-  if (url) attrs.push(`url="${truncateInline(url, 120)}"`);
+  if (node.url) attrs.push(`url="${truncateInline(node.url, 120)}"`);
   for (const flag of node.flags || []) attrs.push(flag);
   if (node.inputType) attrs.push(`type=${truncateInline(node.inputType, 40)}`);
   if (node.accept) attrs.push(`accept="${truncateInline(node.accept, 120)}"`);
@@ -441,35 +440,6 @@ function formatSnapshotLine(node: DisplayNode, pageUrl = "") {
   const omitted = Number(node.omitted || 0);
   if (omitted) attrs.push(`(truncated, ${omitted} more)`);
   return `${" ".repeat(Math.max(0, Number(node.depth) || 0))}${attrs.join(" ")}`;
-}
-
-function compactSameOriginUrl(url: string, pageUrl: string) {
-  let target: URL;
-  let page: URL | null = null;
-  try {
-    page = pageUrl ? new URL(pageUrl) : null;
-    target = new URL(url, page || undefined);
-  } catch {
-    return url;
-  }
-  if (!page || target.origin !== page.origin || !/^https?:$/.test(target.protocol)) return url;
-  const suffix = `${target.search}${target.hash}`;
-  if (target.pathname === page.pathname) return suffix;
-  const originPath = `${target.pathname}${suffix}`;
-  const relative = `${relativePath(page.pathname, target.pathname)}${suffix}`;
-  return relative.length < originPath.length ? relative : originPath;
-}
-
-function relativePath(fromPath: string, toPath: string) {
-  const fromDir = fromPath.endsWith("/") ? fromPath : fromPath.replace(/[^/]*$/, "");
-  const fromParts = fromDir.split("/").filter(Boolean);
-  const toParts = toPath.split("/").filter(Boolean);
-  let shared = 0;
-  while (shared < fromParts.length && shared < toParts.length && fromParts[shared] === toParts[shared]) shared += 1;
-  const ups = fromParts.length - shared;
-  const down = toParts.slice(shared).join("/");
-  if (!ups) return down || ".";
-  return `${"../".repeat(ups)}${down}`;
 }
 
 function truncateInline(value: unknown, max: number) {

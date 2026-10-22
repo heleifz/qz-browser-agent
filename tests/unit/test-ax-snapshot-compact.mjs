@@ -136,9 +136,9 @@ assert.equal(resolvedOrphan.selector, "");
 assert.equal(resolvedOrphan.ref.backendNodeId, 9);
 
 const urls = await run({
-  overview: { title: "Links", url: "https://example.com/forms/post", actions: [] },
+  overview: { title: "Links", url: "https://example.com/forms/post?run=s5-C-r1", actions: [] },
   nodes: [
-    ax({ id: "root", children: ["next", "out", "here", "query", "top"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "root", children: ["next", "out", "here", "query", "top"], backend: 1, role: "RootWebArea", name: "Page", url: "https://example.com/forms/post?run=s5-C-r1" }),
     ax({ id: "next", parent: "root", backend: 2, role: "link", name: "Next", url: "https://example.com/forms/next" }),
     ax({ id: "out", parent: "root", backend: 3, role: "link", name: "Out", url: "https://other.example/x" }),
     ax({ id: "here", parent: "root", backend: 4, role: "link", name: "Here", url: "https://example.com/forms/post#section" }),
@@ -146,11 +146,12 @@ const urls = await run({
     ax({ id: "top", parent: "root", backend: 6, role: "link", name: "Top", url: "https://example.com/x" }),
   ],
 });
-assert.match(line(urls.snapshot, "Next"), /url="next"/);
+assert.match(line(urls.snapshot, "RootWebArea"), /url="https:\/\/example\.com\/forms\/post\?run=s5-C-r1"/);
+assert.match(line(urls.snapshot, "Next"), /url="https:\/\/example\.com\/forms\/next"/);
 assert.match(line(urls.snapshot, "Out"), /url="https:\/\/other\.example\/x"/);
-assert.match(line(urls.snapshot, "Here"), /url="#section"/);
-assert.match(line(urls.snapshot, "Query"), /url="\?x=1"/);
-assert.match(line(urls.snapshot, "Top"), /url="\/x"/);
+assert.match(line(urls.snapshot, "Here"), /url="https:\/\/example\.com\/forms\/post#section"/);
+assert.match(line(urls.snapshot, "Query"), /url="https:\/\/example\.com\/forms\/post\?x=1"/);
+assert.match(line(urls.snapshot, "Top"), /url="https:\/\/example\.com\/x"/);
 
 const names = await run({
   overview: { title: "Names", url: "https://example.com/forms/post", actions: [] },
