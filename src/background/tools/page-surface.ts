@@ -32,7 +32,7 @@ export async function ensurePageSurface(tabId: number, send: Send) {
   }
 }
 
-/** Count trusted input on the live document. Null means the page could not be observed. */
+/** Count trusted input on the armed document. Null means that document is gone or unreadable. */
 export async function armPageInputReceipt(tabId: number) {
   await receipt(tabId, true);
 }
@@ -57,6 +57,8 @@ async function receipt(tabId: number, arm: boolean) {
         };
         const doc = root.document;
         if (!doc.__qzInputReceiptBound) {
+          // Navigation replaced the armed document. A missing count is not a missed click.
+          if (!shouldArm) return null;
           doc.__qzInputReceiptBound = true;
           const count = (event: { isTrusted: boolean }) => {
             if (event.isTrusted) root.__qzInputReceipt = (root.__qzInputReceipt || 0) + 1;

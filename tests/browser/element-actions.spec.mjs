@@ -363,3 +363,45 @@ test("httpbin pizza radios check through the wrapped label", async () => {
     expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
   } finally { await h.close(); }
 });
+
+test("a click that navigates is not reported as undelivered input", async () => {
+  test.setTimeout(120_000);
+  const h = await createHarness("desktop");
+  try {
+    await h.worker.evaluate(() => {
+      const original = chrome.scripting.executeScript.bind(chrome.scripting);
+      globalThis.receiptReads = 0;
+      chrome.scripting.executeScript = async options => {
+        const source = String(options?.func || "");
+        if (!source.includes("__qzInputReceiptBound") || options.args?.[0] !== false) return original(options);
+        // A committed navigation leaves this read on a document that was never armed.
+        receiptReads += 1;
+        const root = globalThis;
+        const previousDocument = root.document;
+        const previousCount = root.__qzInputReceipt;
+        root.document = { addEventListener() {} };
+        delete root.__qzInputReceipt;
+        try { return [{ result: options.func(false) }]; }
+        finally {
+          if (previousDocument === undefined) delete root.document;
+          else root.document = previousDocument;
+          if (previousCount === undefined) delete root.__qzInputReceipt;
+          else root.__qzInputReceipt = previousCount;
+        }
+      };
+    });
+    for (const [id, html, url] of [
+      ["go", `<!doctype html><a id="go" href="/next" style="display:block;width:160px;height:40px">Next</a>`, "/next"],
+      ["send", `<!doctype html><form action="/sent" method="get"><button id="send" type="submit" style="width:160px;height:40px">Send</button></form>`, "/sent"],
+    ]) {
+      await h.page.setContent(html);
+      const result = await h.act(id, "click");
+      expect(result, JSON.stringify(result)).toMatchObject({
+        clickDispatched: true, inputDelivered: true, navigated: true,
+      });
+      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      await expect.poll(() => h.page.url()).toContain(url);
+    }
+    expect(await h.worker.evaluate(() => receiptReads)).toBe(2);
+  } finally { await h.close(); }
+});
