@@ -153,7 +153,7 @@ function assertElementActionRoutingContract() {
 
 function assertAxTreeCompactContract() {
   const block = toolBlock("get_ax_tree");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /target（形如 uid:\.\.\.）原样传给 act_on_element（click、fill 等）/, "get_ax_tree should say that uid targets go to click and fill");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /target（形如 uid:\.\.\.）原样传给 act_on_element/, "get_ax_tree should say that uid targets go to act_on_element unchanged");
   assert.match(resolveToolDefinition("get_ax_tree").description, /其下还有 N 行未展开/, "get_ax_tree should explain that N is unexpanded lines");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
