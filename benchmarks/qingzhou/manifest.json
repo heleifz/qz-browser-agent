@@ -1,8 +1,8 @@
 {
   "name": "qingzhou-eval-v0.1",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "created": "2026-10-23",
-  "revised": "2026-10-23",
+  "revised": "2026-10-23T04:10:00+08:00",
   "seed": 20261023,
   "policy": {
     "curated_target": "~30",
@@ -14,14 +14,17 @@
   },
   "counts": {
     "total": 30,
-    "online_mind2web": 8,
-    "webvoyager": 4,
-    "self": 18,
     "ready": 30,
-    "partial_or_pending": 0,
-    "auto_judged_rule": 20,
-    "needs_review": 10,
-    "temporal": 1
+    "by_source": {
+      "open:online-mind2web": 8,
+      "open:webvoyager": 4,
+      "self": 18
+    },
+    "by_judge": {
+      "human": 8,
+      "rule": 20,
+      "llm_judge": 2
+    }
   },
   "by_core_task": {
     "research": 7,
@@ -932,29 +935,29 @@
       "source": "self",
       "core_task": "skill_reuse",
       "difficulty": "medium",
-      "prompt": "[two-stage] create: On Quotes to Scrape, open the tag page for 'love', follow pagination to the end, and report the total number of quotes and the sorted list of distinct authors. || reuse: Run it for the tag 'inspirational' and finish with: total=<n>; authors=<comma-separated>",
-      "start_url": "https://quotes.toscrape.com/tag/love/",
+      "prompt": "[two-stage] create: On Quotes to Scrape tag 'friendship' (SINGLE page, no Next), report total quotes and sorted distinct authors. Write a SHORT Skill first. || reuse: Run it on tag 'reading' (also single page) and finish with: total=<n>; authors=<comma-separated>",
+      "start_url": "https://quotes.toscrape.com/tag/friendship/",
       "judge": "rule",
       "timeout_s": 600,
       "tags": [
         "skill",
         "two_stage",
-        "pagination",
+        "single_page",
         "difficulty:medium"
       ],
       "skill_name": "qzb-tag-quotes-{run}",
       "stages": [
         {
           "name": "create",
-          "start_url": "https://quotes.toscrape.com/tag/love/",
+          "start_url": "https://quotes.toscrape.com/tag/friendship/",
           "new_session": true,
-          "prompt": "On Quotes to Scrape, open the tag page for 'love', follow pagination to the end, and report the total number of quotes and the sorted list of distinct authors. After it works, save this workflow as a reusable Skill named `{skill_name}` (parameterize the input so it can run on a different page). Reply with the exact Skill name you saved."
+          "prompt": "Open https://quotes.toscrape.com/tag/friendship/ — it is ONE page only (no Next). Report the total number of quotes and the sorted list of distinct authors.\nIMPORTANT workflow to avoid context overflow:\n1) FIRST write a SHORT reusable Skill named `{skill_name}` that takes a tag-page URL, scrapes every quote on that single page (do not paginate), and returns `total=<n>; authors=<comma-separated sorted authors>`. Keep the skill body brief; do NOT repeatedly load_skill while drafting.\n2) THEN execute the Skill once on the friendship URL above.\n3) Reply with the exact Skill name you saved and the one-line result."
         },
         {
           "name": "reuse",
-          "start_url": "https://quotes.toscrape.com/tag/inspirational/",
+          "start_url": "https://quotes.toscrape.com/tag/reading/",
           "new_session": true,
-          "prompt": "Use the existing Skill `{skill_name}` (do not rebuild the workflow from scratch). Run it for the tag 'inspirational' and finish with: total=<n>; authors=<comma-separated> End by stating which Skill you used."
+          "prompt": "Use the existing Skill `{skill_name}` exactly once (do not rebuild; do not call load_skill more than once). Run it on https://quotes.toscrape.com/tag/reading/ (single page, no pagination). Finish with exactly: total=<n>; authors=<comma-separated>. End by stating which Skill you used."
         }
       ],
       "success_criteria": {
@@ -966,11 +969,18 @@
         "reuse": {
           "type": "must_include",
           "must_include": [
-            "total=13"
+            "total=7",
+            "C.S. Lewis",
+            "Dr. Seuss",
+            "George R.R. Martin",
+            "J.D. Salinger",
+            "Jane Austen",
+            "Mark Twain",
+            "William Nicholson"
           ],
           "skill_must_be_referenced": true
         },
-        "notes": "Stage 1 pass = new/updated non-builtin Skill with the name exists after the run. Stage 2 pass = gold check AND transcript/answer references the Skill. Both required."
+        "notes": "Create gold (friendship, single page): total=5; authors=Alfred Tennyson,Bob Marley,Friedrich Nietzsche,Jane Austen,Mark Twain. Reuse gold (reading, single page): total=7 and the seven authors listed. Stage 1 pass = Skill exists; Stage 2 = gold + Skill referenced."
       },
       "locale": "en",
       "requires_login": false,

@@ -452,5 +452,25 @@
         "hard": 2
       }
     }
+  },
+  "v0_2_2_skill_tag_single_page": {
+    "revised_at_asia_shanghai": "2026-10-23T04:10:00+08:00",
+    "goal": "Remove pagination from medium skill_reuse self:skill-tag-quotes to avoid context overflow on create; keep skill_reuse 5 = 2e/1m/2h",
+    "rewrites": [
+      {
+        "id": "self:skill-tag-quotes",
+        "from": {
+          "create": "https://quotes.toscrape.com/tag/love/ (paginate to end)",
+          "reuse": "https://quotes.toscrape.com/tag/inspirational/ (multipage)",
+          "gold": "total=13"
+        },
+        "to": {
+          "create": "https://quotes.toscrape.com/tag/friendship/ (single page, total=5)",
+          "reuse": "https://quotes.toscrape.com/tag/reading/ (single page, total=7)",
+          "gold": "total=7 + 7 author names"
+        },
+        "reason": "love/inspirational tag pages require pagination and risk ~112k context_overflow on Skill create (same failure mode as v0.2.1 hard skills). friendship/reading are verified single-page with stable gold."
+      }
+    ]
   }
 }
