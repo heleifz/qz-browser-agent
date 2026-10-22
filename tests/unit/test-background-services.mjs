@@ -391,6 +391,28 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   assert.equal(remembered.at(-1)?.event?.ownedTabsRestore?.failedCount, 1);
   assert.deepEqual(opened.at(-1), { windowId: 7 });
 
+  const focused = [];
+  const windowed = [];
+  const focusedBridge = createSessionExchangeBridge({
+    sidePanel: { open: async input => focused.push(input) },
+    importSessionExchange: async () => ({ session: { id: "existing", title: "杭州三日游" }, ownedTabsRestore: null }),
+    channel: {
+      hasPorts: () => true,
+      broadcast() { throw new Error("window delivery should not broadcast to every panel"); },
+      remember: (...args) => windowed.push(args),
+      sendToWindow: async () => false,
+    },
+    logger: { debug() {} },
+  });
+  await focusedBridge.importFromPage({ payload }, {
+    tab: { url: "http://127.0.0.1/export.html", id: 4, windowId: 7 },
+  });
+  assert.deepEqual(focused, [{ windowId: 7 }]);
+  assert.equal(windowed[0]?.[0], "session_export_import");
+  assert.equal(windowed[0]?.[1]?.sessionId, "existing");
+  assert.equal(windowed[0]?.[2], 15_000);
+  assert.deepEqual(windowed[0]?.[3], { windowId: 7 });
+
   const rememberedBeforePages = remembered.length;
   await assert.rejects(
     () => bridge.importFromPage({ payload }, { tab: { url: "https://alibaba.github.io/other-repo/session.html", id: 12, windowId: 4 } }),
@@ -471,7 +493,7 @@ async function sessionExchangeRevealWaitsForConsentBeforeImport() {
   assert.deepEqual(bridge.revealForImport(sender), { needsConsent: false });
   const second = dispatchSync(transport, { type: "session_export_reveal_consent" }, sender);
   assert.deepEqual(second.response, { ok: true, needsConsent: false });
-  assert.deepEqual(opened, [{ windowId: 9 }, { windowId: 9 }]);
+  assert.deepEqual(opened, [{ windowId: 9 }, { windowId: 9 }, { windowId: 9 }, { windowId: 9 }], "an accepted import click still opens the side panel on the gesture");
   assert.equal(imported.length, 0);
 
   const failClosedOpened = [];

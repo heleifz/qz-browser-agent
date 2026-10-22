@@ -14,6 +14,7 @@ const IDLE_SCREENSHOT = "/tmp/qingzhou-consent-import-idle.png";
 const PANEL_SCREENSHOT = "/tmp/qingzhou-consent-panel.png";
 const DONE_SCREENSHOT = "/tmp/qingzhou-consent-import-done.png";
 const CONSENTED_SCREENSHOT = "/tmp/qingzhou-consent-import-already.png";
+const REPEAT_SCREENSHOT = "/tmp/qingzhou-import-repeat-panel.png";
 const headless = process.env.CONSENT_IMPORT_HEADLESS !== "0";
 
 const [extension, runtime] = await Promise.all([
@@ -25,8 +26,8 @@ const [extension, runtime] = await Promise.all([
   }),
 ]);
 const pages = new Map([
-  ["/pending.html", exportHtml("未同意自动导入")],
-  ["/consented.html", exportHtml("已同意直接导入")],
+  ["/pending.html", exportHtml("未同意自动导入", "pending-source", "未同意的会话正文")],
+  ["/consented.html", exportHtml("已同意直接导入", "consented-source", "已同意的会话正文")],
 ]);
 const server = createServer((request, response) => {
   const body = pages.get(new URL(request.url || "/", "http://127.0.0.1").pathname);
@@ -95,6 +96,13 @@ try {
   }, 20000);
   assert.equal(imported.results.some(item => item.status === "error"), false);
   assert.deepEqual(await sessionTitles(worker), ["未同意自动导入"]);
+  const pendingPanel = await waitUntil("panel focuses the consented import", () => panelChat(context), snapshot => (
+    snapshot.title === "未同意自动导入"
+    && snapshot.hidden === false
+    && snapshot.state === "conversation"
+    && snapshot.text.includes("未同意的会话正文")
+  ), 20000);
+  assert.equal(pendingPanel.title, "未同意自动导入");
   await pending.page.screenshot({ path: DONE_SCREENSHOT });
 
   const consented = await openExport(context, `${origin}/consented.html`);
@@ -110,8 +118,42 @@ try {
     return state.text === "已导入" && state.imported;
   }, 20000);
   assert.equal(direct.results.some(item => item.status === "error"), false);
-  assert.deepEqual((await sessionTitles(worker)).sort(), ["未同意自动导入", "已同意直接导入"].sort());
+  const importedRecords = await sessionRecords(worker);
+  assert.deepEqual(importedRecords.map(session => session.title).sort(), ["未同意自动导入", "已同意直接导入"].sort());
+  const existingId = importedRecords.find(session => session.title === "已同意直接导入")?.id;
+  assert.equal(direct.imported, existingId);
+  const focused = await waitUntil("panel focuses the direct import", () => panelChat(context), snapshot => (
+    snapshot.title === "已同意直接导入"
+    && snapshot.hidden === false
+    && snapshot.state === "conversation"
+    && snapshot.text.includes("已同意的会话正文")
+  ), 20000);
+  assert.equal(focused.title, "已同意直接导入");
   await consented.page.screenshot({ path: CONSENTED_SCREENSHOT });
+
+  await closeSidePanel(context);
+  await waitUntil("side panel closed", () => sidePanelContexts(worker), contexts => contexts.length === 0, 8000);
+  await consented.page.reload({ waitUntil: "domcontentloaded" });
+  await consented.page.locator("#qingzhou-session-cta[data-qingzhou-session-import]").waitFor({ timeout: 10000 });
+  const reloaded = await buttonState(consented.page);
+  assert.equal(reloaded.text, "导入轻舟");
+  await consented.page.locator("#qingzhou-session-cta").click();
+  const repeated = await waitUntil("repeat import", () => buttonState(consented.page), state => {
+    if (state.text === "重试导入") throw new Error(`repeat import failed: ${state.title} ${JSON.stringify(state.results)}`);
+    return state.text === "已导入" && state.imported === existingId;
+  }, 20000);
+  assert.equal(repeated.imported, existingId);
+  assert.deepEqual(await sessionRecords(worker), importedRecords, "importing the same export again must not create another session");
+  const repeatedPanel = await waitUntil("panel reopens on the existing session", () => panelChat(context), snapshot => (
+    snapshot.open === true
+    && snapshot.title === "已同意直接导入"
+    && snapshot.hidden === false
+    && snapshot.state === "conversation"
+    && snapshot.text.includes("已同意的会话正文")
+  ), 20000);
+  assert.equal(repeatedPanel.open, true);
+  assert.equal(repeatedPanel.title, "已同意直接导入");
+  await captureSidePanel(context, REPEAT_SCREENSHOT);
   assert.deepEqual(pending.errors, []);
   assert.deepEqual(consented.errors, []);
   console.log("consent import check passed");
@@ -125,10 +167,10 @@ try {
   await rm(profile, { recursive: true, force: true });
 }
 
-function exportHtml(title) {
+function exportHtml(title, sourceId, content) {
   const payload = createSessionExchangePayload({
-    session: { id: "source", title },
-    conversation: serializeConversation([{ role: "user", content: "import me" }]),
+    session: { id: sourceId, title },
+    conversation: serializeConversation([{ role: "user", content }]),
     transcript: [],
     exportedAt: "2026-07-12 12:00:00",
   });
@@ -202,11 +244,54 @@ function assertIdle(state, label) {
 }
 
 async function sessionTitles(worker) {
+  return (await sessionRecords(worker)).map(session => session.title).filter(Boolean);
+}
+
+async function sessionRecords(worker) {
   return worker.evaluate(async () => {
     const data = await chrome.storage.local.get("_sessions");
     const sessions = data._sessions && typeof data._sessions === "object" ? data._sessions : {};
-    return Object.values(sessions).map(session => session?.title || "").filter(Boolean);
+    return Object.values(sessions)
+      .map(session => ({ id: String(session?.id || ""), title: String(session?.title || "") }))
+      .sort((left, right) => left.id.localeCompare(right.id));
   });
+}
+
+async function panelChat(context) {
+  const contexts = await sidePanelContexts(workerFrom(context)).catch(() => []);
+  const page = sidePanelPages(context).at(-1);
+  if (page) {
+    const chat = await page.evaluate(() => ({
+      title: (document.querySelector("#current-session-title")?.textContent || "").trim(),
+      hidden: document.querySelector("#session-title-bar")?.classList.contains("hidden") === true,
+      state: document.querySelector("#messages")?.getAttribute("data-chat-state") || "",
+      text: document.querySelector("#messages")?.textContent || "",
+    })).catch(error => ({ error: String(error) }));
+    return { title: "", hidden: true, state: "", text: "", ...chat, open: contexts.length > 0 };
+  }
+  if (!contexts.length) return { open: false, title: "", hidden: true, state: "", text: "" };
+  const chat = await evaluateSidePanel(context, `(() => ({
+    title: (document.querySelector("#current-session-title")?.textContent || "").trim(),
+    hidden: document.querySelector("#session-title-bar")?.classList.contains("hidden") === true,
+    state: document.querySelector("#messages")?.getAttribute("data-chat-state") || "",
+    text: document.querySelector("#messages")?.textContent || "",
+  }))()`).catch(error => ({ error: String(error) }));
+  return { title: "", hidden: true, state: "", text: "", ...chat, open: contexts.length > 0 };
+}
+
+function workerFrom(context) {
+  const worker = context.serviceWorkers().find(item => item.url().startsWith("chrome-extension://"));
+  if (!worker) throw new Error("extension worker is gone");
+  return worker;
+}
+
+async function closeSidePanel(context) {
+  const page = sidePanelPages(context).at(-1);
+  if (page) {
+    await page.close();
+    return;
+  }
+  await evaluateSidePanel(context, `(() => { window.close(); return true; })()`);
 }
 
 async function sidePanelContexts(worker) {
