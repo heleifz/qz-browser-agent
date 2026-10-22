@@ -6,6 +6,10 @@ const listeners = new Set();
 const commands = [];
 const contentCalls = [];
 let debuggerUses = 0;
+let childContentInjected = false;
+let oopifContentInjected = false;
+let exposeOopif = false;
+const scriptCalls = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
   tabs: { async get(tabId) { return { id: tabId, url: currentUrl }; } },
@@ -43,8 +47,8 @@ const runtime = createElementRuntime({
   },
   async withDebugger(tabId, callback) {
     debuggerUses += 1;
-    return await callback({ tabId }, async (method, params = {}) => {
-      commands.push({ method, params });
+    const send = async (method, params = {}) => {
+      commands.push({ method, params, sessionId: "" });
       if (method === "Runtime.enable") {
         for (const listener of listeners) {
           listener({ tabId }, "Runtime.executionContextCreated", {
@@ -64,18 +68,60 @@ const runtime = createElementRuntime({
         }
         return {};
       }
-      if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", loaderId: params.loaderId || "loader-live" } } };
+      if (method === "Runtime.disable") throw new Error("disable");
+      if (method === "Page.getFrameTree") return {
+        frameTree: {
+          frame: { id: "main", loaderId: params.loaderId || "loader-live" },
+          childFrames: [{
+            frame: { id: "child", parentId: "main", loaderId: "child-loader" },
+            childFrames: [{ frame: { id: "grandchild", parentId: "child", loaderId: "grand-loader" } }],
+          }],
+        },
+      };
+      if (method === "Target.getTargets") return {
+        targetInfos: exposeOopif ? [{ type: "iframe", targetId: "tid", parentFrameId: "main" }] : [],
+      };
+      if (method === "Target.attachToTarget") return { sessionId: "sess" };
       if (method === "DOM.getDocument") return { root: { nodeId: 3 } };
       if (method === "DOM.querySelectorAll") {
         return { nodeIds: String(params.selector).includes("dup") ? [11, 12] : [9] };
       }
       if (method === "DOM.describeNode") return { node: { backendNodeId: 44 } };
       if (method === "DOM.resolveNode") return { object: { objectId: "uid-node" } };
-      if (method === "Runtime.evaluate") return { result: { value: { extensionId: "extension-id", bridge: true } } };
+      if (method === "Runtime.evaluate") {
+        if (String(params.expression || "").includes("__qzFrameProbe")) return { result: { value: "frame-token" } };
+        const bridge = Number(params.contextId) === 8 ? childContentInjected : true;
+        return { result: { value: { extensionId: "extension-id", bridge } } };
+      }
       if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
       if (method === "Runtime.releaseObjectGroup") return {};
       throw new Error(`unexpected CDP method ${method}`);
-    });
+    };
+    send.inSession = sessionId => async (method, params = {}) => {
+      commands.push({ method, params, sessionId });
+      if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "oopif", loaderId: "oopif-loader" } } };
+      if (method === "Runtime.disable" || method === "Runtime.releaseObjectGroup") return {};
+      if (method === "Runtime.enable") {
+        for (const listener of listeners) {
+          listener({ tabId, sessionId }, "Runtime.executionContextCreated", {
+            context: {
+              id: 9,
+              origin: "chrome-extension://extension-id",
+              auxData: { type: "isolated", frameId: "oopif" },
+            },
+          });
+        }
+        return {};
+      }
+      if (method === "Runtime.evaluate") {
+        if (String(params.expression || "").includes("__qzFrameProbe")) return { result: { value: "oopif-token" } };
+        return { result: { value: { extensionId: "extension-id", bridge: oopifContentInjected } } };
+      }
+      if (method === "DOM.resolveNode") return { object: { objectId: "oopif-node" } };
+      if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
+      throw new Error(`unexpected child CDP method ${method}`);
+    };
+    return await callback({ tabId }, send);
   },
 });
 
@@ -400,5 +446,81 @@ try {
 } finally {
   Date.now = realNow;
 }
+
+chrome.scripting = {
+  async executeScript(options) {
+    scriptCalls.push(options);
+    if (options.func) {
+      const source = String(options.func);
+      if (source.includes("__qzFrameProbe")) {
+        return [
+          { frameId: 0, result: "top-token" },
+          { frameId: 4, result: "frame-token" },
+          { frameId: 5, result: "oopif-token" },
+        ];
+      }
+      return [{ documentId: "doc-live", frameId: options.target?.frameIds?.[0] ?? 0, result: null }];
+    }
+    if (options.files?.includes("content/content-script.js")) {
+      if (options.target?.frameIds?.[0] === 4) childContentInjected = true;
+      if (options.target?.frameIds?.[0] === 5) oopifContentInjected = true;
+    }
+    return [{ frameId: options.target?.frameIds?.[0], documentId: "frame-doc" }];
+  },
+};
+
+function childRef(uid, frameId, loaderId, backendNodeId = 41) {
+  runtime.registerElementRef({
+    uid, tabId: 5, sessionId: "session-a", pageUrl: "https://example.test/page",
+    backendNodeId, loaderId, frameId,
+  });
+  return { tabId: 5, uid, target: `uid:${uid}`, ref: { backendNodeId, loaderId, frameId } };
+}
+
+childContentInjected = false;
+const childCommands = commands.length;
+const childScripts = scriptCalls.length;
+const childHit = await runtime.callElement(5, childRef("t5.000010.1", "child", "child-loader"), "inspectElement", {}, context);
+assert.equal(childHit.ok, true);
+assert.ok(commands.slice(childCommands).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 8 && command.sessionId === ""));
+assert.equal(commands.slice(childCommands).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 7), false);
+const childInject = scriptCalls.slice(childScripts).find(call => call.files?.includes("content/content-script.js"));
+assert.deepEqual(childInject?.target?.frameIds, [4]);
+assert.equal(childInject?.target?.allFrames, undefined);
+assert.ok(scriptCalls.slice(childScripts).some(call => call.target?.allFrames === true && !call.files));
+
+const staleScripts = scriptCalls.length;
+const staleCommands = commands.length;
+await assert.rejects(
+  runtime.callElement(5, childRef("t5.000011.1", "child", "old-child"), "inspectElement", {}, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+);
+assert.equal(scriptCalls.length, staleScripts, "a replaced child document must not inject");
+assert.equal(commands.slice(staleCommands).some(command => command.method === "DOM.resolveNode"), false);
+
+await assert.rejects(
+  runtime.callElement(5, childRef("t5.000012.1", "missing", "child-loader"), "inspectElement", {}, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+);
+await assert.rejects(
+  runtime.callElement(5, childRef("t5.000013.1", "grandchild", "grand-loader"), "inspectElement", {}, context),
+  error => error?.code === "STALE_ELEMENT_UID",
+  "a nested frame is not a direct child",
+);
+
+exposeOopif = true;
+oopifContentInjected = false;
+const oopifCommands = commands.length;
+const oopifScripts = scriptCalls.length;
+const oopifHit = await runtime.callElement(5, childRef("t5.000014.1", "oopif", "oopif-loader", 3), "inspectElement", {}, context);
+assert.equal(oopifHit.ok, true);
+const oopifResolve = commands.slice(oopifCommands).filter(command => command.method === "DOM.resolveNode");
+assert.equal(oopifResolve.length, 1);
+assert.equal(oopifResolve[0].sessionId, "sess");
+assert.equal(oopifResolve[0].params.executionContextId, 9);
+assert.deepEqual(scriptCalls.slice(oopifScripts).find(call => call.files?.includes("content/content-script.js"))?.target?.frameIds, [5]);
+const mainAfterOopif = commands.length;
+await runtime.callElement(5, resolved, "inspectElement", {}, context);
+assert.ok(commands.slice(mainAfterOopif).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 7 && command.sessionId === ""));
 
 console.log("element runtime ownership tests passed");

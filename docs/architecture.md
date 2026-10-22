@@ -243,10 +243,18 @@ read back field state. Mobile actions use touch. Optional form submission sends 
 page handlers and native validation. A CDP error ends that attempt. Multiline rich-text fields use
 their paragraph writer.
 
-Node-backed UIDs use a main-frame isolated context only after verifying the current extension ID
-and its Content bridge. Extension reloads can leave older contexts alive. If no candidate is valid,
-the runtime initializes Content once and rechecks the document before resolving the original node.
-This recovery precedes action dispatch; an action failure is never replayed.
+Node-backed UIDs use the isolated context of the node's own document after verifying the current
+extension ID and its Content bridge. The main frame is the default. A direct child iframe uses the
+same uid and action path: the snapshot grafts that frame's accessibility tree under the owning
+iframe, and click or fill resolves the node in the child frame. Extension reloads can leave older
+contexts alive. If no candidate is valid, the runtime initializes Content once in that document
+and rechecks it before resolving the original node. This recovery precedes action dispatch; an
+action failure is never replayed.
+
+Mouse and text input stay on the page target. A click point from a child frame adds that iframe's
+content origin. Nested frames stay unaddressed. A cross-site child is absent from the page frame
+tree; the page session auto-attaches to that child target and uses the child session for the tree
+and the node call.
 
 [Script policy](../src/background/tools/script-policy.ts) and the [script
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner

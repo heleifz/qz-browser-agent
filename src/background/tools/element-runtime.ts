@@ -1,10 +1,12 @@
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
+import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
 import type { createCdpRuntime } from './cdp-runtime.js';
+import { openChildFrame } from './child-frames.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number;   backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  loaderId?: string; documentId?: string;
+  loaderId?: string; documentId?: string; frameId?: string;
   [field: string]: unknown;
 }
 interface ElementRuntimeHost {
@@ -24,16 +26,31 @@ import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
 const isolatedByTab = new Map<number, Map<string, Set<number>>>();
-function noteExecutionContext(source: { tabId?: number } | undefined, method: string, params: unknown) {
+const isolatedBySession = new Map<string, Map<string, Set<number>>>();
+const sessionsByTab = new Map<number, Set<string>>();
+const chromeFramesByTab = new Map<number, Map<string, number>>();
+function noteExecutionContext(source: { tabId?: number; sessionId?: string } | undefined, method: string, params: unknown) {
   const tabId = Number(source?.tabId);
-  if (!Number.isInteger(tabId) || tabId <= 0) return;
-  if (method === "Runtime.executionContextsCleared") { isolatedByTab.delete(tabId); return; }
+  const sessionId = String(source?.sessionId || "");
+  const hasTab = Number.isInteger(tabId) && tabId > 0;
+  if (!hasTab && !sessionId) return;
+  if (hasTab && sessionId) {
+    const known = sessionsByTab.get(tabId) || new Set<string>();
+    known.add(sessionId);
+    sessionsByTab.set(tabId, known);
+  }
+  const frames = () => sessionId ? isolatedBySession.get(sessionId) : hasTab ? isolatedByTab.get(tabId) : undefined;
+  const dropFrames = () => {
+    if (sessionId) isolatedBySession.delete(sessionId);
+    else if (hasTab) isolatedByTab.delete(tabId);
+  };
+  if (method === "Runtime.executionContextsCleared") { dropFrames(); return; }
   if (method === "Runtime.executionContextDestroyed") {
     const id = Number(record(params).executionContextId);
-    const frames = isolatedByTab.get(tabId);
-    if (frames) for (const [frameId, candidates] of frames) {
+    const map = frames();
+    if (map) for (const [frameId, candidates] of map) {
       candidates.delete(id);
-      if (!candidates.size) frames.delete(frameId);
+      if (!candidates.size) map.delete(frameId);
     }
     return;
   }
@@ -43,18 +60,23 @@ function noteExecutionContext(source: { tabId?: number } | undefined, method: st
   if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
   const id = Number(context.id), frameId = String(aux.frameId || "");
   if (!Number.isInteger(id) || id <= 0 || !frameId) return;
-  const frames = isolatedByTab.get(tabId) || new Map<string, Set<number>>();
-  const candidates = frames.get(frameId) || new Set<number>();
+  const map = frames() || new Map<string, Set<number>>();
+  const candidates = map.get(frameId) || new Set<number>();
   candidates.add(id);
-  frames.set(frameId, candidates);
-  isolatedByTab.set(tabId, frames);
+  map.set(frameId, candidates);
+  if (sessionId) isolatedBySession.set(sessionId, map);
+  else if (hasTab) isolatedByTab.set(tabId, map);
 }
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
 globalThis.chrome?.debugger?.onDetach?.addListener(source => {
   const tabId = Number(source?.tabId);
-  if (Number.isInteger(tabId)) isolatedByTab.delete(tabId);
+  if (!Number.isInteger(tabId)) return;
+  isolatedByTab.delete(tabId);
+  const sessions = sessionsByTab.get(tabId);
+  if (sessions) for (const sessionId of sessions) isolatedBySession.delete(sessionId);
+  sessionsByTab.delete(tabId);
+  chromeFramesByTab.delete(tabId);
 });
-type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /** Owns stable element references and page/tab/session validation. */
@@ -371,7 +393,7 @@ async function bindBackendNodes(tabId: number, selectors: string[], context: Too
   }
 }
 
-async function describeSelectors(send: CdpSend, selectors: string[]) {
+async function describeSelectors(send: CdpCommand, selectors: string[]) {
   const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
   const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
   const documentNodeId = Number(record(root.root).nodeId || 0);
@@ -446,28 +468,49 @@ async function readMainDocumentId(tabId: number) {
   }
 }
 
-async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpSend, call: ElementCaller) => Promise<T>) {
+async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpCommand, call: ElementCaller) => Promise<T>) {
   const id = Number(binding.tabId || tabId);
   if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable tabId", { target: binding.target || "" });
   const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
-    const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-    const loaderId = String(frame.loaderId || "");
-    if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
-    const contextId = await contentContextId(id, send, String(frame.id || ""));
-    // Selection may initialize Content while a navigation replaces the document.
-    const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-    if (current.id !== frame.id || current.loaderId !== frame.loaderId) throw staleElement(binding.uid || binding.target || "");
-    const objectId = await objectFromBackend(send, binding, objectGroup, contextId);
+    const requestedFrameId = String(binding.ref?.frameId || "");
+    let nodeSend: CdpCommand = send;
+    let cdpFrameId = "";
+    let sessionId = "";
+    let loaderId = "";
+    if (requestedFrameId) {
+      const opened = await openChildFrame(send, requestedFrameId);
+      if (!opened) throw staleElement(binding.uid || binding.target || "");
+      if (binding.ref?.loaderId && opened.loaderId && binding.ref.loaderId !== opened.loaderId) throw staleElement(binding.uid || binding.target || "");
+      nodeSend = opened.send;
+      cdpFrameId = opened.id;
+      sessionId = opened.sessionId;
+      loaderId = opened.loaderId;
+    } else {
+      const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+      cdpFrameId = String(frame.id || "");
+      loaderId = String(frame.loaderId || "");
+      if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    }
+    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId, Boolean(requestedFrameId));
+    if (requestedFrameId) {
+      const opened = await openChildFrame(send, requestedFrameId);
+      if (!opened || opened.id !== cdpFrameId || (loaderId && opened.loaderId !== loaderId)) throw staleElement(binding.uid || binding.target || "");
+    } else {
+      // Selection may initialize Content while a navigation replaces the document.
+      const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+      if (current.id !== cdpFrameId || current.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    }
+    const objectId = await objectFromBackend(nodeSend, binding, objectGroup, contextId);
     try {
-      return await run(send, (action, params = {}) => invokeBound(send, objectId, action, params, objectGroup));
+      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup));
     } finally {
-      try { await send("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
+      try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
   }, context);
 }
 
-async function objectFromBackend(send: CdpSend, binding: { target?: string; ref?: ElementReference }, objectGroup: string, contextId: number) {
+async function objectFromBackend(send: CdpCommand, binding: { target?: string; ref?: ElementReference }, objectGroup: string, contextId: number) {
   const backendNodeId = Number(binding.ref?.backendNodeId || 0);
   if (!backendNodeId) throw staleElement(binding.target || "");
   try {
@@ -481,9 +524,18 @@ async function objectFromBackend(send: CdpSend, binding: { target?: string; ref?
   }
 }
 
-async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
+function isolatedContexts(tabId: number, sessionId: string) {
+  return sessionId ? isolatedBySession.get(sessionId) : isolatedByTab.get(tabId);
+}
+
+function clearIsolatedContexts(tabId: number, sessionId: string) {
+  if (sessionId) isolatedBySession.delete(sessionId);
+  else isolatedByTab.delete(tabId);
+}
+
+async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "", childFrame = false) {
   const select = async () => {
-    const candidates = isolatedByTab.get(tabId)?.get(frameId);
+    const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
     for (const contextId of [...(candidates || [])]) {
       try {
         const result = record(await send("Runtime.evaluate", {
@@ -497,7 +549,7 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
         const value = record(record(result.result).value);
         const selected = !result.exceptionDetails && Boolean(chrome.runtime.id)
           && value.extensionId === chrome.runtime.id && value.bridge === true
-          && isolatedByTab.get(tabId)?.get(frameId) === candidates && candidates?.has(contextId);
+          && isolatedContexts(tabId, sessionId)?.get(frameId) === candidates && candidates?.has(contextId);
         if (selected) return contextId;
       } catch (error) {
         if (isCdpFallbackForbiddenError(error) || !/Cannot find context|Execution context (?:was destroyed|is not available)/i.test(String(error))) throw error;
@@ -507,22 +559,79 @@ async function contentContextId(tabId: number, send: CdpSend, frameId: string) {
   };
   const discover = async () => {
     try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
-    isolatedByTab.delete(tabId);
+    clearIsolatedContexts(tabId, sessionId);
     await send("Runtime.enable");
   };
-  if (!isolatedByTab.get(tabId)?.get(frameId)?.size) await discover();
+  if (!isolatedContexts(tabId, sessionId)?.get(frameId)?.size) await discover();
   let id = await select();
   if (id) return id;
   // A responding ping can belong to Content without the node bridge. Initialize
   // once, then validate again; no action has been dispatched on this path.
-  await initializeContentScript(tabId);
+  if (childFrame) await ensureChildContentScript(tabId, send, frameId, sessionId);
+  else await initializeContentScript(tabId);
   await discover();
   id = await select();
   if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
   return id;
 }
 
-async function invokeBound(send: CdpSend, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
+async function ensureChildContentScript(tabId: number, send: CdpCommand, cdpFrameId: string, sessionId: string) {
+  const chromeFrameId = await chromeFrameIdFor(tabId, send, cdpFrameId, sessionId);
+  await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [chromeFrameId] },
+    world: "ISOLATED",
+    injectImmediately: true,
+    files: ["content/article-extractor.js", "content/content-script.js"],
+  });
+}
+
+async function chromeFrameIdFor(tabId: number, send: CdpCommand, cdpFrameId: string, sessionId: string) {
+  const cacheKey = `${sessionId}:${cdpFrameId}`;
+  const cached = chromeFramesByTab.get(tabId)?.get(cacheKey);
+  if (cached) return cached;
+  const scripting = chrome.scripting;
+  if (!scripting?.executeScript) {
+    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId, frameId: cdpFrameId });
+  }
+  const probed = await scripting.executeScript({
+    target: { tabId, allFrames: true },
+    world: "ISOLATED",
+    injectImmediately: true,
+    func: () => {
+      const scope = globalThis as typeof globalThis & { __qzFrameProbe?: string };
+      if (scope.__qzFrameProbe) return scope.__qzFrameProbe;
+      const token = crypto.randomUUID();
+      scope.__qzFrameProbe = token;
+      return token;
+    },
+  });
+  try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
+  clearIsolatedContexts(tabId, sessionId);
+  await send("Runtime.enable");
+  let token = "";
+  for (const contextId of [...(isolatedContexts(tabId, sessionId)?.get(cdpFrameId) || [])]) {
+    try {
+      const result = record(await send("Runtime.evaluate", {
+        contextId, returnByValue: true, expression: "globalThis.__qzFrameProbe || ''",
+      }));
+      const value = record(result.result).value;
+      if (!result.exceptionDetails && typeof value === "string" && value) { token = value; break; }
+    } catch (error) {
+      if (isCdpFallbackForbiddenError(error)) throw error;
+    }
+  }
+  const match = (Array.isArray(probed) ? probed : []).find(entry => entry?.result === token && Number(entry.frameId) > 0);
+  const chromeFrameId = Number(match?.frameId);
+  if (!Number.isInteger(chromeFrameId) || chromeFrameId <= 0) {
+    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId, frameId: cdpFrameId });
+  }
+  const frames = chromeFramesByTab.get(tabId) || new Map<string, number>();
+  frames.set(cacheKey, chromeFrameId);
+  chromeFramesByTab.set(tabId, frames);
+  return chromeFrameId;
+}
+
+async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
   const remote = record(await send("Runtime.callFunctionOn", {
     objectId, objectGroup, awaitPromise: true, returnByValue: true,
     functionDeclaration: "function(payload){return globalThis.__qzInvoke(this,payload)}",
