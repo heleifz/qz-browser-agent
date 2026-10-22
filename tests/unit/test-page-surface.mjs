@@ -38,7 +38,7 @@ test("a replaced document is not counted as a missed click", async () => {
     const id = await armPageInputReceipt(7);
     assert.equal(typeof id, "string");
     assert.notEqual(id, "");
-    const op = () => page.document.__qzInputReceipts.ops[id];
+    const op = () => page.document.__qzInputReceiptsV2.ops[id];
     assert.equal(op().n, 0);
     const pointerdown = page.listeners.find(item => item.type === "pointerdown");
     assert.equal(pointerdown.capture, true);
@@ -53,11 +53,40 @@ test("a replaced document is not counted as a missed click", async () => {
 
     const next = installPage();
     assert.equal(await readPageInputReceipt(7, id), null);
-    assert.equal(next.document.__qzInputReceiptBound, undefined);
+    assert.equal(next.document.__qzInputReceiptsV2Bound, undefined);
   } finally {
     runInPage = null;
     delete globalThis.document;
     delete globalThis.__qzInputReceipt;
+    delete globalThis.addEventListener;
+  }
+});
+
+test("an old receipt flag does not block the versioned listener", async () => {
+  runInPage = ({ func, args }) => func(...args);
+  try {
+    const page = installPage();
+    page.document.__qzInputReceiptBound = true;
+    page.document.__qzInputReceipt = 0;
+    const oldListener = event => {
+      if (event.isTrusted) page.document.__qzInputReceipt += 1;
+    };
+    for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) {
+      page.listeners.push({ type, listener: oldListener, capture: true });
+    }
+    const installed = page.listeners.length;
+    const id = await armPageInputReceipt(7);
+    assert.notEqual(id, "");
+    assert.equal(page.document.__qzInputReceiptsV2Bound, true);
+    const click = page.listeners.slice(installed).find(item => item.type === "click");
+    assert.ok(click, "the upgraded page installs its own listener");
+    click.listener({ isTrusted: true });
+    assert.equal(page.document.__qzInputReceipt, 0);
+    assert.ok(page.document.__qzInputReceiptsV2.ops[id].n > 0);
+    assert.ok(await readPageInputReceipt(7, id) > 0);
+  } finally {
+    runInPage = null;
+    delete globalThis.document;
     delete globalThis.addEventListener;
   }
 });

@@ -37,6 +37,9 @@ export async function ensurePageSurface(tabId: number, send: Send) {
 interface ReceiptOp { n: number; closed?: boolean }
 interface ReceiptBook { ops: Record<string, ReceiptOp> }
 
+// The previous extension stored `__qzInputReceiptBound` and its own listeners.
+// Reusing that flag skips installation, so every later count stays at zero.
+
 /** Arm one operation in every frame. An empty id means the page could not be armed. */
 export async function armPageInputReceipt(tabId: number) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -76,13 +79,13 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean) {
         const root = globalThis as unknown as {
           addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
-            __qzInputReceiptBound?: boolean;
-            __qzInputReceipts?: ReceiptBook;
+            __qzInputReceiptsV2Bound?: boolean;
+            __qzInputReceiptsV2?: ReceiptBook;
           };
         };
         const doc = root.document;
         if (!doc) return null;
-        const ops = () => doc.__qzInputReceipts?.ops;
+        const ops = () => doc.__qzInputReceiptsV2?.ops;
         if (!shouldArm) {
           const op = ops()?.[opId];
           // This document never armed the operation. Navigation is not a missed click.
@@ -90,8 +93,8 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean) {
           op.closed = true;
           return op.n;
         }
-        if (!doc.__qzInputReceiptBound) {
-          doc.__qzInputReceiptBound = true;
+        if (!doc.__qzInputReceiptsV2Bound) {
+          doc.__qzInputReceiptsV2Bound = true;
           const count = (event: { isTrusted: boolean }) => {
             if (!event.isTrusted) return;
             const open = ops();
@@ -103,7 +106,7 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean) {
           // pointerdown preventDefault suppresses mousedown; the click still runs.
           for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) root.addEventListener(type, count, true);
         }
-        const book = doc.__qzInputReceipts || (doc.__qzInputReceipts = { ops: {} });
+        const book = doc.__qzInputReceiptsV2 || (doc.__qzInputReceiptsV2 = { ops: {} });
         book.ops[opId] = { n: 0, closed: false };
         return 0;
       },
