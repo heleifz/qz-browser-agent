@@ -40,6 +40,16 @@ function hideInstalledMagick(directory) {
   return hook;
 }
 
+// The TypeScript loader's esbuild service can print this after a concurrent
+// run has already skipped. It is not output from the comparison command.
+function stderrBeyondRunnerNoise(stderr) {
+  const noise = new Set(["context canceled", "context cancelled"]);
+  return stderr.split(/\r?\n/).filter(line => {
+    const text = line.trim();
+    return text !== "" && !noise.has(text.toLowerCase());
+  }).join("\n");
+}
+
 function run(args, path) {
   const env = { ...process.env, PATH: path };
   // Nested node --test must not inherit the parent runner's channel.
@@ -122,7 +132,7 @@ test("comparison commands that do not invoke magick keep their existing errors",
   assert.match(baseline.stdout, /^conversation render baseline comparison skipped: /);
   assert.match(baseline.stdout, skipReason);
   assert.equal(baseline.stdout.trim().split(/\r?\n/).length, 1, baseline.stdout);
-  assert.equal(baseline.stderr, "");
+  assert.equal(stderrBeyondRunnerNoise(baseline.stderr), "", baseline.stderr);
   assert.equal(existsSync(output), false);
 });
 
