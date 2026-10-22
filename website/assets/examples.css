@@ -34,7 +34,7 @@
 qz-session-view { display: block; min-width: 0; max-width: 100%; }
 
 @media (min-width: 1024px) {
-  .example-stage { display: grid; grid-template-columns: 5fr 7fr; gap: 48px; align-items: start; }
+  .example-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 400px); gap: 48px; align-items: start; }
   .example-lead { position: sticky; top: 124px; min-width: 0; }
   .example-thread { height: calc(100dvh - 100px - 48px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
   .example-thread::-webkit-scrollbar { width: 8px; }
