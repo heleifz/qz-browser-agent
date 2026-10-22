@@ -24,7 +24,9 @@ function laidOut(size: { width: number; height: number } | null) {
 
 /** A background tab drops CDP mouse input until Chrome has composited it. One capture does that. */
 export async function ensurePageSurface(tabId: number, send: Send) {
-  if (laidOut(await outerSize(tabId))) return;
+  const size = await outerSize(tabId);
+  // An unreadable size is not evidence the surface is missing.
+  if (!size || laidOut(size)) return;
   try {
     await send("Page.captureScreenshot", { format: "jpeg", quality: 1, fromSurface: true, captureBeyondViewport: false });
   } catch {

@@ -24,6 +24,11 @@ test("a zero outer size gets one warmup capture and the tab stays in the backgro
   const warm = [];
   await ensurePageSurface(7, async (method) => { warm.push(method); return {}; });
   assert.deepEqual(warm, ["Page.captureScreenshot"]);
+
+  sizes.push(null);
+  const unread = [];
+  await ensurePageSurface(7, async (method) => { unread.push(method); });
+  assert.deepEqual(unread, []);
 });
 
 test("a replaced document is not counted as a missed click", async () => {
