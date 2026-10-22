@@ -25,7 +25,16 @@ function setLanguage(next, { remember = false } = {}) {
   locale = next;
   localeVersion += 1;
   document.documentElement.lang = next;
-  document.title = copy.title;
+  const titleKey = document.documentElement.dataset.titleKey;
+  if (titleKey && copy.html[titleKey]) {
+    const holder = document.createElement("div");
+    holder.innerHTML = copy.html[titleKey];
+    holder.querySelectorAll(".copy-pending").forEach((node) => node.remove());
+    const text = holder.textContent.replace(/\s+/g, " ").trim();
+    document.title = text ? `${text} — qz` : copy.title;
+  } else {
+    document.title = copy.title;
+  }
   // These strings are static markup shipped with the site, never visitor-supplied HTML.
   for (const element of contentBindings) element.innerHTML = copy.html[element.dataset.i18n];
   for (const element of attributeBindings) {
