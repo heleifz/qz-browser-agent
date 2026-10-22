@@ -42,6 +42,7 @@ function buildCopy() {
       examplesTitle: escapeHtml(shared.title),
       examplesLede: escapeHtml(shared.lede),
       exampleDownload: buttonHtml(shared.download),
+      exampleDownloadShort: escapeHtml(shared.downloadShort),
     };
     const attributes = {
       examplePlayButton: { "aria-label": shared.play },
@@ -213,6 +214,7 @@ function detailPage(item, session, part) {
       <div class="example-actions">
         <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
         <a class="button" id="example-download" href="${file}" download="${filename}" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
+        <a class="example-download-short" href="${file}" download="${filename}" data-i18n="exampleDownloadShort" hidden>${escapeHtml(en.downloadShort)}</a>
       </div>
       <div class="example-frame">${mediaMarkup(item)}</div>
     </div>
