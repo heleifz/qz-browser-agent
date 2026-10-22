@@ -41,9 +41,9 @@
   --chat-sticky-offset: 0px;
 }
 
-/* Hand vertical wheel movement back to the transcript once an inner
-   panel is at its end. Contain on these panels swallows the wheel even
-   when they have nothing left to scroll. */
+/* Chain wheel and touch scrolls through nested export panels, then the
+   transcript, then the page. Contain stops that chain at the panel edge. */
+#messages,
 #messages :is(
   .tool-timeline-slot-body,
   .tool-text-preview,
@@ -55,7 +55,9 @@
   .copyable-code-block,
   .copyable-code-block pre,
   .tool-data-table-wrap,
-  .example-table-scroll
+  .example-table-scroll,
+  .thinking-group-body,
+  .tool-session-prompt-body
 ) {
-  overscroll-behavior-y: auto;
+  overscroll-behavior: auto;
 }
