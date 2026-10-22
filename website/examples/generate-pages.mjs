@@ -26,10 +26,6 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function sessionHref(file) {
-  return `../sessions/${path.posix.basename(file)}`;
-}
-
 function buttonHtml(label) {
   return `<span>${escapeHtml(label)}</span>${ARROW}`;
 }
@@ -41,8 +37,7 @@ function buildCopy() {
     const html = {
       examplesTitle: escapeHtml(shared.title),
       examplesLede: escapeHtml(shared.lede),
-      exampleDownload: buttonHtml(shared.download),
-      exampleDownloadShort: escapeHtml(shared.downloadShort),
+      exampleDownload: escapeHtml(shared.download),
     };
     const attributes = {
       examplePlayButton: { "aria-label": shared.play },
@@ -169,7 +164,7 @@ function lazyImages(html) {
 }
 
 function sessionView(part) {
-  return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
+  return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><link rel="stylesheet" href="../../assets/examples/session-view-overrides.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
 }
 
 function relatedMarkup(item, session) {
@@ -195,8 +190,6 @@ function writeSharedSessionAssets(parts) {
 function detailPage(item, session, part) {
   const en = catalog.copy.en;
   const slug = pageSlug(item, session);
-  const file = sessionHref(session.file);
-  const filename = path.posix.basename(session.file);
   const canonical = `https://alibaba.github.io/qz-browser-agent/examples/${slug}/`;
   return `<!DOCTYPE html>
 <html lang="en" data-example="${item.slug}" data-site-root="../../" data-generated="qz-example" data-session="${session.id}">
@@ -238,8 +231,7 @@ function detailPage(item, session, part) {
         <p class="example-session-title">${escapeHtml(part.title)}</p>
         <div class="example-thread-cta">
           <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
-          <a class="button" id="example-store" href="${STORE}" target="_blank" rel="noopener" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
-          <a class="example-download-short" href="${file}" download="${filename}" data-i18n="exampleDownloadShort">${escapeHtml(en.downloadShort)}</a>
+          <a class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" id="example-store" href="${STORE}" target="_blank" rel="noopener" data-i18n="exampleDownload">${escapeHtml(en.download)}</a>
         </div>
       </div>
       ${sessionView(part)}

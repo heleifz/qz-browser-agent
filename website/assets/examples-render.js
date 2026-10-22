@@ -35,9 +35,62 @@ function bindMedia() {
   });
 }
 
+function adoptSessionOverrides(root) {
+  if (root.querySelector('link[href*="session-view-overrides.css"]')) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = siteUrl("assets/examples/session-view-overrides.css");
+  const current = [...root.querySelectorAll("link")].find((node) => node.getAttribute("href")?.includes("session-view.css"));
+  if (current) current.after(link);
+  else root.prepend(link);
+}
+
+function cellText(cell) {
+  return (cell.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function keepCellOnOneLine(text) {
+  if (!text || (text.length <= 14 && !/\s/.test(text))) return true;
+  if (text.length > 24) return false;
+  const time = /^(?:\d{1,2}:\d{2})(?:\s*[-–—~～至到]\s*\d{1,2}:\d{2})?$/;
+  const date = /^(?:\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?|\d{1,2}[/.月]\d{1,2}日?)(?:\s*[-–—~～至到]\s*(?:\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?|\d{1,2}[/.月]\d{1,2}日?))?$/;
+  const price = /^(?:免费|免票|[—–-]|[$¥￥€£]\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|美元|人民币))$/;
+  return time.test(text) || date.test(text) || price.test(text);
+}
+
+function markTableCells(table) {
+  for (const cell of table.querySelectorAll("th, td")) {
+    cell.classList.toggle("example-cell-nowrap", keepCellOnOneLine(cellText(cell)));
+  }
+}
+
+function prepareTable(table) {
+  const parent = table.parentElement;
+  if (!parent) return;
+  if (parent.classList.contains("example-table-scroll") || parent.classList.contains("tool-data-table-wrap")) {
+    markTableCells(table);
+    return;
+  }
+  const scroller = document.createElement("div");
+  scroller.className = "example-table-scroll";
+  parent.insertBefore(scroller, table);
+  scroller.append(table);
+  markTableCells(table);
+}
+
+function prepareTables(root) {
+  adoptSessionOverrides(root);
+  root.querySelectorAll("table").forEach(prepareTable);
+  root.querySelectorAll("template").forEach((template) => {
+    template.content.querySelectorAll("table").forEach(prepareTable);
+  });
+}
+
 function bindSessions() {
   for (const host of document.querySelectorAll("qz-session-view")) {
-    if (host.shadowRoot) mountSessionView(host.shadowRoot);
+    if (!host.shadowRoot) continue;
+    mountSessionView(host.shadowRoot);
+    prepareTables(host.shadowRoot);
   }
 }
 
@@ -51,7 +104,7 @@ function labelImportButton() {
   if (!(button instanceof HTMLButtonElement) || !button.hasAttribute("data-qingzhou-session-import")) return;
   if (button.disabled || button.getAttribute("aria-busy") === "true") return;
   const label = importLabel();
-  if (label) button.textContent = label;
+  if (label && button.textContent !== label) button.textContent = label;
 }
 
 function bindImport() {

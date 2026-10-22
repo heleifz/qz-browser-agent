@@ -87,8 +87,7 @@ export const translations = {
       /* example-html:en:start */
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. Watch the recording on the left, follow every step it took on the right, then import it into qz and pick up the conversation.",
-      "exampleDownload": "<span>Import into qz to continue</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "exampleDownloadShort": "Download session",
+      "exampleDownload": "Import into qz to continue",
       "example-travel-title": "Three days in Hangzhou",
       "example-travel-summary": "Checks sights, hours, and tickets, then merges them into a day-by-day plan.",
       "example-llm-compare-title": "Model comparison",
@@ -331,8 +330,7 @@ export const translations = {
       /* example-html:zh:start */
       "examplesTitle": "真实任务，完整过程。",
       "examplesLede": "每个例子都是轻舟的一次真实会话。左边看录屏，右边看它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
-      "exampleDownload": "<span>导入轻舟继续对话</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
-      "exampleDownloadShort": "下载会话",
+      "exampleDownload": "导入轻舟继续对话",
       "example-travel-title": "杭州三日游",
       "example-travel-summary": "查景点、开放时间和门票，汇成每日路线表。",
       "example-llm-compare-title": "模型对比表",
