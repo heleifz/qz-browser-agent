@@ -465,6 +465,45 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
+  test("a shadow subtree button is not bound to the outer button with the same id", async () => {
+    await h.page.evaluate(() => {
+      const outer = document.createElement("button");
+      outer.id = "shadow-save";
+      outer.textContent = "Outer save";
+      outer.addEventListener("click", () => { window.hits.outer = (window.hits.outer || 0) + 1; });
+      const host = document.createElement("div");
+      host.id = "shadow-panel-host";
+      const root = host.attachShadow({ mode: "open" });
+      const region = document.createElement("div");
+      region.setAttribute("role", "region");
+      region.setAttribute("aria-label", "Panel");
+      const inner = document.createElement("button");
+      inner.id = "shadow-save";
+      inner.textContent = "Inner save";
+      inner.addEventListener("click", () => { window.hits.inner = (window.hits.inner || 0) + 1; });
+      region.append(inner);
+      root.append(region);
+      document.body.append(outer, host);
+    });
+    const page = await h.call("get_ax_tree", {});
+    expect(page.code, JSON.stringify(page)).toBeUndefined();
+    const region = targets(page.snapshot, "region", "Panel")[0];
+    expect(region, page.snapshot).toBeTruthy();
+    const sub = await h.call("get_ax_tree", { root: region });
+    expect(sub.code, JSON.stringify(sub)).toBeUndefined();
+    const buttons = targets(sub.snapshot, "button", "Inner save");
+    expect(buttons, sub.snapshot).toHaveLength(1);
+    const clicked = await h.call("act_on_element", { target: buttons[0], action: "click" });
+    expect(clicked.code, JSON.stringify(clicked)).toBeUndefined();
+    const inspected = await h.call("inspect_element", { target: buttons[0] });
+    expect(inspected.code, JSON.stringify(inspected)).toBeUndefined();
+    expect(inspected.text, JSON.stringify(inspected)).toContain("Inner save");
+    expect(inspected.text).not.toContain("Outer save");
+    const hits = (await h.state()).hits;
+    expect(hits.inner).toBe(1);
+    expect(hits.outer || 0).toBe(0);
+  });
+
   test("a shallow snapshot clicks each duplicate-id button", async () => {
     await h.page.evaluate(() => {
       const root = document.createElement("div");
