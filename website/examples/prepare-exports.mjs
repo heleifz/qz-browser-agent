@@ -1,7 +1,9 @@
 // Copy qz session exports into the website and clear runtime.ownedTabs.
-// The rest of each file, including the exchange script tag and JSON escapes, stays put.
+// PNG data URLs inside the exchange JSON are re-encoded to WebP when that is smaller.
+// The script tag stays id-before-type. <, U+2028, and U+2029 stay escaped.
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const SCRIPT_PATTERN = /<script\s+id=(["'])qingzhou-session-exchange\1\s+type=(["'])application\/json\2>([\s\S]*?)<\/script>/u;
@@ -12,7 +14,7 @@ export function clearOwnedTabs(html) {
   if (!match) throw new Error("missing qingzhou-session-exchange script");
   const json = match[3];
   const header = json.slice(0, 256);
-  if (!header.includes('"format":"qingzhou.session"') || !header.includes('"version":1')) {
+  if (!/"format"\s*:\s*"qingzhou\.session"/.test(header) || !/"version"\s*:\s*1/.test(header)) {
     throw new Error("exchange JSON does not start with qingzhou.session version 1");
   }
   const span = findLastArrayProperty(json, "ownedTabs");
@@ -131,6 +133,83 @@ function findLastArrayProperty(json, key) {
   return last;
 }
 
+const PNG_DATA_URL = /data:image\/png;base64,[A-Za-z0-9+/]+=*/g;
+
+// v1 stores every screenshot inline. Import copies dataUrl through and has no asset id,
+// so two identical images stay as two strings.
+export function prepareExport(html) {
+  const cleared = clearOwnedTabs(html);
+  const match = SCRIPT_PATTERN.exec(cleared);
+  const payload = JSON.parse(match[3]);
+  const stats = { seen: 0, replaced: 0, duplicateStrings: 0 };
+  const seenUrls = new Map();
+  const next = mapStrings(payload, (value) => recompressPngs(value, stats, seenUrls));
+  if (!Array.isArray(next?.runtime?.ownedTabs) || next.runtime.ownedTabs.length !== 0) {
+    throw new Error("runtime.ownedTabs was not empty after prepare");
+  }
+  const json = minifyExchangeJson(next);
+  const open = match[0].slice(0, match[0].indexOf(">") + 1);
+  const idAt = open.indexOf("id=");
+  const typeAt = open.indexOf("type=");
+  if (idAt < 0 || typeAt < 0 || idAt > typeAt) throw new Error("script id must come before type");
+  return {
+    html: `${cleared.slice(0, match.index)}${open}${json}</script>${cleared.slice(match.index + match[0].length)}`,
+    stats,
+  };
+}
+
+function mapStrings(value, visit) {
+  if (typeof value === "string") return visit(value);
+  if (Array.isArray(value)) return value.map((item) => mapStrings(item, visit));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = mapStrings(item, visit);
+    return out;
+  }
+  return value;
+}
+
+function recompressPngs(value, stats, seenUrls) {
+  if (!value.includes("data:image/png;base64,")) return value;
+  return value.replace(PNG_DATA_URL, (url) => {
+    stats.seen += 1;
+    if (seenUrls.has(url)) {
+      stats.duplicateStrings += 1;
+      return seenUrls.get(url);
+    }
+    const next = pngDataUrlToWebp(url);
+    seenUrls.set(url, next);
+    if (next !== url) stats.replaced += 1;
+    return next;
+  });
+}
+
+function pngDataUrlToWebp(url) {
+  const png = Buffer.from(url.slice("data:image/png;base64,".length), "base64");
+  const result = spawnSync("convert", ["png:-", "-quality", "80", "webp:-"], {
+    input: png,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.status !== 0 || !result.stdout?.length) {
+    throw new Error(`webp encode failed: ${result.stderr?.toString() || "no output"}`);
+  }
+  const webp = `data:image/webp;base64,${result.stdout.toString("base64")}`;
+  return webp.length < url.length ? webp : url;
+}
+
+function minifyExchangeJson(payload) {
+  const json = JSON.stringify(payload)
+    .replace(/</gu, "\\u003c")
+    .replace(/\u2028/gu, "\\u2028")
+    .replace(/\u2029/gu, "\\u2029");
+  const header = json.slice(0, 256);
+  if (!header.includes('"format":"qingzhou.session"') || !header.includes('"version":1')) {
+    throw new Error("exchange JSON does not start with qingzhou.session version 1");
+  }
+  if (json.includes("\n")) throw new Error("exchange JSON was not minified");
+  return json;
+}
+
 function printUsage() {
   console.log("Usage: node website/examples/prepare-exports.mjs --out website/examples/sessions <export.html>...");
 }
@@ -150,10 +229,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     fs.mkdirSync(outDir, { recursive: true });
     for (const input of inputs) {
       const before = fs.readFileSync(input);
-      const after = clearOwnedTabs(before.toString("utf8"));
+      const prepared = prepareExport(before.toString("utf8"));
       const name = path.basename(input);
-      fs.writeFileSync(path.join(outDir, name), after);
-      console.log(`${name}: ownedTabs cleared`);
+      fs.writeFileSync(path.join(outDir, name), prepared.html);
+      console.log(`${name}: ${before.length} -> ${Buffer.byteLength(prepared.html)} bytes, png ${prepared.stats.seen}, webp ${prepared.stats.replaced}, repeated ${prepared.stats.duplicateStrings}`);
     }
   }
 }
@@ -173,6 +252,41 @@ function runSelfTest() {
   const payload = JSON.parse(SCRIPT_PATTERN.exec(cleared)[3]);
   if (payload.runtime.ownedTabs.length !== 0 || payload.session.ownedTabs.length !== 1) {
     throw new Error("the wrong ownedTabs array was replaced");
+  }
+  const png = spawnSync("convert", ["-size", "32x32", "gradient:red-blue", "png:-"], { maxBuffer: 1024 * 1024 });
+  if (png.status !== 0 || !png.stdout?.length) throw new Error("could not build a PNG fixture");
+  const dataUrl = `data:image/png;base64,${png.stdout.toString("base64")}`;
+  const fixture = {
+    format: "qingzhou.session",
+    version: 1,
+    session: {
+      title: "a < b \u2028 \u2029",
+      ownedTabs: [1],
+      note: `${dataUrl} ${dataUrl}`,
+    },
+    runtime: { ownedTabs: [{ url: "https://example.com" }] },
+  };
+  const source = `<!doctype html><script id="qingzhou-session-exchange" type="application/json">${JSON.stringify(fixture, null, 2)}</script>`;
+  const first = prepareExport(source);
+  const second = prepareExport(first.html);
+  if (second.html !== first.html) throw new Error("prepare was not stable");
+  const preparedJson = SCRIPT_PATTERN.exec(first.html)[3];
+  const prepared = JSON.parse(preparedJson);
+  if (prepared.runtime.ownedTabs.length !== 0 || prepared.session.ownedTabs.length !== 1) {
+    throw new Error("prepare cleared the wrong ownedTabs array");
+  }
+  if (!preparedJson.includes("\\u003c") || !preparedJson.includes("\\u2028") || !preparedJson.includes("\\u2029")) {
+    throw new Error("prepare dropped JSON escapes");
+  }
+  if (!preparedJson.startsWith('{"format":"qingzhou.session","version":1')) {
+    throw new Error("prepare moved format or version");
+  }
+  const urls = prepared.session.note.split(" ");
+  if (urls.length !== 2 || urls[0] !== urls[1] || !urls[0].startsWith("data:image/webp;base64,")) {
+    throw new Error("duplicate PNG screenshots were not kept as repeated WebP data URLs");
+  }
+  if (prepared.session.note.includes("\"$ref\"") || prepared.session.note.includes("asset:")) {
+    throw new Error("prepare replaced a screenshot with a reference");
   }
   console.log("prepare-exports self-test passed");
 }
