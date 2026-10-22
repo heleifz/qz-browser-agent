@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qingzhou.local/benchmark/task.schema.json",
+  "title": "QingzhouEvalTask",
+  "type": "object",
+  "required": [
+    "id",
+    "source",
+    "core_task",
+    "prompt",
+    "locale",
+    "requires_login",
+    "success_criteria",
+    "judge",
+    "timeout_s",
+    "license_note",
+    "status"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable id, e.g. om2w:<task_id> or self:form-login-001"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "open:online-mind2web",
+        "open:webvoyager",
+        "self"
+      ]
+    },
+    "source_task_id": {
+      "type": "string"
+    },
+    "core_task": {
+      "type": "string",
+      "enum": [
+        "research",
+        "compare",
+        "skill_reuse",
+        "batch_collect",
+        "form_fill"
+      ]
+    },
+    "prompt": {
+      "type": "string"
+    },
+    "start_url": {
+      "type": "string"
+    },
+    "locale": {
+      "type": "string",
+      "enum": [
+        "zh-CN",
+        "en"
+      ]
+    },
+    "requires_login": {
+      "type": "boolean"
+    },
+    "success_criteria": {
+      "type": "object"
+    },
+    "judge": {
+      "type": "string",
+      "enum": [
+        "rule",
+        "llm_judge",
+        "human"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeout_s": {
+      "type": "integer",
+      "minimum": 30
+    },
+    "license_note": {
+      "type": "string"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": [
+        "easy",
+        "medium",
+        "hard",
+        "unknown"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "partial",
+        "pending_website"
+      ]
+    },
+    "website_status": {
+      "type": "string"
+    },
+    "gold": {},
+    "pair": {
+      "type": "string"
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

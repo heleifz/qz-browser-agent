@@ -1,0 +1,827 @@
+{
+  "name": "qingzhou-eval-v0.1",
+  "version": "0.1.0",
+  "created": "2026-10-23",
+  "seed": 20261023,
+  "policy": {
+    "curated_target": "25-30",
+    "parallel_max": 3,
+    "single_model": true,
+    "no_webarena": true,
+    "release_gate": "must_run_curated"
+  },
+  "counts": {
+    "total": 32,
+    "webvoyager": 6,
+    "online_mind2web": 18,
+    "self": 8,
+    "ready": 14,
+    "partial_or_pending": 18
+  },
+  "by_core_task": {
+    "research": 25,
+    "form_fill": 4,
+    "batch_collect": 1,
+    "skill_reuse": 2
+  },
+  "tasks": [
+    {
+      "id": "wv:GitHub--23",
+      "source": "open:webvoyager",
+      "source_task_id": "GitHub--23",
+      "core_task": "research",
+      "prompt": "Find the wiki page of ohmyzsh on GitHub and tell me how to change the theme of zsh to agnoster.",
+      "start_url": "https://github.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "extraction",
+        "site:GitHub"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "wv:ArXiv--23",
+      "source": "open:webvoyager",
+      "source_task_id": "ArXiv--23",
+      "core_task": "research",
+      "prompt": "Determine how many articles with the keyword 'autonomous vehicles' were published in the 'Electrical Engineering and Systems Science' section of ArXiv yesterday.",
+      "start_url": "https://arxiv.org/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "site:ArXiv"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "wv:Google Search--2",
+      "source": "open:webvoyager",
+      "source_task_id": "Google Search--2",
+      "core_task": "research",
+      "prompt": "Search for the latest news title about the NBA team the Los Angeles Lakers.",
+      "start_url": "https://www.google.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "site:Google Search"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "wv:Amazon--4",
+      "source": "open:webvoyager",
+      "source_task_id": "Amazon--4",
+      "core_task": "research",
+      "prompt": "Find the used Nintendo Switch Lite on Amazon then filter by 'Used - Good', tell me the cheapest one that is 'Used - Good'.",
+      "start_url": "https://www.amazon.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "extraction",
+        "site:Amazon"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "wv:Coursera--29",
+      "source": "open:webvoyager",
+      "source_task_id": "Coursera--29",
+      "core_task": "research",
+      "prompt": "Browse the Coursera website and find the price required for one year of Coursera Plus. How much is the discount? Then list 3 companies that work with Coursera.",
+      "start_url": "https://www.coursera.org/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "extraction",
+        "long_horizon",
+        "site:Coursera"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "wv:ESPN--22",
+      "source": "open:webvoyager",
+      "source_task_id": "ESPN--22",
+      "core_task": "research",
+      "prompt": "Find the latest Team transactions in the NBA within the past week.",
+      "start_url": "https://www.espn.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "reference_or_human",
+        "notes": "Prefer WebVoyager reference_answer.json when present; else llm_judge/human."
+      },
+      "judge": "llm_judge",
+      "tags": [
+        "navigation",
+        "extraction",
+        "site:ESPN"
+      ],
+      "timeout_s": 600,
+      "license_note": "Apache-2.0 (MinorJerry/WebVoyager)",
+      "difficulty": "unknown",
+      "status": "ready",
+      "website_status": "official"
+    },
+    {
+      "id": "om2w:20a460a8fe1971b84411c5b1e6ac4186",
+      "source": "open:online-mind2web",
+      "source_task_id": "20a460a8fe1971b84411c5b1e6ac4186",
+      "core_task": "research",
+      "prompt": "Show theatre events for Las Vegas and select one.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:e24662008c3be5d56f986f232fcec447",
+      "source": "open:online-mind2web",
+      "source_task_id": "e24662008c3be5d56f986f232fcec447",
+      "core_task": "research",
+      "prompt": "Find the stock price for WWE over the last month.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:b6d10e9bd19b4009a02dea0e98f4e1ae",
+      "source": "open:online-mind2web",
+      "source_task_id": "b6d10e9bd19b4009a02dea0e98f4e1ae",
+      "core_task": "research",
+      "prompt": "Check the current standings for MLS on Fox Sports.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:23204728192da9f73197a613d9681c18",
+      "source": "open:online-mind2web",
+      "source_task_id": "23204728192da9f73197a613d9681c18",
+      "core_task": "research",
+      "prompt": "What are the Symptoms and causes of fever?",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:9586827ad04ee2362f4f0076bf0f0468",
+      "source": "open:online-mind2web",
+      "source_task_id": "9586827ad04ee2362f4f0076bf0f0468",
+      "core_task": "research",
+      "prompt": "Find the side effects of taking Montelukast.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:6ca20f1da01edeb49a7a42c816d8c6fe",
+      "source": "open:online-mind2web",
+      "source_task_id": "6ca20f1da01edeb49a7a42c816d8c6fe",
+      "core_task": "research",
+      "prompt": "Find the Eligibility to get the child benefit and How it works and how to claim",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:5e1b8254c123c80178cc28e0afdb14f0",
+      "source": "open:online-mind2web",
+      "source_task_id": "5e1b8254c123c80178cc28e0afdb14f0",
+      "core_task": "research",
+      "prompt": "Find a help page about buying tickets on seatgeek.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:easy"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "easy",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:bfa2de159be6978acf2702be31a2eeeb",
+      "source": "open:online-mind2web",
+      "source_task_id": "bfa2de159be6978acf2702be31a2eeeb",
+      "core_task": "research",
+      "prompt": "Show me the options for a roundtrip leaving from Las Vegas on flexible dates on the interactive map on united.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:bc2ce7f206045dd2d322e5695a947219",
+      "source": "open:online-mind2web",
+      "source_task_id": "bc2ce7f206045dd2d322e5695a947219",
+      "core_task": "research",
+      "prompt": "Estimate the federal income tax I would owe on $158,500 of taxable income in ZIP code 97007, filing as single.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:502e864440283214e0180645015f568b",
+      "source": "open:online-mind2web",
+      "source_task_id": "502e864440283214e0180645015f568b",
+      "core_task": "research",
+      "prompt": "Check permit availability for a group of 4 in Brooks Camp, Katmai National Park on May 22.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:48c73f3f53e2611c4a1052457c1033db",
+      "source": "open:online-mind2web",
+      "source_task_id": "48c73f3f53e2611c4a1052457c1033db",
+      "core_task": "research",
+      "prompt": "Get the report from the final environmental impact statement for the Jamaica Bus Depot expansion on new.mta.info.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:3adeea7627f4343069f38adae40f73d0",
+      "source": "open:online-mind2web",
+      "source_task_id": "3adeea7627f4343069f38adae40f73d0",
+      "core_task": "research",
+      "prompt": "Within 25 Miles of 96817, find a nursing home that accepts medicare.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:a7a73c8fa75441fc76df9746c327bdd6",
+      "source": "open:online-mind2web",
+      "source_task_id": "a7a73c8fa75441fc76df9746c327bdd6",
+      "core_task": "research",
+      "prompt": "Estimate the cost of a photographer in 07055 for a 4-hour project.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:c698ff3fc0f6cbce39947c597ab5749b",
+      "source": "open:online-mind2web",
+      "source_task_id": "c698ff3fc0f6cbce39947c597ab5749b",
+      "core_task": "research",
+      "prompt": "Browse the page with event planning tips on Eventbrite.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:medium"
+      ],
+      "timeout_s": 600,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "medium",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:eb2db4b769c145dbe6ba4f74f3e0de98",
+      "source": "open:online-mind2web",
+      "source_task_id": "eb2db4b769c145dbe6ba4f74f3e0de98",
+      "core_task": "research",
+      "prompt": "Find an energetic hairless dog with medium barking.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:hard"
+      ],
+      "timeout_s": 900,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "hard",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:636b07af4dd97c1793733db1fd1b90b8",
+      "source": "open:online-mind2web",
+      "source_task_id": "636b07af4dd97c1793733db1fd1b90b8",
+      "core_task": "research",
+      "prompt": "Filter handbags to evening bags that are blue, and polyester and cost less than $100.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:hard"
+      ],
+      "timeout_s": 900,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "hard",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:271b36efd4346721b5542488ff997042",
+      "source": "open:online-mind2web",
+      "source_task_id": "271b36efd4346721b5542488ff997042",
+      "core_task": "research",
+      "prompt": "Browse 8K Samsung TVs that are open box.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "difficulty:hard"
+      ],
+      "timeout_s": 900,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "hard",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "om2w:f2be37a9a60fbc25b6b11cf622d17352",
+      "source": "open:online-mind2web",
+      "source_task_id": "f2be37a9a60fbc25b6b11cf622d17352",
+      "core_task": "research",
+      "prompt": "Find obedience trials in state of New York during the month of May.",
+      "start_url": "",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "task_completion",
+        "notes": "Must start from the official website field once HF access fills start_url."
+      },
+      "judge": "human",
+      "tags": [
+        "navigation",
+        "extraction",
+        "difficulty:hard"
+      ],
+      "timeout_s": 900,
+      "license_note": "CC BY 4.0. Task text from public human_label.json; official website pending HF gated download.",
+      "difficulty": "hard",
+      "status": "pending_website",
+      "website_status": "missing_hf_gated"
+    },
+    {
+      "id": "self:form-login-001",
+      "source": "self",
+      "core_task": "form_fill",
+      "prompt": "Open the login page. Fill username tomsmith and password SuperSecretPassword! then click Login. Confirm the success message contains \"You logged into a secure area!\". Do not change the password.",
+      "start_url": "https://the-internet.herokuapp.com/login",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "dom_text",
+        "must_include": [
+          "You logged into a secure area!"
+        ]
+      },
+      "judge": "rule",
+      "tags": [
+        "form",
+        "navigation"
+      ],
+      "timeout_s": 180,
+      "license_note": "internal",
+      "difficulty": "easy",
+      "status": "ready",
+      "website_status": "verified_200"
+    },
+    {
+      "id": "self:form-controls-001",
+      "source": "self",
+      "core_task": "form_fill",
+      "prompt": "On the checkboxes page, ensure the first checkbox is unchecked and the second checkbox is checked. Then open /dropdown and select Option 2. Report the final checkbox states and selected dropdown value.",
+      "start_url": "https://the-internet.herokuapp.com/checkboxes",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "state",
+        "notes": "checkbox1=false, checkbox2=true, dropdown=Option 2"
+      },
+      "judge": "rule",
+      "tags": [
+        "form",
+        "navigation"
+      ],
+      "timeout_s": 180,
+      "license_note": "internal",
+      "difficulty": "easy",
+      "status": "ready",
+      "website_status": "verified_200"
+    },
+    {
+      "id": "self:iframe-001",
+      "source": "self",
+      "core_task": "form_fill",
+      "prompt": "Open the iframe page. Inside the TinyMCE editor iframe, clear the existing text and type exactly: Qingzhou iframe smoke test. Do not leave the page.",
+      "start_url": "https://the-internet.herokuapp.com/iframe",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "iframe_text",
+        "must_include": [
+          "Qingzhou iframe smoke test"
+        ]
+      },
+      "judge": "rule",
+      "tags": [
+        "form",
+        "iframe",
+        "navigation"
+      ],
+      "timeout_s": 240,
+      "license_note": "internal",
+      "difficulty": "medium",
+      "status": "ready",
+      "website_status": "verified_200"
+    },
+    {
+      "id": "self:shadowdom-001",
+      "source": "self",
+      "core_task": "form_fill",
+      "prompt": "Open the shadow DOM page. Read both lines of text inside shadow roots. Quote both lines exactly in your final answer. Do not invent text.",
+      "start_url": "https://the-internet.herokuapp.com/shadowdom",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "text_match",
+        "notes": "Must quote both shadow-root text lines on the page"
+      },
+      "judge": "rule",
+      "tags": [
+        "extraction",
+        "shadow_dom"
+      ],
+      "timeout_s": 180,
+      "license_note": "internal",
+      "difficulty": "medium",
+      "status": "ready",
+      "website_status": "verified_200"
+    },
+    {
+      "id": "self:batch-books-001",
+      "source": "self",
+      "core_task": "batch_collect",
+      "prompt": "Open Books to Scrape. Extract the first 8 books on the homepage into a table with columns: title, price, rating.",
+      "start_url": "https://books.toscrape.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "table",
+        "min_rows": 8,
+        "required_columns": [
+          "title",
+          "price",
+          "rating"
+        ]
+      },
+      "judge": "rule",
+      "tags": [
+        "extraction",
+        "batch_collect",
+        "navigation"
+      ],
+      "timeout_s": 300,
+      "license_note": "internal",
+      "difficulty": "easy",
+      "status": "ready",
+      "website_status": "verified_200"
+    },
+    {
+      "id": "self:skill-reuse-001a",
+      "source": "self",
+      "core_task": "skill_reuse",
+      "prompt": "On Books to Scrape, collect the first 5 books (title and price) into a table. Save this workflow as a Skill named books-first5 if supported; otherwise describe the exact reusable steps.",
+      "start_url": "https://books.toscrape.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "skill_created_or_described",
+        "skill_name": "books-first5",
+        "min_rows": 5
+      },
+      "judge": "human",
+      "tags": [
+        "skill",
+        "extraction",
+        "batch_collect"
+      ],
+      "timeout_s": 420,
+      "license_note": "internal",
+      "difficulty": "medium",
+      "status": "ready",
+      "website_status": "verified_200",
+      "pair": "self:skill-reuse-001b"
+    },
+    {
+      "id": "self:skill-reuse-001b",
+      "source": "self",
+      "core_task": "skill_reuse",
+      "prompt": "Reuse the Skill books-first5 (or the reusable steps from the previous task) on Books to Scrape to collect the first 5 books again (title and price).",
+      "start_url": "https://books.toscrape.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "skill_reused",
+        "skill_name": "books-first5",
+        "min_rows": 5
+      },
+      "judge": "human",
+      "tags": [
+        "skill",
+        "extraction",
+        "batch_collect"
+      ],
+      "timeout_s": 300,
+      "license_note": "internal",
+      "difficulty": "medium",
+      "status": "ready",
+      "website_status": "verified_200",
+      "pair": "self:skill-reuse-001a",
+      "depends_on": [
+        "self:skill-reuse-001a"
+      ]
+    },
+    {
+      "id": "self:parallel-smoke-001",
+      "source": "self",
+      "core_task": "research",
+      "prompt": "Run at most 3 parallel subtasks: (1) /checkboxes — how many checkboxes are checked; (2) /dropdown — default selected option; (3) /tables — email of the first row in Example 1. Return one combined answer. If subtasks are unavailable, do them sequentially under 4 minutes.",
+      "start_url": "https://the-internet.herokuapp.com/",
+      "locale": "en",
+      "requires_login": false,
+      "success_criteria": {
+        "type": "multi_fact",
+        "must_answer": [
+          "checkbox_count",
+          "dropdown_default",
+          "first_email"
+        ]
+      },
+      "judge": "rule",
+      "tags": [
+        "parallel",
+        "navigation",
+        "extraction",
+        "recovery"
+      ],
+      "timeout_s": 240,
+      "license_note": "internal",
+      "difficulty": "medium",
+      "status": "ready",
+      "website_status": "verified_200"
+    }
+  ]
+}

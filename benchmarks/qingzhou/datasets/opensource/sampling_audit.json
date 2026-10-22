@@ -1,0 +1,74 @@
+{
+  "seed": 20261023,
+  "om_seed_offset": 20261024,
+  "webvoyager": {
+    "source_file": "raw/webvoyager.jsonl",
+    "skipped_sites": [
+      "Booking",
+      "Google Flights",
+      "Google Map"
+    ],
+    "picked_ids": [
+      "GitHub--23",
+      "ArXiv--23",
+      "Google Search--2",
+      "Amazon--4",
+      "Coursera--29",
+      "ESPN--22"
+    ],
+    "picked_sites": [
+      "GitHub",
+      "ArXiv",
+      "Google Search",
+      "Amazon",
+      "Coursera",
+      "ESPN"
+    ]
+  },
+  "online_mind2web": {
+    "source_file": "raw/human_label.json",
+    "hf_dataset": "osunlp/Online-Mind2Web",
+    "hf_status": "gated_401_without_auth",
+    "difficulty_proxy": "fraction of agents with human_label==1 among 0/1 labels",
+    "quota": {
+      "easy": 7,
+      "medium": 7,
+      "hard": 4
+    },
+    "picked_ids": [
+      "20a460a8fe1971b84411c5b1e6ac4186",
+      "e24662008c3be5d56f986f232fcec447",
+      "b6d10e9bd19b4009a02dea0e98f4e1ae",
+      "23204728192da9f73197a613d9681c18",
+      "9586827ad04ee2362f4f0076bf0f0468",
+      "6ca20f1da01edeb49a7a42c816d8c6fe",
+      "5e1b8254c123c80178cc28e0afdb14f0",
+      "bfa2de159be6978acf2702be31a2eeeb",
+      "bc2ce7f206045dd2d322e5695a947219",
+      "502e864440283214e0180645015f568b",
+      "48c73f3f53e2611c4a1052457c1033db",
+      "3adeea7627f4343069f38adae40f73d0",
+      "a7a73c8fa75441fc76df9746c327bdd6",
+      "c698ff3fc0f6cbce39947c597ab5749b",
+      "eb2db4b769c145dbe6ba4f74f3e0de98",
+      "636b07af4dd97c1793733db1fd1b90b8",
+      "271b36efd4346721b5542488ff997042",
+      "f2be37a9a60fbc25b6b11cf622d17352"
+    ],
+    "website_inferred": 0,
+    "website_missing": 18
+  },
+  "self": {
+    "count": 8,
+    "ids": [
+      "self:form-login-001",
+      "self:form-controls-001",
+      "self:iframe-001",
+      "self:shadowdom-001",
+      "self:batch-books-001",
+      "self:skill-reuse-001a",
+      "self:skill-reuse-001b",
+      "self:parallel-smoke-001"
+    ]
+  }
+}
