@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="A Hangzhou itinerary, researched in parallel." data-i18n-attributes="example-travel-description">
+  <meta name="description" content="Checks sights, hours, and tickets, then merges them into a day-by-day plan." data-i18n-attributes="example-travel-description">
   <meta name="theme-color" content="#f7f7f5">
   <link rel="canonical" href="https://alibaba.github.io/qz-browser-agent/examples/travel/">
   <link rel="alternate" hreflang="en" href="https://alibaba.github.io/qz-browser-agent/examples/travel/">
@@ -29,16 +29,19 @@
   <div class="example-stage">
     <div class="example-lead">
       <h1 data-i18n="example-travel-title">Three days in Hangzhou</h1>
-      <p class="example-summary" data-i18n="example-travel-summary">A Hangzhou itinerary, researched in parallel.</p>
+      <p class="example-summary" data-i18n="example-travel-summary">Checks sights, hours, and tickets, then merges them into a day-by-day plan.</p>
       
-      <div class="example-actions">
-        <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
-        <a class="button" id="example-download" href="../sessions/travel-zh.html" download="travel-zh.html" data-i18n="exampleDownload"><span>Download the session and import it into qz</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
-        <a class="example-download-short" href="../sessions/travel-zh.html" download="travel-zh.html" data-i18n="exampleDownloadShort" hidden>Download session</a>
-      </div>
       <div class="example-frame"><div class="example-player"><video class="example-loop" poster="../../assets/examples/travel.webp" muted playsinline loop preload="none" width="840" height="1544" aria-label="Parallel tasks researching a Hangzhou itinerary" data-i18n-attributes="example-travel-media"></video></div></div>
     </div>
     <div class="example-thread">
+      <div class="example-actions example-thread-bar">
+        <p class="example-session-title">杭州三日游</p>
+        <div class="example-thread-cta">
+          <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
+          <a class="button" id="example-store" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" target="_blank" rel="noopener" data-i18n="exampleDownload"><span>Import into qz to continue</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+          <a class="example-download-short" href="../sessions/travel-zh.html" download="travel-zh.html" data-i18n="exampleDownloadShort">Download session</a>
+        </div>
+      </div>
       <qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><script type="application/json" id="qingzhou-export-messages">{"imagePreview":"图片预览","images":"图片","close":"关闭","importQingzhou":"导入轻舟","importing":"正在导入","imported":"已导入","retryImport":"重试导入","importFailedRetry":"导入失败，请重试"}</script><main id="messages"><div class="msg msg-user" data-client-message-id="" data-transcript-type="user">
     <div class="msg-user-row">
       <div class="msg-content user-selectable">

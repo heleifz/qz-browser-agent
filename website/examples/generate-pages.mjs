@@ -113,7 +113,27 @@ function readExport(file) {
   if (styles.length < 2 || !runtime || !exchange || !messages || !labels) {
     throw new Error(`export ${file} is missing the transcript, stylesheet, or exchange script`);
   }
-  return { styles, runtime: runtime[1], exchange: exchange[0], messages: messages[1], labels: labels[0] };
+  const title = sessionTitle(html, exchange[0]);
+  const transcript = messages[1].replace(/<div id="session-title-bar"[\s\S]*?<\/div>/, "");
+  return { styles, runtime: runtime[1], exchange: exchange[0], messages: transcript, labels: labels[0], title };
+}
+
+function decodeHtml(value) {
+  return value
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function sessionTitle(html, exchangeTag) {
+  const shown = html.match(/<span id="current-session-title"[^>]*>([\s\S]*?)<\/span>/);
+  if (!shown?.[1].trim()) throw new Error("export is missing the session title");
+  const title = decodeHtml(shown[1].trim());
+  const payload = JSON.parse(exchangeTag.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, ""));
+  if (payload?.session?.title !== title) throw new Error(`session title mismatch for ${title}`);
+  return title;
 }
 
 function adaptSessionCss(panel, shell) {
@@ -211,14 +231,17 @@ function detailPage(item, session, part) {
       <h1 data-i18n="example-${item.slug}-title">${escapeHtml(item.title.en)}</h1>
       <p class="example-summary" data-i18n="example-${item.slug}-summary">${escapeHtml(item.summary.en)}</p>
       ${relatedMarkup(item, session)}
-      <div class="example-actions">
-        <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
-        <a class="button" id="example-download" href="${file}" download="${filename}" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
-        <a class="example-download-short" href="${file}" download="${filename}" data-i18n="exampleDownloadShort" hidden>${escapeHtml(en.downloadShort)}</a>
-      </div>
       <div class="example-frame">${mediaMarkup(item)}</div>
     </div>
     <div class="example-thread">
+      <div class="example-actions example-thread-bar">
+        <p class="example-session-title">${escapeHtml(part.title)}</p>
+        <div class="example-thread-cta">
+          <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
+          <a class="button" id="example-store" href="${STORE}" target="_blank" rel="noopener" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
+          <a class="example-download-short" href="${file}" download="${filename}" data-i18n="exampleDownloadShort">${escapeHtml(en.downloadShort)}</a>
+        </div>
+      </div>
       ${sessionView(part)}
     </div>
   </div>

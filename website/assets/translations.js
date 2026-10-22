@@ -85,20 +85,20 @@ export const translations = {
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.",
       /* example-html:en:start */
-      "examplesTitle": "Watch it run once, then import it and run it yourself.",
-      "examplesLede": "Four session exports from 轻舟（qz）. Open one to see the result, download the file, and import it locally.",
-      "exampleDownload": "<span>Download the session and import it into qz</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "examplesTitle": "Real tasks, start to finish.",
+      "examplesLede": "Each example is a real qz session. Watch the recording on the left, follow every step it took on the right, then import it into qz and pick up the conversation.",
+      "exampleDownload": "<span>Import into qz to continue</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "exampleDownloadShort": "Download session",
       "example-travel-title": "Three days in Hangzhou",
-      "example-travel-summary": "A Hangzhou itinerary, researched in parallel.",
+      "example-travel-summary": "Checks sights, hours, and tickets, then merges them into a day-by-day plan.",
       "example-llm-compare-title": "Model comparison",
-      "example-llm-compare-summary": "A comparison across sites, saved as one table.",
+      "example-llm-compare-summary": "Reads several model sites and builds one comparison table.",
       "example-arxiv-title": "Paper table → Skill",
-      "example-arxiv-summary": "A paper table, saved as a Skill.",
+      "example-arxiv-summary": "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.",
       "example-arxiv-first": "First run",
       "example-arxiv-reuse": "A week later",
       "example-github-weekly-title": "Open-source weekly",
-      "example-github-weekly-summary": "Several tabs read open-source projects at once, then deliver a weekly report."
+      "example-github-weekly-summary": "Sub-tasks read open-source projects in parallel and sum it up in a weekly report."
       /* example-html:en:end */
     },
     "attributes": {
@@ -207,7 +207,7 @@ export const translations = {
         "aria-label": "Play"
       },
       "example-travel-description": {
-        "content": "A Hangzhou itinerary, researched in parallel."
+        "content": "Checks sights, hours, and tickets, then merges them into a day-by-day plan."
       },
       "example-travel-cover": {
         "alt": "Parallel tasks researching a Hangzhou itinerary"
@@ -216,7 +216,7 @@ export const translations = {
         "aria-label": "Parallel tasks researching a Hangzhou itinerary"
       },
       "example-llm-compare-description": {
-        "content": "A comparison across sites, saved as one table."
+        "content": "Reads several model sites and builds one comparison table."
       },
       "example-llm-compare-cover": {
         "alt": "Comparison table saved from several model pages"
@@ -225,7 +225,7 @@ export const translations = {
         "alt": "Cover frame of the qz demo"
       },
       "example-arxiv-description": {
-        "content": "A paper table, saved as a Skill."
+        "content": "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence."
       },
       "example-arxiv-cover": {
         "alt": "Paper table saved from a research run"
@@ -234,7 +234,7 @@ export const translations = {
         "alt": "Cover frame of the qz demo"
       },
       "example-github-weekly-description": {
-        "content": "Several tabs read open-source projects at once, then deliver a weekly report."
+        "content": "Sub-tasks read open-source projects in parallel and sum it up in a weekly report."
       },
       "example-github-weekly-cover": {
         "alt": "Weekly report assembled from open-source projects"
@@ -329,20 +329,20 @@ export const translations = {
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
       /* example-html:zh:start */
-      "examplesTitle": "看它干一遍，再导入自己跑",
-      "examplesLede": "四份来自轻舟（qz）的会话导出。打开看结果，下载文件，在本地导入。",
-      "exampleDownload": "<span>下载会话，导入轻舟</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
+      "examplesTitle": "真实任务，完整过程。",
+      "examplesLede": "每个例子都是轻舟的一次真实会话。左边看录屏，右边看它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
+      "exampleDownload": "<span>导入轻舟继续对话</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "exampleDownloadShort": "下载会话",
       "example-travel-title": "杭州三日游",
-      "example-travel-summary": "并行查出杭州行程",
+      "example-travel-summary": "查景点、开放时间和门票，汇成每日路线表。",
       "example-llm-compare-title": "模型对比表",
-      "example-llm-compare-summary": "多站对比落成一张表",
+      "example-llm-compare-summary": "读多个模型的官网，整理成一张对比表。",
       "example-arxiv-title": "论文表 → Skill",
-      "example-arxiv-summary": "论文表存成 Skill",
+      "example-arxiv-summary": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
       "example-arxiv-first": "第一次跑",
       "example-arxiv-reuse": "一周后再用",
       "example-github-weekly-title": "开源项目周报",
-      "example-github-weekly-summary": "多个 Tab 同时读开源项目，最后交一份周报"
+      "example-github-weekly-summary": "几个子任务并行读开源项目动态，汇总成一份周报。"
       /* example-html:zh:end */
     },
     "attributes": {
@@ -451,7 +451,7 @@ export const translations = {
         "aria-label": "播放"
       },
       "example-travel-description": {
-        "content": "并行查出杭州行程"
+        "content": "查景点、开放时间和门票，汇成每日路线表。"
       },
       "example-travel-cover": {
         "alt": "并行查询杭州行程的任务"
@@ -460,7 +460,7 @@ export const translations = {
         "aria-label": "并行查询杭州行程的任务"
       },
       "example-llm-compare-description": {
-        "content": "多站对比落成一张表"
+        "content": "读多个模型的官网，整理成一张对比表。"
       },
       "example-llm-compare-cover": {
         "alt": "多站对比后落成的模型表"
@@ -469,7 +469,7 @@ export const translations = {
         "alt": "轻舟演示的封面帧"
       },
       "example-arxiv-description": {
-        "content": "论文表存成 Skill"
+        "content": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。"
       },
       "example-arxiv-cover": {
         "alt": "检索结果里的论文表"
@@ -478,7 +478,7 @@ export const translations = {
         "alt": "轻舟演示的封面帧"
       },
       "example-github-weekly-description": {
-        "content": "多个 Tab 同时读开源项目，最后交一份周报"
+        "content": "几个子任务并行读开源项目动态，汇总成一份周报。"
       },
       "example-github-weekly-cover": {
         "alt": "读完开源项目后交上的周报"
