@@ -1,15 +1,18 @@
 # Website examples
 
-Homepage cards and detail pages come from [`catalog.js`](catalog.js). The generator writes
-`assets/examples-i18n.js`, the `#examples` block in `index.html`, and `examples/<slug>/index.html`.
-Edit the catalog, then regenerate. Do not hand-edit the generated files.
+Homepage cards and detail pages come from [`catalog.js`](catalog.js). Regenerate after a catalog
+or export change. Do not hand-edit the generated HTML or the marked translation blocks.
 
 ```bash
 node website/examples/generate-pages.mjs
 ```
 
-Paths in the catalog are relative to `website/`. The catalog is a classic script that sets
-`window.QZ_EXAMPLES`, so detail pages can read it on the GitHub Pages subpath without `fetch`.
+The generator writes the `#examples` block in `index.html`, `examples/<slug>/index.html`, and
+appends example keys to `assets/translations.js`. Styles for this section live in
+`assets/examples.css`. Detail pages load `assets/examples-render.js` for the looping clip,
+click-to-play video, session tabs, and the document title. Paths in the catalog are relative to
+`website/`. The catalog is a classic script that sets `window.QZ_EXAMPLES`, so pages can read it
+on the GitHub Pages subpath without `fetch`.
 
 ## Add an example
 
@@ -25,16 +28,14 @@ Paths in the catalog are relative to `website/`. The catalog is a classic script
    `node website/examples/prepare-exports.mjs --self-test` after changing that script.
 3. Add one object to `items` in `catalog.js`: `slug`, localized `title` and `summary`, `cover`,
    `media` (`kind` is `loop` or `click`), and `sessions`. Put a cover image in `assets/examples/`.
-4. Regenerate. A second session with a `label` becomes a tab, and the download link follows the
-   selected tab.
-
-Example copy that should stay marked temporary uses the shared `copy-pending` class. Remove that
-class from the generator when the wording is final.
+4. Regenerate. The generator reads `<script id="qingzhou-session-exchange" type="application/json">`
+   and writes the conversation into the page. The export HTML is only the download target. A second
+   session with a `label` becomes a tab, and the download link follows the selected tab.
 
 ## Replace an export
 
-Run `prepare-exports.mjs` again for the same filename. Do not edit the JSON inside the HTML by hand.
-Regenerate only if the catalog entry changed.
+Run `prepare-exports.mjs` again for the same filename, then regenerate so the rendered conversation
+matches the file. Do not edit the JSON inside the HTML by hand.
 
 ## Unpublish an example
 

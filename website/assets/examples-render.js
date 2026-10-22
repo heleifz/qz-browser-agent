@@ -1,75 +1,34 @@
-// Detail pages: play catalog media, and show the exported conversation in an iframe.
+// Detail-page media, session tabs, and the document title. Conversation HTML is already in the page.
 const catalog = window.QZ_EXAMPLES;
 const slug = document.documentElement.dataset.example;
 const item = catalog?.items?.find((entry) => entry.slug === slug);
 const siteRoot = document.documentElement.dataset.siteRoot || "../../";
 
 function siteUrl(relativeToSite) {
-  const root = new URL(siteRoot, document.baseURI);
-  return new URL(relativeToSite, root).href;
+  return new URL(relativeToSite, new URL(siteRoot, document.baseURI)).href;
 }
 
-const THREAD_CSS = `
-html, body { height: auto !important; min-height: 100% !important; overflow: visible !important; }
-.session-export-shell { width: auto !important; max-width: none !important; min-width: 100% !important; }
-#messages { overflow-x: auto !important; }
-#messages table, .tabulator { width: max-content !important; min-width: 100% !important; table-layout: auto !important; }
-#messages th, #messages td, .tabulator-cell, .tabulator-col-title {
-  min-width: 6.5rem !important;
-  max-width: 16rem !important;
-  width: auto !important;
-  word-break: normal !important;
-  overflow-wrap: break-word !important;
-  white-space: normal !important;
+function syncTitle() {
+  const heading = document.querySelector(".example-page h1");
+  const text = heading?.textContent?.replace(/\s+/g, " ").trim();
+  if (text) document.title = `${text} — qz`;
 }
-.tabulator, .data-row-detail { overflow-x: auto !important; }
-`;
 
-const LAZY_SCRIPT = `(() => {
-  const images = document.querySelectorAll("img[data-src]");
-  const load = (img) => {
-    if (!img.dataset.src) return;
-    img.src = img.dataset.src;
-    if (img.dataset.srcset) img.srcset = img.dataset.srcset;
-    delete img.dataset.src;
-    delete img.dataset.srcset;
-  };
-  if (!images.length) return;
-  if (!("IntersectionObserver" in window)) {
-    images.forEach(load);
-    return;
+function applySteps() {
+  const chinese = document.documentElement.lang === "zh-CN";
+  for (const node of document.querySelectorAll("[data-steps]")) {
+    const count = node.dataset.steps;
+    node.textContent = chinese ? `${count} 个步骤` : `${count} steps`;
   }
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      load(entry.target);
-      observer.unobserve(entry.target);
-    }
-  }, { rootMargin: "240px" });
-  images.forEach((img) => observer.observe(img));
-})();`;
-
-function prepareDisplayHtml(html) {
-  const stripped = String(html).replace(/<script\b[^>]*\bsrc\s*=\s*(["'])https?:[^"']*\1[^>]*>\s*<\/script>/giu, "");
-  const lazy = stripped.replace(/<img\b[^>]*>/giu, (tag) => {
-    if (!/\ssrc\s*=/iu.test(tag)) return tag;
-    return tag.replace(/\s(src|srcset)\s*=\s*(["'])([\s\S]*?)\2/giu, (_, name, quote, value) => {
-      const placeholder = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=";
-      const shown = name === "src" ? placeholder : "";
-      return ` data-${name}=${quote}${value}${quote} ${name}=${quote}${shown}${quote}`;
-    });
-  });
-  const extra = `<style id="qz-example-thread">${THREAD_CSS}</style><script>${LAZY_SCRIPT}</script>`;
-  return lazy.includes("</head>") ? lazy.replace("</head>", `${extra}</head>`) : `${extra}${lazy}`;
 }
 
 function bindMedia() {
   if (!item) return;
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const loop = document.querySelector(".example-loop");
-  if (loop && item.media.kind === "loop" && !reduced) {
+  if (loop instanceof HTMLVideoElement && item.media.kind === "loop" && !reduced) {
     loop.src = siteUrl(item.media.src);
-    loop.play().catch(() => { /* The poster stays visible if autoplay is blocked. */ });
+    loop.play().catch(() => { /* The poster stays if autoplay is blocked. */ });
   }
   const play = document.querySelector(".example-play");
   const clip = document.querySelector(".example-player video:not(.example-loop)");
@@ -82,40 +41,32 @@ function bindMedia() {
   });
 }
 
-async function showSession(file) {
-  const frame = document.querySelector("#example-thread");
-  const status = document.querySelector("#example-thread-status");
-  if (!(frame instanceof HTMLIFrameElement)) return;
-  const response = await fetch(file);
-  if (!response.ok) throw new Error(String(response.status));
-  frame.srcdoc = prepareDisplayHtml(await response.text());
-  if (status instanceof HTMLElement) status.hidden = true;
-}
-
-function bindSessions() {
+function bindTabs() {
   const download = document.querySelector("#example-download");
-  const status = document.querySelector("#example-thread-status");
-  const tabs = [...document.querySelectorAll(".example-switch [data-file]")];
-  if (!(download instanceof HTMLAnchorElement)) return;
-
-  const select = (file, tab) => {
-    download.href = file;
-    download.setAttribute("download", file.split("/").pop() || "session.html");
+  const tabs = [...document.querySelectorAll(".example-switch [data-pane]")];
+  const panes = [...document.querySelectorAll(".example-log")];
+  if (!(download instanceof HTMLAnchorElement) || !tabs.length) return;
+  const select = (tab) => {
+    const pane = document.getElementById(tab.dataset.pane);
     for (const button of tabs) button.setAttribute("aria-selected", button === tab ? "true" : "false");
-    showSession(file).catch(() => {
-      if (status instanceof HTMLElement) status.hidden = false;
-    });
+    for (const itemPane of panes) itemPane.hidden = itemPane !== pane;
+    if (pane?.dataset.file) {
+      download.href = pane.dataset.file;
+      download.setAttribute("download", pane.dataset.download || "");
+    }
   };
-
-  for (const tab of tabs) {
-    tab.addEventListener("click", () => select(tab.dataset.file, tab));
-  }
-  if (download.getAttribute("href")) {
-    showSession(download.getAttribute("href")).catch(() => {
-      if (status instanceof HTMLElement) status.hidden = false;
-    });
-  }
+  for (const tab of tabs) tab.addEventListener("click", () => select(tab));
 }
 
 bindMedia();
-bindSessions();
+bindTabs();
+syncTitle();
+applySteps();
+document.querySelector(".language")?.addEventListener("click", () => {
+  syncTitle();
+  applySteps();
+});
+window.addEventListener("popstate", () => {
+  syncTitle();
+  applySteps();
+});
