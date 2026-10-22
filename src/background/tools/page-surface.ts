@@ -34,46 +34,82 @@ export async function ensurePageSurface(tabId: number, send: Send) {
   }
 }
 
-/** Count trusted input on the armed document. Null means that document is gone or unreadable. */
+interface ReceiptOp { n: number; closed?: boolean }
+interface ReceiptBook { ops: Record<string, ReceiptOp> }
+
+/** Arm one operation in every frame. An empty id means the page could not be armed. */
 export async function armPageInputReceipt(tabId: number) {
-  await receipt(tabId, true);
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const frames = await receiptFrames(tabId, id, true);
+  return frames.some(value => typeof value === "number") ? id : "";
 }
 
-export async function readPageInputReceipt(tabId: number) {
-  return receipt(tabId, false);
+/** Count this operation across frames. Null means the result cannot be confirmed. */
+export async function readPageInputReceipt(tabId: number, receiptId = "") {
+  if (!receiptId) return null;
+  return aggregateReceipts(await receiptFrames(tabId, receiptId, false));
 }
 
-async function receipt(tabId: number, arm: boolean) {
+function aggregateReceipts(frames: unknown[]) {
+  let highest = 0;
+  let sawNumber = false;
+  let unknown = false;
+  for (const value of frames) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      sawNumber = true;
+      if (value > highest) highest = value;
+    } else unknown = true;
+  }
+  // One delivered frame is enough. A missing frame is not a count of zero.
+  if (highest > 0) return highest;
+  if (unknown || !sawNumber) return null;
+  return 0;
+}
+
+async function receiptFrames(tabId: number, receiptId: string, arm: boolean) {
   try {
-    const [frame] = await chrome.scripting.executeScript({
-      target: { tabId },
+    const frames = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
       world: "MAIN",
-      args: [arm],
-      func: (shouldArm: boolean) => {
+      args: [receiptId, arm],
+      func: (opId: string, shouldArm: boolean) => {
         const root = globalThis as unknown as {
-          __qzInputReceipt?: number;
           addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
             __qzInputReceiptBound?: boolean;
+            __qzInputReceipts?: ReceiptBook;
           };
         };
         const doc = root.document;
+        if (!doc) return null;
+        const ops = () => doc.__qzInputReceipts?.ops;
+        if (!shouldArm) {
+          const op = ops()?.[opId];
+          // This document never armed the operation. Navigation is not a missed click.
+          if (!op || typeof op.n !== "number") return null;
+          op.closed = true;
+          return op.n;
+        }
         if (!doc.__qzInputReceiptBound) {
-          // Navigation replaced the armed document. A missing count is not a missed click.
-          if (!shouldArm) return null;
           doc.__qzInputReceiptBound = true;
           const count = (event: { isTrusted: boolean }) => {
-            if (event.isTrusted) root.__qzInputReceipt = (root.__qzInputReceipt || 0) + 1;
+            if (!event.isTrusted) return;
+            const open = ops();
+            if (!open) return;
+            for (const op of Object.values(open)) {
+              if (op && op.closed !== true) op.n += 1;
+            }
           };
           // pointerdown preventDefault suppresses mousedown; the click still runs.
           for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) root.addEventListener(type, count, true);
         }
-        if (shouldArm) root.__qzInputReceipt = 0;
-        return root.__qzInputReceipt || 0;
+        const book = doc.__qzInputReceipts || (doc.__qzInputReceipts = { ops: {} });
+        book.ops[opId] = { n: 0, closed: false };
+        return 0;
       },
     });
-    return typeof frame?.result === "number" ? frame.result : null;
+    return frames.map(frame => frame?.result);
   } catch {
-    return null;
+    return [null];
   }
 }
