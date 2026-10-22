@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
-const sameDocument = `<!doctype html><button id="same" type="button" onclick="window.clicks=(window.clicks||0)+1">Same</button><input id="field" aria-label="Same field" value="">`;
+const sameDocument = `<!doctype html><button id="same" class="hit" type="button" onclick="window.clicks=(window.clicks||0)+1">Same</button><input id="field" aria-label="Same field" value="">`;
 const crossDocument = `<!doctype html><button id="cross" type="button" onclick="window.clicks=(window.clicks||0)+1">Cross</button><input id="field" aria-label="Cross field" value="">`;
 const nestDocument = `<!doctype html><iframe title="Inner" srcdoc="<!doctype html><button id='deep'>Deep</button>"></iframe>`;
 
@@ -16,6 +16,7 @@ function pageHtml(crossUrl) {
     <iframe id="same" name="same" title="Same frame"></iframe>
     <iframe id="cross" name="cross" title="Cross frame" src="${crossUrl}"></iframe>
     <iframe id="nest" name="nest" title="Nest frame"></iframe>
+    <button id="main-hit" class="hit" type="button" style="position:fixed;left:360px;top:8px;width:140px;height:28px" onclick="window.hits=(window.hits||0)+1">Main hit</button>
     <script>
       document.querySelector("#same").srcdoc = ${JSON.stringify(sameDocument)};
       document.querySelector("#nest").srcdoc = ${JSON.stringify(nestDocument)};
@@ -118,6 +119,12 @@ test("one-level iframe elements have uids and accept click and fill", async () =
     const crossFill = await call("act_on_element", { target: found.crossField, action: "fill", value: "cross-value" });
     expect(crossFill, JSON.stringify(crossFill)).toMatchObject({ filled: true, value: "cross-value" });
     expect(await page.frame({ name: "cross" }).evaluate(() => document.querySelector("input").value)).toBe("cross-value");
+
+    const cssClick = await call("act_on_element", { target: "css:button.hit", action: "click" });
+    expect(cssClick, JSON.stringify(cssClick)).toMatchObject({ clickDispatched: true, inputDelivered: true });
+    expect(cssClick).not.toHaveProperty("code");
+    expect(await page.evaluate(() => window.hits)).toBe(1);
+    expect(await page.frame({ name: "same" }).evaluate(() => window.clicks)).toBe(1);
   } finally {
     await close();
   }

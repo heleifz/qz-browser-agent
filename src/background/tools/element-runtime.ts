@@ -25,34 +25,39 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
-// Context ids reported while Runtime stays enabled. A flattened child session
-// has its own id space, so it does not share the page-session map.
+// One table per tab while Runtime stays enabled. A same-process frame is keyed
+// by its CDP frame id. A cross-process frame is keyed by session id plus frame id.
 const isolatedByTab = new Map<number, Map<string, Set<number>>>();
-const isolatedBySession = new Map<string, Map<string, Set<number>>>();
-const sessionsByTab = new Map<number, Set<string>>();
+function contextKey(sessionId: string, frameId: string) {
+  return sessionId ? `session:${sessionId}\n${frameId}` : frameId;
+}
+function scopedContextKeys(map: Map<string, Set<number>>, sessionId: string) {
+  const prefix = sessionId ? `session:${sessionId}\n` : "";
+  return [...map.keys()].filter(key => sessionId ? key.startsWith(prefix) : !key.startsWith("session:"));
+}
 function noteExecutionContext(source: { tabId?: number; sessionId?: string } | undefined, method: string, params: unknown) {
   const tabId = Number(source?.tabId);
   const sessionId = String(source?.sessionId || "");
-  const hasTab = Number.isInteger(tabId) && tabId > 0;
-  if (!hasTab && !sessionId) return;
-  if (hasTab && sessionId) {
-    const known = sessionsByTab.get(tabId) || new Set<string>();
-    known.add(sessionId);
-    sessionsByTab.set(tabId, known);
+  if (!Number.isInteger(tabId) || tabId <= 0) return;
+  const current = () => isolatedByTab.get(tabId);
+  if (method === "Runtime.executionContextsCleared") {
+    const map = current();
+    if (!map) return;
+    for (const key of scopedContextKeys(map, sessionId)) map.delete(key);
+    if (!map.size) isolatedByTab.delete(tabId);
+    return;
   }
-  const frames = () => sessionId ? isolatedBySession.get(sessionId) : hasTab ? isolatedByTab.get(tabId) : undefined;
-  const dropFrames = () => {
-    if (sessionId) isolatedBySession.delete(sessionId);
-    else if (hasTab) isolatedByTab.delete(tabId);
-  };
-  if (method === "Runtime.executionContextsCleared") { dropFrames(); return; }
   if (method === "Runtime.executionContextDestroyed") {
     const id = Number(record(params).executionContextId);
-    const map = frames();
-    if (map) for (const [frameId, candidates] of map) {
+    const map = current();
+    if (!map) return;
+    for (const key of scopedContextKeys(map, sessionId)) {
+      const candidates = map.get(key);
+      if (!candidates) continue;
       candidates.delete(id);
-      if (!candidates.size) map.delete(frameId);
+      if (!candidates.size) map.delete(key);
     }
+    if (!map.size) isolatedByTab.delete(tabId);
     return;
   }
   if (method !== "Runtime.executionContextCreated") return;
@@ -61,21 +66,18 @@ function noteExecutionContext(source: { tabId?: number; sessionId?: string } | u
   if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
   const id = Number(context.id), frameId = String(aux.frameId || "");
   if (!Number.isInteger(id) || id <= 0 || !frameId) return;
-  const map = frames() || new Map<string, Set<number>>();
-  const candidates = map.get(frameId) || new Set<number>();
+  const map = current() || new Map<string, Set<number>>();
+  const key = contextKey(sessionId, frameId);
+  const candidates = map.get(key) || new Set<number>();
   candidates.add(id);
-  map.set(frameId, candidates);
-  if (sessionId) isolatedBySession.set(sessionId, map);
-  else if (hasTab) isolatedByTab.set(tabId, map);
+  map.set(key, candidates);
+  isolatedByTab.set(tabId, map);
 }
 globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
 globalThis.chrome?.debugger?.onDetach?.addListener(source => {
   const tabId = Number(source?.tabId);
   if (!Number.isInteger(tabId)) return;
   isolatedByTab.delete(tabId);
-  const sessions = sessionsByTab.get(tabId);
-  if (sessions) for (const sessionId of sessions) isolatedBySession.delete(sessionId);
-  sessionsByTab.delete(tabId);
 });
 type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -524,7 +526,9 @@ async function objectFromBackend(send: CdpCommand, binding: { target?: string; r
 }
 
 function isolatedContexts(tabId: number, sessionId: string) {
-  return sessionId ? isolatedBySession.get(sessionId) : isolatedByTab.get(tabId);
+  const map = isolatedByTab.get(tabId);
+  if (!map) return undefined;
+  return { get: (frameId: string) => map.get(contextKey(sessionId, frameId)) };
 }
 
 async function frameLoaderId(send: CdpCommand, frameId: string) {

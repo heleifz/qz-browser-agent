@@ -300,14 +300,14 @@ export function createCdpRuntime({
       if (state.retained && (state.attached || state.recoveryPromise) && !state.releasing) {
         state.ownerKey = `session:${sid}`;
         state.ownerKind = "session";
-        // Keep emulation, not ongoing event collection. The next borrower waits
-        // for this reset so a late disable cannot undo its newly enabled domains.
+        // Keep emulation and Runtime. Network and Page collection stops. Runtime
+        // stays enabled so the next borrower does not replay console calls.
         state.idlePromise = Promise.resolve(state.recoveryPromise).then(async () => {
           if (!state.attached || state.releasing) return;
           // The stopped run can no longer send its own cleanup commands. Release
           // any held finger before lending this retained connection to another run.
           await debuggerApi.sendCommand(state.target, "Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] }).catch(() => {});
-          await Promise.all(["Network.disable", "Runtime.disable", "Page.disable"].map(method =>
+          await Promise.all(["Network.disable", "Page.disable"].map(method =>
             debuggerApi.sendCommand(state.target, method).catch(() => {})));
         });
         cleanup.push(state.idlePromise);

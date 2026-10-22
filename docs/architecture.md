@@ -247,16 +247,16 @@ Node-backed UIDs use the isolated context of the node's own document after verif
 extension ID and its Content bridge. The main frame is the default. A direct child iframe uses the
 same uid and action path: the snapshot grafts that frame's accessibility tree under the owning
 iframe, and click or fill resolves the node in the child frame. Runtime stays enabled for the
-debugger session, and the contexts it already reported stay in use. Content runs in child frames
-so those contexts exist; page messages stay on the main frame. Recovery initializes Content
-once through the same entry as the main frame. Extension reloads can leave older contexts alive.
-This recovery precedes action dispatch; an action failure is never replayed.
+debugger session. One table records isolated context ids for the tab: a same-process frame by its
+CDP frame id, and a cross-process frame by its flattened session id plus that frame id. Recovery
+initializes Content once and injects those scripts into every frame. Page messages stay on the
+main frame. Extension reloads can leave older contexts alive. This recovery precedes action
+dispatch; an action failure is never replayed.
 
 Mouse and text input stay on the page target. A click point from a child frame adds that iframe's
 content origin. Nested frames stay unaddressed. A cross-site child is absent from the page frame
 tree; the page session auto-attaches to that child target and uses the child session for the tree
-and the node call. Detach drops that tab's flattened sessions. Isolated context ids follow Runtime
-context events and the same detach; a child session keeps its own id space.
+and the node call. Detach drops that tab's flattened sessions and its isolated context ids.
 
 [Script policy](../src/background/tools/script-policy.ts) and the [script
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner

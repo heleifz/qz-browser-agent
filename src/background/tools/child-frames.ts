@@ -7,8 +7,8 @@ export interface ChildFrame {
   send: CdpCommand;
 }
 
-// One-level iframe targets only. Detach drops the tab; a detached child session
-// drops that session. Isolated context ids stay with the element runtime.
+// Flattened iframe targets for one direct child level. Detach drops the tab;
+// a detached child session drops that session. Context ids live in isolatedByTab.
 const sessionsByTarget = new Map<string, string>();
 const attachedByTab = new Map<number, AttachedChild[]>();
 const armedConnectionByTab = new Map<number, number>();

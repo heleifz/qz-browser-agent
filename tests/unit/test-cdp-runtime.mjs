@@ -276,7 +276,7 @@ assert.deepEqual(commandRaceCalls, [
   assert(f.calls.some(call => call[2] === "Input.dispatchTouchEvent" && call[3].type === "touchCancel"),
     "retaining a stopped run's connection must release any held finger");
   assert.deepEqual(f.calls.filter(call => call[0] === "command" && call[2].endsWith(".disable")).map(call => call[2]),
-    ["Network.disable", "Runtime.disable", "Page.disable"], "idle emulation does not keep event domains enabled");
+    ["Network.disable", "Page.disable"], "idle emulation stops network and page events and leaves Runtime enabled");
   finishOld({ stale: true });
   await assert.rejects(lateResult, { code: "CDP_RUN_RELEASED" });
   await assert.rejects(oldSend("Input.dispatchMouseEvent"), { code: "CDP_RUN_RELEASED" });

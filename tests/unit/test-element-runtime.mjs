@@ -450,7 +450,7 @@ try {
 chrome.scripting = {
   async executeScript(options) {
     scriptCalls.push(options);
-    if (options.target?.allFrames) throw new Error("allFrames is not used to address a child frame");
+    if (options.target?.allFrames) throw new Error("element runtime must not probe frames");
     if (String(options.func || "").includes("__qzFrameProbe")) throw new Error("frame probe is not used");
     return [{ documentId: "doc-live", frameId: options.target?.frameIds?.[0] ?? 0, result: null }];
   },
