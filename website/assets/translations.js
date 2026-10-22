@@ -85,7 +85,6 @@ export const translations = {
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.",
       /* example-html:en:start */
-      "navExamples": "Examples",
       "examplesTitle": "Watch it run once, then import it and run it yourself.",
       "examplesLede": "Four session exports from 轻舟（qz）. Open one to see the result, download the file, and import it locally.",
       "exampleDownload": "<span>Download the session and import it into qz</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
@@ -329,7 +328,6 @@ export const translations = {
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
       "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
       /* example-html:zh:start */
-      "navExamples": "例子",
       "examplesTitle": "看它干一遍，再导入自己跑",
       "examplesLede": "四份来自轻舟（qz）的会话导出。打开看结果，下载文件，在本地导入。",
       "exampleDownload": "<span>下载会话，导入轻舟</span><svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",

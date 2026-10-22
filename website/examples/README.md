@@ -17,14 +17,19 @@ on the GitHub Pages subpath without `fetch`.
 ## Add an example
 
 1. Export the session from qz.
-2. Clear `runtime.ownedTabs` and copy the file into `examples/sessions/`:
+2. Clear `runtime.ownedTabs`, shrink PNG data URLs in the exchange JSON, and copy the file
+   into `examples/sessions/`:
 
    ```bash
    node website/examples/prepare-exports.mjs --out website/examples/sessions path/to/export.html
    ```
 
-   The script replaces only the last `ownedTabs` array. The exchange script tag, the rest of the
-   JSON, and the `<`, U+2028, and U+2029 escapes stay as they were. Run
+   The script empties the last `ownedTabs` array and minifies the exchange JSON. A
+   `data:image/png;base64` URL inside that JSON is re-encoded to WebP at quality 80 when the
+   result is smaller, and the MIME type is updated. The script tag stays `id` then `type`.
+   `format` and `version` stay in the first 256 characters. `<`, U+2028, and U+2029 stay escaped.
+   The same screenshot is not folded into a shared reference: version 1 stores each image inline,
+   and import copies that data URL through with no asset id. Run
    `node website/examples/prepare-exports.mjs --self-test` after changing that script.
 3. Add one object to `items` in `catalog.js`: `slug`, localized `title` and `summary`, `cover`,
    `media` (`kind` is `loop` or `click`), and `sessions`. Put a cover image in `assets/examples/`.
@@ -53,7 +58,7 @@ screenshot, used until a real `parallel.gif` is available. The player respects
 its own recording. Those players show a cover frame and set the video `src` only after a click.
 Do not add the long case video.
 
-Keep the whole `website/` directory at or below 20MB. Covers should be compressed. The homepage
+Keep the whole `website/` directory at or below 30MB. Covers should be compressed. The homepage
 does not request session HTML.
 
 ## Preview on the Pages subpath

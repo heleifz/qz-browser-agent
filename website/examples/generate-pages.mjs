@@ -41,7 +41,6 @@ function buildCopy() {
   for (const locale of ["en", "zh-CN"]) {
     const shared = catalog.copy[locale];
     const html = {
-      navExamples: escapeHtml(shared.nav),
       examplesTitle: escapeHtml(shared.title),
       examplesLede: escapeHtml(shared.lede),
       exampleDownload: buttonHtml(shared.download),
@@ -148,7 +147,7 @@ function detailPage(item) {
 <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
 <header class="header wrap">
   <a class="brand" href="../../" aria-label="qz — Home" data-i18n-attributes="home"><img src="../../assets/icon.png" width="32" height="32" alt=""><span>qz<span class="brand-caption"> / 轻舟</span></span></a>
-  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="../../#examples" data-i18n="navExamples">${escapeHtml(en.nav)}</a><a href="../../#overview" data-i18n="navOverview">Data</a><a href="../../#extend" data-i18n="navExtend">Skills</a><a href="../../#agents" data-i18n="navAgents">For agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub ${GITHUB}</a></nav>
+  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="../../#overview" data-i18n="navOverview">Data</a><a href="../../#extend" data-i18n="navExtend">Skills</a><a href="../../#agents" data-i18n="navAgents">For agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub ${GITHUB}</a></nav>
   <div class="header-actions"><button class="language" type="button" hidden="" aria-label="Switch to 简体中文">中文</button><a class="button button-small" href="${STORE}" data-i18n="navStart">Install${ARROW}</a></div>
 </header>
 <main id="main" class="example-page wrap">
@@ -175,7 +174,10 @@ function assertClean(label, html) {
     throw new Error(`${label} still has a draft mark, frame, or duplicate Examples link`);
   }
   const navEntries = html.match(/data-i18n="navExamples"/g) || [];
-  if (navEntries.length !== 1) throw new Error(`${label} has ${navEntries.length} Examples entries`);
+  if (navEntries.length !== 0) throw new Error(`${label} still changes the site nav`);
+  if (html.includes("Allow access to file URLs") || html.includes("允许访问文件网址") || html.includes("下载后用 Chrome")) {
+    throw new Error(`${label} still shows a download hint`);
+  }
 }
 
 function assertExampleKeys(html, translations) {
@@ -246,7 +248,9 @@ function ensureHomepage(html) {
       '  <link rel="stylesheet" href="./assets/site.css">\n  <link rel="stylesheet" href="./assets/examples.css">\n',
     );
   }
-  return html.replace('<a class="header-examples" href="#examples" data-i18n="navExamples">Examples</a>', "");
+  return html
+    .replace('<a class="header-examples" href="#examples" data-i18n="navExamples">Examples</a>', "")
+    .replace('<a href="#examples" data-i18n="navExamples">Examples</a>', "");
 }
 
 function upsertHomepage(section) {
@@ -257,12 +261,13 @@ function upsertHomepage(section) {
     html = html.replace(new RegExp(`${START}[\\s\\S]*?${END}\\n?`), block);
   } else {
     const marker = '<section class="results section wrap" id="overview"';
-    const nav = '<nav aria-label="Main navigation" data-i18n-attributes="nav">';
-    if (!html.includes(marker) || !html.includes(nav)) throw new Error("homepage markers were not found");
-    html = html.replace(nav, `${nav}<a href="#examples" data-i18n="navExamples">${escapeHtml(catalog.copy.en.nav)}</a>`);
+    if (!html.includes(marker)) throw new Error("homepage overview section was not found");
     html = html.replace(marker, `${block}${marker}`);
   }
-  if (!html.includes('href="#examples"')) throw new Error("homepage nav is missing Examples");
+  if (!html.includes('id="examples"')) throw new Error("homepage is missing the examples section");
+  if (html.includes('href="#examples"') || html.includes('data-i18n="navExamples"')) {
+    throw new Error("homepage nav was changed");
+  }
   fs.writeFileSync(indexPath, html);
   return html;
 }
