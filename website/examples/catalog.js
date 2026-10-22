@@ -5,12 +5,12 @@ window.QZ_EXAMPLES = {
   copy: {
     en: {
       nav: "Examples",
-      title: "Watch it run once, then import it and run it yourself.",
-      lede: "Four session exports from 轻舟（qz）. Open one to see the result, download the file, and import it locally.",
+      title: "Real tasks, start to finish.",
+      lede: "Each example is a real qz session. Watch the recording on the left, follow every step it took on the right, then import it into qz and pick up the conversation.",
       open: "Open example",
       back: "All examples",
       kind: "Session export",
-      download: "Download the session and import it into qz",
+      download: "Import into qz to continue",
       downloadShort: "Download session",
       chrome: "Add to Chrome",
       play: "Play",
@@ -19,12 +19,12 @@ window.QZ_EXAMPLES = {
     },
     "zh-CN": {
       nav: "例子",
-      title: "看它干一遍，再导入自己跑",
-      lede: "四份来自轻舟（qz）的会话导出。打开看结果，下载文件，在本地导入。",
+      title: "真实任务，完整过程。",
+      lede: "每个例子都是轻舟的一次真实会话。左边看录屏，右边看它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
       open: "打开例子",
       back: "全部例子",
       kind: "会话导出",
-      download: "下载会话，导入轻舟",
+      download: "导入轻舟继续对话",
       downloadShort: "下载会话",
       chrome: "添加到 Chrome",
       play: "播放",
@@ -36,7 +36,7 @@ window.QZ_EXAMPLES = {
     {
       slug: "travel",
       title: { en: "Three days in Hangzhou", "zh-CN": "杭州三日游" },
-      summary: { en: "A Hangzhou itinerary, researched in parallel.", "zh-CN": "并行查出杭州行程" },
+      summary: { en: "Checks sights, hours, and tickets, then merges them into a day-by-day plan.", "zh-CN": "查景点、开放时间和门票，汇成每日路线表。" },
       cover: {
         src: "assets/examples/travel.webp",
         width: 840,
@@ -64,7 +64,7 @@ window.QZ_EXAMPLES = {
     {
       slug: "llm-compare",
       title: { en: "Model comparison", "zh-CN": "模型对比表" },
-      summary: { en: "A comparison across sites, saved as one table.", "zh-CN": "多站对比落成一张表" },
+      summary: { en: "Reads several model sites and builds one comparison table.", "zh-CN": "读多个模型的官网，整理成一张对比表。" },
       cover: {
         src: "assets/examples/llm-compare.webp",
         width: 1200,
@@ -92,7 +92,7 @@ window.QZ_EXAMPLES = {
     {
       slug: "arxiv",
       title: { en: "Paper table → Skill", "zh-CN": "论文表 → Skill" },
-      summary: { en: "A paper table, saved as a Skill.", "zh-CN": "论文表存成 Skill" },
+      summary: { en: "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.", "zh-CN": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。" },
       cover: {
         src: "assets/examples/arxiv.webp",
         width: 840,
@@ -132,8 +132,8 @@ window.QZ_EXAMPLES = {
       slug: "github-weekly",
       title: { en: "Open-source weekly", "zh-CN": "开源项目周报" },
       summary: {
-        en: "Several tabs read open-source projects at once, then deliver a weekly report.",
-        "zh-CN": "多个 Tab 同时读开源项目，最后交一份周报",
+        en: "Sub-tasks read open-source projects in parallel and sum it up in a weekly report.",
+        "zh-CN": "几个子任务并行读开源项目动态，汇总成一份周报。",
       },
       cover: {
         src: "assets/examples/github-weekly.webp",

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="A comparison across sites, saved as one table." data-i18n-attributes="example-llm-compare-description">
+  <meta name="description" content="Reads several model sites and builds one comparison table." data-i18n-attributes="example-llm-compare-description">
   <meta name="theme-color" content="#f7f7f5">
   <link rel="canonical" href="https://alibaba.github.io/qz-browser-agent/examples/llm-compare/">
   <link rel="alternate" hreflang="en" href="https://alibaba.github.io/qz-browser-agent/examples/llm-compare/">
@@ -29,16 +29,19 @@
   <div class="example-stage">
     <div class="example-lead">
       <h1 data-i18n="example-llm-compare-title">Model comparison</h1>
-      <p class="example-summary" data-i18n="example-llm-compare-summary">A comparison across sites, saved as one table.</p>
+      <p class="example-summary" data-i18n="example-llm-compare-summary">Reads several model sites and builds one comparison table.</p>
       
-      <div class="example-actions">
-        <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
-        <a class="button" id="example-download" href="../sessions/llm-compare-zh.html" download="llm-compare-zh.html" data-i18n="exampleDownload"><span>Download the session and import it into qz</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
-        <a class="example-download-short" href="../sessions/llm-compare-zh.html" download="llm-compare-zh.html" data-i18n="exampleDownloadShort" hidden>Download session</a>
-      </div>
       <div class="example-frame"><div class="example-player"><button class="example-play" type="button" aria-label="Play" data-i18n-attributes="examplePlayButton"><img src="../../assets/examples/demo-poster.jpg" width="1280" height="720" alt="Cover frame of the qz demo" decoding="async" data-i18n-attributes="example-llm-compare-media"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="m9 5 11 7-11 7z"></path></svg></button><video hidden controls playsinline preload="none"></video></div></div>
     </div>
     <div class="example-thread">
+      <div class="example-actions example-thread-bar">
+        <p class="example-session-title">开源大模型横向对比</p>
+        <div class="example-thread-cta">
+          <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
+          <a class="button" id="example-store" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" target="_blank" rel="noopener" data-i18n="exampleDownload"><span>Import into qz to continue</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+          <a class="example-download-short" href="../sessions/llm-compare-zh.html" download="llm-compare-zh.html" data-i18n="exampleDownloadShort">Download session</a>
+        </div>
+      </div>
       <qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><script type="application/json" id="qingzhou-export-messages">{"imagePreview":"图片预览","images":"图片","close":"关闭","importQingzhou":"导入轻舟","importing":"正在导入","imported":"已导入","retryImport":"重试导入","importFailedRetry":"导入失败，请重试"}</script><main id="messages"><div class="msg msg-user" data-client-message-id="" data-transcript-type="user">
     <div class="msg-user-row">
       <div class="msg-content user-selectable">
