@@ -1,5 +1,7 @@
 // Static, authored translations for the shared homepage DOM.
 // ogImage supplies both Open Graph and Twitter images.
+import { exampleCopy } from "./examples-i18n.js";
+
 export const translations = {
   "en": {
     "title": "qz — Open-source browser agent",
@@ -83,7 +85,8 @@ export const translations = {
       "agentTerminalResult": "Saved 6 comparison rows with source links.",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured."
+      "agentRequirements": "Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.",
+      ...exampleCopy.en.html
     },
     "attributes": {
       "description": {
@@ -185,7 +188,8 @@ export const translations = {
       "agentPanelLink": {
         "href": "./assets/screens/agent-en.png",
         "aria-label": "Enlarge the qz side panel"
-      }
+      },
+      ...exampleCopy.en.attributes
     }
   },
   "zh-CN": {
@@ -270,7 +274,8 @@ export const translations = {
       "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。"
+      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上的 Chrome、轻舟扩展和已配置的模型。",
+      ...exampleCopy["zh-CN"].html
     },
     "attributes": {
       "description": {
@@ -372,7 +377,8 @@ export const translations = {
       "agentPanelLink": {
         "href": "./assets/screens/agent-zh.png",
         "aria-label": "放大查看轻舟侧边栏"
-      }
+      },
+      ...exampleCopy["zh-CN"].attributes
     }
   }
 };
