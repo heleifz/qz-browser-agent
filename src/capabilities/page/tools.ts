@@ -51,7 +51,12 @@ async function callElement(tabId: number | undefined, binding: ElementTarget, ac
   return result;
 }
 function unknownInput(identity: Record<string, unknown>) {
-  return { ...identity, error: t("inputResultUnknown"), code: "INPUT_RESULT_UNKNOWN", resultUnknown: true };
+  return {
+    ...identity,
+    error: "Input was dispatched and the result is unknown. Do not replay it or choose another element. Take a fresh get_ax_tree before continuing.",
+    code: "INPUT_RESULT_UNKNOWN",
+    resultUnknown: true,
+  };
 }
 async function withElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, options: ElementCallOptions, fn: (send: CdpCommand, call: (action: string, params?: Record<string, unknown>) => Promise<ElementReply>) => Promise<T>) {
   return withBoundElement(tabId, binding, context, options, (send, call) => fn(send, async (action, params = {}) => {
