@@ -12,13 +12,11 @@
 .example-page .button { max-width: 100%; height: auto; margin-top: 22px; white-space: normal; }
 .example-page .button span { min-width: 0; }
 .example-stage { display: block; }
-.example-frame { margin-top: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); }
-.example-player { position: relative; aspect-ratio: 16 / 10; background: var(--soft); }
-.example-loop, .example-player video, .example-play img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
-.example-player video { position: absolute; inset: 0; }
-.example-player video[hidden], .example-play[hidden] { display: none !important; }
-.example-play { position: absolute; inset: 0; border: 0; padding: 0; background: transparent; color: var(--ink); }
-.example-play svg { position: absolute; top: 50%; left: 50%; width: 48px; height: 48px; padding: 14px; border-radius: 999px; background: var(--surface); color: var(--ink); fill: currentColor; stroke: none; transform: translate(-50%, -50%); }
+.example-frame { position: relative; width: 100%; margin-top: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); aspect-ratio: 16 / 10; }
+.example-frame :is(.example-poster, .example-video) { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.example-video { opacity: 0; }
+.example-video.is-playing { opacity: 1; }
+.example-cover-empty { background: var(--soft); }
 .example-related { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .example-related a:hover { color: var(--ink); }
 .example-actions { display: flex; align-items: center; }
@@ -60,6 +58,7 @@ qz-session-view { display: block; min-width: 0; max-width: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
   .example-thread { animation: none; }
+  .example-video { display: none !important; }
 }
 
 @media (prefers-color-scheme: dark) {

@@ -1,6 +1,11 @@
 // Per-locale example lists. Detail pages, homepage cards, and translations
 // are generated from this file. Paths are relative to the website root.
 //
+// An entry needs `slug` and `file` (the session export). `video` is an optional
+// mp4. `poster` is an optional image; with a video and no poster, the generator
+// extracts a frame. `posterTime` is the extract point in seconds (default 1).
+// `title` and `summary` override the session title and the first user message.
+//
 // fallback: while a locale list is empty, the homepage shows that locale's
 // cards from locales[fallback], using fallbackCopy for the empty locale.
 // The cards link to the fallback locale's pages. One flag, read only here.
@@ -11,26 +16,24 @@ window.QZ_EXAMPLES = {
     en: {
       nav: "Examples",
       title: "Real tasks, start to finish.",
-      lede: "Each example is a real qz session. Watch the recording on the left, follow every step it took on the right, then import it into qz and pick up the conversation.",
+      lede: "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
       open: "Open example",
       back: "All examples",
       kind: "Session export",
       download: "Import into qz to continue",
       chrome: "Add to Chrome",
-      play: "Play",
       thread: "Exported conversation",
       missing: "This session export is not on the site yet.",
     },
     "zh-CN": {
       nav: "例子",
       title: "真实任务，完整过程。",
-      lede: "每个例子都是轻舟的一次真实会话。左边看录屏，右边看它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
+      lede: "每个例子都是轻舟的一次真实会话。左边是这次会话自己的画面，右边是它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
       open: "打开例子",
       back: "全部例子",
       kind: "会话导出",
       download: "导入轻舟继续对话",
       chrome: "添加到 Chrome",
-      play: "播放",
       thread: "导出的对话",
       missing: "这份会话导出还没有放进站点。",
     },
@@ -40,27 +43,26 @@ window.QZ_EXAMPLES = {
       travel: {
         title: "Three days in Hangzhou",
         summary: "Checks sights, hours, and tickets, then merges them into a day-by-day plan.",
-        coverAlt: "Parallel tasks researching a Hangzhou itinerary",
-        mediaAlt: "Parallel tasks researching a Hangzhou itinerary",
+        alt: "Three-day Hangzhou route from the session",
       },
       "llm-compare": {
         title: "Model comparison",
         summary: "Reads several model sites and builds one comparison table.",
-        coverAlt: "Comparison table saved from several model pages",
-        mediaAlt: "Cover frame of the qz demo",
+        alt: "Comparison table saved from several model pages",
       },
       arxiv: {
         title: "Paper table → Skill",
         summary: "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.",
-        coverAlt: "Paper table saved from a research run",
-        mediaAlt: "Cover frame of the qz demo",
+        alt: "Paper table and saved Skill from the briefing",
+        sessionAlt: {
+          reuse: "This week's papers retrieved with the saved Skill",
+        },
         related: { first: "First run", reuse: "A week later" },
       },
       "github-weekly": {
         title: "Open-source weekly",
         summary: "Sub-tasks read open-source projects in parallel and sum it up in a weekly report.",
-        coverAlt: "Weekly report assembled from open-source projects",
-        mediaAlt: "Cover frame of the qz demo",
+        alt: "Weekly report assembled from open-source projects",
       },
     },
   },
@@ -71,40 +73,16 @@ window.QZ_EXAMPLES = {
         title: "杭州三日游",
         summary: "查景点、开放时间和门票，汇成每日路线表。",
         file: "examples/sessions/travel-zh.html",
-        cover: {
-          src: "assets/examples/travel.webp",
-          width: 840,
-          height: 1544,
-          alt: "并行查询杭州行程的任务",
-        },
-        media: {
-          kind: "loop",
-          src: "assets/media/parallel.mp4",
-          poster: "assets/examples/travel.webp",
-          width: 840,
-          height: 1544,
-          alt: "并行查询杭州行程的任务",
-        },
+        poster: "assets/examples/travel.webp",
+        alt: "杭州三日游的行程速览",
       },
       {
         slug: "llm-compare",
         title: "模型对比表",
         summary: "读多个模型的官网，整理成一张对比表。",
         file: "examples/sessions/llm-compare-zh.html",
-        cover: {
-          src: "assets/examples/llm-compare.webp",
-          width: 1200,
-          height: 648,
-          alt: "多站对比后落成的模型表",
-        },
-        media: {
-          kind: "click",
-          src: "assets/demo-en.mp4",
-          poster: "assets/examples/demo-poster.jpg",
-          width: 1280,
-          height: 720,
-          alt: "轻舟演示的封面帧",
-        },
+        poster: "assets/examples/llm-compare.webp",
+        alt: "多站对比后落成的模型表",
       },
       {
         slug: "arxiv",
@@ -112,20 +90,8 @@ window.QZ_EXAMPLES = {
         title: "论文表 → Skill",
         summary: "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
         file: "examples/sessions/arxiv-skill-zh.html",
-        cover: {
-          src: "assets/examples/arxiv.webp",
-          width: 840,
-          height: 2011,
-          alt: "检索结果里的论文表",
-        },
-        media: {
-          kind: "click",
-          src: "assets/demo-en.mp4",
-          poster: "assets/examples/demo-poster.jpg",
-          width: 1280,
-          height: 720,
-          alt: "轻舟演示的封面帧",
-        },
+        poster: "assets/examples/arxiv.webp",
+        alt: "Browser Agent 论文速览的论文表与 Skill",
         related: [{ slug: "arxiv-reuse", id: "reuse", label: "一周后再用" }],
       },
       {
@@ -136,20 +102,8 @@ window.QZ_EXAMPLES = {
         title: "论文表 → Skill",
         summary: "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
         file: "examples/sessions/arxiv-skill-reuse-zh.html",
-        cover: {
-          src: "assets/examples/arxiv.webp",
-          width: 840,
-          height: 2011,
-          alt: "检索结果里的论文表",
-        },
-        media: {
-          kind: "click",
-          src: "assets/demo-en.mp4",
-          poster: "assets/examples/demo-poster.jpg",
-          width: 1280,
-          height: 720,
-          alt: "轻舟演示的封面帧",
-        },
+        poster: "assets/examples/arxiv-reuse.webp",
+        alt: "用已保存的 Skill 检出的本周论文表",
         related: [{ slug: "arxiv", id: "first", label: "第一次跑" }],
       },
       {
@@ -157,20 +111,8 @@ window.QZ_EXAMPLES = {
         title: "开源项目周报",
         summary: "几个子任务并行读开源项目动态，汇总成一份周报。",
         file: "examples/sessions/github-weekly-zh.html",
-        cover: {
-          src: "assets/examples/github-weekly.webp",
-          width: 840,
-          height: 1426,
-          alt: "读完开源项目后交上的周报",
-        },
-        media: {
-          kind: "click",
-          src: "assets/demo-en.mp4",
-          poster: "assets/examples/demo-poster.jpg",
-          width: 1280,
-          height: 720,
-          alt: "轻舟演示的封面帧",
-        },
+        poster: "assets/examples/github-weekly.webp",
+        alt: "读完开源项目后交上的周报",
       },
     ],
     en: [],

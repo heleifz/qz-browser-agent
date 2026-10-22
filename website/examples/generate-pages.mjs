@@ -1,4 +1,5 @@
 // Build homepage cards, detail pages, and example translations from catalog.js.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -18,7 +19,8 @@ if (!catalog.locales.zh.length && !catalog.locales.en.length) throw new Error("c
 
 const ARROW = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>';
 const GITHUB = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg>';
-const PLAY = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="m9 5 11 7-11 7z"></path></svg>';
+const VIDEO_BYTES = 5 * 1024 * 1024;
+let locales = catalog.locales;
 const START = "<!-- examples:start -->";
 const END = "<!-- examples:end -->";
 const STORE = catalog.storeUrl;
@@ -40,12 +42,13 @@ function groupOf(entry) {
 }
 
 function requireEntry(entry, localeId) {
-  for (const field of ["slug", "title", "summary", "file"]) {
-    if (!entry[field]) throw new Error(`${localeId} example is missing ${field}`);
-  }
+  if (!entry.slug) throw new Error(`${localeId} example is missing slug`);
+  if (!entry.file) throw new Error(`${entry.slug} example is missing file`);
   if (entry.slug === "en" || entry.slug === "sessions") throw new Error(`${entry.slug} is a reserved directory name`);
-  if (!entry.cover?.src || !entry.media?.src || !entry.media?.poster) throw new Error(`${entry.slug} is missing cover or media`);
-  if (entry.media.kind !== "loop" && entry.media.kind !== "click") throw new Error(`${entry.slug} media.kind must be loop or click`);
+  if (entry.posterTime !== undefined && entry.posterTime !== null && entry.posterTime !== "") {
+    const time = Number(entry.posterTime);
+    if (!Number.isFinite(time) || time < 0) throw new Error(`${entry.slug} posterTime must be seconds`);
+  }
   for (const link of entry.related || []) {
     if (!link.slug || !link.id || !link.label) throw new Error(`${entry.slug} related link is incomplete`);
     if (!catalog.locales[localeId].some((item) => item.slug === link.slug)) {
@@ -55,12 +58,12 @@ function requireEntry(entry, localeId) {
 }
 
 function presentation(localeId) {
-  const own = catalog.locales[localeId];
+  const own = locales[localeId];
   if (own.length || localeId === catalog.fallback || !catalog.fallback) {
     return { entries: own.filter((entry) => entry.card !== false), fallback: false, source: localeId };
   }
   return {
-    entries: catalog.locales[catalog.fallback].filter((entry) => entry.card !== false),
+    entries: locales[catalog.fallback].filter((entry) => entry.card !== false),
     fallback: true,
     source: catalog.fallback,
   };
@@ -77,9 +80,12 @@ function cardsHtml(localeId) {
     if (view.fallback && !pack) throw new Error(`missing fallbackCopy.${localeId}.${groupOf(entry)}`);
     const title = view.fallback ? pack.title : entry.title;
     const summary = view.fallback ? pack.summary : entry.summary;
-    const alt = view.fallback ? pack.coverAlt : entry.cover.alt;
+    const alt = view.fallback ? (pack.alt || pack.title) : (entry.alt || entry.title);
+    const cover = entry.poster
+      ? `<span class="example-cover"><img src="./${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>`
+      : `<span class="example-cover example-cover-empty" role="img" aria-label="${escapeHtml(alt)}"></span>`;
     return `    <a class="example-card" href="${cardHref(view.source, entry.slug)}">
-      <span class="example-cover"><img src="./${entry.cover.src}" width="${entry.cover.width}" height="${entry.cover.height}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>
+      ${cover}
       <h3>${escapeHtml(title)}</h3>
       <p>${escapeHtml(summary)}</p>
     </a>`;
@@ -90,6 +96,186 @@ function englishPack(group) {
   const pack = catalog.fallbackCopy?.en?.[group];
   if (!pack) throw new Error(`missing fallbackCopy.en.${group}`);
   return pack;
+}
+
+function englishAlt(entry) {
+  const pack = englishPack(groupOf(entry));
+  return pack.sessionAlt?.[entry.session] || pack.alt || pack.title;
+}
+
+function commandExists(name) {
+  const found = spawnSync("which", [name], { encoding: "utf8" });
+  return found.status === 0 && Boolean(found.stdout.trim());
+}
+
+function inspectVideo(entry, absPath) {
+  const size = fs.statSync(absPath).size;
+  if (size > VIDEO_BYTES) {
+    console.warn(`warning: ${entry.slug} video is ${(size / 1048576).toFixed(1)}MB, over the 5MB guide size`);
+  }
+  if (!commandExists("ffprobe")) {
+    console.warn(`warning: ffprobe is not installed, so the codec and audio checks for ${entry.slug} were skipped`);
+    return null;
+  }
+  const probe = spawnSync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "stream=codec_type,codec_name,width,height",
+    "-of", "json",
+    absPath,
+  ], { encoding: "utf8" });
+  if (probe.status !== 0) {
+    console.warn(`warning: ffprobe could not read ${entry.slug}; the frame uses 16:10`);
+    return null;
+  }
+  const streams = JSON.parse(probe.stdout || "{}").streams || [];
+  const video = streams.find((stream) => stream.codec_type === "video");
+  if (streams.some((stream) => stream.codec_type === "audio")) {
+    console.warn(`warning: ${entry.slug} video has an audio track. Examples play muted; strip the audio before publishing.`);
+  }
+  if (video?.codec_name && video.codec_name !== "h264") {
+    console.warn(`warning: ${entry.slug} video codec is ${video.codec_name}, not H.264`);
+  }
+  const width = Number(video?.width);
+  const height = Number(video?.height);
+  if (!width || !height) {
+    console.warn(`warning: ${entry.slug} video dimensions are unknown; the frame uses 16:10`);
+    return null;
+  }
+  return { width, height };
+}
+
+function extractPoster(entry, localeId, videoAbs) {
+  const rel = `assets/examples/${entry.slug}-${localeId}.webp`;
+  const out = path.join(websiteRoot, rel);
+  const time = entry.posterTime === undefined || entry.posterTime === null || entry.posterTime === ""
+    ? 1
+    : Number(entry.posterTime);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  let quality = 72;
+  while (quality >= 40) {
+    const result = spawnSync("ffmpeg", [
+      "-y", "-ss", String(time), "-i", videoAbs,
+      "-frames:v", "1",
+      "-vf", "scale=840:-2",
+      "-c:v", "libwebp",
+      "-quality", String(quality),
+      out,
+    ], { encoding: "utf8" });
+    if (result.status !== 0) {
+      const tail = (result.stderr || "").trim().split("\n").slice(-3).join(" ");
+      console.warn(`warning: ffmpeg could not extract a poster for ${entry.slug}${tail ? ` (${tail})` : ""}`);
+      if (entry.poster) console.warn(`warning: ${entry.slug} keeps the poster field`);
+      return entry.poster || "";
+    }
+    if (fs.statSync(out).size <= 80 * 1024) break;
+    quality -= 8;
+  }
+  return rel;
+}
+
+function readImageSize(absPath) {
+  const buf = fs.readFileSync(absPath);
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") {
+    const kind = buf.toString("ascii", 12, 16);
+    if (kind === "VP8X" && buf.length >= 30) {
+      return { width: 1 + buf.readUIntLE(24, 3), height: 1 + buf.readUIntLE(27, 3) };
+    }
+    if (kind === "VP8 " && buf.length >= 30) {
+      return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+    }
+    if (kind === "VP8L" && buf.length >= 25) {
+      const bits = buf.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+    }
+  }
+  return null;
+}
+
+function resolveMedia(entry, localeId) {
+  const video = typeof entry.video === "string" ? entry.video.trim() : "";
+  let poster = typeof entry.poster === "string" ? entry.poster.trim() : "";
+  let frameWidth = 16;
+  let frameHeight = 10;
+  if (video) {
+    const abs = path.join(websiteRoot, video);
+    if (!fs.existsSync(abs)) throw new Error(`${entry.slug} video was not found at ${video}`);
+    const probed = inspectVideo(entry, abs);
+    if (probed) {
+      frameWidth = probed.width;
+      frameHeight = probed.height;
+    }
+    if (!commandExists("ffmpeg")) {
+      console.warn(`warning: ffmpeg is not installed, so no poster frame was extracted for ${entry.slug}`);
+      if (poster) console.warn(`warning: ${entry.slug} keeps the poster field`);
+      else console.warn(`warning: ${entry.slug} has no poster field to fall back to`);
+    } else if (!poster) {
+      poster = extractPoster(entry, localeId, abs);
+    }
+  }
+  if (poster && !fs.existsSync(path.join(websiteRoot, poster))) {
+    throw new Error(`${entry.slug} poster was not found at ${poster}`);
+  }
+  const image = poster ? readImageSize(path.join(websiteRoot, poster)) : null;
+  return {
+    video,
+    poster,
+    frameWidth,
+    frameHeight,
+    imageWidth: image?.width || frameWidth,
+    imageHeight: image?.height || frameHeight,
+  };
+}
+
+function messageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => (typeof part === "string" ? part : part?.text || "")).join(" ");
+}
+
+function oneLine(text) {
+  const flat = String(text || "").replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const sentence = flat.split(/(?<=[。！？.!?])/)[0].trim();
+  const line = sentence.length >= 12 ? sentence : flat;
+  if (line.length <= 140) return line;
+  return `${line.slice(0, 139).trim()}…`;
+}
+
+function firstUserLine(payload) {
+  const entries = payload?.session?.conversation?.entries || [];
+  for (const item of entries) {
+    const message = item?.message;
+    if (message?.role !== "user") continue;
+    if (message._kind === "context_capsule" || message._origin === "context_capsule") continue;
+    const text = messageText(message.content).trim();
+    if (!text || text.startsWith("[运行上下文")) continue;
+    return oneLine(text);
+  }
+  return "";
+}
+
+const exportCache = new Map();
+function loadExport(file) {
+  if (!exportCache.has(file)) exportCache.set(file, readExport(file));
+  return exportCache.get(file);
+}
+
+function presentEntry(entry, localeId) {
+  const exported = loadExport(entry.file);
+  const media = resolveMedia(entry, localeId);
+  return {
+    ...entry,
+    title: entry.title || exported.title,
+    summary: entry.summary || exported.summary || exported.title,
+    alt: entry.alt || entry.title || exported.title,
+    video: media.video,
+    poster: media.poster,
+    frameWidth: media.frameWidth,
+    frameHeight: media.frameHeight,
+    imageWidth: media.imageWidth,
+    imageHeight: media.imageHeight,
+    exportPart: exported,
+  };
 }
 
 function buildCopy() {
@@ -104,17 +290,15 @@ function buildCopy() {
         exampleDownload: escapeHtml(shared.download),
         examplesGrid: cardsHtml(localeId),
       },
-      attributes: {
-        examplePlayButton: { "aria-label": shared.play },
-      },
+      attributes: {},
     };
   }
   const seen = new Set();
-  for (const entry of catalog.locales.zh) {
+  for (const entry of locales.zh) {
     const group = groupOf(entry);
     if (seen.has(group)) continue;
     seen.add(group);
-    const primary = catalog.locales.zh.find((item) => item.slug === group) || entry;
+    const primary = locales.zh.find((item) => item.slug === group) || entry;
     const pack = englishPack(group);
     copy.en.html[`example-${group}-title`] = escapeHtml(pack.title);
     copy["zh-CN"].html[`example-${group}-title`] = escapeHtml(primary.title);
@@ -122,12 +306,7 @@ function buildCopy() {
     copy["zh-CN"].html[`example-${group}-summary`] = escapeHtml(primary.summary);
     copy.en.attributes[`example-${group}-description`] = { content: pack.summary };
     copy["zh-CN"].attributes[`example-${group}-description`] = { content: primary.summary };
-    copy.en.attributes[`example-${group}-cover`] = { alt: pack.coverAlt };
-    copy["zh-CN"].attributes[`example-${group}-cover`] = { alt: primary.cover.alt };
-    const mediaName = primary.media.kind === "loop" ? "aria-label" : "alt";
-    copy.en.attributes[`example-${group}-media`] = { [mediaName]: pack.mediaAlt };
-    copy["zh-CN"].attributes[`example-${group}-media`] = { [mediaName]: primary.media.alt };
-    const labels = catalog.locales.zh
+    const labels = locales.zh
       .filter((item) => groupOf(item) === group)
       .flatMap((item) => item.related || []);
     labels.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
@@ -138,20 +317,25 @@ function buildCopy() {
       copy["zh-CN"].html[`example-${group}-${link.id}`] = escapeHtml(link.label);
     }
   }
-  for (const entry of catalog.locales.en) {
+  for (const entry of locales.zh) {
+    const key = `example-${entry.slug}-poster`;
+    copy.en.attributes[key] = { alt: englishAlt(entry), "aria-label": englishAlt(entry) };
+    const zhAlt = entry.alt || entry.title;
+    copy["zh-CN"].attributes[key] = { alt: zhAlt, "aria-label": zhAlt };
+  }
+  for (const entry of locales.en) {
     const key = `example-en-${entry.slug}`;
-    const zhMatch = catalog.locales.zh.find((item) => item.slug === entry.slug);
+    const zhMatch = locales.zh.find((item) => item.slug === entry.slug);
     copy.en.html[`${key}-title`] = escapeHtml(entry.title);
     copy["zh-CN"].html[`${key}-title`] = escapeHtml(zhMatch?.title || entry.title);
     copy.en.html[`${key}-summary`] = escapeHtml(entry.summary);
     copy["zh-CN"].html[`${key}-summary`] = escapeHtml(zhMatch?.summary || entry.summary);
     copy.en.attributes[`${key}-description`] = { content: entry.summary };
     copy["zh-CN"].attributes[`${key}-description`] = { content: zhMatch?.summary || entry.summary };
-    copy.en.attributes[`${key}-cover`] = { alt: entry.cover.alt };
-    copy["zh-CN"].attributes[`${key}-cover`] = { alt: zhMatch?.cover.alt || entry.cover.alt };
-    const mediaName = entry.media.kind === "loop" ? "aria-label" : "alt";
-    copy.en.attributes[`${key}-media`] = { [mediaName]: entry.media.alt };
-    copy["zh-CN"].attributes[`${key}-media`] = { [mediaName]: zhMatch?.media.alt || entry.media.alt };
+    const enAlt = entry.alt || entry.title;
+    const zhAlt = zhMatch?.alt || zhMatch?.title || enAlt;
+    copy.en.attributes[`${key}-poster`] = { alt: enAlt, "aria-label": enAlt };
+    copy["zh-CN"].attributes[`${key}-poster`] = { alt: zhAlt, "aria-label": zhAlt };
     for (const link of entry.related || []) {
       copy.en.html[`${key}-${link.id}`] = escapeHtml(link.label);
       const zhLabel = zhMatch?.related?.find((item) => item.id === link.id)?.label || link.label;
@@ -175,16 +359,22 @@ ${cards}
 }
 
 function mediaMarkup(entry, view, root) {
-  const poster = `${root}${entry.media.poster}`;
   const alt = escapeHtml(view.mediaAlt);
-  if (entry.media.kind === "loop") {
-    return `<div class="example-player"><video class="example-loop" poster="${poster}" muted playsinline loop preload="none" width="${entry.media.width}" height="${entry.media.height}" aria-label="${alt}" data-i18n-attributes="${view.mediaKey}"></video></div>`;
+  const ratio = `style="aspect-ratio: ${entry.frameWidth} / ${entry.frameHeight}"`;
+  const poster = entry.poster
+    ? `<img class="example-poster" src="${root}${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${alt}" decoding="async" data-i18n-attributes="${view.mediaKey}">`
+    : "";
+  const video = entry.video
+    ? `<video class="example-video" muted autoplay loop playsinline preload="metadata"${entry.poster ? ` poster="${root}${entry.poster}"` : ""} width="${entry.frameWidth}" height="${entry.frameHeight}" data-src="${root}${entry.video}" aria-label="${alt}" data-i18n-attributes="${view.mediaKey}"></video>`
+    : "";
+  if (!poster && !video) {
+    return `<div class="example-frame example-frame-empty" ${ratio} role="img" aria-label="${alt}" data-i18n-attributes="${view.mediaKey}"></div>`;
   }
-  return `<div class="example-player"><button class="example-play" type="button" aria-label="${escapeHtml(catalog.copy.en.play)}" data-i18n-attributes="examplePlayButton"><img src="${poster}" width="${entry.media.width}" height="${entry.media.height}" alt="${alt}" decoding="async" data-i18n-attributes="${view.mediaKey}">${PLAY}</button><video hidden controls playsinline preload="none"></video></div>`;
+  return `<div class="example-frame" ${ratio}>${poster}${video}</div>`;
 }
 
 function hasSlug(localeId, slug) {
-  return catalog.locales[localeId].some((entry) => entry.slug === slug);
+  return locales[localeId].some((entry) => entry.slug === slug);
 }
 
 function switchHref(localeId, slug) {
@@ -204,9 +394,11 @@ function readExport(file) {
   if (styles.length < 2 || !runtime || !exchange || !messages || !labels) {
     throw new Error(`export ${file} is missing the transcript, stylesheet, or exchange script`);
   }
-  const title = sessionTitle(html, exchange[0]);
+  const payload = JSON.parse(exchange[0].replace(/^<script[^>]*>/, "").replace(/<\/script>$/, ""));
+  const title = sessionTitle(html, payload);
+  const summary = firstUserLine(payload);
   const transcript = messages[1].replace(/<div id="session-title-bar"[\s\S]*?<\/div>/, "");
-  return { styles, runtime: runtime[1], exchange: exchange[0], messages: transcript, labels: labels[0], title };
+  return { styles, runtime: runtime[1], exchange: exchange[0], messages: transcript, labels: labels[0], title, summary };
 }
 
 function decodeHtml(value) {
@@ -218,11 +410,10 @@ function decodeHtml(value) {
     .replace(/&amp;/g, "&");
 }
 
-function sessionTitle(html, exchangeTag) {
+function sessionTitle(html, payload) {
   const shown = html.match(/<span id="current-session-title"[^>]*>([\s\S]*?)<\/span>/);
   if (!shown?.[1].trim()) throw new Error("export is missing the session title");
   const title = decodeHtml(shown[1].trim());
-  const payload = JSON.parse(exchangeTag.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, ""));
   if (payload?.session?.title !== title) throw new Error(`session title mismatch for ${title}`);
   return title;
 }
@@ -281,11 +472,11 @@ function pageView(entry, localeId) {
     return {
       title: pack.title,
       summary: pack.summary,
-      mediaAlt: pack.mediaAlt,
+      mediaAlt: englishAlt(entry),
       titleKey: `example-${group}-title`,
       summaryKey: `example-${group}-summary`,
       descriptionKey: `example-${group}-description`,
-      mediaKey: `example-${group}-media`,
+      mediaKey: `example-${entry.slug}-poster`,
       related: relatedMarkup(entry),
     };
   }
@@ -296,11 +487,11 @@ function pageView(entry, localeId) {
   return {
     title: entry.title,
     summary: entry.summary,
-    mediaAlt: entry.media.alt,
+    mediaAlt: entry.alt || entry.title,
     titleKey: `${key}-title`,
     summaryKey: `${key}-summary`,
     descriptionKey: `${key}-description`,
-    mediaKey: `${key}-media`,
+    mediaKey: `${key}-poster`,
     related: links.length ? `\n      <p class="example-related">${links.join("")}</p>` : "\n      ",
   };
 }
@@ -364,7 +555,7 @@ function detailPage(localeId, entry, part) {
     <div class="example-lead">
       <h1 data-i18n="${view.titleKey}">${escapeHtml(view.title)}</h1>
       <p class="example-summary" data-i18n="${view.summaryKey}">${escapeHtml(view.summary)}</p>${view.related}
-      <div class="example-frame">${mediaMarkup(entry, view, root)}</div>
+      ${mediaMarkup(entry, view, root)}
     </div>
     <div class="example-thread">
       <div class="example-actions example-thread-bar">
@@ -517,6 +708,10 @@ for (const localeId of localeIds) {
     seen.add(entry.slug);
   }
 }
+locales = {
+  zh: catalog.locales.zh.map((entry) => presentEntry(entry, "zh")),
+  en: catalog.locales.en.map((entry) => presentEntry(entry, "en")),
+};
 const copy = buildCopy();
 const staleI18n = path.join(websiteRoot, "assets/examples-i18n.js");
 if (fs.existsSync(staleI18n)) fs.rmSync(staleI18n);
@@ -527,10 +722,10 @@ const homepage = upsertHomepage(section);
 assertClean("homepage", homepage);
 assertExampleKeys(homepage, translations);
 removeStalePages();
-const pages = localeIds.flatMap((localeId) => catalog.locales[localeId].map((entry) => ({
+const pages = localeIds.flatMap((localeId) => locales[localeId].map((entry) => ({
   localeId,
   entry,
-  part: readExport(entry.file),
+  part: entry.exportPart,
 })));
 writeSharedSessionAssets(pages.map((page) => page.part));
 for (const page of pages) {

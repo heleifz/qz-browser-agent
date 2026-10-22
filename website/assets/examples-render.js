@@ -2,19 +2,7 @@
 import { mountSessionView } from "./examples/session-view.js";
 
 const catalog = window.QZ_EXAMPLES;
-const slug = document.documentElement.dataset.example;
 const siteRoot = document.documentElement.dataset.siteRoot || "../../";
-
-function findExample() {
-  const specified = document.querySelector(".language")?.dataset.exampleLocale;
-  const localeId = specified === "en" ? "en" : "zh";
-  const entries = catalog?.locales?.[localeId] || [];
-  const session = document.documentElement.dataset.session || "default";
-  return entries.find((entry) => (entry.group || entry.slug) === slug && (entry.session || "default") === session)
-    || entries.find((entry) => entry.slug === slug);
-}
-
-const item = findExample();
 
 function siteUrl(relativeToSite) {
   return new URL(relativeToSite, new URL(siteRoot, document.baseURI)).href;
@@ -27,22 +15,30 @@ function syncTitle() {
 }
 
 function bindMedia() {
-  if (!item) return;
+  const video = document.querySelector(".example-video");
+  if (!(video instanceof HTMLVideoElement)) return;
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const loop = document.querySelector(".example-loop");
-  if (loop instanceof HTMLVideoElement && item.media.kind === "loop" && !reduced) {
-    loop.src = siteUrl(item.media.src);
-    loop.play().catch(() => { /* The poster stays if autoplay is blocked. */ });
-  }
-  const play = document.querySelector(".example-play");
-  const clip = document.querySelector(".example-player video:not(.example-loop)");
-  if (!(play instanceof HTMLButtonElement) || !(clip instanceof HTMLVideoElement) || item.media.kind !== "click") return;
-  play.addEventListener("click", () => {
-    if (!clip.getAttribute("src")) clip.src = siteUrl(item.media.src);
-    clip.hidden = false;
-    play.hidden = true;
-    clip.play().catch(() => { /* Native controls remain if playback is blocked. */ });
+  if (reduced) return;
+  const src = video.dataset.src;
+  if (!src) return;
+  const frame = video.closest(".example-frame") || video;
+  let started = false;
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) {
+        if (started) video.pause();
+        continue;
+      }
+      if (!video.getAttribute("src")) {
+        video.src = src;
+        video.load();
+      }
+      started = true;
+      video.play().catch(() => { /* The poster stays visible if autoplay is blocked. */ });
+    }
   });
+  video.addEventListener("playing", () => video.classList.add("is-playing"));
+  observer.observe(frame);
 }
 
 function adoptSessionOverrides(root) {
