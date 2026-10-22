@@ -11,6 +11,15 @@ client, and stores per-task transcript / timing / status under results/<run_id>/
 
 Nothing runs unless you pass --ids / --core / --difficulty / --source / --all.
 Concurrency is clamped to <= 3. Judging is a separate step (scripts/judge.py).
+
+v0.3 additions (written 2026-10-22, NOT yet exercised against a live browser):
+  --files datasets/v0.3/qingzhou_v03_draft.jsonl --include-not-ready   run the draft set
+  --usage-poll 5   create without --wait, then `watch` while polling `show` every
+                   5 s; distinct contextUsage samples are summed into
+                   stage.usage_cum (lower bound of cumulative cost) plus an
+                   upper estimate (last-call cost x LLM turns). Off by default.
+  Skill (two-stage) tasks are serialized behind one lock even with -j 3, so
+  `skills list` diffs cannot pick up another task's Skill.
 """
 from __future__ import annotations
 
@@ -37,6 +46,8 @@ DEFAULT_FILES = [
 DEFAULT_QZ = "npx --yes --registry=https://registry.npmjs.org/ qz-browser-agent@latest"
 MAX_CONCURRENCY = 3
 _print_lock = threading.Lock()
+_skill_lock = threading.Lock()  # serialize two-stage Skill tasks (skills-list diff cross-talk)
+TERMINAL = {"completed", "failed", "error", "cancelled", "canceled", "stopped"}
 
 
 def log(*a):
@@ -121,14 +132,69 @@ def final_answer(transcript):
     return ""
 
 
-def run_one_prompt(qz: QZ, prompt: str, timeout_s: int, title: str):
-    created = qz.run(["create", "-", "--title", title, "--wait", "--timeout", str(timeout_s)], timeout=timeout_s + 90, stdin=prompt)
+def _sid(created):
     res = (created.get("data") or {}).get("result") or {}
-    sid = (res.get("session") or {}).get("id") or res.get("sessionId") or ((res.get("snapshot") or {}).get("sessionId"))
+    return (res.get("session") or {}).get("id") or res.get("sessionId") or ((res.get("snapshot") or {}).get("sessionId")) or res.get("id")
+
+
+def _usage_of(shown):
+    snap = ((shown.get("data") or {}).get("result")) or {}
+    return ((snap.get("state") or {}).get("runtime") or {}).get("contextUsage") or {}
+
+
+def _create_polled(qz: QZ, prompt: str, timeout_s: int, title: str, poll_s: float):
+    """create (no wait) -> watch in foreground, poll `show` in background for usage samples."""
+    created = qz.run(["create", "-", "--title", title], timeout=120, stdin=prompt)
+    sid = _sid(created)
+    samples = []
+    if not sid:
+        return created, sid, samples
+    stop = threading.Event()
+
+    def poller():
+        last = None
+        while not stop.wait(poll_s):
+            u = _usage_of(qz.run(["show", sid], timeout=60))
+            key = (u.get("prompt_tokens"), u.get("completion_tokens"), u.get("cost_in_usd_ticks"))
+            if u and key != last:
+                samples.append({k: u.get(k) for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cost_in_usd_ticks"]})
+                last = key
+
+    th = threading.Thread(target=poller, daemon=True)
+    th.start()
+    watched = qz.run(["watch", sid, "--timeout", str(timeout_s)], timeout=timeout_s + 90)
+    stop.set()
+    th.join(timeout=70)
+    watched["elapsed_s"] = round(watched["elapsed_s"] + created["elapsed_s"], 2)
+    return watched, sid, samples
+
+
+def _usage_cum(samples, final_usage, transcript):
+    seq = list(samples)
+    fk = (final_usage.get("prompt_tokens"), final_usage.get("completion_tokens"), final_usage.get("cost_in_usd_ticks"))
+    if final_usage and (not seq or (seq[-1].get("prompt_tokens"), seq[-1].get("completion_tokens"), seq[-1].get("cost_in_usd_ticks")) != fk):
+        seq.append(dict(final_usage))
+    lower = sum((x.get("cost_in_usd_ticks") or 0) for x in seq) / 1e10
+    turns = sum(1 for m in transcript or [] if m.get("type") in ("assistant", "tool"))  # >= LLM calls
+    last_cost = (final_usage.get("cost_in_usd_ticks") or 0) / 1e10
+    return {"calls_sampled": len(seq), "llm_turns_est": turns,
+            "prompt_tokens_sum_sampled": sum((x.get("prompt_tokens") or 0) for x in seq),
+            "completion_tokens_sum_sampled": sum((x.get("completion_tokens") or 0) for x in seq),
+            "cost_usd_lower": round(lower, 4), "cost_usd_upper_est": round(max(lower, last_cost * turns), 4),
+            "method": "poll show; distinct contextUsage samples summed (misses calls between polls)"}
+
+
+def run_one_prompt(qz: QZ, prompt: str, timeout_s: int, title: str, usage_poll: float = 0):
+    samples = None
+    if usage_poll:
+        created, sid, samples = _create_polled(qz, prompt, timeout_s, title, usage_poll)
+    else:
+        created = qz.run(["create", "-", "--title", title, "--wait", "--timeout", str(timeout_s)], timeout=timeout_s + 90, stdin=prompt)
+        sid = _sid(created)
     shown = qz.run(["show", sid], timeout=120) if sid else {"data": None, "code": None}
     snap = ((shown.get("data") or {}).get("result")) or {}
     status = snap.get("status") or ((snap.get("state") or {}).get("status"))
-    if created["code"] == -9:
+    if created["code"] == -9 or (usage_poll and sid and status and status not in TERMINAL and created["elapsed_s"] >= timeout_s):
         status = "timeout"
         if sid:
             qz.run(["cancel", sid], timeout=60)
@@ -149,6 +215,8 @@ def run_one_prompt(qz: QZ, prompt: str, timeout_s: int, title: str):
         "usage": {k: usage.get(k) for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cost_in_usd_ticks"]},
         "artifacts": snap.get("artifacts"),
         "transcript": snap.get("transcript"),
+        **({"usage_cum": _usage_cum(samples, {k: usage.get(k) for k in ["prompt_tokens", "completion_tokens", "total_tokens", "cost_in_usd_ticks"]},
+                                    snap.get("transcript"))} if samples is not None else {}),
     }
 
 
@@ -169,7 +237,14 @@ def safe(s):
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s)[:120]
 
 
-def run_task(qz: QZ, task: dict, out_dir: Path, run_tag: str, timeout_override):
+def run_task(qz: QZ, task: dict, out_dir: Path, run_tag: str, timeout_override, usage_poll: float = 0):
+    if task.get("stages"):
+        with _skill_lock:
+            return _run_task(qz, task, out_dir, run_tag, timeout_override, usage_poll)
+    return _run_task(qz, task, out_dir, run_tag, timeout_override, usage_poll)
+
+
+def _run_task(qz: QZ, task: dict, out_dir: Path, run_tag: str, timeout_override, usage_poll: float = 0):
     tdir = out_dir / "tasks" / safe(task["id"])
     tdir.mkdir(parents=True, exist_ok=True)
     timeout = timeout_override or task.get("timeout_s", 600)
@@ -183,7 +258,7 @@ def run_task(qz: QZ, task: dict, out_dir: Path, run_tag: str, timeout_override):
         before = qz.skills()
         for i, st in enumerate(task["stages"]):
             p = build_prompt(st.get("start_url"), st["prompt"].replace("{skill_name}", skill_name))
-            r = run_one_prompt(qz, p, timeout, f"qzbench {task['id']} {st['name']}")
+            r = run_one_prompt(qz, p, timeout, f"qzbench {task['id']} {st['name']}", usage_poll)
             r["stage"] = st["name"]
             r["prompt"] = p
             if st["name"] == "create":
@@ -212,7 +287,7 @@ def run_task(qz: QZ, task: dict, out_dir: Path, run_tag: str, timeout_override):
         rec["stage_statuses"] = statuses
     else:
         p = build_prompt(task.get("start_url"), task["prompt"])
-        r = run_one_prompt(qz, p, timeout, f"qzbench {task['id']}")
+        r = run_one_prompt(qz, p, timeout, f"qzbench {task['id']}", usage_poll)
         r["prompt"] = p
         (tdir / "stage0_main.json").write_text(json.dumps(r, ensure_ascii=False, indent=1))
         rec["stages"].append({k: v for k, v in r.items() if k != "transcript"})
@@ -245,6 +320,7 @@ def main():
     ap.add_argument("--run-id")
     ap.add_argument("--results-dir", default=str(ROOT / "results"))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--usage-poll", type=float, default=0, help="seconds between `show` polls for cumulative usage (0=off)")
     a = ap.parse_args()
 
     conc = max(1, min(a.concurrency, MAX_CONCURRENCY))
@@ -254,7 +330,9 @@ def main():
     if a.dry_run:
         for t in tasks:
             stages = [s["name"] for s in t.get("stages", [])] or ["main"]
-            print(f"{t['id']:45} {t['core_task']:13} {t['difficulty']:6} stages={stages} timeout={a.timeout or t['timeout_s']}")
+            b = t.get("budget") or {}
+            print(f"{t['id']:52} {t['core_task']:13} {t['difficulty']:6} {t.get('status','?'):6} stages={stages} timeout={a.timeout or t['timeout_s']}"
+                  + (f" budget=calls<={b.get('max_tool_calls')},t<={b.get('max_elapsed_s')}s" if b else ""))
         print(f"{len(tasks)} task(s); client={a.client}; concurrency={conc}")
         return
     out = Path(a.results_dir) / run_id
@@ -262,12 +340,13 @@ def main():
     manifest = json.loads((ROOT / "manifest.json").read_text())
     meta = {"run_id": run_id, "run_tag": run_tag, "client": a.client, "concurrency": conc, "qz_cmd": a.qz,
             "dataset": manifest.get("name"), "dataset_version": manifest.get("version"), "git_head": git_head(),
-            "task_ids": [t["id"] for t in tasks], "started_at": now_iso()}
+            "task_ids": [t["id"] for t in tasks], "files": a.files.split(","), "usage_poll_s": a.usage_poll,
+            "started_at": now_iso()}
     (out / "run_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1))
     qz = QZ(a.qz, a.client)
     results = []
     with cf.ThreadPoolExecutor(max_workers=conc) as ex:
-        futs = {ex.submit(run_task, qz, t, out, run_tag, a.timeout): t for t in tasks}
+        futs = {ex.submit(run_task, qz, t, out, run_tag, a.timeout, a.usage_poll): t for t in tasks}
         for f in cf.as_completed(futs):
             try:
                 results.append(f.result())

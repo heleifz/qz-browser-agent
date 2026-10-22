@@ -1,5 +1,13 @@
 # 状态与卡点（2026-10-23，v0.2.5；首轮全量基线已完成）
 
+## v0.3 草案（2026-10-22，未跑测）
+
+- 25 题 draft：research 6 · compare 6 · form_fill 5 · batch_collect 4 · skill_reuse 4；hard 20 / medium 5；自建 20 + 开源对照 5（OM2W 4、WV 1）；全部 rule 判（5 题带人工抽查）。
+- judge.py：新增 any_of / must_not_include / must_match / numbers_near、效率与软预算（over_budget、pass_within_budget）、成本汇总；Skill 判定去掉「唯一新增即通过」兜底。已对 v0.2.5 基线结果副本回放，判定零差异。
+- run_eval.py：`--usage-poll` 累计 usage 采样（默认关，未实跑）；Skill 两段式题串行锁；run_meta 记录 files。
+- 待用户点头：抽样试跑 5 题 → 转 ready → v0.3 首轮基线。设计文档 `docs/v0.3-design.md`。
+
+
 ## 首轮全量基线（2026-10-23，Grok 4.7，并发 3）
 
 - run `20261023-baseline-grok47`（重跑 `20261023-baseline-grok47-retry1`），详见 [`baselines/2026-10-23-grok-4.7.md`](baselines/2026-10-23-grok-4.7.md) / `.json`。

@@ -7,6 +7,16 @@
 仓库路径（fork）：`benchmarks/qingzhou/`  
 当前版本：**0.2.5**（30 ready；含 runner + judge；HGX start_url→en-us/drivers）。
 
+## v0.3 草案（2026-10-22，draft，未跑）
+
+v0.2.5 首轮基线 96.7%，天花板效应明显 → v0.3 设计 25 题（自建真实站难题 20 + 开源对照 5），规则判分收紧 + 软预算 + 累计成本统计方案。
+详见 [`docs/v0.3-design.md`](docs/v0.3-design.md)；题目定义 `scripts/build_v03.py` → `datasets/v0.3/qingzhou_v03_draft.jsonl`。
+草案题 `status=draft`，runner 默认不会选中；试跑需显式：
+
+```bash
+python3 scripts/run_eval.py --files datasets/v0.3/qingzhou_v03_draft.jsonl --ids <id,...> --include-not-ready -j 1 --usage-poll 5
+```
+
 ## 原则
 
 调研 → 收集 → 验证 → 思考 → 抽象。决策靠数据：先有可重复测量，再谈成功率门槛。
