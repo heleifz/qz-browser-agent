@@ -586,10 +586,20 @@ automationRuntime = createAutomationRuntime({
 chrome.alarms?.onAlarm?.addListener((alarm) => {
   automationRuntime.handleAlarm(alarm);
 });
+function dataConsentAllowsImport() {
+  try {
+    dataConsent.assertAccepted();
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error && "code" in error && error.code === "DATA_CONSENT_REQUIRED") return false;
+    throw error;
+  }
+}
 const sessionExchangeBridge = createSessionExchangeBridge({
   sidePanel: chrome.sidePanel,
   importSessionExchange: sessionCommands.importSessionExchangeRuntime,
   channel: sidepanelChannel,
+  consentAccepted: dataConsentAllowsImport,
 });
 skillSettings = createSkillSettingsService({
   storage: chrome.storage.local,
@@ -888,6 +898,7 @@ const backgroundApi = createBackgroundApi({
     export: sessionCommands.exportSessionExchangeRuntime,
     import: sessionCommands.importSessionExchangeRuntime,
     importFromPage: sessionExchangeBridge.importFromPage,
+    revealForImport: sessionExchangeBridge.revealForImport,
   },
   ui: {
     startElementPicker: platformCommands.startElementPicker,
@@ -955,7 +966,7 @@ const backgroundApi = createBackgroundApi({
     stream: sidepanelChannel.recordStreamTrace,
   },
 }, path => {
-  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
+  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 

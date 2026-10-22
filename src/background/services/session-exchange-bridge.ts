@@ -8,6 +8,8 @@ interface SessionExchangeBridgeOptions {
   importSessionExchange(payload: ReturnType<typeof normalizeSessionExchangePayload>, options: { sourceWindowId?: number }): Promise<{ session?: Fields | null; ownedTabsRestore?: unknown; [key: string]: unknown }>;
   channel: { hasPorts(): boolean; broadcast(event: Fields): unknown; remember(key: string, event: Fields): unknown };
   logger?: Pick<Console, "debug">;
+  /** False opens the side panel and does not import. Omitted is treated as not accepted. */
+  consentAccepted?: () => boolean;
 }
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : error;
 
@@ -16,6 +18,7 @@ export function createSessionExchangeBridge({
   importSessionExchange,
   channel,
   logger = console,
+  consentAccepted = () => false,
 }: SessionExchangeBridgeOptions) {
   async function importFromPage(message: Fields = {}, sender: chrome.runtime.MessageSender = {}) {
     if (!isAllowedSessionExportSource(sender?.tab?.url)) {
@@ -41,6 +44,15 @@ export function createSessionExchangeBridge({
     return result;
   }
 
+  function revealForImport(sender: chrome.runtime.MessageSender = {}) {
+    if (consentAccepted()) return { needsConsent: false };
+    // sidePanel.open has to start on this message turn so the click stays a user gesture.
+    openSidePanel(sender?.tab?.windowId).catch(error => {
+      logger.debug?.("[轻舟] open side panel before data consent failed:", errorMessage(error));
+    });
+    return { needsConsent: true };
+  }
+
   async function openSidePanel(windowId: unknown) {
     const id = Number(windowId);
     if (!Number.isInteger(id) || id < 0 || !sidePanel?.open) return false;
@@ -50,6 +62,7 @@ export function createSessionExchangeBridge({
 
   return Object.freeze({
     importFromPage,
+    revealForImport,
     openSidePanel,
   });
 }

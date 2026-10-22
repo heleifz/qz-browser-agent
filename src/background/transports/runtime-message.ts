@@ -78,6 +78,12 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
       return false;
     }
 
+    if (type === "session_export_reveal_consent") {
+      // Reply in this turn. sidePanel.open must run before the click's user gesture ends.
+      sendResponse({ ok: true, ...object(call("exchange.revealForImport", sender)) });
+      return false;
+    }
+
     if (type === "session_export_import_request") {
       respondAsync(
         () => call("exchange.importFromPage", message, sender),

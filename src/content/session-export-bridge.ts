@@ -61,6 +61,19 @@ export {};
     if (importPending) return;
 
     importPending = true;
+    let reveal: unknown;
+    try {
+      reveal = await chrome.runtime.sendMessage({ type: "session_export_reveal_consent" });
+    } catch {
+      importPending = false;
+      return;
+    }
+    // Missing consent only opens the side panel. Leave the button ready for another click.
+    if (!isRecord(reveal) || reveal.ok !== true || reveal.needsConsent !== false) {
+      importPending = false;
+      return;
+    }
+
     postBridgeResult("import", { status: "working", ok: false });
     try {
       await refreshContentLanguage();
