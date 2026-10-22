@@ -1,4 +1,6 @@
-// Detail-page media, session tabs, and the document title. Conversation HTML is already in the page.
+// Detail-page media, the export transcript, and the document title.
+import { mountSessionView } from "./examples/session-view.js";
+
 const catalog = window.QZ_EXAMPLES;
 const slug = document.documentElement.dataset.example;
 const item = catalog?.items?.find((entry) => entry.slug === slug);
@@ -12,14 +14,6 @@ function syncTitle() {
   const heading = document.querySelector(".example-page h1");
   const text = heading?.textContent?.replace(/\s+/g, " ").trim();
   if (text) document.title = `${text} — qz`;
-}
-
-function applySteps() {
-  const chinese = document.documentElement.lang === "zh-CN";
-  for (const node of document.querySelectorAll("[data-steps]")) {
-    const count = node.dataset.steps;
-    node.textContent = chinese ? `${count} 个步骤` : `${count} steps`;
-  }
 }
 
 function bindMedia() {
@@ -41,32 +35,30 @@ function bindMedia() {
   });
 }
 
-function bindTabs() {
-  const download = document.querySelector("#example-download");
-  const tabs = [...document.querySelectorAll(".example-switch [data-pane]")];
-  const panes = [...document.querySelectorAll(".example-log")];
-  if (!(download instanceof HTMLAnchorElement) || !tabs.length) return;
-  const select = (tab) => {
-    const pane = document.getElementById(tab.dataset.pane);
-    for (const button of tabs) button.setAttribute("aria-selected", button === tab ? "true" : "false");
-    for (const itemPane of panes) itemPane.hidden = itemPane !== pane;
-    if (pane?.dataset.file) {
-      download.href = pane.dataset.file;
-      download.setAttribute("download", pane.dataset.download || "");
-    }
+function bindSessions() {
+  for (const host of document.querySelectorAll("qz-session-view")) {
+    if (host.shadowRoot) mountSessionView(host.shadowRoot);
+  }
+}
+
+function bindImport() {
+  const actions = document.querySelector(".example-actions");
+  if (!actions) return;
+  const sync = () => {
+    actions.classList.toggle("is-live", Boolean(actions.querySelector("[data-qingzhou-session-import]")));
   };
-  for (const tab of tabs) tab.addEventListener("click", () => select(tab));
+  sync();
+  new MutationObserver(sync).observe(actions, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "hidden"],
+  });
 }
 
 bindMedia();
-bindTabs();
+bindSessions();
+bindImport();
 syncTitle();
-applySteps();
-document.querySelector(".language")?.addEventListener("click", () => {
-  syncTitle();
-  applySteps();
-});
-window.addEventListener("popstate", () => {
-  syncTitle();
-  applySteps();
-});
+document.querySelector(".language")?.addEventListener("click", syncTitle);
+window.addEventListener("popstate", syncTitle);
