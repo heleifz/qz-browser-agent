@@ -18,7 +18,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.1-draft"
+VERSION = "0.3.2"
 VERIFIED = "2026-10-22"
 OM_LIC = "CC BY 4.0 Online-Mind2Web; website from public mirror (datasets/opensource/om2w_website_join.json)"
 WV_LIC = "Apache-2.0 (MinorJerry/WebVoyager)"
@@ -442,12 +442,12 @@ skill("skill-rfc-meta-cross-site", "hard", "qzb-rfc-meta-{run}",
 om("b4aa7315e31dfcdc52baf7771be260c9", "research", "hard",
    "Find the latest NVIDIA Data Center driver that supports HGX H100 on Ubuntu 22.04 (x86_64 / AMD64) using NVIDIA's official driver pages. "
    "Stop as soon as you have it — do not enumerate other branches. Report exactly: driver_version=<x.y.z>; release_date=<YYYY-MM-DD>; "
-   "url=<nvidia.com or docs.nvidia.com page you got it from>.",
+   "gpu=<HGX H100 as listed on the page>; os=<Ubuntu 22.04 as listed>; url=<nvidia.com or docs.nvidia.com page you got it from>.",
    "https://www.nvidia.com/en-us/drivers/",
-   {"type": "must_include", "must_include": ["H100", "22.04"],
-    "must_match": [r"driver_version=\d{3}\.\d{1,3}(\.\d{1,3})?", r"url=https?://[^ ]*nvidia\.com"],
+   {"type": "must_include", "must_include": ["gpu=", "os="],
+    "must_match": [r"driver_version=\d{3}\.\d{1,3}(\.\d{1,3})?", r"gpu=[^;]*H100", r"os=[^;]*22\.04", r"url=https?://[^ ]*nvidia\.com"],
     "review": "human checks driver_version is the newest datacenter release listed on the run day (rule only gates format + domain)",
-    "notes": "2026-10-23 baseline saw 595.112.07 then 615.71.10 (released 2026-10-19) — gold is 'latest at run time'."},
+    "notes": "2026-10-23 baseline saw 595.112.07 then 615.71.10 (released 2026-10-19) — gold is 'latest at run time'. v0.3 full run 1: judge bug — H100/22.04 were required in the answer but the output format had no such field; fixed by adding gpu=/os= fields (rerun 1)."},
    hardness="真实厂商站多级筛选 + 地理跳转（nvidia.cn）+ 文档站绕行",
    keep_reason="首轮基线中耗时第二（173s）、上下文 98k，真实站点导航最长；版本漂移已改为『跑时最新 + 格式/域名 rule』",
    drift_policy="金标随发布漂移：rule 只判格式与域名，版本号由人工按跑时页面核对",
@@ -523,6 +523,8 @@ PILOT_RUNS = {
     "v03:compare-mortgage-two-calculators": "20261022-v03-pilot-mortgage",
     "v03:skill-pkg-releases-cross-registry": "20261022-v03-pilot-skillpkg",
 }
+# one allowed rerun after a judge bug (HGX criteria required fields the output format did not carry)
+RERUNS = {"om2w-v03:b4aa7315e31dfcdc52baf7771be260c9": "20261023-v03-hgx-rerun1"}
 # Calibration from the pilot (see baselines/2026-10-22-v0.3-pilot.md):
 CALIBRATE = {
     # two-site / many-field forms legitimately need ~36 calls; 35 flagged both as over budget
@@ -542,8 +544,10 @@ for _t in TASKS:
             _t["difficulty"] = c["difficulty"]
         _t["calibrated"] = {k: v for k, v in c.items()}
     if _t["id"] in PILOT_RUNS:
-        _t["status"] = "ready"
         _t["pilot_run"] = PILOT_RUNS[_t["id"]]
+    # 2026-10-23: all 25 tasks validated by a real run (gold + judge reliable) → ready, regardless of agent pass/fail.
+    _t["status"] = "ready"
+    _t["full_run"] = RERUNS.get(_t["id"]) or ("20261023-v03-full20" if _t["id"] not in PILOT_RUNS else PILOT_RUNS[_t["id"]])
 
 
 def main():
@@ -559,7 +563,7 @@ def main():
     for t in TASKS:
         cx[t["core_task"]][t["difficulty"]] += 1
     manifest = {
-        "name": "qingzhou-eval", "version": VERSION, "status": "draft", "created": VERIFIED,
+        "name": "qingzhou-eval", "version": VERSION, "status": "ready", "created": VERIFIED,
         "supersedes_for_capability_score": "0.2.5 (kept as regression/smoke set)",
         "policy": {"parallel_max": 3, "skill_tasks_serialized": True, "single_model": True, "no_webarena": True,
                    "requires_login": False, "budgets_are_soft": True},

@@ -1,0 +1,543 @@
+{
+ "n": 25,
+ "pass": 24,
+ "pass_first_try_strict": 23,
+ "by_core_task": {
+  "batch_collect": "4/4",
+  "compare": "6/6",
+  "form_fill": "5/5",
+  "research": "6/6",
+  "skill_reuse": "3/4"
+ },
+ "by_difficulty": {
+  "hard": "17/18",
+  "medium": "7/7"
+ },
+ "pass_within_budget": 19,
+ "over_budget": {
+  "om2w-v03:1b867afecf072cb877ebfa4069263746": [
+   "tool_calls 32>20",
+   "elapsed 246.57>240"
+  ],
+  "om2w-v03:71f8de1834599fba443f40dbbfab8edd": [
+   "tool_calls 23>12"
+  ],
+  "om2w-v03:bc2ce7f206045dd2d322e5695a947219": [
+   "tool_calls 38>20",
+   "screenshots 5>4"
+  ],
+  "v03:compare-http-rfcs": [
+   "tool_calls 39>35"
+  ],
+  "v03:form-quotes-viewstate": [
+   "tool_calls 22>20"
+  ]
+ },
+ "bypass": {
+  "any": 22,
+  "run_script": 21,
+  "direct_api_or_fetch": 7
+ },
+ "cost_usd": {
+  "lower": 0.7615,
+  "mid": 18.1503,
+  "upper": 21.6088
+ },
+ "elapsed_s_sum": 1547.6,
+ "tool_calls_sum": 493,
+ "screenshots_sum": 7,
+ "compacts_sum": 0,
+ "tasks": [
+  {
+   "id": "v03:batch-oscars-ajax",
+   "core": "batch_collect",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 25.64,
+   "tool_calls": 7,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0254,
+    0.2767,
+    0.2793
+   ]
+  },
+  {
+   "id": "v03:batch-pypi-release-history",
+   "core": "batch_collect",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 37.25,
+   "tool_calls": 9,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0242,
+    0.3625,
+    0.3625
+   ]
+  },
+  {
+   "id": "v03:batch-quotes-infinite-scroll",
+   "core": "batch_collect",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 49.55,
+   "tool_calls": 10,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.019,
+    0.323,
+    0.323
+   ]
+  },
+  {
+   "id": "v03:batch-webscraper-load-more",
+   "core": "batch_collect",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261022-v03-pilot-loadmore",
+   "elapsed_s": 43.37,
+   "tool_calls": 8,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0189,
+    0.0,
+    0.2268
+   ]
+  },
+  {
+   "id": "om2w-v03:1b867afecf072cb877ebfa4069263746",
+   "core": "compare",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 246.57,
+   "tool_calls": 32,
+   "screenshots": 2,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [
+    "tool_calls 32>20",
+    "elapsed 246.57>240"
+   ],
+   "cost": [
+    0.0496,
+    2.4813,
+    2.4813
+   ]
+  },
+  {
+   "id": "v03:compare-ecb-fx-chart",
+   "core": "compare",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 20.65,
+   "tool_calls": 6,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0232,
+    0.2513,
+    0.2549
+   ]
+  },
+  {
+   "id": "v03:compare-http-rfcs",
+   "core": "compare",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 88.81,
+   "tool_calls": 39,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [
+    "tool_calls 39>35"
+   ],
+   "cost": [
+    0.0361,
+    1.5401,
+    1.7706
+   ]
+  },
+  {
+   "id": "v03:compare-lifecycle-3stack",
+   "core": "compare",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 46.68,
+   "tool_calls": 24,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0289,
+    1.006,
+    1.01
+   ]
+  },
+  {
+   "id": "v03:compare-mortgage-two-calculators",
+   "core": "compare",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261022-v03-pilot-mortgage",
+   "elapsed_s": 86.32,
+   "tool_calls": 36,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0414,
+    1.6495,
+    1.8644
+   ]
+  },
+  {
+   "id": "wv-v03:Apple--2",
+   "core": "compare",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 40.4,
+   "tool_calls": 20,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0285,
+    0.669,
+    0.7994
+   ]
+  },
+  {
+   "id": "om2w-v03:bc2ce7f206045dd2d322e5695a947219",
+   "core": "form_fill",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 110.34,
+   "tool_calls": 38,
+   "screenshots": 5,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [
+    "tool_calls 38>20",
+    "screenshots 5>4"
+   ],
+   "cost": [
+    0.033,
+    1.6158,
+    1.6158
+   ]
+  },
+  {
+   "id": "v03:form-demoqa-practice",
+   "core": "form_fill",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261022-v03-pilot-demoqa",
+   "elapsed_s": 72.1,
+   "tool_calls": 36,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0268,
+    0.0,
+    1.2876
+   ]
+  },
+  {
+   "id": "v03:form-hockey-search-paginate",
+   "core": "form_fill",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 24.99,
+   "tool_calls": 9,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0191,
+    0.268,
+    0.268
+   ]
+  },
+  {
+   "id": "v03:form-quotes-viewstate",
+   "core": "form_fill",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 37.27,
+   "tool_calls": 22,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [
+    "tool_calls 22>20"
+   ],
+   "cost": [
+    0.0215,
+    0.6037,
+    0.623
+   ]
+  },
+  {
+   "id": "v03:form-usgs-quake-search",
+   "core": "form_fill",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 47.23,
+   "tool_calls": 18,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0381,
+    0.8827,
+    1.0671
+   ]
+  },
+  {
+   "id": "om2w-v03:71f8de1834599fba443f40dbbfab8edd",
+   "core": "research",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 49.4,
+   "tool_calls": 23,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [
+    "tool_calls 23>12"
+   ],
+   "cost": [
+    0.0278,
+    0.7097,
+    0.8339
+   ]
+  },
+  {
+   "id": "om2w-v03:b4aa7315e31dfcdc52baf7771be260c9",
+   "core": "research",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-hgx-rerun1",
+   "elapsed_s": 69.83,
+   "tool_calls": 27,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0348,
+    1.2364,
+    1.4977
+   ]
+  },
+  {
+   "id": "v03:research-attention-provenance",
+   "core": "research",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 62.76,
+   "tool_calls": 12,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0271,
+    0.4877,
+    0.4877
+   ]
+  },
+  {
+   "id": "v03:research-nobel-advisor-chain",
+   "core": "research",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261022-v03-pilot-nobel",
+   "elapsed_s": 60.74,
+   "tool_calls": 23,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0257,
+    0.0,
+    0.8483
+   ]
+  },
+  {
+   "id": "v03:research-node-lts-choice",
+   "core": "research",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 25.97,
+   "tool_calls": 12,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.0268,
+    0.5369,
+    0.5369
+   ]
+  },
+  {
+   "id": "v03:research-python-match-chain",
+   "core": "research",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 35.48,
+   "tool_calls": 19,
+   "screenshots": 0,
+   "bypass": false,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0259,
+    0.6582,
+    0.7247
+   ]
+  },
+  {
+   "id": "v03:skill-arxiv-card-multi",
+   "core": "skill_reuse",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 35.78,
+   "tool_calls": 13,
+   "screenshots": 0,
+   "bypass": false,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0428,
+    0.581,
+    0.581
+   ]
+  },
+  {
+   "id": "v03:skill-mortgage-params",
+   "core": "skill_reuse",
+   "difficulty": "hard",
+   "verdict": "fail",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 104.89,
+   "tool_calls": 18,
+   "screenshots": 0,
+   "bypass": false,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0524,
+    0.9503,
+    0.9503
+   ]
+  },
+  {
+   "id": "v03:skill-pkg-releases-cross-registry",
+   "core": "skill_reuse",
+   "difficulty": "medium",
+   "verdict": "pass",
+   "run": "20261022-v03-pilot-skillpkg",
+   "elapsed_s": 42.12,
+   "tool_calls": 12,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": true,
+   "over_budget": [],
+   "cost": [
+    0.043,
+    0.6888,
+    0.5272
+   ]
+  },
+  {
+   "id": "v03:skill-rfc-meta-cross-site",
+   "core": "skill_reuse",
+   "difficulty": "hard",
+   "verdict": "pass",
+   "run": "20261023-v03-full20",
+   "elapsed_s": 83.48,
+   "tool_calls": 20,
+   "screenshots": 0,
+   "bypass": true,
+   "bypass_api": false,
+   "over_budget": [],
+   "cost": [
+    0.0215,
+    0.3717,
+    0.3874
+   ]
+  }
+ ],
+ "meta": {
+  "dataset_version": "0.3.2",
+  "client": "product-expert (0e2be1ce-94dc-4fd3-9454-22ccc922b999)",
+  "model": "grok-4.7",
+  "contextWindow": 512000,
+  "runs": {
+   "pilot (5 tasks, -j1)": "20261022-v03-pilot-{nobel,mortgage,demoqa,loadmore,skillpkg}",
+   "full (20 tasks, -j3, Skill serialized)": "20261023-v03-full20",
+   "rerun (HGX, judge fix)": "20261023-v03-hgx-rerun1"
+  },
+  "usage_poll_s": 5,
+  "date": "2026-10-22 19:23 – 2026-10-22 20:05 America/New_York"
+ },
+ "cost_usd_adjusted": {
+  "lower": 0.8,
+  "upper": 22.83,
+  "note": "includes first HGX run (judge bug, $0.04–1.22). mid ≈ upper-ish; 3 pilot tasks lack a mid sample, their upper is used"
+ },
+ "failures": [
+  {
+   "id": "v03:skill-mortgage-params",
+   "attribution": "capability: Skill script mis-set the down-payment field on reuse (URL cdownpayment=0.002) → pi=$2,195.35 vs gold $3,736.85; the agent did not sanity check; create only exercised default price/down/years so the parameterization was never validated; first reuse call also hit SESSION_TAB_TARGET_REQUIRED (needed open_tab)"
+  }
+ ],
+ "first_run_judge_bug": {
+  "id": "om2w-v03:b4aa7315e31dfcdc52baf7771be260c9",
+  "fix": "output format lacked gpu=/os= fields that criteria required; added fields + regexes, rerun once → pass"
+ },
+ "mid_cost_note": "per-task cost mid==0 means no mid sample (pilot before sampling)."
+}

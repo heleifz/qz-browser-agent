@@ -89,10 +89,26 @@ def check_text(crit: dict, text: str):
     return ok, detail
 
 
+API_PATTERNS = [
+    r"https?://[^\s\"']*/api/[^\s\"']*",
+    r"https?://[^\s\"']*/pypi/[^\s\"'/]+/json",
+    r"https?://[^\s\"']*/fdsnws/[^\s\"']*",
+    r"https?://[^\s\"']*[?&]ajax=true[^\s\"']*",
+    r"https?://[^\s\"']*\.json(\?[^\s\"']*)?(?=[\s\"'\\]|$)",
+    r"https?://[^\s\"']*eurofxref[^\s\"']*\.(zip|xml|csv)",
+    r"https?://[^\s\"']*\.xml(?=[\s\"'\\]|$)",
+    r"export\.arxiv\.org/api",
+    r"https?://[^\s\"']*/w/api\.php[^\s\"']*",
+    r"fetch\(\s*[`'\"\\]+[^`'\"\\]+",  # fetch() of any URL from run_script = direct request, not page UI
+    r"XMLHttpRequest",
+]
+
+
 def efficiency(task: dict, res: dict, tdir: Path) -> dict:
     """Soft budget check from transcripts. Never changes the verdict."""
     calls = shots = compacts = scripts = turns = 0
     chars = 0
+    api_hits = []
     for f in sorted(tdir.glob("stage*_*.json")):
         d = json.loads(f.read_text())
         for m in d.get("transcript") or []:
@@ -102,11 +118,20 @@ def efficiency(task: dict, res: dict, tdir: Path) -> dict:
                 calls += 1
                 shots += "screenshot" in name
                 scripts += "run_script" in name
+                blob = str(m.get("args") or "")
+                for pat in API_PATTERNS:
+                    mm = re.search(pat, blob, re.I)
+                    if mm:
+                        api_hits.append(mm.group(0)[:80])
+                        break
             elif ty == "compact":
                 compacts += 1
             elif ty == "assistant":
                 turns += 1
-    eff = {"tool_calls": calls, "screenshots": shots, "run_scripts": scripts, "compacts": compacts,
+    # "Bypass" (stat only, never affects verdict): solved via run_script and/or by calling a site API directly.
+    eff = {"bypass": bool(scripts or api_hits), "bypass_run_script": scripts > 0, "bypass_api": bool(api_hits),
+           "api_hits": sorted(set(api_hits))[:10],
+           "tool_calls": calls, "screenshots": shots, "run_scripts": scripts, "compacts": compacts,
            "assistant_turns": turns, "elapsed_s": res.get("elapsed_s"), "transcript_chars": chars}
     b = task.get("budget") or {}
     over = []
@@ -294,6 +319,11 @@ def main():
     board["over_budget_tasks"] = {j["id"]: j["efficiency"]["over_budget"] for j in judgments
                                   if (j.get("efficiency") or {}).get("over_budget")}
     board["spot_check_pending"] = sum(1 for j in judgments if j.get("spot_check"))
+    effj = [j for j in judgments if j.get("efficiency")]
+    if effj:
+        board["bypass"] = {"rate": round(sum(j["efficiency"]["bypass"] for j in effj) / len(effj), 3),
+                           "run_script": sum(j["efficiency"]["bypass_run_script"] for j in effj),
+                           "api": sum(j["efficiency"]["bypass_api"] for j in effj), "n": len(effj)}
     cost = {"cost_usd_last_calls_sum": round(sum(j["usage"]["cost_usd_last_calls"] for j in judgments), 4),
             "prompt_tokens_last_sum": sum(j["usage"]["prompt_tokens_last"] for j in judgments)}
     cum = [j["usage"] for j in judgments if j["usage"].get("cost_usd_cum_lower") is not None]
