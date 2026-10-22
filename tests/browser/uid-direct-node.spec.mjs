@@ -504,6 +504,43 @@ test.describe("uid resolves the original node", () => {
     expect(hits.outer || 0).toBe(0);
   });
 
+  test("duplicate image ids stay readable", async () => {
+    await h.page.evaluate(() => {
+      const root = document.createElement("div");
+      root.id = "dup-pics";
+      const pixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+      for (const alt of ["First pic", "Second pic"]) {
+        const image = document.createElement("img");
+        image.id = "pic";
+        image.alt = alt;
+        image.width = 40;
+        image.height = 40;
+        image.src = pixel;
+        image.addEventListener("click", () => {
+          const key = alt === "First pic" ? "pic1" : "pic2";
+          window.hits[key] = (window.hits[key] || 0) + 1;
+        });
+        root.append(image);
+      }
+      document.body.append(root);
+    });
+    const listed = await h.call("list_images", { selector: "#dup-pics" });
+    expect(listed.code, JSON.stringify(listed)).toBeUndefined();
+    const images = listed.images.filter(item => item.alt === "First pic" || item.alt === "Second pic");
+    expect(images.map(item => item.alt).sort()).toEqual(["First pic", "Second pic"]);
+    for (const image of images) {
+      const inspected = await h.call("inspect_element", { target: image.target });
+      expect(inspected.code, JSON.stringify(inspected)).not.toBe("STALE_ELEMENT_UID");
+      expect(inspected.tag, JSON.stringify(inspected)).toBe("img");
+      expect(inspected.name || inspected.attrs?.alt).toBe(image.alt);
+      const clicked = await h.call("act_on_element", { target: image.target, action: "click" });
+      expect(clicked.code, JSON.stringify(clicked)).not.toBe("STALE_ELEMENT_UID");
+    }
+    const hits = (await h.state()).hits;
+    expect(hits.pic1).toBe(1);
+    expect(hits.pic2).toBe(1);
+  });
+
   test("a shallow snapshot clicks each duplicate-id button", async () => {
     await h.page.evaluate(() => {
       const root = document.createElement("div");
