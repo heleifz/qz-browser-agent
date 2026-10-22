@@ -41,14 +41,25 @@ function bindSessions() {
   }
 }
 
+function importLabel() {
+  const lang = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en";
+  return catalog?.copy?.[lang]?.download || "";
+}
+
+function labelImportButton() {
+  const button = document.querySelector("#qingzhou-session-cta");
+  if (!(button instanceof HTMLButtonElement) || !button.hasAttribute("data-qingzhou-session-import")) return;
+  if (button.disabled || button.getAttribute("aria-busy") === "true") return;
+  const label = importLabel();
+  if (label) button.textContent = label;
+}
+
 function bindImport() {
   const actions = document.querySelector(".example-actions");
   if (!actions) return;
-  const shortLink = actions.querySelector(".example-download-short");
   const sync = () => {
-    const live = Boolean(actions.querySelector("[data-qingzhou-session-import]"));
-    actions.classList.toggle("is-live", live);
-    if (shortLink) shortLink.hidden = !live;
+    actions.classList.toggle("is-live", Boolean(actions.querySelector("[data-qingzhou-session-import]")));
+    labelImportButton();
   };
   sync();
   new MutationObserver(sync).observe(actions, {
@@ -63,5 +74,11 @@ bindMedia();
 bindSessions();
 bindImport();
 syncTitle();
-document.querySelector(".language")?.addEventListener("click", syncTitle);
-window.addEventListener("popstate", syncTitle);
+document.querySelector(".language")?.addEventListener("click", () => {
+  syncTitle();
+  labelImportButton();
+});
+window.addEventListener("popstate", () => {
+  syncTitle();
+  labelImportButton();
+});
