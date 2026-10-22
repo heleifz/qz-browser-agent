@@ -25,7 +25,7 @@ const [extension, runtime] = await Promise.all([
   }),
 ]);
 const pages = new Map([
-  ["/pending.html", exportHtml("未同意再点导入")],
+  ["/pending.html", exportHtml("未同意自动导入")],
   ["/consented.html", exportHtml("已同意直接导入")],
 ]);
 const server = createServer((request, response) => {
@@ -89,24 +89,12 @@ try {
   console.log(`unconsented click opened consent via ${opened.consent.via}: ${opened.consent.title}`);
 
   await acceptConsent(context);
-  await waitUntil("saved consent", async () => ({
-    stored: await consentStored(worker),
-    consent: (await consentSnapshot(context, worker)).consent,
-    button: await buttonState(pending.page),
-    titles: await sessionTitles(worker),
-  }), snapshot => snapshot.stored === true && snapshot.consent?.accept === false);
-  await new Promise(resolveDelay => setTimeout(resolveDelay, 400));
-  const afterAccept = await buttonState(pending.page);
-  assertIdle(afterAccept, "consent does not auto-import");
-  assert.deepEqual(await sessionTitles(worker), []);
-
-  await pending.page.locator("#qingzhou-session-cta").click();
   const imported = await waitUntil("import after consent", () => buttonState(pending.page), state => {
     if (state.text === "重试导入") throw new Error(`import failed: ${state.title} ${JSON.stringify(state.results)}`);
     return state.text === "已导入" && state.imported;
   }, 20000);
   assert.equal(imported.results.some(item => item.status === "error"), false);
-  assert.deepEqual(await sessionTitles(worker), ["未同意再点导入"]);
+  assert.deepEqual(await sessionTitles(worker), ["未同意自动导入"]);
   await pending.page.screenshot({ path: DONE_SCREENSHOT });
 
   const consented = await openExport(context, `${origin}/consented.html`);
@@ -122,7 +110,7 @@ try {
     return state.text === "已导入" && state.imported;
   }, 20000);
   assert.equal(direct.results.some(item => item.status === "error"), false);
-  assert.deepEqual((await sessionTitles(worker)).sort(), ["未同意再点导入", "已同意直接导入"].sort());
+  assert.deepEqual((await sessionTitles(worker)).sort(), ["未同意自动导入", "已同意直接导入"].sort());
   await consented.page.screenshot({ path: CONSENTED_SCREENSHOT });
   assert.deepEqual(pending.errors, []);
   assert.deepEqual(consented.errors, []);

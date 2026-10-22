@@ -28,7 +28,7 @@ await notificationRevealEventsSelectTheRelatedSession();
 await llmRetryStatusUsesExistingTransportFacts();
 await offscreenKeepaliveIsSingleFlightAndRetryable();
 await sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics();
-await sessionExchangeRevealOpensConsentWithoutImporting();
+await sessionExchangeRevealWaitsForConsentBeforeImport();
 await platformCommandsRequireExplicitTabs();
 await sidepanelChannelOwnsPortsPendingDeliveryAndDynamicContext();
 
@@ -411,7 +411,7 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   assert.equal(broadcasts.some(event => event.type === "skill_registry_update"), false);
 }
 
-async function sessionExchangeRevealOpensConsentWithoutImporting() {
+async function sessionExchangeRevealWaitsForConsentBeforeImport() {
   const content = readFileSync(new URL("../../src/content/session-export-bridge.ts", import.meta.url), "utf8");
   const transportSource = readFileSync(new URL("../../src/background/transports/runtime-message.ts", import.meta.url), "utf8");
   const workerSource = readFileSync(new URL("../../src/background/service-worker.ts", import.meta.url), "utf8");
@@ -422,6 +422,7 @@ async function sessionExchangeRevealOpensConsentWithoutImporting() {
   assert.match(transportSource, /type === "session_export_reveal_consent"/u);
   assert.doesNotMatch(transportSource, /respondAsync\(\s*\(\) => call\("exchange\.revealForImport"/u);
   assert.match(workerSource, /"exchange\.revealForImport"/u);
+  assert.match(workerSource, /whenConsented: \(\) => dataConsent\.whenAccepted/u);
 
   const opened = [];
   const imported = [];
@@ -482,6 +483,46 @@ async function sessionExchangeRevealOpensConsentWithoutImporting() {
   });
   assert.deepEqual(failClosed.revealForImport(sender), { needsConsent: true });
   assert.deepEqual(failClosedOpened, [true]);
+
+  let releaseConsent;
+  const consented = new Promise(resolve => { releaseConsent = resolve; });
+  const waitingOpened = [];
+  const waiting = createSessionExchangeBridge({
+    sidePanel: { open(input) { waitingOpened.push(input); return Promise.resolve(); } },
+    importSessionExchange: async () => { throw new Error("consent reveal must not import"); },
+    channel: { hasPorts: () => false, broadcast() {}, remember() {} },
+    logger: { debug() {} },
+    consentAccepted: () => false,
+    whenConsented: () => consented,
+  });
+  const pendingReveal = waiting.revealForImport(sender);
+  assert.equal(typeof pendingReveal.then, "function");
+  assert.deepEqual(waitingOpened, [{ windowId: 9 }]);
+  const pendingApi = createBackgroundApi({
+    exchange: {
+      revealForImport: waiting.revealForImport,
+      importFromPage() { imported.push("after-consent"); },
+    },
+  }, path => {
+    if (path === "exchange.revealForImport") return;
+    throw denied;
+  });
+  const waitingTransport = createRuntimeMessageTransport(pendingApi);
+  let continued;
+  let continuedSync = false;
+  const keptOpen = waitingTransport.listener({ type: "session_export_reveal_consent" }, sender, value => {
+    continuedSync = true;
+    continued = value;
+  });
+  assert.equal(keptOpen, true);
+  assert.equal(continuedSync, false);
+  assert.deepEqual(waitingOpened, [{ windowId: 9 }, { windowId: 9 }]);
+  releaseConsent();
+  assert.deepEqual(await pendingReveal, { needsConsent: false });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(continuedSync, true);
+  assert.deepEqual(continued, { ok: true, needsConsent: false });
+  assert.equal(imported.length, 0);
 }
 
 function dispatchSync(transport, message, sender) {

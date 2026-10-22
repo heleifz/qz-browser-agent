@@ -68,7 +68,7 @@ export {};
       importPending = false;
       return;
     }
-    // Missing consent only opens the side panel. Leave the button ready for another click.
+    // Acceptance resolves this same click into the import below. Dismissal leaves the button ready.
     if (!isRecord(reveal) || reveal.ok !== true || reveal.needsConsent !== false) {
       importPending = false;
       return;

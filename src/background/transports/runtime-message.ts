@@ -79,8 +79,16 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
     }
 
     if (type === "session_export_reveal_consent") {
-      // Reply in this turn. sidePanel.open must run before the click's user gesture ends.
-      sendResponse({ ok: true, ...object(call("exchange.revealForImport", sender)) });
+      // Open the panel before awaiting consent so this click remains a user gesture.
+      const result = call("exchange.revealForImport", sender);
+      if (result && typeof (result as Promise<unknown>).then === "function") {
+        (result as Promise<unknown>).then(
+          value => sendResponse({ ok: true, ...object(value) }),
+          error => sendResponse(failure(error, "SESSION_EXPORT_REVEAL_FAILED")),
+        );
+        return true;
+      }
+      sendResponse({ ok: true, ...object(result) });
       return false;
     }
 
