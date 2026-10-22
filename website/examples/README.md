@@ -73,3 +73,12 @@ The poster is optional.
    ```
 
    Open `http://127.0.0.1:4173/qz-browser-agent/#examples`.
+
+## Export runtime
+
+`generate-pages.mjs` rewrites the extension's minified export runtime in
+`adaptSessionScript` so the transcript runs inside the page's shadow root. If
+the extension changes that runtime, regenerate the example pages and check
+`adaptSessionScript` against the new script. The generator stops when an
+expected rewrite target is missing, so a changed runtime cannot ship as a
+broken page.
