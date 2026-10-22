@@ -374,7 +374,9 @@ function detailPage(localeId, entry, part) {
           <a class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" id="example-store" href="${STORE}" target="_blank" rel="noopener" data-i18n="exampleDownload">${escapeHtml(en.download)}</a>
         </div>
       </div>
-      ${sessionView(part, root)}
+      <div class="example-thread-body">
+        ${sessionView(part, root)}
+      </div>
     </div>
   </div>
 </main>

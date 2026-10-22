@@ -22,7 +22,7 @@
 .example-related { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .example-related a:hover { color: var(--ink); }
 .example-actions { display: flex; align-items: center; }
-.example-thread-bar { position: sticky; top: 0; z-index: 2; justify-content: space-between; flex-wrap: nowrap; gap: 8px; box-sizing: border-box; min-height: 0; padding: 9px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.example-thread-bar { position: relative; z-index: 2; flex: 0 0 auto; justify-content: space-between; flex-wrap: nowrap; gap: 8px; box-sizing: border-box; min-height: 0; padding: 9px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .example-session-title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; color: #8b8f94; font-size: 11px; font-weight: 400; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .example-thread-cta { display: flex; flex: 0 0 auto; align-items: center; min-width: 0; }
 .example-thread-bar :is(#example-store, #qingzhou-session-cta:not([hidden])) { height: 22px; min-height: 22px; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 4px; margin: 0; padding: 0 7px; border: 1px solid transparent; border-radius: 4px; background: #171717; color: #fff; font: 540 10px/1 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; white-space: nowrap; text-decoration: none; cursor: pointer; }
@@ -31,9 +31,10 @@
 #qingzhou-session-cta[hidden] { display: none !important; }
 #qingzhou-session-cta:disabled { cursor: progress; opacity: .42; }
 .example-actions.is-live #example-store { display: none !important; }
-.example-thread { min-width: 0; margin-top: 36px; height: min(70dvh, 640px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(0, 0, 0, .07), 0 32px 64px rgba(0, 0, 0, .05); scrollbar-width: thin; scrollbar-color: var(--line) transparent; animation: example-thread-in 500ms var(--ease); }
-.example-thread::-webkit-scrollbar { width: 8px; }
-.example-thread::-webkit-scrollbar-thumb { background: var(--line); }
+.example-thread { display: flex; flex-direction: column; min-width: 0; margin-top: 36px; height: min(70dvh, 640px); overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(0, 0, 0, .07), 0 32px 64px rgba(0, 0, 0, .05); animation: example-thread-in 500ms var(--ease); }
+.example-thread-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.example-thread-body::-webkit-scrollbar { width: 8px; }
+.example-thread-body::-webkit-scrollbar-thumb { background: var(--line); }
 qz-session-view { display: block; min-width: 0; max-width: 100%; }
 
 @media (min-width: 1024px) {
@@ -45,7 +46,7 @@ qz-session-view { display: block; min-width: 0; max-width: 100%; }
 @media (max-width: 1023px) {
   .example-page { width: calc(100% - 40px); padding-top: 28px; }
   .example-lead { position: static; }
-  .example-thread { height: min(70dvh, 640px); margin-top: 36px; overflow: auto; overscroll-behavior: contain; }
+  .example-thread { height: min(70dvh, 640px); margin-top: 36px; overflow: hidden; }
 }
 
 @media (max-width: 700px) {
