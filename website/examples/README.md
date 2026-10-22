@@ -34,8 +34,8 @@ GitHub Pages subpath without `fetch`.
 3. Add one object to `items` in `catalog.js`: `slug`, localized `title` and `summary`, `cover`,
    `media` (`kind` is `loop` or `click`), and `sessions`. Put a cover image in `assets/examples/`.
 4. Regenerate. The generator copies `#messages` from the export into a shadow root, copies the
-   exchange `<script id="qingzhou-session-exchange" type="application/json">` once onto the page,
-   and keeps the export file as the download target. The side-panel stylesheet and interaction
+   exchange `<script id="qingzhou-session-exchange" type="application/json">` once onto the page.
+   The side-panel stylesheet and interaction
    script are shared, so every export must carry the same copies; `:root` and `html, body` in
    that stylesheet are retargeted to `:host` so the rules apply inside the shadow root. A second
    session needs its own `page` slug. The homepage card links to the first session. Each page

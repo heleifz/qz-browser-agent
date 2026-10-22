@@ -38,11 +38,10 @@
         <p class="example-session-title">开源大模型横向对比</p>
         <div class="example-thread-cta">
           <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
-          <a class="button" id="example-store" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" target="_blank" rel="noopener" data-i18n="exampleDownload"><span>Import into qz to continue</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
-          <a class="example-download-short" href="../sessions/llm-compare-zh.html" download="llm-compare-zh.html" data-i18n="exampleDownloadShort">Download session</a>
+          <a class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" id="example-store" href="https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm" target="_blank" rel="noopener" data-i18n="exampleDownload">Import into qz to continue</a>
         </div>
       </div>
-      <qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><script type="application/json" id="qingzhou-export-messages">{"imagePreview":"图片预览","images":"图片","close":"关闭","importQingzhou":"导入轻舟","importing":"正在导入","imported":"已导入","retryImport":"重试导入","importFailedRetry":"导入失败，请重试"}</script><main id="messages"><div class="msg msg-user" data-client-message-id="" data-transcript-type="user">
+      <qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><link rel="stylesheet" href="../../assets/examples/session-view-overrides.css"><script type="application/json" id="qingzhou-export-messages">{"imagePreview":"图片预览","images":"图片","close":"关闭","importQingzhou":"导入轻舟","importing":"正在导入","imported":"已导入","retryImport":"重试导入","importFailedRetry":"导入失败，请重试"}</script><main id="messages"><div class="msg msg-user" data-client-message-id="" data-transcript-type="user">
     <div class="msg-user-row">
       <div class="msg-content user-selectable">
         <div class="user-text">对比最近 6 个月发布的主流开源大模型，每行一个模型：发布日期、参数量、上下文长度、协议、主要基准成绩，附官方来源。</div>

@@ -1,0 +1,36 @@
+/* Table layout for example transcripts. Loaded inside the shadow root after session-view.css.
+   Unlayered so these rules win over the export stylesheet's layered cell wrapping. */
+
+.example-table-scroll,
+.tool-data-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.example-table-scroll > table,
+.tool-data-table-wrap > table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+}
+
+.example-table-scroll :is(th, td),
+.tool-data-table :is(th, td) {
+  min-width: 4em;
+  max-width: 22em;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: manual;
+}
+
+.example-table-scroll :is(th, td).example-cell-nowrap,
+.tool-data-table :is(th, td).example-cell-nowrap {
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}

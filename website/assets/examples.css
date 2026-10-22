@@ -22,20 +22,15 @@
 .example-related { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .example-related a:hover { color: var(--ink); }
 .example-actions { display: flex; align-items: center; }
-.example-thread { container-type: inline-size; }
-.example-thread-bar { position: sticky; top: 0; z-index: 2; justify-content: space-between; flex-wrap: nowrap; gap: 12px; box-sizing: border-box; min-height: 56px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.example-session-title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--muted); font-size: 13px; font-weight: 450; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.example-thread-cta { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; min-width: 0; }
-.example-thread-bar .button,
-.example-thread-bar #qingzhou-session-cta:not([hidden]) { min-height: 36px; margin-top: 0; padding: 8px 14px; }
-.example-thread-bar .example-download-short { margin: 0; white-space: nowrap; }
+.example-thread-bar { position: sticky; top: 0; z-index: 2; justify-content: space-between; flex-wrap: nowrap; gap: 8px; box-sizing: border-box; min-height: 0; padding: 9px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.example-session-title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; color: #8b8f94; font-size: 11px; font-weight: 400; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.example-thread-cta { display: flex; flex: 0 0 auto; align-items: center; min-width: 0; }
+.example-thread-bar :is(#example-store, #qingzhou-session-cta:not([hidden])) { height: 22px; min-height: 22px; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 4px; margin: 0; padding: 0 7px; border: 1px solid transparent; border-radius: 4px; background: #171717; color: #fff; font: 540 10px/1 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; white-space: nowrap; text-decoration: none; cursor: pointer; }
+.example-thread-bar :is(#example-store, #qingzhou-session-cta:not([hidden])):hover { background: #2e2e2e; }
+.example-thread-bar #example-store svg { display: none; }
 #qingzhou-session-cta[hidden] { display: none !important; }
-#qingzhou-session-cta:not([hidden]) { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; margin-top: 0; padding: 8px 14px; border: 1px solid var(--ink); border-radius: var(--radius); background: var(--ink); color: var(--page); font-size: 14px; font-weight: 520; cursor: pointer; }
-#qingzhou-session-cta:not([hidden]):hover { background: #333; }
-#qingzhou-session-cta:disabled { cursor: progress; opacity: .72; }
+#qingzhou-session-cta:disabled { cursor: progress; opacity: .42; }
 .example-actions.is-live #example-store { display: none !important; }
-.example-download-short { color: var(--muted); font-size: 13px; font-weight: 400; line-height: 1.5; }
-.example-download-short:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 4px; }
 .example-thread { min-width: 0; margin-top: 36px; height: min(70dvh, 640px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(0, 0, 0, .07), 0 32px 64px rgba(0, 0, 0, .05); scrollbar-width: thin; scrollbar-color: var(--line) transparent; animation: example-thread-in 500ms var(--ease); }
 .example-thread::-webkit-scrollbar { width: 8px; }
 .example-thread::-webkit-scrollbar-thumb { background: var(--line); }
@@ -51,12 +46,6 @@ qz-session-view { display: block; min-width: 0; max-width: 100%; }
   .example-page { width: calc(100% - 40px); padding-top: 28px; }
   .example-lead { position: static; }
   .example-thread { height: min(70dvh, 640px); margin-top: 36px; overflow: auto; overscroll-behavior: contain; }
-}
-
-@container (max-width: 380px) {
-  .example-thread-bar { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; max-height: 96px; }
-  .example-session-title { flex: 1 1 100%; }
-  .example-thread-cta { flex: 1 1 100%; justify-content: space-between; }
 }
 
 @media (max-width: 700px) {
