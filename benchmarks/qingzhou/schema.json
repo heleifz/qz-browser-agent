@@ -111,6 +111,39 @@
       "items": {
         "type": "string"
       }
+    },
+    "stages": {
+      "type": "array",
+      "description": "Two-stage tasks (skill_reuse): run sequentially, each in a new session",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "prompt"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "start_url": {
+            "type": "string"
+          },
+          "new_session": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "skill_name": {
+      "type": "string",
+      "description": "Skill name template; {run} replaced by runner run tag"
+    },
+    "temporal": {
+      "type": "boolean",
+      "description": "Live/volatile answer; judge against page at run time"
     }
   },
   "additionalProperties": true

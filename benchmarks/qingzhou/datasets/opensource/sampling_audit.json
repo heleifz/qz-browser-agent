@@ -146,62 +146,63 @@
   "url_probe_asia_shanghai": "2026-10-23T02:49:00+08:00",
   "url_probe_notes": "curl from box egress; 403/000 treated as unreliable for gate. Browser may still open some; we still replaced for gate stability.",
   "final_counts": {
-    "total": 32,
-    "webvoyager": 8,
-    "online_mind2web": 14,
-    "self": 10,
-    "ready": 32,
-    "partial_or_pending": 0
+    "total": 30,
+    "online_mind2web": 8,
+    "webvoyager": 4,
+    "self": 18,
+    "ready": 30,
+    "partial_or_pending": 0,
+    "auto_judged_rule": 20,
+    "needs_review": 10,
+    "temporal": 1
   },
   "by_core_task": {
-    "research": 19,
-    "compare": 4,
-    "form_fill": 5,
-    "batch_collect": 2,
-    "skill_reuse": 2
+    "research": 7,
+    "compare": 6,
+    "form_fill": 6,
+    "batch_collect": 6,
+    "skill_reuse": 5
   },
   "by_difficulty": {
     "easy": 10,
-    "medium": 14,
-    "hard": 8
+    "medium": 11,
+    "hard": 9
   },
   "picked_om2w_ids": [
-    "e24662008c3be5d56f986f232fcec447",
-    "b6d10e9bd19b4009a02dea0e98f4e1ae",
-    "6ca20f1da01edeb49a7a42c816d8c6fe",
     "5e1b8254c123c80178cc28e0afdb14f0_110325",
-    "bc2ce7f206045dd2d322e5695a947219",
-    "502e864440283214e0180645015f568b_110325",
-    "3adeea7627f4343069f38adae40f73d0_110325",
-    "c698ff3fc0f6cbce39947c597ab5749b_121425",
-    "eb2db4b769c145dbe6ba4f74f3e0de98",
-    "f2be37a9a60fbc25b6b11cf622d17352_110325",
-    "d71be72aa25c3eab8eea47a0e60382e2",
-    "bf3b311cc8dce16d3de844f4b5875dfd",
+    "6ca20f1da01edeb49a7a42c816d8c6fe",
     "b4aa7315e31dfcdc52baf7771be260c9",
-    "71f8de1834599fba443f40dbbfab8edd"
+    "71f8de1834599fba443f40dbbfab8edd",
+    "bf3b311cc8dce16d3de844f4b5875dfd",
+    "1b867afecf072cb877ebfa4069263746",
+    "bc2ce7f206045dd2d322e5695a947219",
+    "3adeea7627f4343069f38adae40f73d0_110325"
   ],
   "picked_wv_ids": [
-    "GitHub--23",
-    "ArXiv--23",
     "Google Search--2",
-    "Amazon--4",
-    "Coursera--29",
-    "ESPN--22",
-    "Apple--2",
-    "GitHub--29"
+    "GitHub--23",
+    "GitHub--29",
+    "Apple--2"
   ],
   "picked_self_ids": [
+    "self:shadowdom-001",
+    "self:compare-books-categories-001",
+    "self:compare-multi-001",
     "self:form-login-001",
     "self:form-controls-001",
-    "self:form-inputs-hard-001",
     "self:iframe-001",
-    "self:shadowdom-001",
+    "self:form-inputs-hard-001",
+    "self:batch-tables-001",
     "self:batch-books-001",
+    "self:batch-quotes-001",
     "self:batch-pages-001",
-    "self:skill-reuse-001a",
-    "self:skill-reuse-001b",
-    "self:compare-multi-001"
+    "self:batch-mystery-001",
+    "self:batch-einstein-001",
+    "self:skill-books-first5",
+    "self:skill-login-check",
+    "self:skill-tag-quotes",
+    "self:skill-category-summary",
+    "self:skill-wiki-designers"
   ],
   "webvoyager": {
     "source_file": "raw/webvoyager.jsonl",
@@ -220,5 +221,188 @@
       "Apple--2",
       "GitHub--29"
     ]
+  },
+  "v0_2_0_rebalance": {
+    "revised_at_asia_shanghai": "2026-10-23T03:05:00+08:00",
+    "goal": "five core tasks 5-7 each, batch_collect and skill_reuse >=5, easy/medium/hard in every class, total ~30",
+    "result": {
+      "by_core_task": {
+        "research": 7,
+        "compare": 6,
+        "form_fill": 6,
+        "batch_collect": 6,
+        "skill_reuse": 5
+      },
+      "core_x_difficulty": {
+        "research": {
+          "easy": 2,
+          "medium": 3,
+          "hard": 2
+        },
+        "compare": {
+          "easy": 2,
+          "medium": 2,
+          "hard": 2
+        },
+        "form_fill": {
+          "easy": 2,
+          "medium": 3,
+          "hard": 1
+        },
+        "batch_collect": {
+          "easy": 2,
+          "medium": 2,
+          "hard": 2
+        },
+        "skill_reuse": {
+          "easy": 2,
+          "medium": 1,
+          "hard": 2
+        }
+      },
+      "total": 30
+    },
+    "dropped_from_v0_1_1": [
+      {
+        "id": "om2w:e24662008c3be5d56f986f232fcec447",
+        "reason": "research overweight; Google Finance WWE chart temporal"
+      },
+      {
+        "id": "om2w:b6d10e9bd19b4009a02dea0e98f4e1ae",
+        "reason": "research overweight; MLS standings temporal"
+      },
+      {
+        "id": "om2w:502e864440283214e0180645015f568b_110325",
+        "reason": "research overweight; recreation.gov permit availability temporal"
+      },
+      {
+        "id": "om2w:c698ff3fc0f6cbce39947c597ab5749b_121425",
+        "reason": "research overweight; eventbrite this-month temporal"
+      },
+      {
+        "id": "om2w:eb2db4b769c145dbe6ba4f74f3e0de98",
+        "reason": "research overweight"
+      },
+      {
+        "id": "om2w:f2be37a9a60fbc25b6b11cf622d17352_110325",
+        "reason": "research overweight; next-month temporal"
+      },
+      {
+        "id": "om2w:d71be72aa25c3eab8eea47a0e60382e2",
+        "reason": "research overweight; easy covered by ticketmaster/Google"
+      },
+      {
+        "id": "wv:ArXiv--23",
+        "reason": "research overweight; daily count unverifiable"
+      },
+      {
+        "id": "wv:Amazon--4",
+        "reason": "research overweight; used inventory price volatile, bot walls"
+      },
+      {
+        "id": "wv:Coursera--29",
+        "reason": "research overweight; price volatile"
+      },
+      {
+        "id": "wv:ESPN--22",
+        "reason": "research overweight; transactions temporal"
+      },
+      {
+        "id": "self:skill-reuse-001a/b",
+        "reason": "merged into two-stage self:skill-books-first5 (create then reuse on a different page)"
+      }
+    ],
+    "reclassified": [
+      {
+        "id": "om2w:bc2ce7f206045dd2d322e5695a947219",
+        "from": "research",
+        "to": "form_fill",
+        "reason": "calculator form entry"
+      },
+      {
+        "id": "om2w:3adeea7627f4343069f38adae40f73d0_110325",
+        "from": "research",
+        "to": "form_fill",
+        "reason": "search form with radius/type filters"
+      },
+      {
+        "id": "self:shadowdom-001",
+        "from": "form_fill",
+        "to": "research",
+        "reason": "read-only extraction, not form entry"
+      },
+      {
+        "id": "wv:GitHub--23",
+        "change": "judge llm_judge -> rule (ZSH_THEME + agnoster)"
+      },
+      {
+        "id": "wv:Google Search--2",
+        "change": "judge -> rule (Crypto.com Arena)"
+      }
+    ],
+    "added": [
+      {
+        "id": "om2w:1b867afecf072cb877ebfa4069263746",
+        "core": "compare",
+        "difficulty": "hard",
+        "reason": "AHR Illinois vs Michigan chart; site reachable"
+      },
+      {
+        "id": "self:compare-books-categories-001",
+        "core": "compare",
+        "difficulty": "medium",
+        "reason": "deterministic two-category compare with pagination"
+      },
+      {
+        "id": "self:batch-tables-001",
+        "core": "batch_collect",
+        "difficulty": "easy"
+      },
+      {
+        "id": "self:batch-quotes-001",
+        "core": "batch_collect",
+        "difficulty": "medium",
+        "reason": "nested fields (tags)"
+      },
+      {
+        "id": "self:batch-mystery-001",
+        "core": "batch_collect",
+        "difficulty": "hard",
+        "reason": "category nav + 2 pages, total=32"
+      },
+      {
+        "id": "self:batch-einstein-001",
+        "core": "batch_collect",
+        "difficulty": "hard",
+        "reason": "10 pages scan + filter, total=10"
+      },
+      {
+        "id": "self:skill-books-first5",
+        "core": "skill_reuse",
+        "difficulty": "easy"
+      },
+      {
+        "id": "self:skill-login-check",
+        "core": "skill_reuse",
+        "difficulty": "easy"
+      },
+      {
+        "id": "self:skill-tag-quotes",
+        "core": "skill_reuse",
+        "difficulty": "medium"
+      },
+      {
+        "id": "self:skill-category-summary",
+        "core": "skill_reuse",
+        "difficulty": "hard"
+      },
+      {
+        "id": "self:skill-wiki-designers",
+        "core": "skill_reuse",
+        "difficulty": "hard"
+      }
+    ],
+    "gold_source": "Computed 2026-10-23 from live static sandboxes (books.toscrape.com, quotes.toscrape.com, the-internet, Wikipedia infobox). Rust infobox has no Designed-by row; gold uses years + Go designers.",
+    "form_text_readback_note": "Form tasks require an exact read-back line; v0 judges the claim, DOM-state verification is future work."
   }
 }
