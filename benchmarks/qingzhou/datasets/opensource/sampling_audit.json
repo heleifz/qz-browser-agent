@@ -1,7 +1,7 @@
 {
   "seed": 20261023,
-  "revised_at_asia_shanghai": "2026-10-23T02:55:00+08:00",
-  "revision": "v0.1.1-full-audit",
+  "revised_at_asia_shanghai": "2026-10-23T03:40:00+08:00",
+  "revision": "v0.2.1-skill-overflow-fix",
   "website_source": {
     "kind": "public_third_party_mirror",
     "files": "raw/Online_Mind2Web.public_mirror.json",
@@ -44,6 +44,14 @@
     {
       "id": "self:parallel-smoke-001",
       "reason": "Replaced by harder form/batch/compare coverage; parallel is product infra smoke not a core-task pillar"
+    },
+    {
+      "id": "self:skill-category-summary",
+      "reason": "v0.2.1: create-stage context_overflow (~112k) on multi-page Mystery/Travel category scan during Skill authoring; replaced by single-page Philosophy→Music skill-cat-cheapest"
+    },
+    {
+      "id": "self:skill-wiki-designers",
+      "reason": "v0.2.1: create-stage context_overflow on large Wikipedia pages during Skill authoring; replaced by short quotes.toscrape author-bio pages skill-author-bio"
     }
   ],
   "updates": [
@@ -113,6 +121,14 @@
     {
       "id": "self:compare-multi-001",
       "reason": "True multi-source compare (was missing); hard research/compare"
+    },
+    {
+      "id": "self:skill-cat-cheapest",
+      "reason": "v0.2.1 hard skill_reuse: single-page category count+cheapest (Philosophy create → Music reuse); avoids multi-page pagination that blew context"
+    },
+    {
+      "id": "self:skill-author-bio",
+      "reason": "v0.2.1 hard skill_reuse: short author bio pages (Einstein create → Austen+Rowling reuse table); avoids Wikipedia"
     }
   ],
   "rewrites": [
@@ -141,6 +157,10 @@
     {
       "id": "self:skill-reuse-001a/b",
       "reason": "Tightened success_criteria so Skill reuse is observable"
+    },
+    {
+      "id": "self:skill-books-first5",
+      "reason": "v0.2.1: tighten create/reuse prompts — write SHORT Skill first, title+price only, forbid repeated load_skill (mitigate intermittent context_overflow)"
     }
   ],
   "url_probe_asia_shanghai": "2026-10-23T02:49:00+08:00",
@@ -201,8 +221,8 @@
     "self:skill-books-first5",
     "self:skill-login-check",
     "self:skill-tag-quotes",
-    "self:skill-category-summary",
-    "self:skill-wiki-designers"
+    "self:skill-cat-cheapest",
+    "self:skill-author-bio"
   ],
   "webvoyager": {
     "source_file": "raw/webvoyager.jsonl",
@@ -404,5 +424,33 @@
     ],
     "gold_source": "Computed 2026-10-23 from live static sandboxes (books.toscrape.com, quotes.toscrape.com, the-internet, Wikipedia infobox). Rust infobox has no Designed-by row; gold uses years + Go designers.",
     "form_text_readback_note": "Form tasks require an exact read-back line; v0 judges the claim, DOM-state verification is future work."
+  },
+  "v0_2_1_skill_overflow_fix": {
+    "revised_at_asia_shanghai": "2026-10-23T03:40:00+08:00",
+    "goal": "Make hard skill_reuse dual-stage tasks runnable under ~112k context; keep skill_reuse 5 = 2e/1m/2h",
+    "replacements": [
+      {
+        "from": "self:skill-category-summary",
+        "to": "self:skill-cat-cheapest",
+        "why": "Multi-page category scan + skill-author tool dumps overflowed at create; new task uses single-page Philosophy/Music only"
+      },
+      {
+        "from": "self:skill-wiki-designers",
+        "to": "self:skill-author-bio",
+        "why": "Wikipedia HTML too large for create-stage skill authoring; new task uses ~3–5KB quotes.toscrape author pages with multi-input reuse"
+      }
+    ],
+    "prompt_tighten": [
+      "self:skill-books-first5"
+    ],
+    "gold_verified_asia_shanghai": "2026-10-23",
+    "unchanged_counts": {
+      "total": 30,
+      "skill_reuse": {
+        "easy": 2,
+        "medium": 1,
+        "hard": 2
+      }
+    }
   }
 }
