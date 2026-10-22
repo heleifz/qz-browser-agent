@@ -1,4 +1,4 @@
-# 状态与卡点（2026-10-23，v0.2.4 Shadow DOM 金标修正）
+# 状态与卡点（2026-10-23，v0.2.4；挑战题抽检 3/3 pass）
 
 ## 已完成
 
@@ -43,21 +43,33 @@
 |---|---|---|
 | self:shadowdom-001 (medium) | **pass** 18.9s | 新金标可见行全命中 |
 
+### run `20261023-challenge-v024`（未测挑战 rule 抽检）
+| 题 | 结果 | 说明 |
+|---|---|---|
+| self:compare-books-categories-001 (medium) | **pass** 76.7s | Travel/Poetry 多源对比；金标 count/cheapest/more_books 全命中；线上金标复核一致 |
+| self:batch-mystery-001 (hard) | **pass** 47.9s | Mystery 分类 2 页共 32 本；`total=32` + cheapest `Tastes Like Fear` £10.69；table_rows=32 |
+| self:skill-login-check (easy) | **pass** 91.2s | create 存 `qzb-login-check-*`；reuse 命中 `Your password is invalid!` 且引用 Skill |
+
 **观察（仅记录，未提研发）**
 1. 短页 +「先写短 Skill」后，多数 Skill create 落在 ~28–44k；但 product-expert 上堆积的历次 `qzb-*` Skill 仍可能把 create 顶到 112k 溢出线。
 2. `create_skill` 仍偶发「saved=true 但 skills list 无新名」或「create 会话 overflow 但 Skill 已写入」；runner/judge 已用 tool_saved / skills_new_or_updated 兜底。
 3. CLI 无 Skill 删除命令；全量基线前建议在扩展 UI 手动清掉试跑残留 `qzb-*`。
 4. medicare.gov 在评测 egress 上稳定 403，开源 OM2W 表单题需自建可判替身（httpbin）。
 5. the-internet Shadow DOM demo 的可见文案依赖 slot 填充；金标需按渲染结果而非 template 默认值。
+6. Skill reuse 偶发 `PAGE_CONTEXT_UNAVAILABLE`（skill 工具挂不上页），agent 手工复现流程仍能过金标；判分按引用 Skill + 金标放行。
+7. **nvidia.com 地理跳转**：box egress 访问 `https://www.nvidia.com/` → 307 → `https://www.nvidia.cn/`。中文站 `/drivers/` 偏 GeForce；`/data-center/h100/` 会落到通用 data-center。但直连 `https://www.nvidia.com/en-us/drivers/` 仍 200，且 lookup 产品列表含 `Tesla | HGX-Series | HGX H100`。故 `om2w:…b4aa7315…`（Find HGX H100 driver，human/hard）**未彻底不可跑**，但 start_url 根域会先落 CN，可执行性偏弱。
 
 ## 仍须注意
 
 1. `temporal` 题（`wv:Apple--2`）按直播页判分。
 2. 表单题 v0 判 agent 的回读行，DOM 状态校验待做（不阻塞可跑/可判分）。
 3. HF 官方 OM2W JSON 有权限后与镜像 diff。
-4. 仍有一批 rule 题尚未小规模试跑（如部分 batch / skill-login / WV research）；全量基线可一并覆盖。
+4. 多数此前未测的 rule 挑战题本轮已抽检过；剩余未小规模试跑的 rule/WV 可随全量基线覆盖。
 
 ## 下一步
 
 1. **首轮全量基线**（需用户点头再跑，成本约 30 题 × 单模型；建议先清 `qzb-*` 残留）。
-2. 用户同意后再把 Skill 上下文 / 同名覆盖观察交研发。
+2. **nvidia HGX 题**（待拍板，本轮未改题/未 bump）：
+   - 方案 A（最小）：把 `start_url` 改为 `https://www.nvidia.com/en-us/drivers/`，避开根域 → CN 跳转，仍保留 OM2W 题面。
+   - 方案 B：换成自建 hard research + rule/human 可判题（例如 docs 站点多约束查找）；写入 sampling_audit 并 bump patch。
+3. 用户同意后再把 Skill 上下文 / 同名覆盖 / PAGE_CONTEXT_UNAVAILABLE 观察交研发。
