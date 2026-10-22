@@ -6,8 +6,9 @@ const listeners = new Set();
 const commands = [];
 const contentCalls = [];
 let debuggerUses = 0;
-let childContentInjected = false;
-let oopifContentInjected = false;
+let childBridge = true;
+let oopifBridge = true;
+let contentInitializations = 0;
 let exposeOopif = false;
 const scriptCalls = [];
 globalThis.chrome = {
@@ -41,6 +42,7 @@ const runtime = createElementRuntime({
   },
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
   async assertTabAllowed() {},
+  async initializeContentScript() { contentInitializations += 1; },
   async sendToContent(tabId, action, params = {}) {
     contentCalls.push({ tabId, action, ...params });
     return { ok: true, action, selector: params.selector, index: params.index };
@@ -89,8 +91,7 @@ const runtime = createElementRuntime({
       if (method === "DOM.describeNode") return { node: { backendNodeId: 44 } };
       if (method === "DOM.resolveNode") return { object: { objectId: "uid-node" } };
       if (method === "Runtime.evaluate") {
-        if (String(params.expression || "").includes("__qzFrameProbe")) return { result: { value: "frame-token" } };
-        const bridge = Number(params.contextId) === 8 ? childContentInjected : true;
+        const bridge = Number(params.contextId) === 8 ? childBridge : true;
         return { result: { value: { extensionId: "extension-id", bridge } } };
       }
       if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
@@ -114,8 +115,7 @@ const runtime = createElementRuntime({
         return {};
       }
       if (method === "Runtime.evaluate") {
-        if (String(params.expression || "").includes("__qzFrameProbe")) return { result: { value: "oopif-token" } };
-        return { result: { value: { extensionId: "extension-id", bridge: oopifContentInjected } } };
+        return { result: { value: { extensionId: "extension-id", bridge: oopifBridge } } };
       }
       if (method === "DOM.resolveNode") return { object: { objectId: "oopif-node" } };
       if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true, action: params.arguments?.[0]?.value?.action || "" } } };
@@ -450,22 +450,9 @@ try {
 chrome.scripting = {
   async executeScript(options) {
     scriptCalls.push(options);
-    if (options.func) {
-      const source = String(options.func);
-      if (source.includes("__qzFrameProbe")) {
-        return [
-          { frameId: 0, result: "top-token" },
-          { frameId: 4, result: "frame-token" },
-          { frameId: 5, result: "oopif-token" },
-        ];
-      }
-      return [{ documentId: "doc-live", frameId: options.target?.frameIds?.[0] ?? 0, result: null }];
-    }
-    if (options.files?.includes("content/content-script.js")) {
-      if (options.target?.frameIds?.[0] === 4) childContentInjected = true;
-      if (options.target?.frameIds?.[0] === 5) oopifContentInjected = true;
-    }
-    return [{ frameId: options.target?.frameIds?.[0], documentId: "frame-doc" }];
+    if (options.target?.allFrames) throw new Error("allFrames is not used to address a child frame");
+    if (String(options.func || "").includes("__qzFrameProbe")) throw new Error("frame probe is not used");
+    return [{ documentId: "doc-live", frameId: options.target?.frameIds?.[0] ?? 0, result: null }];
   },
 };
 
@@ -477,17 +464,16 @@ function childRef(uid, frameId, loaderId, backendNodeId = 41) {
   return { tabId: 5, uid, target: `uid:${uid}`, ref: { backendNodeId, loaderId, frameId } };
 }
 
-childContentInjected = false;
 const childCommands = commands.length;
 const childScripts = scriptCalls.length;
+const childInits = contentInitializations;
 const childHit = await runtime.callElement(5, childRef("t5.000010.1", "child", "child-loader"), "inspectElement", {}, context);
 assert.equal(childHit.ok, true);
 assert.ok(commands.slice(childCommands).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 8 && command.sessionId === ""));
 assert.equal(commands.slice(childCommands).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 7), false);
-const childInject = scriptCalls.slice(childScripts).find(call => call.files?.includes("content/content-script.js"));
-assert.deepEqual(childInject?.target?.frameIds, [4]);
-assert.equal(childInject?.target?.allFrames, undefined);
-assert.ok(scriptCalls.slice(childScripts).some(call => call.target?.allFrames === true && !call.files));
+assert.equal(scriptCalls.length, childScripts, "a reported child context does not inject or probe frames");
+assert.equal(contentInitializations, childInits);
+assert.equal(commands.slice(childCommands).some(command => command.method === "Runtime.disable"), false);
 
 const staleScripts = scriptCalls.length;
 const staleCommands = commands.length;
@@ -508,8 +494,18 @@ await assert.rejects(
   "a nested frame is not a direct child",
 );
 
+childBridge = false;
+const missingBridgeInits = contentInitializations;
+const missingBridgeScripts = scriptCalls.length;
+await assert.rejects(
+  runtime.callElement(5, childRef("t5.000015.1", "child", "child-loader"), "inspectElement", {}, context),
+  error => error?.code === "CONTENT_SCRIPT_NOT_READY",
+);
+assert.equal(contentInitializations, missingBridgeInits + 1, "a child frame with no bridge uses Content initialization");
+assert.equal(scriptCalls.length, missingBridgeScripts);
+childBridge = true;
+
 exposeOopif = true;
-oopifContentInjected = false;
 const oopifCommands = commands.length;
 const oopifScripts = scriptCalls.length;
 const oopifHit = await runtime.callElement(5, childRef("t5.000014.1", "oopif", "oopif-loader", 3), "inspectElement", {}, context);
@@ -518,9 +514,11 @@ const oopifResolve = commands.slice(oopifCommands).filter(command => command.met
 assert.equal(oopifResolve.length, 1);
 assert.equal(oopifResolve[0].sessionId, "sess");
 assert.equal(oopifResolve[0].params.executionContextId, 9);
-assert.deepEqual(scriptCalls.slice(oopifScripts).find(call => call.files?.includes("content/content-script.js"))?.target?.frameIds, [5]);
+assert.equal(scriptCalls.length, oopifScripts, "a reported cross-site context does not inject or probe frames");
+assert.equal(commands.slice(oopifCommands).some(command => command.method === "Runtime.disable"), false);
 const mainAfterOopif = commands.length;
 await runtime.callElement(5, resolved, "inspectElement", {}, context);
 assert.ok(commands.slice(mainAfterOopif).some(command => command.method === "DOM.resolveNode" && command.params.executionContextId === 7 && command.sessionId === ""));
 
+assert.equal(commands.some(command => command.method === "Runtime.disable"), false, "uid resolution must leave Runtime enabled");
 console.log("element runtime ownership tests passed");

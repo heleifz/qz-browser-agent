@@ -25,10 +25,11 @@ import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
 
 const OBJECT_GROUP = "qz-uid";
+// Context ids reported while Runtime stays enabled. A flattened child session
+// has its own id space, so it does not share the page-session map.
 const isolatedByTab = new Map<number, Map<string, Set<number>>>();
 const isolatedBySession = new Map<string, Map<string, Set<number>>>();
 const sessionsByTab = new Map<number, Set<string>>();
-const chromeFramesByTab = new Map<number, Map<string, number>>();
 function noteExecutionContext(source: { tabId?: number; sessionId?: string } | undefined, method: string, params: unknown) {
   const tabId = Number(source?.tabId);
   const sessionId = String(source?.sessionId || "");
@@ -75,7 +76,6 @@ globalThis.chrome?.debugger?.onDetach?.addListener(source => {
   const sessions = sessionsByTab.get(tabId);
   if (sessions) for (const sessionId of sessions) isolatedBySession.delete(sessionId);
   sessionsByTab.delete(tabId);
-  chromeFramesByTab.delete(tabId);
 });
 type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -492,10 +492,9 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
       loaderId = String(frame.loaderId || "");
       if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
     }
-    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId, Boolean(requestedFrameId));
+    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId);
     if (requestedFrameId) {
-      const opened = await openChildFrame(send, requestedFrameId);
-      if (!opened || opened.id !== cdpFrameId || (loaderId && opened.loaderId !== loaderId)) throw staleElement(binding.uid || binding.target || "");
+      if ((await frameLoaderId(nodeSend, cdpFrameId)) !== loaderId) throw staleElement(binding.uid || binding.target || "");
     } else {
       // Selection may initialize Content while a navigation replaces the document.
       const current = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
@@ -528,12 +527,24 @@ function isolatedContexts(tabId: number, sessionId: string) {
   return sessionId ? isolatedBySession.get(sessionId) : isolatedByTab.get(tabId);
 }
 
-function clearIsolatedContexts(tabId: number, sessionId: string) {
-  if (sessionId) isolatedBySession.delete(sessionId);
-  else isolatedByTab.delete(tabId);
+async function frameLoaderId(send: CdpCommand, frameId: string) {
+  let tree: unknown;
+  try { tree = await send("Page.getFrameTree"); }
+  catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
+    return "";
+  }
+  const root = record(record(tree).frameTree);
+  const main = record(root.frame);
+  if (String(main.id || "") === frameId) return String(main.loaderId || "");
+  for (const entry of Array.isArray(root.childFrames) ? root.childFrames : []) {
+    const frame = record(record(entry).frame);
+    if (String(frame.id || "") === frameId) return String(frame.loaderId || "");
+  }
+  return "";
 }
 
-async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "", childFrame = false) {
+async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "") {
   const select = async () => {
     const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
     for (const contextId of [...(candidates || [])]) {
@@ -557,78 +568,22 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
     }
     return 0;
   };
+  // Leave Runtime enabled and keep the contexts already reported. A fresh
+  // enable reports contexts only when the domain was off, and that transition
+  // replays cached console calls into read_console_messages.
   const discover = async () => {
-    try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
-    clearIsolatedContexts(tabId, sessionId);
     await send("Runtime.enable");
   };
   if (!isolatedContexts(tabId, sessionId)?.get(frameId)?.size) await discover();
   let id = await select();
   if (id) return id;
-  // A responding ping can belong to Content without the node bridge. Initialize
-  // once, then validate again; no action has been dispatched on this path.
-  if (childFrame) await ensureChildContentScript(tabId, send, frameId, sessionId);
-  else await initializeContentScript(tabId);
+  // The reported worlds have no bridge. Initialize Content once, then validate
+  // again; no action has been dispatched on this path.
+  await initializeContentScript(tabId);
   await discover();
   id = await select();
   if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
   return id;
-}
-
-async function ensureChildContentScript(tabId: number, send: CdpCommand, cdpFrameId: string, sessionId: string) {
-  const chromeFrameId = await chromeFrameIdFor(tabId, send, cdpFrameId, sessionId);
-  await chrome.scripting.executeScript({
-    target: { tabId, frameIds: [chromeFrameId] },
-    world: "ISOLATED",
-    injectImmediately: true,
-    files: ["content/article-extractor.js", "content/content-script.js"],
-  });
-}
-
-async function chromeFrameIdFor(tabId: number, send: CdpCommand, cdpFrameId: string, sessionId: string) {
-  const cacheKey = `${sessionId}:${cdpFrameId}`;
-  const cached = chromeFramesByTab.get(tabId)?.get(cacheKey);
-  if (cached) return cached;
-  const scripting = chrome.scripting;
-  if (!scripting?.executeScript) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId, frameId: cdpFrameId });
-  }
-  const probed = await scripting.executeScript({
-    target: { tabId, allFrames: true },
-    world: "ISOLATED",
-    injectImmediately: true,
-    func: () => {
-      const scope = globalThis as typeof globalThis & { __qzFrameProbe?: string };
-      if (scope.__qzFrameProbe) return scope.__qzFrameProbe;
-      const token = crypto.randomUUID();
-      scope.__qzFrameProbe = token;
-      return token;
-    },
-  });
-  try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
-  clearIsolatedContexts(tabId, sessionId);
-  await send("Runtime.enable");
-  let token = "";
-  for (const contextId of [...(isolatedContexts(tabId, sessionId)?.get(cdpFrameId) || [])]) {
-    try {
-      const result = record(await send("Runtime.evaluate", {
-        contextId, returnByValue: true, expression: "globalThis.__qzFrameProbe || ''",
-      }));
-      const value = record(result.result).value;
-      if (!result.exceptionDetails && typeof value === "string" && value) { token = value; break; }
-    } catch (error) {
-      if (isCdpFallbackForbiddenError(error)) throw error;
-    }
-  }
-  const match = (Array.isArray(probed) ? probed : []).find(entry => entry?.result === token && Number(entry.frameId) > 0);
-  const chromeFrameId = Number(match?.frameId);
-  if (!Number.isInteger(chromeFrameId) || chromeFrameId <= 0) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId, frameId: cdpFrameId });
-  }
-  const frames = chromeFramesByTab.get(tabId) || new Map<string, number>();
-  frames.set(cacheKey, chromeFrameId);
-  chromeFramesByTab.set(tabId, frames);
-  return chromeFrameId;
 }
 
 async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
