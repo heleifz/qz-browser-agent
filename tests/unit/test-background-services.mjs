@@ -345,10 +345,13 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   for (const url of [
     "file:///tmp/export.html",
     "http://localhost:8080/export",
+    "https://alibaba.github.io/qz-browser-agent/",
   ]) assert.equal(isAllowedSessionExportSource(url), true, url);
   for (const url of [
     "chrome-extension://id/export",
     "https://example.invalid/export",
+    "https://alibaba.github.io/other-repo/",
+    "http://alibaba.github.io/qz-browser-agent/",
     "bad url",
   ]) assert.equal(isAllowedSessionExportSource(url), false, url);
 
@@ -383,6 +386,18 @@ async function sessionExchangeBridgeEnforcesSourceBoundariesAndDeliverySemantics
   assert.equal(remembered.at(-1)?.key, "session_export_import");
   assert.equal(remembered.at(-1)?.event?.ownedTabsRestore?.failedCount, 1);
   assert.deepEqual(opened.at(-1), { windowId: 7 });
+
+  const rememberedBeforePages = remembered.length;
+  await assert.rejects(
+    () => bridge.importFromPage({ payload }, { tab: { url: "https://alibaba.github.io/other-repo/session.html", id: 12, windowId: 4 } }),
+    error => error?.code === "SESSION_EXPORT_SOURCE_NOT_ALLOWED",
+  );
+  assert.equal(remembered.length, rememberedBeforePages);
+  const pagesImported = await bridge.importFromPage({ payload }, {
+    tab: { url: "https://alibaba.github.io/qz-browser-agent/examples/travel/", id: 11, windowId: 4 },
+  });
+  assert.equal(pagesImported.session.id, "imported");
+  assert.deepEqual(opened.at(-1), { windowId: 4 });
 
   hasPorts = true;
   await bridge.importFromPage({ payload }, {
