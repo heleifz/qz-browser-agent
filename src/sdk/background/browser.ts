@@ -11,8 +11,9 @@ export interface BrowserDebugger {
   evaluateCdpScript(tabId: unknown, params?: Record<string, unknown>, signal?: AbortSignal, context?: ToolContext): Promise<unknown>;
 }
 export interface ElementTarget {
-  tabId?: number; selector: string; index?: number; target?: string; uid?: string; ref?: ElementReference;
+  tabId?: number; selector?: string; index?: number; target?: string; uid?: string; ref?: ElementReference;
 }
+export interface ElementCallOptions { editingHost?: boolean; scope?: boolean }
 export interface ElementAccess {
   readonly elementTargetGrammar: string;
   getElementTargetDescription(): string;
@@ -23,9 +24,14 @@ export interface ElementAccess {
   elementTargetForRef(ref?: ElementReference): string;
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
-  resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; allowBackendOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
+  resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number }, context?: ToolContext): Promise<ElementTarget>;
   addElementTargetsToFindResult(value: unknown): unknown;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
+  callElement(tabId: number | undefined, binding: ElementTarget, action: string, params?: Record<string, unknown>, context?: ToolContext, options?: ElementCallOptions): Promise<Record<string, unknown>>;
+  withElement<T>(tabId: number | undefined, binding: ElementTarget, context: ToolContext, options: ElementCallOptions, run: (
+    send: CdpCommand,
+    call: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  ) => Promise<T>): Promise<T>;
 }
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";
