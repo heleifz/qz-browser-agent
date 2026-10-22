@@ -1,4 +1,14 @@
-# 状态与卡点（2026-10-23，v0.2.5；HGX start_url 方案 A）
+# 状态与卡点（2026-10-23，v0.2.5；首轮全量基线已完成）
+
+## 首轮全量基线（2026-10-23，Grok 4.7，并发 3）
+
+- run `20261023-baseline-grok47`（重跑 `20261023-baseline-grok47-retry1`），详见 [`baselines/2026-10-23-grok-4.7.md`](baselines/2026-10-23-grok-4.7.md) / `.json`。
+- **首跑 29/30 = 96.7%**；含 1 次基础设施重跑 30/30。
+- 五类首跑：research 7/7 · compare 5/6 · form_fill 6/6 · batch_collect 6/6 · skill_reuse 5/5；难度：easy 10/10 · medium 11/11 · hard 8/9。
+- 唯一失败：`om2w:1b867…`（AHR 对比图，hard）context_overflow（反复截图 + 隐藏 sticky 头，112,179/112,000）；重跑 58s pass。
+- 8 道 human/llm_judge 题由执行 agent 按 transcript + 金标人工判，全部 pass（理由逐题记录）。
+- 成本：qz 只暴露末次调用 usage，首跑成本区间 $0.94（下界）～$21（粗略上界）。
+- 题目问题（只记录未改）：SmartAsset 题 taxable/household 歧义；HGX 金标版本漂移（595→615）；arxiv「top results」标准模糊；GitHub pricing 需登录。另：自建题天花板效应明显，区分度不足。
 
 ## 已完成
 
@@ -74,5 +84,6 @@
 
 ## 下一步
 
-1. **首轮全量基线**（需用户点头再跑，成本约 30 题 × 单模型；建议先清 `qzb-*` 残留）。
+1. ~~首轮全量基线~~ 已完成（见上）。下一轮前清理 product-expert 上本轮新增的 `qzb-*-bef4a7` 5 个 Skill。
+1b. 产品侧候选（待用户定）：加难自建题 / 提高真实站占比以解决天花板效应；评测器补累计 token/成本采集；Skill 题 create 判定在并发下改为只看本题前缀。
 2. 用户同意后再把 Skill 上下文 / 同名覆盖 / PAGE_CONTEXT_UNAVAILABLE 观察交研发。

@@ -1,0 +1,653 @@
+{
+ "dataset": "qingzhou-eval-v0.1",
+ "dataset_version": "0.2.5",
+ "git_head": "61fa7872c6b07b999f0870f3357260d33867d5df",
+ "run_id": "20261023-baseline-grok47",
+ "retry_run_ids": [
+  "20261023-baseline-grok47-retry1"
+ ],
+ "client": "product-expert (0e2be1ce-94dc-4fd3-9454-22ccc922b999)",
+ "model": "grok-4.7 (xAI custom endpoint, vision on)",
+ "concurrency": 3,
+ "started_at": "2026-10-22T18:25:12-04:00",
+ "ended_at": "2026-10-22T18:36:50-04:00",
+ "totals": {
+  "n": 30,
+  "pass_first_run": 29,
+  "pass_rate_first_run": 0.967,
+  "pass_with_one_infra_retry": 30,
+  "pass_rate_with_retry": 1.0,
+  "wall_clock_s_first_run": 698.0,
+  "sum_task_elapsed_s": 2012.8,
+  "median_task_elapsed_s": 34.45
+ },
+ "by_core_task": {
+  "research": {
+   "n": 7,
+   "pass_first": 7,
+   "pass_with_retry": 7
+  },
+  "compare": {
+   "n": 6,
+   "pass_first": 5,
+   "pass_with_retry": 6
+  },
+  "form_fill": {
+   "n": 6,
+   "pass_first": 6,
+   "pass_with_retry": 6
+  },
+  "batch_collect": {
+   "n": 6,
+   "pass_first": 6,
+   "pass_with_retry": 6
+  },
+  "skill_reuse": {
+   "n": 5,
+   "pass_first": 5,
+   "pass_with_retry": 5
+  }
+ },
+ "by_difficulty": {
+  "easy": {
+   "n": 10,
+   "pass_first": 10,
+   "pass_with_retry": 10
+  },
+  "medium": {
+   "n": 11,
+   "pass_first": 11,
+   "pass_with_retry": 11
+  },
+  "hard": {
+   "n": 9,
+   "pass_first": 8,
+   "pass_with_retry": 9
+  }
+ },
+ "by_source": {
+  "open:online-mind2web": {
+   "n": 7,
+   "pass_first": 6,
+   "pass_with_retry": 7
+  },
+  "open:webvoyager": {
+   "n": 4,
+   "pass_first": 4,
+   "pass_with_retry": 4
+  },
+  "self": {
+   "n": 19,
+   "pass_first": 19,
+   "pass_with_retry": 19
+  }
+ },
+ "failure_buckets_first_run": {
+  "context_overflow": 1
+ },
+ "judging": {
+  "rule": 21,
+  "manual": 9
+ },
+ "cost": {
+  "note": "qz 只暴露每会话「最后一次 LLM 调用」的 contextUsage/cost_in_usd_ticks（1 USD=1e10 ticks），无累计值。lower=各会话最后一次调用成本之和（严格下界）；upper=最后一次调用成本×(assistant+tool 轮数)，粗略上界（实际上下文逐轮增长、有缓存命中）。",
+  "first_run_lower_usd": 0.938,
+  "first_run_upper_usd": 21.33,
+  "retry_lower_usd": 0.031,
+  "retry_upper_usd": 0.9
+ },
+ "tasks": [
+  {
+   "id": "om2w:5e1b8254c123c80178cc28e0afdb14f0_110325",
+   "source": "open:online-mind2web",
+   "core_task": "research",
+   "difficulty": "easy",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 37.35,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "结束页为 help.ticketmaster.com「How do presales work?」，给出链接并总结 Artist/码/粉丝俱乐部三类预售，满足判分。",
+    "last_call_prompt_tokens": 52518,
+    "last_call_cost_usd": 0.0295,
+    "est_cost_upper_usd": 0.797
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "wv:Google Search--2",
+   "source": "open:webvoyager",
+   "core_task": "research",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 29.34,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 37967,
+    "last_call_cost_usd": 0.0202,
+    "est_cost_upper_usd": 0.303
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "wv:GitHub--23",
+   "source": "open:webvoyager",
+   "core_task": "research",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 45.65,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 45534,
+    "last_call_cost_usd": 0.027,
+    "est_cost_upper_usd": 0.756
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:6ca20f1da01edeb49a7a42c816d8c6fe",
+   "source": "open:online-mind2web",
+   "core_task": "research",
+   "difficulty": "medium",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 47.15,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "引用 gov.uk child-benefit 的 eligibility / how it works / what you'll get / how-to-claim 各子页，资格、运作方式、申领步骤三部分齐全。",
+    "last_call_prompt_tokens": 44456,
+    "last_call_cost_usd": 0.0323,
+    "est_cost_upper_usd": 0.903
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:shadowdom-001",
+   "source": "self",
+   "core_task": "research",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 20.89,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 29035,
+    "last_call_cost_usd": 0.0152,
+    "est_cost_upper_usd": 0.121
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:b4aa7315e31dfcdc52baf7771be260c9",
+   "source": "open:online-mind2web",
+   "core_task": "research",
+   "difficulty": "hard",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 172.63,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "报告 Data Center Driver 615.71.10（Ubuntu 22.04 x86_64 repo 下载页 + release notes）。已用 WebFetch 复核 release notes：Linux 发布日 10/19/2026，支持 HGX H100 8/4-GPU 与 Ubuntu 22.04 x86_64。注：未走 en-us/drivers 搜索器而是经 docs/CUDA repo 到达；金标版本随时间漂移（v0.2.5 试跑为 595.112.07）。",
+    "last_call_prompt_tokens": 98486,
+    "last_call_cost_usd": 0.0531,
+    "est_cost_upper_usd": 2.55
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:71f8de1834599fba443f40dbbfab8edd",
+   "source": "open:online-mind2web",
+   "core_task": "research",
+   "difficulty": "hard",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 527.03,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "advanced search 参数正确（reinforcement learning · CS+Math · 含 cross-list · 2024-09-01..2025-01-31），报告查询与 2,383 条总数。边界：答案未直接列 top 结果，而是把全部 2,383 篇抓进数据表，耗时 527s，属过度执行/效率问题，非错误。",
+    "last_call_prompt_tokens": 93812,
+    "last_call_cost_usd": 0.0503,
+    "est_cost_upper_usd": 2.465
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:bf3b311cc8dce16d3de844f4b5875dfd",
+   "source": "open:online-mind2web",
+   "core_task": "compare",
+   "difficulty": "easy",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 46.36,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "轨迹经过 apple.com/watch/compare/ 与 apple-watch-ultra-4 页，输出 Series 12 / Ultra 4 / SE 3 对比表与 Ultra 详述，满足判分。",
+    "last_call_prompt_tokens": 55465,
+    "last_call_cost_usd": 0.0373,
+    "est_cost_upper_usd": 0.858
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "wv:GitHub--29",
+   "source": "open:webvoyager",
+   "core_task": "compare",
+   "difficulty": "easy",
+   "judge": "llm_judge",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 169.57,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "明确 Free 与 Pro 均为 unlimited private repositories。github.com/pricing 在本环境重定向到登录，agent 改读 docs.github.com plans 与 web.archive 快照，结论正确。",
+    "last_call_prompt_tokens": 59880,
+    "last_call_cost_usd": 0.0333,
+    "est_cost_upper_usd": 1.399
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "wv:Apple--2",
+   "source": "open:webvoyager",
+   "core_task": "compare",
+   "difficulty": "medium",
+   "judge": "llm_judge",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 89.89,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "14 Pro=A16 Bionic、15 Pro=A17 Pro；两款发布价均 $999，并明确两款均已停售新机、引用 Apple compare 页「Not available」，符合「停售需说明」判分要求。",
+    "last_call_prompt_tokens": 73480,
+    "last_call_cost_usd": 0.0421,
+    "est_cost_upper_usd": 2.103
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:compare-books-categories-001",
+   "source": "self",
+   "core_task": "compare",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 15.86,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 34479,
+    "last_call_cost_usd": 0.0198,
+    "est_cost_upper_usd": 0.218
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:compare-multi-001",
+   "source": "self",
+   "core_task": "compare",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 13.85,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": [], \"table_rows\": 2}",
+    "last_call_prompt_tokens": 28382,
+    "last_call_cost_usd": 0.0192,
+    "est_cost_upper_usd": 0.134
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:1b867afecf072cb877ebfa4069263746",
+   "source": "open:online-mind2web",
+   "core_task": "compare",
+   "difficulty": "hard",
+   "judge": "human",
+   "first_run": {
+    "run_status": "error",
+    "verdict": "fail",
+    "elapsed_s": 309.97,
+    "judged_by": "rule",
+    "reason": "首跑：在 IL/MI 对比页反复截图 + run_script 隐藏 sticky 头（8 次 screenshot、13 次 run_script、4 次 compact），压缩后仍 112,179/112,000 tokens 溢出；任务主体（导航+选州）已完成，卡在「截出干净图」的完美主义循环。",
+    "last_call_prompt_tokens": 0,
+    "last_call_cost_usd": 0.0,
+    "est_cost_upper_usd": 0.0,
+    "failure_bucket": "context_overflow"
+   },
+   "retry": {
+    "run_id": "20261023-baseline-grok47-retry1",
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 58.03,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "重跑结束于 AHR unemployment_women/IL/compare/MI 对比图，截图存入图片集，描述 2017–2024 两州走势（2020 约 10% 峰值、之后回落至约 4%）。走势细节未独立核对，按判分说明（停在 IL+MI 对比图并描述走势差异）判 pass。",
+    "last_call_prompt_tokens": 58044,
+    "last_call_cost_usd": 0.0312,
+    "est_cost_upper_usd": 0.904
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:form-login-001",
+   "source": "self",
+   "core_task": "form_fill",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 13.05,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 30285,
+    "last_call_cost_usd": 0.0174,
+    "est_cost_upper_usd": 0.174
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:form-controls-001",
+   "source": "self",
+   "core_task": "form_fill",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 9.81,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 28294,
+    "last_call_cost_usd": 0.0148,
+    "est_cost_upper_usd": 0.133
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:iframe-001",
+   "source": "self",
+   "core_task": "form_fill",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 15.53,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 30325,
+    "last_call_cost_usd": 0.0162,
+    "est_cost_upper_usd": 0.129
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "om2w:bc2ce7f206045dd2d322e5695a947219",
+   "source": "open:online-mind2web",
+   "core_task": "form_fill",
+   "difficulty": "medium",
+   "judge": "human",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 92.47,
+    "judged_by": "manual(transcript+criteria)",
+    "reason": "在 SmartAsset 计算器填入 158,500 / 97007 / Single，报告联邦所得税 $27,107（另列 FICA、州税）。按 2025 税表复算：158,500−标准扣除 15,750=142,750 → $27,107，与页面一致。题面写的是 taxable income，计算器按 household income 再扣标准扣除；按判分说明（填计算器并报告显示值）判 pass，歧义另记。",
+    "last_call_prompt_tokens": 72669,
+    "last_call_cost_usd": 0.039,
+    "est_cost_upper_usd": 1.949
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:form-httpbin-pizza-001",
+   "source": "self",
+   "core_task": "form_fill",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 25.74,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 34140,
+    "last_call_cost_usd": 0.019,
+    "est_cost_upper_usd": 0.418
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:form-inputs-hard-001",
+   "source": "self",
+   "core_task": "form_fill",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 26.16,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": []}",
+    "last_call_prompt_tokens": 33942,
+    "last_call_cost_usd": 0.0175,
+    "est_cost_upper_usd": 0.386
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-tables-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 9.24,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"gold_fraction\": 1.0, \"gold_missing\": [], \"table_rows\": 4}",
+    "last_call_prompt_tokens": 32971,
+    "last_call_cost_usd": 0.0182,
+    "est_cost_upper_usd": 0.109
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-books-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 10.59,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"gold_fraction\": 1.0, \"gold_missing\": [], \"table_rows\": 8}",
+    "last_call_prompt_tokens": 33508,
+    "last_call_cost_usd": 0.019,
+    "est_cost_upper_usd": 0.114
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-quotes-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 12.04,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"gold_fraction\": 1.0, \"gold_missing\": [], \"table_rows\": 10}",
+    "last_call_prompt_tokens": 27244,
+    "last_call_cost_usd": 0.0174,
+    "est_cost_upper_usd": 0.104
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-pages-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 20.78,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"gold_fraction\": 1.0, \"gold_missing\": [], \"table_rows\": 40}",
+    "last_call_prompt_tokens": 35659,
+    "last_call_cost_usd": 0.0242,
+    "est_cost_upper_usd": 0.266
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-mystery-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 15.92,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": [], \"table_rows\": 32}",
+    "last_call_prompt_tokens": 33190,
+    "last_call_cost_usd": 0.0244,
+    "est_cost_upper_usd": 0.17
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:batch-einstein-001",
+   "source": "self",
+   "core_task": "batch_collect",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 36.05,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"missing\": [], \"table_rows\": 10}",
+    "last_call_prompt_tokens": 42194,
+    "last_call_cost_usd": 0.0242,
+    "est_cost_upper_usd": 0.63
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:skill-books-first5",
+   "source": "self",
+   "core_task": "skill_reuse",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 23.89,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"create_stage_status\": \"completed\", \"skill_name\": \"qzb-books-first5-bef4a7\", \"skills_new_or_updated\": [\"qzb-books-first5-bef4a7\"], \"create_ok\": true, \"create_note\": \"\", \"create_tool_saved\": true, \"re",
+    "last_call_prompt_tokens": 64795,
+    "last_call_cost_usd": 0.0361,
+    "est_cost_upper_usd": 0.273
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:skill-login-check",
+   "source": "self",
+   "core_task": "skill_reuse",
+   "difficulty": "easy",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 54.7,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"create_stage_status\": \"completed\", \"skill_name\": \"qzb-login-check-bef4a7\", \"skills_new_or_updated\": [\"qzb-books-first5-bef4a7\", \"qzb-cat-cheapest-bef4a7\", \"qzb-login-check-bef4a7\"], \"create_ok\": tru",
+    "last_call_prompt_tokens": 70656,
+    "last_call_cost_usd": 0.0955,
+    "est_cost_upper_usd": 1.624
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:skill-tag-quotes",
+   "source": "self",
+   "core_task": "skill_reuse",
+   "difficulty": "medium",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 39.34,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"create_stage_status\": \"completed\", \"skill_name\": \"qzb-tag-quotes-bef4a7\", \"skills_new_or_updated\": [\"qzb-cat-cheapest-bef4a7\", \"qzb-login-check-bef4a7\", \"qzb-tag-quotes-bef4a7\"], \"create_ok\": true, ",
+    "last_call_prompt_tokens": 65292,
+    "last_call_cost_usd": 0.035,
+    "est_cost_upper_usd": 0.285
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:skill-cat-cheapest",
+   "source": "self",
+   "core_task": "skill_reuse",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 34.45,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"create_stage_status\": \"completed\", \"skill_name\": \"qzb-cat-cheapest-bef4a7\", \"skills_new_or_updated\": [\"qzb-cat-cheapest-bef4a7\", \"qzb-tag-quotes-bef4a7\"], \"create_ok\": true, \"create_note\": \"\", \"crea",
+    "last_call_prompt_tokens": 69845,
+    "last_call_cost_usd": 0.0984,
+    "est_cost_upper_usd": 1.188
+   },
+   "final_verdict": "pass"
+  },
+  {
+   "id": "self:skill-author-bio",
+   "source": "self",
+   "core_task": "skill_reuse",
+   "difficulty": "hard",
+   "judge": "rule",
+   "first_run": {
+    "run_status": "completed",
+    "verdict": "pass",
+    "elapsed_s": 47.51,
+    "judged_by": "rule",
+    "reason": "rule 判分全命中: {\"create_stage_status\": \"completed\", \"skill_name\": \"qzb-author-bio-bef4a7\", \"skills_new_or_updated\": [\"qzb-author-bio-bef4a7\"], \"create_ok\": true, \"create_note\": \"\", \"create_tool_saved\": true, \"reuse_",
+    "last_call_prompt_tokens": 79083,
+    "last_call_cost_usd": 0.0427,
+    "est_cost_upper_usd": 0.772
+   },
+   "final_verdict": "pass"
+  }
+ ]
+}
