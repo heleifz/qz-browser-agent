@@ -596,20 +596,11 @@ function dataConsentAllowsImport() {
     throw error;
   }
 }
-function importConsentPanelOpen(windowId: unknown) {
-  const id = Number(windowId);
-  return chrome.runtime.getContexts({ contextTypes: ["SIDE_PANEL"] }).then(contexts => (
-    contexts.some(item => String(item.documentUrl || "").includes("sidepanel.html")
-      && (!Number.isInteger(id) || item.windowId === id))
-  ));
-}
 const sessionExchangeBridge = createSessionExchangeBridge({
   sidePanel: chrome.sidePanel,
   importSessionExchange: sessionCommands.importSessionExchangeRuntime,
   channel: sidepanelChannel,
   consentAccepted: dataConsentAllowsImport,
-  whenConsented: () => dataConsent.whenAccepted,
-  panelOpen: importConsentPanelOpen,
 });
 skillSettings = createSkillSettingsService({
   storage: chrome.storage.local,

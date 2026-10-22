@@ -26,7 +26,7 @@ const [extension, runtime] = await Promise.all([
   }),
 ]);
 const pages = new Map([
-  ["/pending.html", exportHtml("未同意自动导入", "pending-source", "未同意的会话正文")],
+  ["/pending.html", exportHtml("同意后再点导入", "pending-source", "未同意的会话正文")],
   ["/consented.html", exportHtml("已同意直接导入", "consented-source", "已同意的会话正文")],
   ["/english.html", exportHtml("English page", "english-source", "English body", "en")],
   ["/nolang.html", exportHtml("No lang", "nolang-source", "No lang body", "")],
@@ -109,19 +109,27 @@ try {
   console.log(`unconsented click opened consent via ${opened.consent.via}: ${opened.consent.title}`);
 
   await acceptConsent(context);
-  const imported = await waitUntil("import after consent", () => buttonState(pending.page), state => {
+  await waitUntil("consent saved", () => consentStored(worker), saved => saved === true);
+  const quietUntil = Date.now() + 1500;
+  while (Date.now() < quietUntil) {
+    assertIdle(await buttonState(pending.page), "agreeing does not import");
+    assert.deepEqual(await sessionTitles(worker), []);
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 200));
+  }
+  await pending.page.locator("#qingzhou-session-cta").click();
+  const imported = await waitUntil("import after the second click", () => buttonState(pending.page), state => {
     if (state.text === "重试导入") throw new Error(`import failed: ${state.title} ${JSON.stringify(state.results)}`);
     return state.text === "已导入" && state.imported;
   }, 20000);
   assert.equal(imported.results.some(item => item.status === "error"), false);
-  assert.deepEqual(await sessionTitles(worker), ["未同意自动导入"]);
-  const pendingPanel = await waitUntil("panel focuses the consented import", () => panelChat(context), snapshot => (
-    snapshot.title === "未同意自动导入"
+  assert.deepEqual(await sessionTitles(worker), ["同意后再点导入"]);
+  const pendingPanel = await waitUntil("panel focuses the second-click import", () => panelChat(context), snapshot => (
+    snapshot.title === "同意后再点导入"
     && snapshot.hidden === false
     && snapshot.state === "conversation"
     && snapshot.text.includes("未同意的会话正文")
   ), 20000);
-  assert.equal(pendingPanel.title, "未同意自动导入");
+  assert.equal(pendingPanel.title, "同意后再点导入");
   await pending.page.screenshot({ path: DONE_SCREENSHOT });
 
   const consented = await openExport(context, `${origin}/consented.html`);
@@ -138,7 +146,7 @@ try {
   }, 20000);
   assert.equal(direct.results.some(item => item.status === "error"), false);
   const importedRecords = await sessionRecords(worker);
-  assert.deepEqual(importedRecords.map(session => session.title).sort(), ["未同意自动导入", "已同意直接导入"].sort());
+  assert.deepEqual(importedRecords.map(session => session.title).sort(), ["同意后再点导入", "已同意直接导入"].sort());
   const existingId = importedRecords.find(session => session.title === "已同意直接导入")?.id;
   assert.equal(direct.imported, existingId);
   const focused = await waitUntil("panel focuses the direct import", () => panelChat(context), snapshot => (

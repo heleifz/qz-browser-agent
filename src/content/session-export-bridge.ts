@@ -171,7 +171,7 @@ export {};
       importPending = false;
       return;
     }
-    // Acceptance resolves this same click into the import below. Dismissal leaves the button ready.
+    // Without disclosure consent this click only opens the side panel. The next click imports.
     if (!isRecord(reveal) || reveal.ok !== true || reveal.needsConsent !== false) {
       importPending = false;
       return;
