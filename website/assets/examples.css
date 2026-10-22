@@ -31,8 +31,8 @@
 #qingzhou-session-cta[hidden] { display: none !important; }
 #qingzhou-session-cta:disabled { cursor: progress; opacity: .42; }
 .example-actions.is-live #example-store { display: none !important; }
-.example-thread { display: flex; flex-direction: column; min-width: 0; margin-top: 36px; height: min(70dvh, 640px); overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(0, 0, 0, .07), 0 32px 64px rgba(0, 0, 0, .05); animation: example-thread-in 500ms var(--ease); }
-.example-thread-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.example-thread { display: flex; flex-direction: column; min-width: 0; margin-top: 36px; height: min(70dvh, 640px); overflow: clip; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(0, 0, 0, .07), 0 32px 64px rgba(0, 0, 0, .05); animation: example-thread-in 500ms var(--ease); }
+.example-thread-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .example-thread-body::-webkit-scrollbar { width: 8px; }
 .example-thread-body::-webkit-scrollbar-thumb { background: var(--line); }
 qz-session-view { display: block; min-width: 0; max-width: 100%; }
@@ -40,13 +40,13 @@ qz-session-view { display: block; min-width: 0; max-width: 100%; }
 @media (min-width: 1024px) {
   .example-stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 400px); gap: 48px; align-items: start; }
   .example-lead { position: sticky; top: 124px; min-width: 0; }
-  .example-thread { height: min(calc(100dvh - 148px), 760px); margin-top: 0; }
+  .example-thread { height: min(720px, calc(100dvh - 220px)); margin-top: 0; }
 }
 
 @media (max-width: 1023px) {
   .example-page { width: calc(100% - 40px); padding-top: 28px; }
   .example-lead { position: static; }
-  .example-thread { height: min(70dvh, 640px); margin-top: 36px; overflow: hidden; }
+  .example-thread { height: min(70dvh, 640px); margin-top: 36px; overflow: clip; }
 }
 
 @media (max-width: 700px) {
