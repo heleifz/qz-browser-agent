@@ -1,7 +1,12 @@
-// One list of website examples. Detail pages, homepage cards, and translations
+// Per-locale example lists. Detail pages, homepage cards, and translations
 // are generated from this file. Paths are relative to the website root.
+//
+// fallback: while a locale list is empty, the homepage shows that locale's
+// cards from locales[fallback], using fallbackCopy for the empty locale.
+// The cards link to the fallback locale's pages. One flag, read only here.
 window.QZ_EXAMPLES = {
   storeUrl: "https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm",
+  fallback: "zh",
   copy: {
     en: {
       nav: "Examples",
@@ -30,132 +35,144 @@ window.QZ_EXAMPLES = {
       missing: "这份会话导出还没有放进站点。",
     },
   },
-  items: [
-    {
-      slug: "travel",
-      title: { en: "Three days in Hangzhou", "zh-CN": "杭州三日游" },
-      summary: { en: "Checks sights, hours, and tickets, then merges them into a day-by-day plan.", "zh-CN": "查景点、开放时间和门票，汇成每日路线表。" },
-      cover: {
-        src: "assets/examples/travel.webp",
-        width: 840,
-        height: 1544,
-        alt: {
-          en: "Parallel tasks researching a Hangzhou itinerary",
-          "zh-CN": "并行查询杭州行程的任务",
-        },
+  fallbackCopy: {
+    en: {
+      travel: {
+        title: "Three days in Hangzhou",
+        summary: "Checks sights, hours, and tickets, then merges them into a day-by-day plan.",
+        coverAlt: "Parallel tasks researching a Hangzhou itinerary",
+        mediaAlt: "Parallel tasks researching a Hangzhou itinerary",
       },
-      media: {
-        kind: "loop",
-        src: "assets/media/parallel.mp4",
-        poster: "assets/examples/travel.webp",
-        width: 840,
-        height: 1544,
-        alt: {
-          en: "Parallel tasks researching a Hangzhou itinerary",
-          "zh-CN": "并行查询杭州行程的任务",
-        },
+      "llm-compare": {
+        title: "Model comparison",
+        summary: "Reads several model sites and builds one comparison table.",
+        coverAlt: "Comparison table saved from several model pages",
+        mediaAlt: "Cover frame of the qz demo",
       },
-      sessions: [
-        { id: "default", file: "examples/sessions/travel-zh.html" },
-      ],
+      arxiv: {
+        title: "Paper table → Skill",
+        summary: "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.",
+        coverAlt: "Paper table saved from a research run",
+        mediaAlt: "Cover frame of the qz demo",
+        related: { first: "First run", reuse: "A week later" },
+      },
+      "github-weekly": {
+        title: "Open-source weekly",
+        summary: "Sub-tasks read open-source projects in parallel and sum it up in a weekly report.",
+        coverAlt: "Weekly report assembled from open-source projects",
+        mediaAlt: "Cover frame of the qz demo",
+      },
     },
-    {
-      slug: "llm-compare",
-      title: { en: "Model comparison", "zh-CN": "模型对比表" },
-      summary: { en: "Reads several model sites and builds one comparison table.", "zh-CN": "读多个模型的官网，整理成一张对比表。" },
-      cover: {
-        src: "assets/examples/llm-compare.webp",
-        width: 1200,
-        height: 648,
-        alt: {
-          en: "Comparison table saved from several model pages",
-          "zh-CN": "多站对比后落成的模型表",
+  },
+  locales: {
+    zh: [
+      {
+        slug: "travel",
+        title: "杭州三日游",
+        summary: "查景点、开放时间和门票，汇成每日路线表。",
+        file: "examples/sessions/travel-zh.html",
+        cover: {
+          src: "assets/examples/travel.webp",
+          width: 840,
+          height: 1544,
+          alt: "并行查询杭州行程的任务",
+        },
+        media: {
+          kind: "loop",
+          src: "assets/media/parallel.mp4",
+          poster: "assets/examples/travel.webp",
+          width: 840,
+          height: 1544,
+          alt: "并行查询杭州行程的任务",
         },
       },
-      media: {
-        kind: "click",
-        src: "assets/demo-en.mp4",
-        poster: "assets/examples/demo-poster.jpg",
-        width: 1280,
-        height: 720,
-        alt: {
-          en: "Cover frame of the qz demo",
-          "zh-CN": "轻舟演示的封面帧",
+      {
+        slug: "llm-compare",
+        title: "模型对比表",
+        summary: "读多个模型的官网，整理成一张对比表。",
+        file: "examples/sessions/llm-compare-zh.html",
+        cover: {
+          src: "assets/examples/llm-compare.webp",
+          width: 1200,
+          height: 648,
+          alt: "多站对比后落成的模型表",
+        },
+        media: {
+          kind: "click",
+          src: "assets/demo-en.mp4",
+          poster: "assets/examples/demo-poster.jpg",
+          width: 1280,
+          height: 720,
+          alt: "轻舟演示的封面帧",
         },
       },
-      sessions: [
-        { id: "default", file: "examples/sessions/llm-compare-zh.html" },
-      ],
-    },
-    {
-      slug: "arxiv",
-      title: { en: "Paper table → Skill", "zh-CN": "论文表 → Skill" },
-      summary: { en: "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.", "zh-CN": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。" },
-      cover: {
-        src: "assets/examples/arxiv.webp",
-        width: 840,
-        height: 2011,
-        alt: {
-          en: "Paper table saved from a research run",
-          "zh-CN": "检索结果里的论文表",
+      {
+        slug: "arxiv",
+        session: "first",
+        title: "论文表 → Skill",
+        summary: "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
+        file: "examples/sessions/arxiv-skill-zh.html",
+        cover: {
+          src: "assets/examples/arxiv.webp",
+          width: 840,
+          height: 2011,
+          alt: "检索结果里的论文表",
+        },
+        media: {
+          kind: "click",
+          src: "assets/demo-en.mp4",
+          poster: "assets/examples/demo-poster.jpg",
+          width: 1280,
+          height: 720,
+          alt: "轻舟演示的封面帧",
+        },
+        related: [{ slug: "arxiv-reuse", id: "reuse", label: "一周后再用" }],
+      },
+      {
+        slug: "arxiv-reuse",
+        group: "arxiv",
+        session: "reuse",
+        card: false,
+        title: "论文表 → Skill",
+        summary: "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
+        file: "examples/sessions/arxiv-skill-reuse-zh.html",
+        cover: {
+          src: "assets/examples/arxiv.webp",
+          width: 840,
+          height: 2011,
+          alt: "检索结果里的论文表",
+        },
+        media: {
+          kind: "click",
+          src: "assets/demo-en.mp4",
+          poster: "assets/examples/demo-poster.jpg",
+          width: 1280,
+          height: 720,
+          alt: "轻舟演示的封面帧",
+        },
+        related: [{ slug: "arxiv", id: "first", label: "第一次跑" }],
+      },
+      {
+        slug: "github-weekly",
+        title: "开源项目周报",
+        summary: "几个子任务并行读开源项目动态，汇总成一份周报。",
+        file: "examples/sessions/github-weekly-zh.html",
+        cover: {
+          src: "assets/examples/github-weekly.webp",
+          width: 840,
+          height: 1426,
+          alt: "读完开源项目后交上的周报",
+        },
+        media: {
+          kind: "click",
+          src: "assets/demo-en.mp4",
+          poster: "assets/examples/demo-poster.jpg",
+          width: 1280,
+          height: 720,
+          alt: "轻舟演示的封面帧",
         },
       },
-      media: {
-        kind: "click",
-        src: "assets/demo-en.mp4",
-        poster: "assets/examples/demo-poster.jpg",
-        width: 1280,
-        height: 720,
-        alt: {
-          en: "Cover frame of the qz demo",
-          "zh-CN": "轻舟演示的封面帧",
-        },
-      },
-      sessions: [
-        {
-          id: "first",
-          page: "arxiv",
-          file: "examples/sessions/arxiv-skill-zh.html",
-          label: { en: "First run", "zh-CN": "第一次跑" },
-        },
-        {
-          id: "reuse",
-          page: "arxiv-reuse",
-          file: "examples/sessions/arxiv-skill-reuse-zh.html",
-          label: { en: "A week later", "zh-CN": "一周后再用" },
-        },
-      ],
-    },
-    {
-      slug: "github-weekly",
-      title: { en: "Open-source weekly", "zh-CN": "开源项目周报" },
-      summary: {
-        en: "Sub-tasks read open-source projects in parallel and sum it up in a weekly report.",
-        "zh-CN": "几个子任务并行读开源项目动态，汇总成一份周报。",
-      },
-      cover: {
-        src: "assets/examples/github-weekly.webp",
-        width: 840,
-        height: 1426,
-        alt: {
-          en: "Weekly report assembled from open-source projects",
-          "zh-CN": "读完开源项目后交上的周报",
-        },
-      },
-      media: {
-        kind: "click",
-        src: "assets/demo-en.mp4",
-        poster: "assets/examples/demo-poster.jpg",
-        width: 1280,
-        height: 720,
-        alt: {
-          en: "Cover frame of the qz demo",
-          "zh-CN": "轻舟演示的封面帧",
-        },
-      },
-      sessions: [
-        { id: "default", file: "examples/sessions/github-weekly-zh.html" },
-      ],
-    },
-  ],
+    ],
+    en: [],
+  },
 };

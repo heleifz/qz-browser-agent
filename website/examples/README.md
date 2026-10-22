@@ -7,12 +7,23 @@ or export change. Do not hand-edit the generated HTML or the marked translation 
 node website/examples/generate-pages.mjs
 ```
 
-The generator writes the `#examples` block in `index.html`, one `examples/<page>/index.html`
-per session, and appends example keys to `assets/translations.js`. Styles for this section live
-in `assets/examples.css`. Detail pages load `assets/examples-render.js` for the looping clip,
-click-to-play video, and the document title. Paths in the catalog are relative to `website/`.
-The catalog is a classic script that sets `window.QZ_EXAMPLES`, so pages can read it on the
-GitHub Pages subpath without `fetch`.
+Chinese and English are separate lists, `locales.zh` and `locales.en`. Each entry is one
+exported session with its own media and copy. The generator writes the `#examples` block in
+`index.html`, Chinese pages at `examples/<slug>/`, English pages at `examples/en/<slug>/`, and
+the marked blocks in `assets/translations.js`. English pages sit one directory deeper so a
+Chinese page keeps its `../../` paths to assets and the site root, and every generated page
+stays under `examples/`. Styles for this section live in `assets/examples.css`. Detail pages
+load `assets/examples-render.js` for the looping clip, click-to-play video, and the document
+title. Paths in the catalog are relative to `website/`. The catalog is a classic script that
+sets `window.QZ_EXAMPLES`, so pages can read it on the GitHub Pages subpath without `fetch`.
+
+The homepage `#examples` grid is one translation. Switching language replaces the cards and
+their links. On a detail page, the language button opens the same slug in the other locale.
+When that slug does not exist, it opens the other locale's homepage at `#examples`.
+
+`fallback` is `"zh"`. While `locales.en` is empty, the English homepage shows the Chinese
+examples with the English title and summary in `fallbackCopy.en`, and those cards link to the
+Chinese pages. Adding any English entry turns that fallback off for the whole English list.
 
 ## Add an example
 
@@ -31,15 +42,20 @@ GitHub Pages subpath without `fetch`.
    The same screenshot is not folded into a shared reference: version 1 stores each image inline,
    and import copies that data URL through with no asset id. Run
    `node website/examples/prepare-exports.mjs --self-test` after changing that script.
-3. Add one object to `items` in `catalog.js`: `slug`, localized `title` and `summary`, `cover`,
-   `media` (`kind` is `loop` or `click`), and `sessions`. Put a cover image in `assets/examples/`.
-4. Regenerate. The generator copies `#messages` from the export into a shadow root, copies the
-   exchange `<script id="qingzhou-session-exchange" type="application/json">` once onto the page.
-   The side-panel stylesheet and interaction
-   script are shared, so every export must carry the same copies; `:root` and `html, body` in
-   that stylesheet are retargeted to `:host` so the rules apply inside the shadow root. A second
-   session needs its own `page` slug. The homepage card links to the first session. Each page
-   links to the other sessions with their `label`.
+3. Put the cover image and the video under `assets/`. Add one object to `locales.zh` or
+   `locales.en`: `slug`, `title`, `summary`, `file` (the session export path), `cover`
+   (`src`, `width`, `height`, `alt`), and `media` (`kind` is `loop` or `click`, plus `src`,
+   `poster`, `width`, `height`, and `alt`). An English example is that object in `locales.en`
+   after the English export and video are in place.
+4. Regenerate. The generator copies `#messages` from the export into a shadow root and copies
+   the exchange `<script id="qingzhou-session-exchange" type="application/json">` once onto the
+   page. The side-panel stylesheet and interaction script are shared, so every export must
+   carry the same copies; `:root` and `html, body` in that stylesheet are retargeted to `:host`
+   so the rules apply inside the shadow root.
+
+A companion page stays in the same locale list with `card: false`, so it is not a homepage
+card. `group` shares the card's title keys, `session` keeps the page id, and `related` links
+to the other slug: `{ slug, id, label }`. The arXiv reuse page is the Chinese companion.
 
 ## Replace an export
 
@@ -48,9 +64,10 @@ and the embedded exchange script match the file. Do not edit the JSON inside the
 
 ## Unpublish an example
 
-Remove its object from `items`, run the generator, and delete `examples/sessions/<file>.html`.
-The generator deletes a slug directory only when its `index.html` is marked
-`data-generated="qz-example"`. It leaves `sessions/`, this README, and the scripts in place.
+Remove its object from the locale list, run the generator, and delete
+`examples/sessions/<file>.html`. The generator deletes a slug directory only when its
+`index.html` is marked `data-generated="qz-example"`. It leaves `sessions/`, this README, and
+the scripts in place.
 
 ## Media and size
 

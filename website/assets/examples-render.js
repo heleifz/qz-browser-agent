@@ -3,8 +3,18 @@ import { mountSessionView } from "./examples/session-view.js";
 
 const catalog = window.QZ_EXAMPLES;
 const slug = document.documentElement.dataset.example;
-const item = catalog?.items?.find((entry) => entry.slug === slug);
 const siteRoot = document.documentElement.dataset.siteRoot || "../../";
+
+function findExample() {
+  const specified = document.querySelector(".language")?.dataset.exampleLocale;
+  const localeId = specified === "en" ? "en" : "zh";
+  const entries = catalog?.locales?.[localeId] || [];
+  const session = document.documentElement.dataset.session || "default";
+  return entries.find((entry) => (entry.group || entry.slug) === slug && (entry.session || "default") === session)
+    || entries.find((entry) => entry.slug === slug);
+}
+
+const item = findExample();
 
 function siteUrl(relativeToSite) {
   return new URL(relativeToSite, new URL(siteRoot, document.baseURI)).href;
