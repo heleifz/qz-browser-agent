@@ -9,7 +9,12 @@ const context = { window: {} };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(catalogPath, "utf8"), context, { filename: catalogPath });
 const catalog = context.window.QZ_EXAMPLES;
-if (!catalog?.items?.length) throw new Error("catalog has no examples");
+const localeIds = ["zh", "en"];
+if (!Array.isArray(catalog?.locales?.zh) || !Array.isArray(catalog?.locales?.en)) {
+  throw new Error("catalog locales need zh and en lists");
+}
+if (catalog.fallback && !localeIds.includes(catalog.fallback)) throw new Error("fallback locale must be zh or en");
+if (!catalog.locales.zh.length && !catalog.locales.en.length) throw new Error("catalog has no examples");
 
 const ARROW = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>';
 const GITHUB = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"></path></svg>';
@@ -30,71 +35,162 @@ function buttonHtml(label) {
   return `<span>${escapeHtml(label)}</span>${ARROW}`;
 }
 
+function groupOf(entry) {
+  return entry.group || entry.slug;
+}
+
+function requireEntry(entry, localeId) {
+  for (const field of ["slug", "title", "summary", "file"]) {
+    if (!entry[field]) throw new Error(`${localeId} example is missing ${field}`);
+  }
+  if (entry.slug === "en" || entry.slug === "sessions") throw new Error(`${entry.slug} is a reserved directory name`);
+  if (!entry.cover?.src || !entry.media?.src || !entry.media?.poster) throw new Error(`${entry.slug} is missing cover or media`);
+  if (entry.media.kind !== "loop" && entry.media.kind !== "click") throw new Error(`${entry.slug} media.kind must be loop or click`);
+  for (const link of entry.related || []) {
+    if (!link.slug || !link.id || !link.label) throw new Error(`${entry.slug} related link is incomplete`);
+    if (!catalog.locales[localeId].some((item) => item.slug === link.slug)) {
+      throw new Error(`${entry.slug} links to missing ${localeId} example ${link.slug}`);
+    }
+  }
+}
+
+function presentation(localeId) {
+  const own = catalog.locales[localeId];
+  if (own.length || localeId === catalog.fallback || !catalog.fallback) {
+    return { entries: own.filter((entry) => entry.card !== false), fallback: false, source: localeId };
+  }
+  return {
+    entries: catalog.locales[catalog.fallback].filter((entry) => entry.card !== false),
+    fallback: true,
+    source: catalog.fallback,
+  };
+}
+
+function cardHref(sourceLocale, slug) {
+  return sourceLocale === "en" ? `./examples/en/${slug}/` : `./examples/${slug}/`;
+}
+
+function cardsHtml(localeId) {
+  const view = presentation(localeId);
+  return view.entries.map((entry) => {
+    const pack = view.fallback ? catalog.fallbackCopy?.[localeId]?.[groupOf(entry)] : null;
+    if (view.fallback && !pack) throw new Error(`missing fallbackCopy.${localeId}.${groupOf(entry)}`);
+    const title = view.fallback ? pack.title : entry.title;
+    const summary = view.fallback ? pack.summary : entry.summary;
+    const alt = view.fallback ? pack.coverAlt : entry.cover.alt;
+    return `    <a class="example-card" href="${cardHref(view.source, entry.slug)}">
+      <span class="example-cover"><img src="./${entry.cover.src}" width="${entry.cover.width}" height="${entry.cover.height}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(summary)}</p>
+    </a>`;
+  }).join("\n");
+}
+
+function englishPack(group) {
+  const pack = catalog.fallbackCopy?.en?.[group];
+  if (!pack) throw new Error(`missing fallbackCopy.en.${group}`);
+  return pack;
+}
+
 function buildCopy() {
   const copy = {};
   for (const locale of ["en", "zh-CN"]) {
     const shared = catalog.copy[locale];
-    const html = {
-      examplesTitle: escapeHtml(shared.title),
-      examplesLede: escapeHtml(shared.lede),
-      exampleDownload: escapeHtml(shared.download),
+    const localeId = locale === "zh-CN" ? "zh" : "en";
+    copy[locale] = {
+      html: {
+        examplesTitle: escapeHtml(shared.title),
+        examplesLede: escapeHtml(shared.lede),
+        exampleDownload: escapeHtml(shared.download),
+        examplesGrid: cardsHtml(localeId),
+      },
+      attributes: {
+        examplePlayButton: { "aria-label": shared.play },
+      },
     };
-    const attributes = {
-      examplePlayButton: { "aria-label": shared.play },
-    };
-    for (const item of catalog.items) {
-      html[`example-${item.slug}-title`] = escapeHtml(item.title[locale]);
-      html[`example-${item.slug}-summary`] = escapeHtml(item.summary[locale]);
-      attributes[`example-${item.slug}-description`] = { content: item.summary[locale] };
-      attributes[`example-${item.slug}-cover`] = { alt: item.cover.alt[locale] };
-      attributes[`example-${item.slug}-media`] = item.media.kind === "loop"
-        ? { "aria-label": item.media.alt[locale] }
-        : { alt: item.media.alt[locale] };
-      for (const session of item.sessions) {
-        if (!session.label) continue;
-        html[`example-${item.slug}-${session.id}`] = escapeHtml(session.label[locale]);
-      }
+  }
+  const seen = new Set();
+  for (const entry of catalog.locales.zh) {
+    const group = groupOf(entry);
+    if (seen.has(group)) continue;
+    seen.add(group);
+    const primary = catalog.locales.zh.find((item) => item.slug === group) || entry;
+    const pack = englishPack(group);
+    copy.en.html[`example-${group}-title`] = escapeHtml(pack.title);
+    copy["zh-CN"].html[`example-${group}-title`] = escapeHtml(primary.title);
+    copy.en.html[`example-${group}-summary`] = escapeHtml(pack.summary);
+    copy["zh-CN"].html[`example-${group}-summary`] = escapeHtml(primary.summary);
+    copy.en.attributes[`example-${group}-description`] = { content: pack.summary };
+    copy["zh-CN"].attributes[`example-${group}-description`] = { content: primary.summary };
+    copy.en.attributes[`example-${group}-cover`] = { alt: pack.coverAlt };
+    copy["zh-CN"].attributes[`example-${group}-cover`] = { alt: primary.cover.alt };
+    const mediaName = primary.media.kind === "loop" ? "aria-label" : "alt";
+    copy.en.attributes[`example-${group}-media`] = { [mediaName]: pack.mediaAlt };
+    copy["zh-CN"].attributes[`example-${group}-media`] = { [mediaName]: primary.media.alt };
+    const labels = catalog.locales.zh
+      .filter((item) => groupOf(item) === group)
+      .flatMap((item) => item.related || []);
+    labels.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+    for (const link of labels) {
+      const english = pack.related?.[link.id];
+      if (!english) throw new Error(`missing fallbackCopy.en.${group}.related.${link.id}`);
+      copy.en.html[`example-${group}-${link.id}`] = escapeHtml(english);
+      copy["zh-CN"].html[`example-${group}-${link.id}`] = escapeHtml(link.label);
     }
-    copy[locale] = { html, attributes };
+  }
+  for (const entry of catalog.locales.en) {
+    const key = `example-en-${entry.slug}`;
+    const zhMatch = catalog.locales.zh.find((item) => item.slug === entry.slug);
+    copy.en.html[`${key}-title`] = escapeHtml(entry.title);
+    copy["zh-CN"].html[`${key}-title`] = escapeHtml(zhMatch?.title || entry.title);
+    copy.en.html[`${key}-summary`] = escapeHtml(entry.summary);
+    copy["zh-CN"].html[`${key}-summary`] = escapeHtml(zhMatch?.summary || entry.summary);
+    copy.en.attributes[`${key}-description`] = { content: entry.summary };
+    copy["zh-CN"].attributes[`${key}-description`] = { content: zhMatch?.summary || entry.summary };
+    copy.en.attributes[`${key}-cover`] = { alt: entry.cover.alt };
+    copy["zh-CN"].attributes[`${key}-cover`] = { alt: zhMatch?.cover.alt || entry.cover.alt };
+    const mediaName = entry.media.kind === "loop" ? "aria-label" : "alt";
+    copy.en.attributes[`${key}-media`] = { [mediaName]: entry.media.alt };
+    copy["zh-CN"].attributes[`${key}-media`] = { [mediaName]: zhMatch?.media.alt || entry.media.alt };
+    for (const link of entry.related || []) {
+      copy.en.html[`${key}-${link.id}`] = escapeHtml(link.label);
+      const zhLabel = zhMatch?.related?.find((item) => item.id === link.id)?.label || link.label;
+      copy["zh-CN"].html[`${key}-${link.id}`] = escapeHtml(zhLabel);
+    }
   }
   return copy;
 }
 
-function homepageSection() {
+function homepageSection(cards) {
   const en = catalog.copy.en;
-  const cards = catalog.items.map((item) => {
-    const alt = escapeHtml(item.cover.alt.en);
-    return `    <a class="example-card" href="./examples/${pageSlug(item)}/">
-      <span class="example-cover"><img src="./${item.cover.src}" width="${item.cover.width}" height="${item.cover.height}" alt="${alt}" loading="lazy" decoding="async" data-i18n-attributes="example-${item.slug}-cover"></span>
-      <h3 data-i18n="example-${item.slug}-title">${escapeHtml(item.title.en)}</h3>
-      <p data-i18n="example-${item.slug}-summary">${escapeHtml(item.summary.en)}</p>
-    </a>`;
-  }).join("\n");
   return `<section class="examples section wrap" id="examples" aria-labelledby="examples-title">
   <div class="section-heading">
     <h2 id="examples-title" data-i18n="examplesTitle">${escapeHtml(en.title)}</h2>
     <p data-i18n="examplesLede">${escapeHtml(en.lede)}</p>
   </div>
-  <div class="example-grid">
+  <div class="example-grid" data-i18n="examplesGrid">
 ${cards}
   </div>
 </section>`;
 }
 
-function mediaMarkup(item) {
-  const poster = `../../${item.media.poster}`;
-  const alt = escapeHtml(item.media.alt.en);
-  const key = `example-${item.slug}-media`;
-  if (item.media.kind === "loop") {
-    return `<div class="example-player"><video class="example-loop" poster="${poster}" muted playsinline loop preload="none" width="${item.media.width}" height="${item.media.height}" aria-label="${alt}" data-i18n-attributes="${key}"></video></div>`;
+function mediaMarkup(entry, view, root) {
+  const poster = `${root}${entry.media.poster}`;
+  const alt = escapeHtml(view.mediaAlt);
+  if (entry.media.kind === "loop") {
+    return `<div class="example-player"><video class="example-loop" poster="${poster}" muted playsinline loop preload="none" width="${entry.media.width}" height="${entry.media.height}" aria-label="${alt}" data-i18n-attributes="${view.mediaKey}"></video></div>`;
   }
-  return `<div class="example-player"><button class="example-play" type="button" aria-label="${escapeHtml(catalog.copy.en.play)}" data-i18n-attributes="examplePlayButton"><img src="${poster}" width="${item.media.width}" height="${item.media.height}" alt="${alt}" decoding="async" data-i18n-attributes="${key}">${PLAY}</button><video hidden controls playsinline preload="none"></video></div>`;
+  return `<div class="example-player"><button class="example-play" type="button" aria-label="${escapeHtml(catalog.copy.en.play)}" data-i18n-attributes="examplePlayButton"><img src="${poster}" width="${entry.media.width}" height="${entry.media.height}" alt="${alt}" decoding="async" data-i18n-attributes="${view.mediaKey}">${PLAY}</button><video hidden controls playsinline preload="none"></video></div>`;
 }
 
-function pageSlug(item, session = item.sessions[0]) {
-  if (session.page) return session.page;
-  if (item.sessions.length === 1) return item.slug;
-  throw new Error(`${item.slug} has more than one session and needs a page slug`);
+function hasSlug(localeId, slug) {
+  return catalog.locales[localeId].some((entry) => entry.slug === slug);
+}
+
+function switchHref(localeId, slug) {
+  const other = localeId === "zh" ? "en" : "zh";
+  if (hasSlug(other, slug)) return localeId === "zh" ? `../en/${slug}/` : `../../${slug}/`;
+  return localeId === "zh" ? "../../?lang=en#examples" : "../../../?lang=zh-CN#examples";
 }
 
 function readExport(file) {
@@ -163,15 +259,50 @@ function lazyImages(html) {
   ));
 }
 
-function sessionView(part) {
-  return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css"><link rel="stylesheet" href="../../assets/examples/session-view-overrides.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
+function sessionView(part, root) {
+  return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="${root}assets/examples/session-view.css"><link rel="stylesheet" href="${root}assets/examples/session-view-overrides.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
 }
 
-function relatedMarkup(item, session) {
-  const links = item.sessions
-    .filter((other) => other !== session && other.label)
-    .map((other) => `<a href="../${pageSlug(item, other)}/" data-i18n="example-${item.slug}-${other.id}">${escapeHtml(other.label.en)}</a>`);
-  return links.length ? `<p class="example-related">${links.join("")}</p>` : "";
+function relatedMarkup(entry) {
+  const group = groupOf(entry);
+  const pack = englishPack(group);
+  const links = (entry.related || []).map((link) => {
+    const english = pack.related?.[link.id];
+    if (!english) throw new Error(`missing fallbackCopy.en.${group}.related.${link.id}`);
+    return `<a href="../${link.slug}/" data-i18n="example-${group}-${link.id}">${escapeHtml(english)}</a>`;
+  });
+  return links.length ? `\n      <p class="example-related">${links.join("")}</p>` : "\n      ";
+}
+
+function pageView(entry, localeId) {
+  const group = groupOf(entry);
+  if (localeId === "zh") {
+    const pack = englishPack(group);
+    return {
+      title: pack.title,
+      summary: pack.summary,
+      mediaAlt: pack.mediaAlt,
+      titleKey: `example-${group}-title`,
+      summaryKey: `example-${group}-summary`,
+      descriptionKey: `example-${group}-description`,
+      mediaKey: `example-${group}-media`,
+      related: relatedMarkup(entry),
+    };
+  }
+  const key = `example-en-${entry.slug}`;
+  const links = (entry.related || []).map((link) => (
+    `<a href="../${link.slug}/" data-i18n="${key}-${link.id}">${escapeHtml(link.label)}</a>`
+  ));
+  return {
+    title: entry.title,
+    summary: entry.summary,
+    mediaAlt: entry.media.alt,
+    titleKey: `${key}-title`,
+    summaryKey: `${key}-summary`,
+    descriptionKey: `${key}-description`,
+    mediaKey: `${key}-media`,
+    related: links.length ? `\n      <p class="example-related">${links.join("")}</p>` : "\n      ",
+  };
 }
 
 function writeSharedSessionAssets(parts) {
@@ -187,44 +318,53 @@ function writeSharedSessionAssets(parts) {
   fs.writeFileSync(path.join(dir, "session-view.js"), adaptSessionScript(first.runtime));
 }
 
-function detailPage(item, session, part) {
+function detailPage(localeId, entry, part) {
   const en = catalog.copy.en;
-  const slug = pageSlug(item, session);
-  const canonical = `https://alibaba.github.io/qz-browser-agent/examples/${slug}/`;
+  const view = pageView(entry, localeId);
+  const root = localeId === "zh" ? "../../" : "../../../";
+  const canonical = localeId === "zh"
+    ? `https://alibaba.github.io/qz-browser-agent/examples/${entry.slug}/`
+    : `https://alibaba.github.io/qz-browser-agent/examples/en/${entry.slug}/`;
+  const alternates = localeId === "zh" && !hasSlug("en", entry.slug)
+    ? `<link rel="canonical" href="${canonical}">
+  <link rel="alternate" hreflang="en" href="${canonical}">
+  <link rel="alternate" hreflang="zh-CN" href="${canonical}?lang=zh-CN">
+  <link rel="alternate" hreflang="x-default" href="${canonical}">`
+    : `<link rel="canonical" href="${canonical}">
+  <link rel="alternate" hreflang="en" href="${hasSlug("en", entry.slug) ? `https://alibaba.github.io/qz-browser-agent/examples/en/${entry.slug}/` : "https://alibaba.github.io/qz-browser-agent/?lang=en#examples"}">
+  <link rel="alternate" hreflang="zh-CN" href="${hasSlug("zh", entry.slug) ? `https://alibaba.github.io/qz-browser-agent/examples/${entry.slug}/` : "https://alibaba.github.io/qz-browser-agent/?lang=zh-CN#examples"}">
+  <link rel="alternate" hreflang="x-default" href="${canonical}">`;
+  const pageLang = localeId === "zh" ? "zh-CN" : "en";
   return `<!DOCTYPE html>
-<html lang="en" data-example="${item.slug}" data-site-root="../../" data-generated="qz-example" data-session="${session.id}">
+<html lang="en" data-example="${groupOf(entry)}" data-site-root="${root}" data-generated="qz-example" data-session="${entry.session || "default"}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="${escapeHtml(item.summary.en)}" data-i18n-attributes="example-${item.slug}-description">
+  <meta name="description" content="${escapeHtml(view.summary)}" data-i18n-attributes="${view.descriptionKey}">
   <meta name="theme-color" content="#f7f7f5">
-  <link rel="canonical" href="${canonical}">
-  <link rel="alternate" hreflang="en" href="${canonical}">
-  <link rel="alternate" hreflang="zh-CN" href="${canonical}?lang=zh-CN">
-  <link rel="alternate" hreflang="x-default" href="${canonical}">
-  <link rel="icon" type="image/png" href="../../assets/icon.png">
-  <link rel="stylesheet" href="../../assets/site.css">
-  <link rel="stylesheet" href="../../assets/examples.css">
-  <script src="../../examples/catalog.js"></script>
-  <script src="../../assets/site.js" type="module"></script>
-  <script src="../../assets/examples-render.js" type="module"></script>
-  <title>${escapeHtml(item.title.en)} — qz</title>
+  ${alternates}
+  <link rel="icon" type="image/png" href="${root}assets/icon.png">
+  <link rel="stylesheet" href="${root}assets/site.css">
+  <link rel="stylesheet" href="${root}assets/examples.css">
+  <script src="${root}examples/catalog.js"></script>
+  <script src="${root}assets/site.js" type="module"></script>
+  <script src="${root}assets/examples-render.js" type="module"></script>
+  <title>${escapeHtml(view.title)} — qz</title>
 </head>
 <body>
 <a class="skip-link" href="#main" data-i18n="skip">Skip to content</a>
 <header class="header wrap">
-  <a class="brand" href="../../" aria-label="qz — Home" data-i18n-attributes="home"><img src="../../assets/icon.png" width="32" height="32" alt=""><span>qz<span class="brand-caption"> / 轻舟</span></span></a>
-  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="../../#overview" data-i18n="navOverview">Data</a><a href="../../#extend" data-i18n="navExtend">Skills</a><a href="../../#agents" data-i18n="navAgents">For agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub ${GITHUB}</a></nav>
-  <div class="header-actions"><button class="language" type="button" hidden="" aria-label="Switch to 简体中文">中文</button><a class="button button-small" href="${STORE}" data-i18n="navStart">Install${ARROW}</a></div>
+  <a class="brand" href="${root}" aria-label="qz — Home" data-i18n-attributes="home"><img src="${root}assets/icon.png" width="32" height="32" alt=""><span>qz<span class="brand-caption"> / 轻舟</span></span></a>
+  <nav aria-label="Main navigation" data-i18n-attributes="nav"><a href="${root}#overview" data-i18n="navOverview">Data</a><a href="${root}#extend" data-i18n="navExtend">Skills</a><a href="${root}#agents" data-i18n="navAgents">For agents</a><a href="https://github.com/alibaba/qz-browser-agent" class="nav-github">GitHub ${GITHUB}</a></nav>
+  <div class="header-actions"><button class="language" type="button" hidden="" aria-label="Switch to 简体中文" data-example-locale="${pageLang}" data-switch-href="${switchHref(localeId, entry.slug)}">中文</button><a class="button button-small" href="${STORE}" data-i18n="navStart">Install${ARROW}</a></div>
 </header>
 <main id="main" class="example-page wrap">
   <div class="example-stage">
     <div class="example-lead">
-      <h1 data-i18n="example-${item.slug}-title">${escapeHtml(item.title.en)}</h1>
-      <p class="example-summary" data-i18n="example-${item.slug}-summary">${escapeHtml(item.summary.en)}</p>
-      ${relatedMarkup(item, session)}
-      <div class="example-frame">${mediaMarkup(item)}</div>
+      <h1 data-i18n="${view.titleKey}">${escapeHtml(view.title)}</h1>
+      <p class="example-summary" data-i18n="${view.summaryKey}">${escapeHtml(view.summary)}</p>${view.related}
+      <div class="example-frame">${mediaMarkup(entry, view, root)}</div>
     </div>
     <div class="example-thread">
       <div class="example-actions example-thread-bar">
@@ -234,11 +374,11 @@ function detailPage(item, session, part) {
           <a class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" id="example-store" href="${STORE}" target="_blank" rel="noopener" data-i18n="exampleDownload">${escapeHtml(en.download)}</a>
         </div>
       </div>
-      ${sessionView(part)}
+      ${sessionView(part, root)}
     </div>
   </div>
 </main>
-<footer class="footer wrap"><a class="brand" href="../../">qz<span class="footer-name">qz-browser-agent</span></a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="../../credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
+<footer class="footer wrap"><a class="brand" href="${root}">qz<span class="footer-name">qz-browser-agent</span></a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="${root}credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
 ${part.exchange}
 </body>
 </html>
@@ -348,44 +488,61 @@ function upsertHomepage(section) {
   return html;
 }
 
-function removeStalePages() {
-  const examplesDir = path.join(websiteRoot, "examples");
-  const slugs = new Set(catalog.items.flatMap((item) => item.sessions.map((session) => pageSlug(item, session))));
-  for (const entry of fs.readdirSync(examplesDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === "sessions" || slugs.has(entry.name)) continue;
-    const indexPath = path.join(examplesDir, entry.name, "index.html");
+function removeGenerated(dir, slugs) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "sessions" || entry.name === "en" || slugs.has(entry.name)) continue;
+    const indexPath = path.join(dir, entry.name, "index.html");
     if (!fs.existsSync(indexPath)) continue;
     const html = fs.readFileSync(indexPath, "utf8");
-    if (html.includes('data-generated="qz-example"')) fs.rmSync(path.join(examplesDir, entry.name), { recursive: true });
+    if (html.includes('data-generated="qz-example"')) fs.rmSync(path.join(dir, entry.name), { recursive: true });
   }
 }
 
+function removeStalePages() {
+  const examplesDir = path.join(websiteRoot, "examples");
+  removeGenerated(examplesDir, new Set(catalog.locales.zh.map((entry) => entry.slug)));
+  const englishDir = path.join(examplesDir, "en");
+  removeGenerated(englishDir, new Set(catalog.locales.en.map((entry) => entry.slug)));
+  if (fs.existsSync(englishDir) && fs.readdirSync(englishDir).length === 0) fs.rmdirSync(englishDir);
+}
+
+for (const localeId of localeIds) {
+  const seen = new Set();
+  for (const entry of catalog.locales[localeId]) {
+    requireEntry(entry, localeId);
+    if (seen.has(entry.slug)) throw new Error(`duplicate ${localeId} example ${entry.slug}`);
+    seen.add(entry.slug);
+  }
+}
 const copy = buildCopy();
 const staleI18n = path.join(websiteRoot, "assets/examples-i18n.js");
 if (fs.existsSync(staleI18n)) fs.rmSync(staleI18n);
 writeTranslations(copy);
 const translations = (await import(pathToFileURL(path.join(websiteRoot, "assets/translations.js")).href)).translations;
-const section = homepageSection();
+const section = homepageSection(cardsHtml("en"));
 const homepage = upsertHomepage(section);
 assertClean("homepage", homepage);
 assertExampleKeys(homepage, translations);
 removeStalePages();
-const pages = catalog.items.flatMap((item) => item.sessions.map((session) => ({ item, session, part: readExport(session.file) })));
+const pages = localeIds.flatMap((localeId) => catalog.locales[localeId].map((entry) => ({
+  localeId,
+  entry,
+  part: readExport(entry.file),
+})));
 writeSharedSessionAssets(pages.map((page) => page.part));
-const seen = new Set();
 for (const page of pages) {
-  const slug = pageSlug(page.item, page.session);
-  if (seen.has(slug)) throw new Error(`duplicate example page ${slug}`);
-  seen.add(slug);
-  const html = detailPage(page.item, page.session, page.part);
+  const html = detailPage(page.localeId, page.entry, page.part);
   const exchangeCount = html.split('id="qingzhou-session-exchange"').length - 1;
+  const slug = page.localeId === "zh" ? page.entry.slug : `en/${page.entry.slug}`;
   if (exchangeCount !== 1) throw new Error(`${slug} embeds ${exchangeCount} exchange payloads`);
   if (!html.includes(page.part.exchange)) throw new Error(`${slug} changed the exchange script`);
   assertClean(`examples/${slug}/`, html);
   assertExampleKeys(html, translations);
-  const dir = path.join(websiteRoot, "examples", slug);
+  const dir = path.join(websiteRoot, "examples", ...(page.localeId === "zh" ? [page.entry.slug] : ["en", page.entry.slug]));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), html);
   console.log(`examples/${slug}/`);
 }
+console.log(`fallback: ${catalog.fallback || "off"}`);
 console.log("generated example pages");
