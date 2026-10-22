@@ -3,8 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { renderSessionFile } from "./render-session.mjs";
-
 const websiteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogPath = path.join(websiteRoot, "examples/catalog.js");
 const context = { window: {} };
@@ -70,7 +68,7 @@ function homepageSection() {
   const en = catalog.copy.en;
   const cards = catalog.items.map((item) => {
     const alt = escapeHtml(item.cover.alt.en);
-    return `    <a class="example-card" href="./examples/${item.slug}/">
+    return `    <a class="example-card" href="./examples/${pageSlug(item)}/">
       <span class="example-cover"><img src="./${item.cover.src}" width="${item.cover.width}" height="${item.cover.height}" alt="${alt}" loading="lazy" decoding="async" data-i18n-attributes="example-${item.slug}-cover"></span>
       <h3 data-i18n="example-${item.slug}-title">${escapeHtml(item.title.en)}</h3>
       <p data-i18n="example-${item.slug}-summary">${escapeHtml(item.summary.en)}</p>
@@ -97,34 +95,90 @@ function mediaMarkup(item) {
   return `<div class="example-player"><button class="example-play" type="button" aria-label="${escapeHtml(catalog.copy.en.play)}" data-i18n-attributes="examplePlayButton"><img src="${poster}" width="${item.media.width}" height="${item.media.height}" alt="${alt}" decoding="async" data-i18n-attributes="${key}">${PLAY}</button><video hidden controls playsinline preload="none"></video></div>`;
 }
 
-function tabMarkup(item) {
-  if (item.sessions.length < 2) return "";
-  const buttons = item.sessions.map((session, index) => {
-    const selected = index === 0 ? "true" : "false";
-    return `<button type="button" role="tab" id="example-tab-${session.id}" aria-selected="${selected}" aria-controls="example-pane-${session.id}" data-pane="example-pane-${session.id}" data-i18n="example-${item.slug}-${session.id}">${escapeHtml(session.label.en)}</button>`;
-  }).join("");
-  return `<div class="example-switch" role="tablist" aria-label="${escapeHtml(item.title.en)}">${buttons}</div>`;
+function pageSlug(item, session = item.sessions[0]) {
+  if (session.page) return session.page;
+  if (item.sessions.length === 1) return item.slug;
+  throw new Error(`${item.slug} has more than one session and needs a page slug`);
 }
 
-function logMarkup(item) {
-  return item.sessions.map((session, index) => {
-    const file = sessionHref(session.file);
-    const filename = path.posix.basename(session.file);
-    const absolute = path.join(websiteRoot, session.file);
-    const conversation = renderSessionFile(absolute);
-    if (!conversation) console.warn(`missing session ${session.file}`);
-    const hidden = index === 0 ? "" : " hidden";
-    return `<div class="example-log" id="example-pane-${session.id}" data-file="${file}" data-download="${filename}"${hidden}>${conversation}</div>`;
-  }).join("\n");
+function readExport(file) {
+  const absolute = path.join(websiteRoot, file);
+  const html = fs.readFileSync(absolute, "utf8");
+  const styles = [...html.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((match) => match[1]);
+  const runtime = html.match(/<script>([\s\S]*?)<\/script>/);
+  const exchange = html.match(/<script id="qingzhou-session-exchange" type="application\/json">[\s\S]*?<\/script>/);
+  const messages = html.match(/<main id="messages">([\s\S]*?)<\/main>/);
+  const labels = html.match(/<script type="application\/json" id="qingzhou-export-messages">[\s\S]*?<\/script>/);
+  if (styles.length < 2 || !runtime || !exchange || !messages || !labels) {
+    throw new Error(`export ${file} is missing the transcript, stylesheet, or exchange script`);
+  }
+  return { styles, runtime: runtime[1], exchange: exchange[0], messages: messages[1], labels: labels[0] };
 }
 
-function detailPage(item) {
+function adaptSessionCss(panel, shell) {
+  const adaptedPanel = panel.replaceAll(":root", ":host").replace("html,\n  body", ":host");
+  const adaptedShell = shell
+    .replaceAll("html, body", ":host")
+    .replace("body { background: var(--bg-primary); }", ":host { background: var(--bg-primary); }");
+  if (adaptedPanel.includes(":root") || adaptedPanel.includes("html,") || adaptedShell.includes("html,") || /\bbody\b/.test(adaptedShell)) {
+    throw new Error("session stylesheet still targets the outer page");
+  }
+  return `${adaptedPanel}\n${adaptedShell}\n`;
+}
+
+function adaptSessionScript(source) {
+  source = source.trim();
+  if (!source.startsWith("(()=>{") || !source.endsWith("})();")) throw new Error("unexpected export runtime");
+  const body = source
+    .slice("(()=>{".length, -"})();".length)
+    .replace('document.getElementById("qingzhou-export-messages")', 'root.getElementById("qingzhou-export-messages")')
+    .replace("document.body.appendChild", "root.appendChild")
+    .replace('document.addEventListener("click"', 'root.addEventListener("click"');
+  if (body.includes("document.body") || body.includes('document.addEventListener("click"') || body.includes('document.getElementById("qingzhou-export-messages")')) {
+    throw new Error("export runtime was not scoped to the shadow root");
+  }
+  if (!body.includes('document.getElementById("qingzhou-session-cta")')) throw new Error("import placeholder lookup was removed");
+  return `export function mountSessionView(root) {${body}}\n`;
+}
+
+function lazyImages(html) {
+  return html.replace(/<img\b([^>]*?)>/g, (full, attrs) => (
+    /\bloading\s*=/.test(attrs) ? full : `<img loading="lazy"${attrs}>`
+  ));
+}
+
+function sessionView(part) {
+  return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="../../assets/examples/session-view.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
+}
+
+function relatedMarkup(item, session) {
+  const links = item.sessions
+    .filter((other) => other !== session && other.label)
+    .map((other) => `<a href="../${pageSlug(item, other)}/" data-i18n="example-${item.slug}-${other.id}">${escapeHtml(other.label.en)}</a>`);
+  return links.length ? `<p class="example-related">${links.join("")}</p>` : "";
+}
+
+function writeSharedSessionAssets(parts) {
+  const [first] = parts;
+  for (const part of parts.slice(1)) {
+    if (part.styles[0] !== first.styles[0] || part.styles[1] !== first.styles[1] || part.runtime !== first.runtime || part.labels !== first.labels) {
+      throw new Error("session exports do not share one stylesheet and interaction script");
+    }
+  }
+  const dir = path.join(websiteRoot, "assets/examples");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "session-view.css"), adaptSessionCss(first.styles[0], first.styles[1]));
+  fs.writeFileSync(path.join(dir, "session-view.js"), adaptSessionScript(first.runtime));
+}
+
+function detailPage(item, session, part) {
   const en = catalog.copy.en;
-  const file = sessionHref(item.sessions[0].file);
-  const filename = path.posix.basename(item.sessions[0].file);
-  const canonical = `https://alibaba.github.io/qz-browser-agent/examples/${item.slug}/`;
+  const slug = pageSlug(item, session);
+  const file = sessionHref(session.file);
+  const filename = path.posix.basename(session.file);
+  const canonical = `https://alibaba.github.io/qz-browser-agent/examples/${slug}/`;
   return `<!DOCTYPE html>
-<html lang="en" data-example="${item.slug}" data-site-root="../../" data-generated="qz-example">
+<html lang="en" data-example="${item.slug}" data-site-root="../../" data-generated="qz-example" data-session="${session.id}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -155,15 +209,20 @@ function detailPage(item) {
     <div class="example-lead">
       <h1 data-i18n="example-${item.slug}-title">${escapeHtml(item.title.en)}</h1>
       <p class="example-summary" data-i18n="example-${item.slug}-summary">${escapeHtml(item.summary.en)}</p>
-      ${tabMarkup(item) ? `${tabMarkup(item)}\n      ` : ""}<a class="button" id="example-download" href="${file}" download="${filename}" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
+      ${relatedMarkup(item, session)}
+      <div class="example-actions">
+        <button id="qingzhou-session-cta" class="qz-btn qz-btn--primary qz-btn--xs session-export-cta" hidden type="button"></button>
+        <a class="button" id="example-download" href="${file}" download="${filename}" data-i18n="exampleDownload">${buttonHtml(en.download)}</a>
+      </div>
       <div class="example-frame">${mediaMarkup(item)}</div>
     </div>
     <div class="example-thread">
-      ${logMarkup(item)}
+      ${sessionView(part)}
     </div>
   </div>
 </main>
 <footer class="footer wrap"><a class="brand" href="../../">qz<span class="footer-name">qz-browser-agent</span></a><nav aria-label="Footer navigation" data-i18n-attributes="footer"><a href="https://github.com/alibaba/qz-browser-agent/blob/main/README.md" data-i18n="footerDocs" data-i18n-attributes="documentation">Documentation</a><a href="https://github.com/alibaba/qz-browser-agent/issues" data-i18n="footerIssues">Feedback</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/docs/permissions.md" data-i18n="footerPrivacy">Privacy</a><a href="../../credits/" data-i18n="footerCredits">Credits</a><a href="https://github.com/alibaba/qz-browser-agent/blob/main/LICENSE">Apache-2.0</a></nav></footer>
+${part.exchange}
 </body>
 </html>
 `;
@@ -274,7 +333,7 @@ function upsertHomepage(section) {
 
 function removeStalePages() {
   const examplesDir = path.join(websiteRoot, "examples");
-  const slugs = new Set(catalog.items.map((item) => item.slug));
+  const slugs = new Set(catalog.items.flatMap((item) => item.sessions.map((session) => pageSlug(item, session))));
   for (const entry of fs.readdirSync(examplesDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === "sessions" || slugs.has(entry.name)) continue;
     const indexPath = path.join(examplesDir, entry.name, "index.html");
@@ -294,13 +353,22 @@ const homepage = upsertHomepage(section);
 assertClean("homepage", homepage);
 assertExampleKeys(homepage, translations);
 removeStalePages();
-for (const item of catalog.items) {
-  const html = detailPage(item);
-  assertClean(`examples/${item.slug}/`, html);
+const pages = catalog.items.flatMap((item) => item.sessions.map((session) => ({ item, session, part: readExport(session.file) })));
+writeSharedSessionAssets(pages.map((page) => page.part));
+const seen = new Set();
+for (const page of pages) {
+  const slug = pageSlug(page.item, page.session);
+  if (seen.has(slug)) throw new Error(`duplicate example page ${slug}`);
+  seen.add(slug);
+  const html = detailPage(page.item, page.session, page.part);
+  const exchangeCount = html.split('id="qingzhou-session-exchange"').length - 1;
+  if (exchangeCount !== 1) throw new Error(`${slug} embeds ${exchangeCount} exchange payloads`);
+  if (!html.includes(page.part.exchange)) throw new Error(`${slug} changed the exchange script`);
+  assertClean(`examples/${slug}/`, html);
   assertExampleKeys(html, translations);
-  const dir = path.join(websiteRoot, "examples", item.slug);
+  const dir = path.join(websiteRoot, "examples", slug);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "index.html"), html);
-  console.log(`examples/${item.slug}/`);
+  console.log(`examples/${slug}/`);
 }
 console.log("generated example pages");

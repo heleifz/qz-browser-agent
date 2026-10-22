@@ -114,11 +114,13 @@ window.QZ_EXAMPLES = {
       sessions: [
         {
           id: "first",
+          page: "arxiv",
           file: "examples/sessions/arxiv-skill-zh.html",
           label: { en: "First run", "zh-CN": "第一次跑" },
         },
         {
           id: "reuse",
+          page: "arxiv-reuse",
           file: "examples/sessions/arxiv-skill-reuse-zh.html",
           label: { en: "A week later", "zh-CN": "一周后再用" },
         },
