@@ -44,8 +44,11 @@ function bindSessions() {
 function bindImport() {
   const actions = document.querySelector(".example-actions");
   if (!actions) return;
+  const shortLink = actions.querySelector(".example-download-short");
   const sync = () => {
-    actions.classList.toggle("is-live", Boolean(actions.querySelector("[data-qingzhou-session-import]")));
+    const live = Boolean(actions.querySelector("[data-qingzhou-session-import]"));
+    actions.classList.toggle("is-live", live);
+    if (shortLink) shortLink.hidden = !live;
   };
   sync();
   new MutationObserver(sync).observe(actions, {
