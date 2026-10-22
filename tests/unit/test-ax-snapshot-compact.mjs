@@ -47,13 +47,16 @@ registerAccessibilityTools({
 
 const context = { sessionId: "owner", runId: "run" };
 
-function ax({ id, parent, children = [], backend, role, name, url, ignored }) {
+function ax({ id, parent, children = [], backend, role, name, url, ignored, value, properties = [] }) {
   const node = { nodeId: id, childIds: children };
   if (parent) node.parentId = parent;
   if (backend) node.backendDOMNodeId = backend;
   if (role) node.role = { value: role };
   if (name) node.name = { value: name };
-  if (url) node.properties = [{ name: "url", value: { value: url } }];
+  if (value) node.value = { value };
+  const props = [...properties];
+  if (url) props.push({ name: "url", value: { value: url } });
+  if (props.length) node.properties = props;
   if (ignored) node.ignored = true;
   return node;
 }
@@ -152,14 +155,74 @@ assert.match(line(urls.snapshot, "Top"), /url="\/x"/);
 const names = await run({
   overview: { title: "Names", url: "https://example.com/forms/post", actions: [] },
   nodes: [
-    ax({ id: "root", children: ["text"], backend: 1, role: "button", name: "Save" }),
-    ax({ id: "text", parent: "root", backend: 2, role: "StaticText", name: "Save" }),
+    ax({ id: "root", children: ["text", "box", "empty", "dup", "inline", "own"], backend: 1, role: "button", name: "Save" }),
+    ax({ id: "text", parent: "root", children: ["slice"], backend: 2, role: "StaticText", name: "Save" }),
+    ax({ id: "slice", parent: "text", backend: 3, role: "InlineTextBox", name: "Save" }),
+    ax({ id: "box", parent: "root", backend: 4, role: "InlineTextBox", name: "Save" }),
+    ax({ id: "empty", parent: "root", backend: 5, role: "StaticText", name: "" }),
+    ax({ id: "dup", parent: "root", backend: 6, role: "StaticText", name: "Note" }),
+    ax({ id: "inline", parent: "root", backend: 7, role: "InlineTextBox", name: "Note" }),
+    ax({ id: "own", parent: "root", backend: 8, role: "StaticText", name: "Note" }),
   ],
 });
 assert.match(line(names.snapshot, "button"), /"Save"/);
-const textLine = line(names.snapshot, "StaticText");
-assert.match(textLine, /target=uid:/);
-assert.equal(textLine.includes('"Save"'), false);
+const noteLines = names.snapshot.split("\n").filter(item => item.includes("StaticText"));
+assert.equal(noteLines.length, 1);
+assert.match(noteLines[0], /"Note"/);
+assert.equal(names.snapshot.includes("InlineTextBox"), false);
+assert.equal(names.returnedNodeCount, 2);
+
+const distinct = await run({
+  overview: { title: "Distinct", url: "https://example.com/forms/post", actions: [] },
+  nodes: [
+    ax({ id: "root", children: ["text"], backend: 1, role: "button", name: "Save text" }),
+    ax({ id: "text", parent: "root", backend: 2, role: "StaticText", name: "Save" }),
+  ],
+});
+assert.match(line(distinct.snapshot, "StaticText"), /"Save"/);
+
+const informative = await run({
+  overview: {
+    title: "Informative", url: "https://example.com/forms/post",
+    actions: [{ selector: "#act", role: "StaticText", text: "Save" }],
+  },
+  bound: { loaderId: "loader", ids: [9] },
+  nodes: [
+    ax({ id: "root", children: ["act", "flag", "valued"], backend: 1, role: "button", name: "Save" }),
+    ax({ id: "act", parent: "root", backend: 9, role: "StaticText", name: "Save" }),
+    ax({ id: "flag", parent: "root", backend: 10, role: "StaticText", name: "Save", properties: [{ name: "checked", value: { value: true } }] }),
+    ax({ id: "valued", parent: "root", backend: 11, role: "InlineTextBox", name: "Save", value: "typed" }),
+  ],
+});
+assert.match(line(informative.snapshot, "StaticText"), /"Save"/);
+assert.match(informative.snapshot, /checked/);
+assert.match(line(informative.snapshot, "InlineTextBox"), /value="typed"/);
+const actionTarget = line(informative.snapshot, "StaticText").match(/target=(uid:\S+)/)?.[1];
+const resolvedAction = await element.resolveElementReference(8, { target: actionTarget }, context);
+assert.equal(resolvedAction.ref.backendNodeId, 9);
+
+const textIds = Array.from({ length: 30 }, (_value, index) => `th${index + 1}`);
+const textBudget = await run({
+  limit: 20,
+  overview: { title: "Text budget", url: "https://example.com/forms/post", actions: [] },
+  nodes: [
+    ax({ id: "root", children: textIds, backend: 1, role: "RootWebArea", name: "Page" }),
+    ...textIds.map((id, index) => ax({
+      id, parent: "root", children: [`${id}t`], backend: 300 + index, role: "heading", name: `Heading ${index + 1}`,
+    })),
+    ...textIds.map((id, index) => ax({
+      id: `${id}t`, parent: id, children: [`${id}i`], backend: 400 + index, role: "StaticText", name: `Heading ${index + 1}`,
+    })),
+    ...textIds.map((id, index) => ax({
+      id: `${id}i`, parent: `${id}t`, backend: 500 + index, role: "InlineTextBox", name: `Heading ${index + 1}`,
+    })),
+  ],
+});
+assert.equal(textBudget.returnedNodeCount, 20);
+assert.match(textBudget.snapshot, /"Heading 19"/);
+assert.doesNotMatch(textBudget.snapshot, /"Heading 20"/);
+assert.match(textBudget.snapshot, /\(truncated, 11 more\)/);
+assert.doesNotMatch(textBudget.snapshot, /StaticText|InlineTextBox/);
 
 const merged = await run({
   overview: {

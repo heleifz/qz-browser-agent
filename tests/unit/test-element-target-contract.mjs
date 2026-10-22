@@ -153,10 +153,9 @@ function assertElementActionRoutingContract() {
 
 function assertAxTreeCompactContract() {
   const block = toolBlock("get_ax_tree");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /placeholder、value、checked、disabled/, "get_ax_tree should preserve useful action state on the snapshot line");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /accept、multiple、selectedFileCount/, "get_ax_tree should preserve file-input fields on the snapshot line");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /不另附 actions 或 headings/, "get_ax_tree should not advertise a separate actions or headings list");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /t5493\.00001\.12/, "get_ax_tree should document the short uid");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /uid 用于 click\/fill/, "get_ax_tree should say that uids are for click and fill");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /该节点下还有 N 行没展开/, "get_ax_tree should explain that N is unexpanded lines");
+  assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
   assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");

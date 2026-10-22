@@ -107,6 +107,10 @@ test.describe("compact accessibility snapshot", () => {
     expect(result.code, JSON.stringify(result)).toBeUndefined();
     expect(result).not.toHaveProperty("actions");
     expect(result).not.toHaveProperty("headings");
+    expect(result.snapshot).not.toContain("InlineTextBox");
+    for (const item of result.snapshot.split("\n")) {
+      if (item.includes("StaticText")) expect(item).toMatch(/"[^"]+"|value=|\bchecked\b|\bdisabled\b|\beditable\b/);
+    }
     expect(target(result.snapshot, "button", '"Save"')).toMatch(/^uid:t\d+\.[0-9a-z]{5,}\.\d+$/);
     expect(line(result.snapshot, "Next page")).toMatch(/url="next"/);
     expect(line(result.snapshot, "External")).toContain('url="https://example.com/out"');

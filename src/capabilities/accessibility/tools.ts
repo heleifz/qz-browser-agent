@@ -40,6 +40,7 @@ interface SemanticNode {
   depth: number;
   parent: SemanticNode | null;
   children: SemanticNode[];
+  actionNode?: boolean;
   placeholder?: string;
   inputType?: string;
   accept?: string;
@@ -107,6 +108,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
 
   for (const root of roots) buildSemanticTree(root, 0, null);
   const required = placeActions(actions, semanticNodes, semanticRoots);
+  pruneRedundantText(semanticRoots);
+  rebuildSemanticList(semanticRoots, semanticNodes);
   const includedNodes = selectSemanticNodesByBreadth(semanticRoots, limit, required);
   const displayNodes: DisplayNode[] = [];
   let counter = 0;
@@ -124,7 +127,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (compact.backendNodeId) item.backendNodeId = compact.backendNodeId;
     if (compact.role) item.role = compact.role;
     if (compact.name) item.name = compact.name;
-    if (compact.name && compact.name === semanticNode.parent?.compact.name) item.suppressName = true;
+    if (compact.name && semanticNode.parent && compact.name === visibleName(semanticNode.parent) && !semanticNode.actionNode && !hasOwnValueOrFlags(semanticNode)) item.suppressName = true;
     if (compact.value) item.value = compact.value;
     if (compact.description) item.description = compact.description;
     if (compact.url) item.url = compact.url;
@@ -184,6 +187,7 @@ function placeActions(actions: ActionAnchor[], semanticNodes: SemanticNode[], se
     if (!node) node = insertSynthetic(anchor, byBackend, semanticNodes, semanticRoots);
     if (!node) continue;
     used.add(node);
+    node.actionNode = true;
     mergeAction(node, anchor.action);
     let current: SemanticNode | null = node;
     while (current) {
@@ -268,6 +272,77 @@ function mergeAction(node: SemanticNode, action: Action) {
 
 function hasFlag(flags: string[], key: string) {
   return flags.some(flag => flag === key || flag.startsWith(`${key}=`) || (key === "checked" && (flag === "unchecked" || flag.startsWith("checked="))));
+}
+
+const PURE_TEXT_ROLES = new Set(["statictext", "inlinetextbox", "linebreak"]);
+
+function hasOwnValueOrFlags(node: SemanticNode) {
+  return !!(node.compact.value || node.compact.flags?.length);
+}
+
+function visibleName(node: SemanticNode | null): string {
+  if (!node) return "";
+  const name = node.compact.name || "";
+  if (!name || name === visibleName(node.parent)) return "";
+  return name;
+}
+
+function shouldDropText(node: SemanticNode, shown: Set<string>) {
+  const role = String(node.compact.role || "").toLowerCase();
+  if (!PURE_TEXT_ROLES.has(role) || node.actionNode || hasOwnValueOrFlags(node)) return false;
+  if (role === "inlinetextbox") return true;
+  const name = node.compact.name || "";
+  return !name || shown.has(name);
+}
+
+function shiftDepth(node: SemanticNode, depth: number) {
+  node.depth = depth;
+  for (const child of node.children) shiftDepth(child, depth + 1);
+}
+
+function pruneLevel(nodes: SemanticNode[], parent: SemanticNode | null) {
+  const shown = new Set<string>();
+  const parentName = visibleName(parent);
+  if (parentName) shown.add(parentName);
+  const pending = nodes.map(node => ({ node, pruned: false }));
+  const kept: SemanticNode[] = [];
+  while (pending.length) {
+    const item = pending.shift();
+    if (!item) break;
+    const node = item.node;
+    node.parent = parent;
+    node.depth = parent ? parent.depth + 1 : 0;
+    if (!item.pruned) {
+      node.children = pruneLevel(node.children, node);
+      item.pruned = true;
+    }
+    if (shouldDropText(node, shown)) {
+      const depth = node.depth;
+      for (const child of [...node.children].reverse()) {
+        shiftDepth(child, depth);
+        pending.unshift({ node: child, pruned: true });
+      }
+      continue;
+    }
+    const name = visibleName(node);
+    if (name) shown.add(name);
+    kept.push(node);
+  }
+  return kept;
+}
+
+function pruneRedundantText(roots: SemanticNode[]) {
+  const pruned = pruneLevel(roots, null);
+  roots.splice(0, roots.length, ...pruned);
+}
+
+function rebuildSemanticList(roots: SemanticNode[], into: SemanticNode[]) {
+  into.length = 0;
+  const walk = (node: SemanticNode) => {
+    into.push(node);
+    for (const child of node.children) walk(child);
+  };
+  for (const root of roots) walk(root);
 }
 
 function selectSemanticNodesByBreadth(roots: SemanticNode[], limit: number, required: Set<SemanticNode>) {
