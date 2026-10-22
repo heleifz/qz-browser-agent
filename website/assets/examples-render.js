@@ -141,9 +141,44 @@ function bindImport() {
   });
 }
 
+function pinTranscriptToTop() {
+  const bodies = [...document.querySelectorAll(".example-thread-body")];
+  if (!bodies.length) return;
+  const reset = () => {
+    for (const body of bodies) {
+      if (body.dataset.userScrolled === "true") continue;
+      body.scrollTop = 0;
+      const messages = body.querySelector("qz-session-view")?.shadowRoot?.getElementById("messages");
+      if (messages) messages.scrollTop = 0;
+    }
+  };
+  const mark = (event) => {
+    const node = event.currentTarget instanceof ShadowRoot ? event.currentTarget.host : event.currentTarget;
+    const body = node?.closest?.(".example-thread-body");
+    if (body) body.dataset.userScrolled = "true";
+  };
+  reset();
+  requestAnimationFrame(reset);
+  window.addEventListener("load", reset);
+  for (const delay of [50, 300, 1000]) window.setTimeout(reset, delay);
+  for (const body of bodies) {
+    body.addEventListener("wheel", mark, { passive: true });
+    body.addEventListener("touchmove", mark, { passive: true });
+    body.addEventListener("pointerdown", mark);
+    const root = body.querySelector("qz-session-view")?.shadowRoot;
+    root?.addEventListener("wheel", mark, { passive: true });
+    root?.addEventListener("touchmove", mark, { passive: true });
+    root?.addEventListener("pointerdown", mark);
+    root?.querySelectorAll("img").forEach((img) => {
+      if (!img.complete) img.addEventListener("load", reset, { once: true });
+    });
+  }
+}
+
 bindMedia();
 splitThreadScroll();
 bindSessions();
+pinTranscriptToTop();
 bindImport();
 syncTitle();
 document.querySelector(".language")?.addEventListener("click", () => {
