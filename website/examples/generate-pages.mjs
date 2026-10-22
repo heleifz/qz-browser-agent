@@ -81,8 +81,9 @@ function cardsHtml(localeId) {
     const title = view.fallback ? pack.title : entry.title;
     const summary = view.fallback ? pack.summary : entry.summary;
     const alt = view.fallback ? (pack.alt || pack.title) : (entry.alt || entry.title);
+    const wide = entry.poster && entry.imageWidth / entry.imageHeight > 16 / 10;
     const cover = entry.poster
-      ? `<span class="example-cover"><img src="./${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>`
+      ? `<span class="example-cover${wide ? " is-wide" : ""}"><img src="./${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>`
       : `<span class="example-cover example-cover-empty" role="img" aria-label="${escapeHtml(alt)}"></span>`;
     return `    <a class="example-card" href="${cardHref(view.source, entry.slug)}">
       ${cover}
