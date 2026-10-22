@@ -16,6 +16,7 @@ window.QZ_EXAMPLES = {
       chrome: "Add to Chrome",
       play: "Play",
       thread: "Exported conversation",
+      missing: "This session export is not on the site yet.",
     },
     "zh-CN": {
       nav: "例子",
@@ -30,6 +31,7 @@ window.QZ_EXAMPLES = {
       chrome: "添加到 Chrome",
       play: "播放",
       thread: "导出的对话",
+      missing: "这份会话导出还没有放进站点。",
     },
   },
   items: [
