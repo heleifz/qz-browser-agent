@@ -465,6 +465,34 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
+  test("a shallow snapshot clicks each duplicate-id button", async () => {
+    await h.page.evaluate(() => {
+      const root = document.createElement("div");
+      root.id = "deep-dups";
+      root.innerHTML = `
+        <section><div><p><button id="same" class="same">Alpha</button></p></div></section>
+        <section><div><p><button id="same" class="same">Beta</button></p></div></section>`;
+      document.body.append(root);
+      const [alpha, beta] = root.querySelectorAll("button");
+      alpha.addEventListener("click", () => { window.hits.alpha = (window.hits.alpha || 0) + 1; });
+      beta.addEventListener("click", () => { window.hits.beta = (window.hits.beta || 0) + 1; });
+    });
+    const snapshot = await h.call("get_ax_tree", { depth: 1, limit: 8 });
+    expect(snapshot.code, JSON.stringify(snapshot)).toBeUndefined();
+    const alpha = targets(snapshot.snapshot, "button", "Alpha")[0];
+    const beta = targets(snapshot.snapshot, "button", "Beta")[0];
+    expect(alpha, snapshot.snapshot).toBeTruthy();
+    expect(beta, snapshot.snapshot).toBeTruthy();
+    expect(alpha).not.toBe(beta);
+    const first = await h.call("act_on_element", { target: alpha, action: "click" });
+    const second = await h.call("act_on_element", { target: beta, action: "click" });
+    expect(first, JSON.stringify(first)).not.toHaveProperty("code");
+    expect(second, JSON.stringify(second)).not.toHaveProperty("code");
+    const hits = (await h.state()).hits;
+    expect(hits.alpha).toBe(1);
+    expect(hits.beta).toBe(1);
+  });
+
   test("css index defaults to the first match and an explicit index hits its own element", async () => {
     const first = await h.call("act_on_element", { target: "css:button.dup", action: "click" });
     const second = await h.call("act_on_element", { target: "css:button.dup", index: 1, action: "click" });
