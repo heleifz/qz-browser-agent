@@ -24,23 +24,16 @@ function fixture({ checked, mobile = false } = {}) {
     await onCommand(method, params);
     return {};
   };
-  const sendToContent = async (_tabId, action, params) => {
-    messages.push({ action, params });
-    await onContent(action, params);
-    return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
-  };
   registerPageElementTools({
     registerTool(definition) { if (definition.name === "act_on_element") execute = definition.execute; },
     ToolExecutionError,
-    async resolveElementReference(tabId, { target, index }) { return { tabId, target, selector: target.slice(4), index, uid: String(target).startsWith("uid:") ? target.slice(4) : "" }; },
+    async resolveElementReference(tabId, { target, index }) { return { tabId, target, selector: target.slice(4), index }; },
     elementTargetForSelector: selector => `css:${selector}`,
     getElementTargetDescription: () => "test target",
-    sendToContent,
-    async callElement(tabId, binding, action, params) {
-      return sendToContent(tabId, action, { selector: binding.selector, index: binding.index ?? 0, ...params });
-    },
-    async withElement(tabId, binding, _context, _options, fn) {
-      return fn(send, (action, params) => sendToContent(tabId, action, { selector: binding.selector, index: binding.index ?? 0, ...params }));
+    async sendToContent(_tabId, action, params) {
+      messages.push({ action, params });
+      await onContent(action, params);
+      return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
     },
     clickPointReady: inspected => Boolean(inspected.clickablePoint),
     clickNotReadyResult: () => ({ error: "No point", code: "CLICK_POINT_OUT_OF_VIEWPORT" }),
@@ -65,10 +58,7 @@ function assertNoReplay(f) {
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();
   f.onCommand(method => { if (method === "Input.insertText") throw new Error("lost insert response"); });
-  const result = await f.call({ action: "fill", value: "订单🙂", submit: true });
-  assert.equal(result.code, "INPUT_RESULT_UNKNOWN");
-  assert.equal(result.resultUnknown, true);
-  assert.equal(result.submitDispatched, false);
+  await assert.rejects(f.call({ action: "fill", value: "订单🙂", submit: true }), /lost insert response/);
   assert.equal(f.state.value, "订单🙂", "the browser may have applied the failed command");
   assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
   assert.equal(f.commands.some(command => command.params.key === "Enter"), false);
@@ -124,9 +114,7 @@ for (const mobile of [false, true]) {
     const method = mobile ? "Input.dispatchTouchEvent" : "Input.dispatchMouseEvent";
     const release = mobile ? "touchEnd" : "mouseReleased";
     f.onCommand((name, params) => { if (name === method && params.type === release) throw new Error("lost click response"); });
-    const lost = await f.call({ action: "check" });
-    assert.equal(lost.code, "INPUT_RESULT_UNKNOWN");
-    assert.equal(lost.resultUnknown, true);
+    await assert.rejects(f.call({ action: "check" }), /lost click response/);
     assert.equal(f.state.checked, true);
     assert.equal(f.commands.filter(command => command.method === method && command.params.type === release
       && (mobile || command.params.x >= 0)).length, 1, "neutral cleanup may release again, but must never click the target twice");

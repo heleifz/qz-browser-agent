@@ -15,7 +15,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -30,10 +30,6 @@ interface PickerState {
 }
 interface ContentGlobals {
   __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
-  __qzContentBuild?: string;
-  __qzCount?: (selector: unknown) => { matched: number; error?: string; code?: string };
-  __qzNode?: (selector: unknown, index: number) => Element | null;
-  __qzEditingHost?: (node: Node | null) => Element | null;
   __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
@@ -51,7 +47,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   const ELEMENT_PICKER_MOTION_MS = 240;
   const ELEMENT_PICKER_HOVER_INTENT_MS = 55;
   const ELEMENT_PICKER_RADIUS = 8;
-  let boundNode: Element | null = null;
   let activeElementPicker: PickerState | null = null;
   let elementPickerGeneration = 0;
   let elementPickerStarting = false;
@@ -759,11 +754,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function queryAll(selector: unknown) {
-    if (boundNode) {
-      if (!boundNode.isConnected) {
-        return { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
-      }
-      return { elements: [boundNode] };
+    if (selector instanceof Element) {
+      return selector.isConnected
+        ? { elements: [selector] }
+        : { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
     }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
@@ -792,7 +786,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   function queryElement(selector: unknown, index: number) {
     const query = queryAll(selector);
     if (query.error) return { ...query.error, interactable: getInteractableElements() };
-    const element = query.elements[index];
+    const element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
         ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
@@ -899,7 +893,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   async function readImageElement({ selector, index = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, format = "png", quality = 0.88 }: Partial<ContentRequest>) {
     const query = queryAll(selector);
     if (query.error) return query.error;
-    const matched = query.elements[Math.max(0, Math.floor(Number(index) || 0))];
+    const requested: unknown = selector;
+    const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
       return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
         selector,
@@ -957,8 +952,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function listImageElements({ selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 } = {}) {
     const roots = [];
-    if (boundNode) roots.push(boundNode);
-    else if (selector) {
+    if (selector) {
       const query = queryAll(selector);
       if (query.error) return query.error;
       roots.push(...query.elements);
@@ -1581,13 +1575,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const start = Math.max(0, Math.floor(Number(offset) || 0));
       const mode = String(source || "auto").toLowerCase();
       let article = null;
-      if (boundNode) {
-        const root = queryOne(selector);
-        if (root.error) return root.error;
-        article = articleFromElement(root.element, "selector");
-      }
 
-      const selection = !article && (mode === "auto" || mode === "selection") ? selectedArticle() : null;
+      const selection = mode === "auto" || mode === "selection" ? selectedArticle() : null;
       if (selection) {
         article = {
           mode: "selection",
@@ -2179,7 +2168,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     // -- Interaction --
 
     scrollPage({ direction = "down", pixels = 500, selector }) {
-      if (boundNode || selector) {
+      if (selector) {
         const query = queryOne(selector);
         if (query.error) return query.error;
         query.element.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2536,9 +2525,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementInspection(el: Element, meta: object = {}) {
     const summary = getElementSummary(el);
+    const extra = { ...(meta as Record<string, unknown>) };
+    if (extra.selector instanceof Element) delete extra.selector;
     return {
       ...summary,
-      ...meta,
+      ...extra,
       attrs: getElementAttrs(el),
       state: {
         focused: elementHasFocus(el),
@@ -2959,30 +2950,26 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     });
   }
 
-  host.__qzContentBuild = QZ_CONTENT_VERSION;
-  host.__qzCount = selector => {
-    const query = queryAll(selector);
-    return query.error ? { matched: 0, error: query.error.error, code: query.error.code } : { matched: query.elements.length };
-  };
-  host.__qzNode = (selector, index) => queryAll(selector).elements[Math.max(0, Math.floor(Number(index) || 0))] || null;
-  host.__qzEditingHost = node => {
-    const element = elementFromNode(node);
-    return element instanceof HTMLElement && element.isContentEditable ? getContentEditableRoot(element) : element;
-  };
+  const fillRoots = new Map<string, Element>();
   host.__qzInvoke = async (node, payload) => {
-    const element = elementFromNode(node);
-    if (!element) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
-    const view = element.ownerDocument?.defaultView;
-    if (!view || view.top !== view) return toolError("ELEMENT_CONTEXT_UNSUPPORTED", "Element is not in the top document", {});
-    const previous = boundNode;
-    boundNode = element;
-    try {
-      const handler = handlers[payload?.action];
-      if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
-      return await handler(payload);
-    } finally {
-      boundNode = previous;
+    const token = String(payload?.fillToken || "");
+    let element = elementFromNode(node);
+    const saved = token ? fillRoots.get(token) : undefined;
+    if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
+    const view = element?.ownerDocument?.defaultView;
+    if (!element || !view || view.top !== view) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
+      const root = getContentEditableRoot(element);
+      if (root.isConnected) {
+        element = root;
+        if (token) fillRoots.set(token, root);
+      }
     }
+    const handler = handlers[payload?.action];
+    if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
+    const result = await handler({ ...payload, selector: element } as unknown as ContentRequest);
+    const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
+    return encoded === undefined ? {} : JSON.parse(encoded);
   };
 
 })();

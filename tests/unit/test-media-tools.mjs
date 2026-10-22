@@ -96,33 +96,6 @@ let listedImages = [{
   naturalHeight: 600,
   visible: true,
 }];
-async function sendToContent(_tabId, action) {
-  if (action === "listImageElements") {
-    return {
-      ok: true,
-      count: listedImages.length,
-      scanned: listedImages.length + 2,
-      pageUrl: "https://example.test/",
-      pageTitle: "Example",
-      pageContext: {
-        heading: "Example gallery",
-        description: "A curated image gallery",
-        privateField: "must not escape the projection",
-      },
-      images: listedImages.map(item => ({ ...item })),
-    };
-  }
-  if (action === "readImageElement") {
-    return {
-      ...listedImages[0],
-      dataUrl: "data:image/png;base64,aW1hZ2U=",
-      mimeType: "image/png",
-      width: 800,
-      height: 600,
-    };
-  }
-  return {};
-}
 const runtime = registerMediaTools({
   getPageContext: () => ({ pageMode: mobileMode ? "mobile" : "desktop" }),
   registerTool({ name, description, parameters, execute, validateArgs }) { definitions.set(name, { description, parameters, execute, validateArgs }); },
@@ -172,8 +145,33 @@ const runtime = registerMediaTools({
     };
   },
   makeSessionTabTargetError(code, details) { return new ToolExecutionError(code, code, details); },
-  sendToContent,
-  async callElement(_tabId, _binding, action) { return sendToContent(_tabId, action); },
+  async sendToContent(_tabId, action) {
+    if (action === "listImageElements") {
+      return {
+        ok: true,
+        count: listedImages.length,
+        scanned: listedImages.length + 2,
+        pageUrl: "https://example.test/",
+        pageTitle: "Example",
+        pageContext: {
+          heading: "Example gallery",
+          description: "A curated image gallery",
+          privateField: "must not escape the projection",
+        },
+        images: listedImages.map(item => ({ ...item })),
+      };
+    }
+    if (action === "readImageElement") {
+      return {
+        ...listedImages[0],
+        dataUrl: "data:image/png;base64,aW1hZ2U=",
+        mimeType: "image/png",
+        width: 800,
+        height: 600,
+      };
+    }
+    return {};
+  },
   async resolveSelectorTarget(tabId, selector) { return { tabId, selector }; },
   async resolveElementReference(tabId, { target }) {
     const uid = String(target || "").startsWith("uid:") ? String(target).slice(4) : "";

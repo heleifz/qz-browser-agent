@@ -26,6 +26,7 @@ const html = `<!doctype html><meta charset="utf-8"><title>Direct node</title>
   <form id="rich-form"><div id="rich" contenteditable="true"><b id="child">old rich</b></div><button type="submit">Go</button></form>
   <input id="when" type="date" aria-label="When">
   <input id="plain" aria-label="Plain" value="old">
+  <select id="pick" aria-label="Pick"><option value="one">one</option><option value="two">two</option></select>
   <div id="closed"></div>
   <div id="open"></div>
   <img id="blob" alt="Blob picture" width="32" height="32">
@@ -95,7 +96,14 @@ async function createHarness() {
           updateWorkingTab: async ({ tab }) => { tabId = tab.id; },
         },
       });
+      let debuggerAttaches = 0;
+      const attach = chrome.debugger.attach.bind(chrome.debugger);
+      chrome.debugger.attach = (target, version) => {
+        debuggerAttaches += 1;
+        return attach(target, version);
+      };
       globalThis.elementHarness = {
+        attaches: () => debuggerAttaches,
         async call(name, args, signal) {
           try { return await runtime.execute(name, { tabId, ...args }, signal, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { error: error.message, code: error.code, details: error.details }; }
@@ -114,6 +122,7 @@ async function createHarness() {
             rich: document.querySelector("#rich")?.innerText || "",
             when: document.querySelector("#when")?.value || "",
             plain: document.querySelector("#plain")?.value || "",
+            pick: document.querySelector("#pick")?.value || "",
             shadow: window.shadowInput ? window.shadowInput.value : "",
           }) }))[0].result;
         },
@@ -134,6 +143,7 @@ async function createHarness() {
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
     return {
       call, state, close, page, worker,
+      attaches: () => worker.evaluate(() => elementHarness.attaches()),
       detach: () => worker.evaluate(() => elementHarness.detach()),
     };
   } catch (error) {
@@ -194,6 +204,24 @@ test.describe("uid resolves the original node", () => {
   test.beforeAll(async () => { h = await createHarness(); });
   test.afterAll(async () => { await h?.close(); });
 
+  test("css read and write do not attach the debugger", async () => {
+    await h.detach();
+    const before = await h.attaches();
+    const inspected = await h.call("inspect_element", { target: "css:#save" });
+    expect(inspected.code, JSON.stringify(inspected)).toBeUndefined();
+    expect(JSON.stringify(inspected)).toContain("Save");
+    const dom = await h.call("read_dom", { selector: "css:#scope" });
+    expect(dom.content, JSON.stringify(dom)).toContain("INSIDE-TOKEN");
+    const article = await h.call("read_article", { selector: "css:#scope", source: "selector", limit: 4000 });
+    expect(article.text, JSON.stringify(article)).toContain("INSIDE-TOKEN");
+    const found = await h.call("find_elements", { selector: "css:#save", pattern: "Save text" });
+    expect(found.matches ?? found.results?.length, JSON.stringify(found)).not.toBe(0);
+    const selected = await h.call("act_on_element", { target: "css:#pick", action: "select", value: "two" });
+    expect(selected.code, JSON.stringify(selected)).toBeUndefined();
+    expect((await h.state()).pick).toBe("two");
+    expect(await h.attaches()).toBe(before);
+  });
+
   test("a text-node uid operates on the owning element", async () => {
     const snapshot = (await tree(h)).snapshot;
     const textUid = targets(snapshot, "StaticText", "Save")[0];
@@ -250,6 +278,16 @@ test.describe("uid resolves the original node", () => {
     const shot = await h.call("screenshot", { target: blob.target });
     expect(shot, JSON.stringify(shot)).not.toHaveProperty("code");
     expect(shot.dataUrl || shot._image).toBeTruthy();
+    const [left, right] = await Promise.all([
+      h.call("read_image", { target: blob.target }),
+      h.call("read_image", { target: covered.target }),
+    ]);
+    const leftPixel = await sample(h.page, left.dataUrl || left._image);
+    const rightPixel = await sample(h.page, right.dataUrl || right._image);
+    expect(leftPixel.g, JSON.stringify(left)).toBeGreaterThan(200);
+    expect(leftPixel.r).toBeLessThan(40);
+    expect(rightPixel.r, JSON.stringify(right)).toBeGreaterThan(200);
+    expect(rightPixel.b).toBeLessThan(40);
   });
 
   test("closed-shadow focus, date fill, and rich-text child readback keep the existing editors", async () => {
@@ -272,10 +310,8 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
-  test("duplicate css requires an index and each index hits its own element", async () => {
-    const missing = await h.call("act_on_element", { target: "css:button.dup", action: "click" });
-    expect(missing.code).toBe("ELEMENT_INDEX_REQUIRED");
-    const first = await h.call("act_on_element", { target: "css:button.dup", index: 0, action: "click" });
+  test("css index defaults to the first match and an explicit index hits its own element", async () => {
+    const first = await h.call("act_on_element", { target: "css:button.dup", action: "click" });
     const second = await h.call("act_on_element", { target: "css:button.dup", index: 1, action: "click" });
     expect(first, JSON.stringify(first)).not.toHaveProperty("code");
     expect(second, JSON.stringify(second)).not.toHaveProperty("code");
@@ -298,7 +334,7 @@ test.describe("uid resolves the original node", () => {
     });
     const replaced = await h.call("act_on_element", { target: swap, action: "click" });
     expect(replaced.code).toBe("STALE_ELEMENT_UID");
-    expect(replaced.error).toMatch(/get_ax_tree/);
+    expect(replaced.error).toMatch(/page structure|页面结构|頁面結構/);
     expect((await h.state()).hits.swap || 0).toBe(0);
     const fresh = await tree(h);
     const freshSwap = targets(fresh.snapshot, "button", "Swap")[0];
@@ -316,24 +352,17 @@ test.describe("uid resolves the original node", () => {
     expect((await h.state()).hits.stay || 0).toBe(0);
   });
 
-  test("a child frame is rejected and a detached debugger can be used again", async () => {
+  test("a child frame is not operated through the top-document content script", async () => {
     await h.page.locator("#frame").waitFor();
     await expect.poll(async () => h.page.frameLocator("#frame").locator("button").count()).toBe(1);
     const snapshot = (await tree(h)).snapshot;
     const inside = targets(snapshot, "Inside frame")[0];
     if (inside) {
       const rejected = await h.call("act_on_element", { target: inside, action: "click" });
-      expect(rejected.code, JSON.stringify(rejected)).toBe("ELEMENT_CONTEXT_UNSUPPORTED");
+      expect(rejected.code, JSON.stringify(rejected)).toBe("STALE_ELEMENT_UID");
     } else {
       expect(snapshot).toContain('Iframe "Child frame"');
     }
-    const detached = await h.detach();
-    expect(detached.detached).toBe(true);
-    const next = await tree(h);
-    const reconnect = targets(next.snapshot, "button", "Reconnect")[0];
-    const clicked = await h.call("act_on_element", { target: reconnect, action: "click" });
-    expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
-    expect((await h.state()).hits.reconnect).toBe(1);
   });
 
   test("cancellation does not change the control", async () => {

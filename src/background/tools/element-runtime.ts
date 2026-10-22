@@ -4,44 +4,50 @@ import type { createCdpRuntime } from './cdp-runtime.js';
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number; backendNodeId?: number; role?: string; name?: string; createdAt?: number;
-  loaderId?: string; frameId?: string;
+  loaderId?: string;
   [field: string]: unknown;
 }
-interface ElementBinding {
-  tabId?: number; selector?: string; index?: number; target?: string; uid?: string; ref?: ElementReference;
-}
-interface ElementCallOptions { editingHost?: boolean; scope?: boolean }
-type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
-type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-const CONTENT_MARK = "direct-node";
-const contextsByTab = new Map<number, Set<number>>();
-function rememberExecutionContext(source: { tabId?: number } | undefined, method: string, params: unknown) {
-  if (method !== "Runtime.executionContextCreated") return;
-  const id = Number(record(record(params).context).id);
-  if (!Number.isInteger(id) || id <= 0) return;
-  const tabId = Number(source?.tabId);
-  const key = Number.isInteger(tabId) && tabId > 0 ? tabId : 0;
-  const found = contextsByTab.get(key) || new Set<number>();
-  found.add(id);
-  contextsByTab.set(key, found);
-}
-// Contexts are emitted when the debugger attaches. A listener added later never sees them.
-chrome.debugger?.onEvent?.addListener((source, method, params) => rememberExecutionContext(source, method, params));
-chrome.debugger?.onDetach?.addListener(source => {
-  const tabId = Number(source?.tabId);
-  if (Number.isInteger(tabId)) contextsByTab.delete(tabId);
-});
 interface ElementRuntimeHost {
   ToolExecutionError: ToolErrorConstructor;
   getToolRuntimeDependencies: GetToolRuntimeDependencies;
   makeSessionTabTargetError(code: string, details: Record<string, unknown>): Error;
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
+  sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
+import { isElementReply } from "../../shared/contracts/page-content.js";
 import { getEffectiveTabUrl } from "../../shared/tab-utils.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { t } from "./messages.js";
+
+const OBJECT_GROUP = "qz-uid";
+const isolatedByTab = new Map<number, Map<string, number>>();
+function noteExecutionContext(source: { tabId?: number } | undefined, method: string, params: unknown) {
+  const tabId = Number(source?.tabId);
+  if (!Number.isInteger(tabId) || tabId <= 0) return;
+  if (method === "Runtime.executionContextsCleared") { isolatedByTab.delete(tabId); return; }
+  if (method === "Runtime.executionContextDestroyed") {
+    const id = Number(record(params).executionContextId);
+    const frames = isolatedByTab.get(tabId);
+    if (frames) for (const [frameId, known] of frames) if (known === id) frames.delete(frameId);
+    return;
+  }
+  if (method !== "Runtime.executionContextCreated") return;
+  const context = record(record(params).context);
+  const aux = record(context.auxData);
+  if (context.origin !== `chrome-extension://${chrome.runtime?.id || ""}` || aux.type !== "isolated") return;
+  const frames = isolatedByTab.get(tabId) || new Map<string, number>();
+  frames.set(String(aux.frameId || ""), Number(context.id));
+  isolatedByTab.set(tabId, frames);
+}
+globalThis.chrome?.debugger?.onEvent?.addListener((source, method, params) => noteExecutionContext(source, method, params));
+globalThis.chrome?.debugger?.onDetach?.addListener(source => {
+  const tabId = Number(source?.tabId);
+  if (Number.isInteger(tabId)) isolatedByTab.delete(tabId);
+});
+type CdpSend = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+type ElementCaller = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 /** Owns stable element references and page/tab/session validation. */
 export function createElementRuntime({
@@ -50,6 +56,7 @@ export function createElementRuntime({
   makeSessionTabTargetError,
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
+  sendToContent,
 }: ElementRuntimeHost) {
 // ---------------------------------------------------------------------------
 // Page snapshot element refs
@@ -158,17 +165,18 @@ function addElementTargetsToFindResult(result: unknown) {
   return addTarget(result);
 }
 
-async function resolveSelectorTarget(tabId: number | undefined, selector = "", index?: number, context: ToolContext = {}) {
+async function resolveSelectorTarget(tabId: number | undefined, selector = "", index = 0, context: ToolContext = {}) {
   const raw = String(selector || "").trim();
   if (!raw) return { tabId, selector: "" };
-  if (!isElementTarget(raw)) return { tabId, selector: raw, index };
+  if (!isElementTarget(raw)) return { tabId, selector: raw };
   const parsed = parseElementTarget(raw);
-  if (parsed.selector) return { tabId, selector: parsed.selector, index };
+  if (parsed.selector) return { tabId, selector: parsed.selector };
   const ref = await resolveElementReference(tabId, { target: raw, index }, context);
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
 }
 
-async function resolveElementReference(tabId: number | undefined, { target = "", index }: { target?: string; index?: number } = {}, context: ToolContext = {}) {
+async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, allowBackendOnly = false } = {}, context: ToolContext = {}) {
+  void allowBackendOnly;
   const normalized = parseElementTarget(target);
   const requestedUid = normalizeElementUid(normalized.uid);
   const requestedSelector = String(normalized.selector || "").trim();
@@ -256,7 +264,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   return {
     tabId: resolvedTabId,
     selector: "",
-    index,
+    index: requestedSelector ? index : Number(ref.index || 0),
     uid: requestedUid,
     target: elementTargetForUid(requestedUid),
     ref,
@@ -272,67 +280,66 @@ function normalizeElementUid(uid: unknown) {
 }
 
 async function backendNodeIdForSelector(tabId: number, selector: string, context: ToolContext = {}) {
+  const bound = await bindBackendNodes(tabId, [selector], context);
+  return bound.ids[0] || 0;
+}
+
+async function bindBackendNodes(tabId: number, selectors: string[], context: ToolContext = {}) {
   try {
-    return await withDebugger(tabId, async (_target, send) => {
-      const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
-      const documentNodeId = record(root.root).nodeId;
-      if (!documentNodeId) return 0;
-      const queried = record(await send("DOM.querySelector", { nodeId: documentNodeId, selector }));
-      const nodeId = Number(queried?.nodeId || 0);
-      if (!nodeId) return 0;
-      const described = record(await send("DOM.describeNode", { nodeId }));
-      const node = record(described.node);
-      return Number(node.backendNodeId || node.backendDOMNodeId || 0);
-    }, context);
-  } catch(err) {
+    return await withDebugger(tabId, async (_target, send) => describeSelectors(send, selectors), context);
+  } catch (err) {
     if (isCdpFallbackForbiddenError(err)) throw err;
-    return 0;
+    return { loaderId: "", ids: selectors.map(() => 0) };
   }
 }
 
-/** Hand the original node to the existing content handler. Object ids live for this call only. */
-async function callElement(tabId: number | undefined, binding: ElementBinding, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}, options: ElementCallOptions = {}) {
-  return withElement(tabId, binding, context, options, (_send, call) => call(action, params));
+async function describeSelectors(send: CdpSend, selectors: string[]) {
+  const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
+  const root = record(await send("DOM.getDocument", { depth: 0, pierce: true }));
+  const documentNodeId = Number(record(root.root).nodeId || 0);
+  const ids: number[] = [];
+  for (const selector of selectors) {
+    if (!documentNodeId || !selector) { ids.push(0); continue; }
+    const all = record(await send("DOM.querySelectorAll", { nodeId: documentNodeId, selector }));
+    const nodeIds = Array.isArray(all.nodeIds) ? all.nodeIds.map(id => Number(id)).filter(id => id > 0) : [];
+    const nodeId = nodeIds.length === 1 ? nodeIds[0] : 0;
+    if (!nodeId) { ids.push(0); continue; }
+    const described = record(await send("DOM.describeNode", { nodeId }));
+    ids.push(Number(record(described.node).backendNodeId || record(described.node).backendDOMNodeId || 0));
+  }
+  return { loaderId: String(frame.loaderId || ""), ids };
 }
 
-async function withElement<T>(tabId: number | undefined, binding: ElementBinding, context: ToolContext, options: ElementCallOptions, run: (send: CdpSend, call: ElementCaller) => Promise<T>): Promise<T> {
+async function callElement(tabId: number | undefined, binding: { tabId?: number; selector?: string; index?: number; uid?: string; target?: string; ref?: ElementReference }, action: string, params: Record<string, unknown> = {}, context: ToolContext = {}) {
+  if (!binding.uid) {
+    const index = Number.isInteger(binding.index) && Number(binding.index) >= 0 ? Number(binding.index) : 0;
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector: binding.selector || "", index }), action);
+  }
+  return withElement(tabId, binding, context, (_send, call) => call(action, params));
+}
+
+async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpSend, call: ElementCaller) => Promise<T>) {
   const id = Number(binding.tabId || tabId);
   if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable tabId", { target: binding.target || "" });
+  const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
-    await assertSameDocument(send, binding.ref);
-    const held = new Set<string>();
+    const loaderId = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
+    if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
+    const objectId = await objectFromBackend(id, send, binding, objectGroup);
     try {
-      let objectId = binding.uid
-        ? await objectFromBackend(id, send, binding)
-        : await objectFromSelector(id, send, String(binding.selector || ""), binding.index, options.scope === true);
-      if (objectId) held.add(objectId);
-      if (options.editingHost && objectId) objectId = await adoptEditingHost(send, objectId, held);
-      return await run(send, (action, params = {}) => invokeBound(send, objectId, action, params));
+      return await run(send, (action, params = {}) => invokeBound(send, objectId, action, params, objectGroup));
     } finally {
-      for (const objectId of held) {
-        try { await send("Runtime.releaseObject", { objectId }); } catch { /* The node may already be gone. */ }
-      }
+      try { await send("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
   }, context);
 }
 
-async function assertSameDocument(send: CdpSend, ref?: ElementReference) {
-  if (!ref?.loaderId && !ref?.frameId) return;
-  const frame = record(record(record(await send("Page.getFrameTree")).frameTree).frame);
-  const frameId = String(frame.id || "");
-  const loaderId = String(frame.loaderId || "");
-  if (ref.frameId && frameId && ref.frameId !== frameId) {
-    throw new ToolExecutionError("ELEMENT_CONTEXT_UNSUPPORTED", t("elementContextUnsupported"), { frameId: ref.frameId });
-  }
-  if (ref.loaderId && loaderId && ref.loaderId !== loaderId) throw staleElement(ref.uid || "");
-}
-
-async function objectFromBackend(tabId: number, send: CdpSend, binding: ElementBinding) {
+async function objectFromBackend(tabId: number, send: CdpSend, binding: { target?: string; ref?: ElementReference }, objectGroup: string) {
   const backendNodeId = Number(binding.ref?.backendNodeId || 0);
   if (!backendNodeId) throw staleElement(binding.target || "");
   const contextId = await contentContextId(tabId, send);
   try {
-    const resolved = record(await send("DOM.resolveNode", { backendNodeId, executionContextId: contextId }));
+    const resolved = record(await send("DOM.resolveNode", { backendNodeId, executionContextId: contextId, objectGroup }));
     const objectId = String(record(resolved.object).objectId || "");
     if (!objectId) throw staleElement(binding.target || "");
     return objectId;
@@ -342,76 +349,48 @@ async function objectFromBackend(tabId: number, send: CdpSend, binding: ElementB
   }
 }
 
-async function objectFromSelector(tabId: number, send: CdpSend, selector: string, index: number | undefined, scope: boolean) {
-  if (!selector.trim()) throw new ToolExecutionError("MISSING_SELECTOR", "selector is required", { selector });
-  const contextId = await contentContextId(tabId, send);
-  const counted = record(await send("Runtime.evaluate", {
-    contextId, returnByValue: true, expression: `globalThis.__qzCount(${JSON.stringify(selector)})`,
-  }));
-  const count = record(record(counted.result).value);
-  if (count.error) throw new ToolExecutionError(String(count.code || "ELEMENT_NOT_FOUND"), String(count.error), { selector });
-  const matched = Number(count.matched || 0);
-  const chosen = Number.isInteger(index) && Number(index) >= 0 ? Number(index) : undefined;
-  if (matched > 1 && chosen === undefined) {
-    throw new ToolExecutionError("ELEMENT_INDEX_REQUIRED", t(scope ? "elementIndexRequiredScope" : "elementIndexRequired", { count: String(matched) }), { selector, matched });
-  }
-  if (!matched) throw new ToolExecutionError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { selector, matched });
-  const picked = record(await send("Runtime.evaluate", {
-    contextId, returnByValue: false, expression: `globalThis.__qzNode(${JSON.stringify(selector)}, ${chosen ?? 0})`,
-  }));
-  const objectId = String(record(picked.result).objectId || "");
-  if (!objectId) throw new ToolExecutionError("ELEMENT_NOT_FOUND", `Element not found: ${selector}[${chosen ?? 0}]`, { selector, index: chosen ?? 0, matched });
-  return objectId;
-}
-
 async function contentContextId(tabId: number, send: CdpSend) {
-  await send("Runtime.enable");
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const ids = new Set<number>([...(contextsByTab.get(tabId) || []), ...(contextsByTab.get(0) || [])]);
-    for (const id of ids) {
-      let probed: Record<string, unknown> = {};
-      try {
-        probed = record(await send("Runtime.evaluate", { contextId: id, expression: "globalThis.__qzContentBuild", returnByValue: true }));
-      } catch (err) {
-        if (isCdpFallbackForbiddenError(err)) throw err;
-        continue;
-      }
-      if (String(record(probed.result).value || "").includes(CONTENT_MARK)) return id;
-    }
-    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 20));
+  const main = String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).id || "");
+  const known = () => {
+    const frames = isolatedByTab.get(tabId);
+    if (!frames?.size) return 0;
+    if (main && frames.has(main)) return Number(frames.get(main));
+    return frames.size === 1 ? Number([...frames.values()][0]) : 0;
+  };
+  if (!known()) {
+    try { await send("Runtime.disable"); } catch (err) { if (isCdpFallbackForbiddenError(err)) throw err; }
+    await send("Runtime.enable");
   }
-  throw new ToolExecutionError("CONTENT_SCRIPT_UNAVAILABLE", t("contentScriptUnavailable"), { tabId });
+  const id = known();
+  if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
+  return id;
 }
 
-async function adoptEditingHost(send: CdpSend, objectId: string, held: Set<string>) {
+async function invokeBound(send: CdpSend, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
   const remote = record(await send("Runtime.callFunctionOn", {
-    objectId, returnByValue: false, functionDeclaration: "function(){return globalThis.__qzEditingHost(this)}",
-  }));
-  const next = String(record(remote.result).objectId || "");
-  if (!next) return objectId;
-  held.add(next);
-  return next;
-}
-
-async function invokeBound(send: CdpSend, objectId: string, action: string, params: Record<string, unknown>) {
-  const remote = record(await send("Runtime.callFunctionOn", {
-    objectId, awaitPromise: true, returnByValue: true,
+    objectId, objectGroup, awaitPromise: true, returnByValue: true,
     functionDeclaration: "function(payload){return globalThis.__qzInvoke(this,payload)}",
-    arguments: [{ value: { ...params, action, index: 0 } }],
+    arguments: [{ value: { ...params, action } }],
   }));
   const details = record(remote.exceptionDetails);
   if (details.text || details.exception) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_UNAVAILABLE", t("contentScriptUnavailable"), { action, message: String(details.text || "") });
+    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
   }
-  return record(record(remote.result).value);
+  return asElementReply(record(remote.result).value, action);
+}
+
+function asElementReply(value: unknown, action: string) {
+  const reply = record(value);
+  const code = String(reply.code || "");
+  if (code === "STALE_ELEMENT_UID" || code === "STALE_ELEMENT_UID_PAGE_CHANGED") {
+    throw new ToolExecutionError(code, String(reply.error || code), { action });
+  }
+  if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, { action });
+  return reply;
 }
 
 function staleElement(target: unknown) {
-  return new ToolExecutionError(
-    "STALE_ELEMENT_UID",
-    "Element target is stale or unknown. The document changed or the node is gone. Take a fresh get_ax_tree snapshot, then retry.",
-    { target },
-  );
+  return new ToolExecutionError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", { target });
 }
 
 function samePageUrl(a: unknown, b: unknown) {
@@ -434,6 +413,7 @@ function samePageUrl(a: unknown, b: unknown) {
     resolveElementReference,
     addElementTargetsToFindResult,
     backendNodeIdForSelector,
+    bindBackendNodes,
     callElement,
     withElement,
   });

@@ -462,15 +462,6 @@ export function createCdpRuntime({
       return result;
     } catch (error) {
       assertStateActive(state);
-      if (state.attached && /not attached to the tab/i.test(String(record(error).message || error))) {
-        state.attached = false;
-        await debuggerApi.attach(state.target, "1.3");
-        state.attached = true;
-        const result = await debuggerApi.sendCommand(state.target, method, params);
-        assertStateActive(state);
-        check();
-        return result;
-      }
       check();
       throw error;
     }

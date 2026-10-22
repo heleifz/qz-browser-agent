@@ -50,8 +50,8 @@ console.log("element target contract tests passed");
 function assertTargetInfrastructure() {
   assert.match(tools, /const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> \| "css:" <css_selector>'/, "target grammar should be centralized");
   assert.match(tools, /function parseElementTarget\(target = ""\)/, "target parser should exist");
-  assert.match(tools, /function resolveSelectorTarget\(tabId, selector = "", index, context = \{\}\)/, "selector target compatibility helper should exist");
-  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw, index \};/, "raw CSS selectors should remain valid selector arguments");
+  assert.match(tools, /function resolveSelectorTarget\(tabId, selector = "", index = 0, context = \{\}\)/, "selector target compatibility helper should exist");
+  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw \};/, "raw CSS selectors should remain valid selector arguments");
   assert.match(tools, /const ref = await resolveElementReference\(tabId, \{ target: raw, index \}, context\);/, "uid: selector arguments should resolve through the target resolver");
   assert.doesNotMatch(tools, /async function resolveElementReference\(tabId, \{[^}]*uid[^}]*selector/, "element resolver should not keep the old uid/selector argument pair");
 }
@@ -141,11 +141,10 @@ function assertElementActionClickContract() {
 }
 
 function assertElementActionRoutingContract() {
-  assert.match(tools, /callElement\(tabId, ref, "actOnElement", \{ elementAction: normalizedAction/, "act_on_element should not let element actions overwrite the content message route");
-  assert.match(tools, /call\("prepareElementFill"/, "fill should prepare the resolved editing surface before trusted input");
-  assert.match(tools, /call\("readElementActionState"/, "element mutations should read back the page's actual state");
-  assert.match(tools, /INPUT_RESULT_UNKNOWN/, "input that was already dispatched should report an unknown result instead of replaying");
-  assert.doesNotMatch(tools, /selectorFromBackendNode/, "uid resolution should not generate a CSS selector");
+  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: normalizedAction/, "act_on_element should not let element actions overwrite the content message route");
+  assert.match(tools, /sendToContent\(tabId, "prepareElementFill"/, "fill should prepare the resolved editing surface before trusted input");
+  assert.match(tools, /sendToContent\(tabId, "readElementActionState"/, "element mutations should read back the page's actual state");
+  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: "press"/, "press fallback should use the elementAction payload field");
   assert.match(contentScript, /actOnElement\(\{ selector, index = 0, action, elementAction = ""/, "content actOnElement should read an explicit elementAction payload");
   assert.match(contentScript, /const op = String\(elementAction \|\| action \|\| ""\)\.trim\(\)/, "content actOnElement should keep direct handler compatibility");
   assert.match(contentScript, /if \(op === "select"\)/, "content actOnElement should support native select");
@@ -162,7 +161,7 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated\)/, "get_ax_tree should document truncated branch markers");
-  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}, context\)/, "get_ax_tree should resolve uid/css roots through the target resolver");
+  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, allowBackendOnly: true \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
   assert.match(block, /const fetchDepth = rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
@@ -173,7 +172,8 @@ function assertAxTreeCompactContract() {
   assert.match(block, /canvases: compactAxCanvasesForModel/, "get_ax_tree should compact canvas summaries before returning to the model");
   assert.doesNotMatch(block, /nodes: ax\.nodes/, "get_ax_tree should not return the full node array");
   assert.match(tools, /function backendNodeIdForSelector\(tabId, selector, context = \{\}\)/, "css roots should be convertible to backend nodes within the current run");
-  assert.match(tools, /return await withDebugger\(tabId, async \(_target, send\) => \{[\s\S]*send\("DOM\.querySelector"[\s\S]*send\("DOM\.describeNode"/, "css root backend lookup should stay inside one run-owned CDP connection");
+  assert.match(tools, /return await withDebugger\(tabId, async \(_target, send\) => describeSelectors\(send, selectors\)/, "css root backend lookup should stay inside one run-owned CDP connection");
+  assert.match(tools, /send\("DOM\.querySelectorAll"[\s\S]*nodeIds\.length === 1[\s\S]*send\("DOM\.describeNode"/, "a non-unique selector must not bind the first node");
   assert.match(tools, /function buildAccessibilitySnapshot\(rawNodes, \{[\s\S]*rootBackendNodeId = 0/, "AX snapshot should support subtree roots");
   assert.match(tools, /function selectSemanticNodesByBreadth\(roots, limit\)/, "AX snapshot limit should use BFS budget selection");
   assert.match(tools, /selectSemanticNodesByBreadth\(semanticRoots, limit\)/, "AX snapshot should apply BFS selection before rendering");

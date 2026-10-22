@@ -2,7 +2,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
-import type { ElementReference } from "#sdk/background/browser";
+import type { ElementReference, ElementTarget } from "#sdk/background/browser";
 import type { PageObservationHost, Screenshot, ScreenshotOptions } from "#sdk/background/browser";
 import type { ImageAssetRecord } from "#sdk/shared/data";
 import { bytesToBase64 } from "#sdk/shared/format";
@@ -16,7 +16,7 @@ type MediaHost = Pick<ToolExtensionAPI,
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "registerElementRef"
   | "elementTargetForUid" | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
-  | "getElementTargetDescription" | "callElement" | "backendNodeIdForSelector"> & PageObservationHost & {
+  | "getElementTargetDescription" | "callElement" | "bindBackendNodes"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
   upsertDataRows?: typeof upsertDataRows; saveImageAsset?: typeof saveImageAsset;
   now?(): number;
@@ -68,8 +68,6 @@ export function registerMediaTools({
   sendToContent: contentRequest,
   resolveSelectorTarget,
   resolveElementReference,
-  callElement,
-  backendNodeIdForSelector = async () => 0,
   makeSnapshotId,
   registerElementRef,
   elementTargetForUid,
@@ -77,6 +75,11 @@ export function registerMediaTools({
   elementTargetForRef,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
   getElementTargetDescription,
+  callElement = async (tabId, binding, action, params = {}) => {
+    const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 });
+    return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
+  },
+  bindBackendNodes = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
   getTabPageState,
   pageStateDelta,
   commitObservedPageNavigation,
@@ -106,6 +109,18 @@ const screenActions = createScreenActionRuntime({
 
 async function sendToContent(tabId: number, action: string, args: Fields): Promise<ImageMetadata> {
   return imageMetadata(await contentRequest(tabId, action, args));
+}
+function imageCallTarget(candidate: ImageMetadata): ElementTarget {
+  const stored = candidate.ref && typeof candidate.ref === "object" && !Array.isArray(candidate.ref) ? candidate.ref as ElementReference : undefined;
+  const backendNodeId = Number(candidate.backendNodeId || stored?.backendNodeId || 0);
+  return {
+    tabId: Number(candidate.tabId || 0) || undefined,
+    selector: String(candidate.selector || ""),
+    index: Number.isFinite(Number(candidate.index)) ? Number(candidate.index) : 0,
+    target: typeof candidate.target === "string" ? candidate.target : undefined,
+    uid: typeof candidate.uid === "string" ? candidate.uid : undefined,
+    ref: backendNodeId ? { ...stored, backendNodeId } : stored,
+  };
 }
 function imageMetadata(value: unknown): ImageMetadata {
   const result = record(value);
@@ -186,7 +201,7 @@ registerTool({
     let screenCapture = null;
 
     if (hasElementTarget) {
-      ref = await resolveElementReference(tabId, { target, index }, context);
+      ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
         quality,
@@ -320,46 +335,34 @@ registerTool({
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
-    const raw = String(selector || "").trim();
-    const target = raw ? await resolveSelectorTarget(tabId, raw, undefined, context) : { tabId, selector: "" };
+    const target = await resolveSelectorTarget(tabId, selector, 0, context);
     if (!target.tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "list_images" });
-    const result = raw
-      ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { selector: target.selector || raw, minWidth, minHeight, visibleOnly, limit }, context, { scope: true }))
-      : await sendToContent(target.tabId, "listImageElements", { selector: "", minWidth, minHeight, visibleOnly, limit });
+    const result = target.uid
+      ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
+      : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit });
     if (result?.error) return result;
-    let loaderId = "";
-    let frameId = "";
-    try {
-      const tree = record(await sendCdp(target.tabId, "Page.getFrameTree", {}, context));
-      const frame = record(record(tree.frameTree).frame);
-      loaderId = String(frame.loaderId || "");
-      frameId = String(frame.id || "");
-    } catch (err) {
-      if (isCdpFallbackForbiddenError(err)) throw err;
-    }
     const snapshotId = makeSnapshotId(target.tabId);
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
-    const images = [];
-    for (const [rank, item] of listed.entries()) {
-      const uid = `${snapshotId}_img_${rank + 1}`;
-      const backendNodeId = item.selector ? await backendNodeIdForSelector(target.tabId, item.selector, context) : 0;
-      registerElementRef({
-        uid,
-        tabId: target.tabId,
-        sessionId: context.sessionId || "",
-        pageUrl: result.pageUrl || "",
-        index: 0,
-        role: "img",
-        name: item.alt || item.title || "",
-        imageSrc: item.currentSrc || item.src || "",
-        imageIndex: item.index,
-        backendNodeId: backendNodeId || undefined,
-        loaderId,
-        frameId,
-        source: "list_images",
+    const bound = await bindBackendNodes(target.tabId, listed.map(item => String(item.selector || "")), context);
+    const images = listed.map((item, rank) => {
+        const uid = `${snapshotId}_img_${rank + 1}`;
+        registerElementRef({
+          uid,
+          tabId: target.tabId,
+          sessionId: context.sessionId || "",
+          pageUrl: result.pageUrl || "",
+          selector: item.selector || "",
+          index: 0,
+          role: "img",
+          name: item.alt || item.title || "",
+          imageSrc: item.currentSrc || item.src || "",
+          imageIndex: item.index,
+          backendNodeId: bound.ids[rank] || undefined,
+          loaderId: bound.loaderId || undefined,
+          source: "list_images",
+        });
+        return imageDiscoveryResultItem(item, elementTargetForUid(uid));
       });
-      images.push(imageDiscoveryResultItem(item, elementTargetForUid(uid)));
-    }
     const pageContext = imageDiscoveryPageContext(result.pageContext);
     return {
       ok: result.ok !== false,
@@ -383,9 +386,9 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
   }
-  const listed = imageMetadata(await callElement(ref.tabId, ref, "listImageElements", {
-    selector: ref.selector, minWidth: 0, minHeight: 0, visibleOnly: false, limit: 2,
-  }, context, { scope: true }));
+  const listed = imageMetadata(await callElement(ref.tabId!, ref, "listImageElements", {
+    minWidth: 0, minHeight: 0, visibleOnly: false, limit: 2,
+  }, context));
   if (listed?.error) {
     throw new ToolExecutionError(
       listed.code || "LIST_IMAGES_FAILED",
@@ -686,21 +689,15 @@ registerTool({
       return await readImageUrlAsResult(url, { detail, maxBytes, maxWidth, maxHeight, format, quality, signal });
     }
 
-    const ref = await resolveElementReference(tabId, { target, index }, context);
+    const ref = await resolveElementReference(tabId, { target, index, allowBackendOnly: true }, context);
     let canvasResult: ImageMetadata;
     try {
-      canvasResult = imageMetadata(await callElement(ref.tabId, ref, "readImageElement", {
-        selector: ref.selector, index: ref.index, maxWidth, maxHeight, format, quality: normalizeImageQuality(quality),
+      canvasResult = imageMetadata(await callElement(ref.tabId!, ref, "readImageElement", {
+        maxWidth, maxHeight, format, quality: normalizeImageQuality(quality),
       }, context));
     } catch (err) {
-      if (isCdpFallbackForbiddenError(err)) throw err;
-      const code = errorCode(err);
-      if (["STALE_ELEMENT_UID", "STALE_ELEMENT_UID_PAGE_CHANGED", "ELEMENT_CONTEXT_UNSUPPORTED", "ELEMENT_INDEX_REQUIRED"].includes(code)) throw err;
-      canvasResult = { error: errorMessage(err), code: code || "IMAGE_CANVAS_FAILED", src: String(ref.ref?.imageSrc || "") };
-    }
-    const canvasCode = String(canvasResult?.code || "");
-    if (["STALE_ELEMENT_UID", "STALE_ELEMENT_UID_PAGE_CHANGED", "ELEMENT_CONTEXT_UNSUPPORTED", "ELEMENT_INDEX_REQUIRED", "CONTENT_SCRIPT_UNAVAILABLE"].includes(canvasCode)) {
-      throw new ToolExecutionError(canvasCode, String(canvasResult?.error || canvasCode), { target: ref.target, uid: ref.uid });
+      if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(errorCode(err)).startsWith("STALE_ELEMENT_UID"))) throw err;
+      canvasResult = { error: errorMessage(err), code: errorCode(err) || "IMAGE_CANVAS_FAILED" };
     }
 
     if (canvasResult?.dataUrl) {
@@ -720,14 +717,12 @@ registerTool({
     const src = String(canvasResult?.src || canvasResult?.currentSrc || canvasResult?.details?.src || "");
     try {
       const screenshotFormat = format === "png" ? "png" : "jpeg";
-      const screenshotRef = canvasResult?.selector
-        ? {
-          ...ref,
-          selector: canvasResult.selector,
-          index: Number.isFinite(Number(canvasResult.index)) ? Number(canvasResult.index) : 0,
-        }
-        : ref;
-      const shot = await captureElementScreenshot(ref.tabId!, screenshotRef, {
+      const shot = await captureElementScreenshot(ref.tabId!, imageCallTarget({
+        ...ref,
+        selector: String(canvasResult?.selector || ref.selector || ""),
+        index: Number.isFinite(Number(canvasResult?.index)) ? Number(canvasResult.index) : Number(ref.index || 0),
+        backendNodeId: ref.ref?.backendNodeId,
+      }), {
         format: screenshotFormat,
         quality: Math.round(normalizeImageQuality(quality) * 100),
         padding: 0,
@@ -878,10 +873,11 @@ async function saveScreenshotToImageCollection({ shot, destination = "", tabId, 
 async function readImageForAssetCollection(candidate: ImageMetadata = {}, options: ImageReadOptions = {}) {
   const mode = normalizeCollectImageSource(options.sourceMode);
   const tabId = Number(candidate.tabId || options.tabId || 0);
+  const pageTarget = imageCallTarget(candidate);
   const canReadPage = candidate.sourceKind !== "download"
     && mode !== "download"
     && tabId > 0
-    && (String(candidate.selector || "").trim() || Number(candidate.backendNodeId || 0) > 0 || String(candidate.target || "").startsWith("uid:"));
+    && Boolean(pageTarget.selector || pageTarget.uid || Number(pageTarget.ref?.backendNodeId || 0));
   let pageReadError: ReturnType<typeof normalizeImageReadError> | null = null;
   let downloadError: ReturnType<typeof normalizeImageReadError> | null = null;
   const captureFallback = async () => {
@@ -895,16 +891,14 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
   if (canReadPage) {
     let canvasResult = null;
     try {
-      canvasResult = imageMetadata(await callElement(tabId, {
-        tabId, target: candidate.target, selector: candidate.selector,
-        uid: typeof candidate.uid === "string" ? candidate.uid : undefined,
-        ref: candidate.ref && typeof candidate.ref === "object" ? candidate.ref as ElementReference : undefined,
-        index: 0,
-      }, "readImageElement", {
-        selector: candidate.selector, index: 0,
-        maxWidth: options.maxWidth, maxHeight: options.maxHeight, format: options.format, quality: normalizeImageQuality(options.quality),
+      canvasResult = imageMetadata(await callElement(tabId, pageTarget, "readImageElement", {
+        maxWidth: options.maxWidth,
+        maxHeight: options.maxHeight,
+        format: options.format,
+        quality: normalizeImageQuality(options.quality),
       }, options.context || {}));
     } catch (err) {
+      if (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID")) throw err;
       pageReadError = normalizeImageReadError(err, "IMAGE_PAGE_BINARY_FAILED", {
         stage: "page_canvas",
         selector: candidate.selector,
@@ -992,9 +986,9 @@ async function readImageForAssetCollection(candidate: ImageMetadata = {}, option
 
 async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, options: ImageReadOptions = {}, cause: unknown = null) {
   const tabId = Number(candidate.tabId || options.tabId || 0);
-  const selector = String(candidate.selector || "").trim();
-  const backendNodeId = Number(candidate.backendNodeId || 0);
-  if (!tabId || (!selector && !backendNodeId)) {
+  const binding = imageCallTarget({ ...candidate, tabId });
+  const selector = binding.selector;
+  if (!tabId || (!selector && !binding.uid && !Number(binding.ref?.backendNodeId || 0))) {
     throw new ToolExecutionError("IMAGE_ELEMENT_SCREENSHOT_UNAVAILABLE", t("cannotScreenshotImageCandidateWithoutTabidAndSelector"), {
       tabId,
       selector,
@@ -1003,10 +997,9 @@ async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, op
     });
   }
   if (candidate.expectedSrc) {
-    const current = imageMetadata(await callElement(tabId, {
-      tabId, target: candidate.target, selector, uid: typeof candidate.uid === "string" ? candidate.uid : undefined,
-      ref: candidate.ref && typeof candidate.ref === "object" ? candidate.ref as ElementReference : undefined, index: 0,
-    }, "listImageElements", { selector, minWidth: 0, minHeight: 0, visibleOnly: false, limit: 2 }, options.context || {}, { scope: true }));
+    const current = imageMetadata(await callElement(tabId, binding, "listImageElements", {
+      minWidth: 0, minHeight: 0, visibleOnly: false, limit: 2,
+    }, options.context || {}));
     const matched = Array.isArray(current?.images) ? current.images : [];
     if (current?.error || matched.length !== 1) {
       throw new ToolExecutionError(
@@ -1022,13 +1015,7 @@ async function captureImageCandidateScreenshot(candidate: ImageMetadata = {}, op
     assertSelectedImageSource(candidate, matched[0].currentSrc || matched[0].src);
   }
   const screenshotFormat = options.format === "png" ? "png" : "jpeg";
-  const shot = await captureElementScreenshot(tabId, {
-    selector,
-    index: 0,
-    target: typeof candidate.target === "string" ? candidate.target : undefined,
-    uid: typeof candidate.uid === "string" ? candidate.uid : undefined,
-    ref: backendNodeId ? { backendNodeId } : undefined,
-  }, {
+  const shot = await captureElementScreenshot(tabId, binding, {
     format: screenshotFormat,
     quality: Math.round(normalizeImageQuality(options.quality) * 100),
     padding: 0,
@@ -1630,7 +1617,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
     }
   }
 
-  if (!boundsInfo && ref?.selector && !Number(ref?.ref?.backendNodeId || 0)) {
+  if (!boundsInfo && ref?.selector) {
     try {
       const contentBounds = await sendToContent(tabId, "getElementScreenshotBounds", {
         selector: ref.selector,
@@ -1731,36 +1718,38 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
 async function getElementScreenshotBoundsFromRuntime(tabId: number, backendNodeId: number, context: ToolContext = {}) {
   return await withDebugger(tabId, async (_target, send) => {
     const resolved = record(await send("DOM.resolveNode", { backendNodeId }));
-    const objectId = String(record(resolved.object).objectId || "");
+    const objectId = record(resolved.object).objectId;
     if (!objectId) {
       throw new ToolExecutionError("ELEMENT_RESOLVE_FAILED", t("cannotResolveElementNodeForScreenshot"), {
         tabId,
         backendNodeId,
       });
     }
-    try {
-      const evaluated = await send("Runtime.callFunctionOn", {
-        objectId,
-        returnByValue: true,
-        functionDeclaration: elementPageFunction("bounds"),
+
+    const evaluated = await send("Runtime.callFunctionOn", {
+      objectId,
+      returnByValue: true,
+      functionDeclaration: elementPageFunction("bounds"),
+    });
+
+    const rawValue = record(record(evaluated).result).value;
+    const value = record(rawValue);
+    if (!rawValue || value.error) {
+      throw new ToolExecutionError("ELEMENT_HAS_NO_RENDERED_BOX", String(value.error || "Element has no rendered box to screenshot"), {
+        tabId,
+        backendNodeId,
+        rect: value?.rect,
       });
-      const rawValue = record(record(evaluated).result).value;
-      const value = record(rawValue);
-      if (!rawValue || value.error) {
-        throw new ToolExecutionError("ELEMENT_HAS_NO_RENDERED_BOX", String(value.error || "Element has no rendered box to screenshot"), {
-          tabId, backendNodeId, rect: value?.rect,
-        });
-      }
-      return {
-        method: "runtime_rect",
-        selector: String(value.selector || ""),
-        bounds: normalizeRuntimeBounds(value.bounds),
-        rect: value.rect,
-        viewport: value.viewport,
-      };
-    } finally {
-      try { await send("Runtime.releaseObject", { objectId }); } catch { /* The node may already be gone. */ }
     }
+
+    const bounds = normalizeRuntimeBounds(value.bounds);
+    return {
+      method: "runtime_rect",
+      selector: String(value.selector || ""),
+      bounds,
+      rect: value.rect,
+      viewport: value.viewport,
+    };
   }, context);
 }
 
