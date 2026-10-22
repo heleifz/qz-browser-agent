@@ -40,6 +40,7 @@ let sentContentMessages = [];
 let sentDebuggerCommands = [];
 let contentMessageHandler = null;
 let debuggerCommandHandler = null;
+const debuggerListeners = new Set();
 let toolsModulePromise = null;
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const navigation = navigationDocuments();
@@ -119,10 +120,21 @@ globalThis.chrome = {
     sendMessage() {},
   },
   debugger: {
+    onEvent: {
+      addListener(listener) { debuggerListeners.add(listener); },
+      removeListener(listener) { debuggerListeners.delete(listener); },
+    },
     async attach() {},
     async detach() {},
     async sendCommand(target, method, params = {}) {
       sentDebuggerCommands.push({ tabId: Number(target?.tabId), method, params });
+      if (method === "Runtime.enable") {
+        for (const listener of debuggerListeners) {
+          listener({ tabId: Number(target?.tabId) }, "Runtime.executionContextCreated", {
+            context: { id: 7, auxData: { isDefault: false, type: "isolated", frameId: "main" } },
+          });
+        }
+      }
       if (typeof debuggerCommandHandler === "function") {
         const response = await debuggerCommandHandler(target, method, params);
         if (response !== undefined) return response;
@@ -271,6 +283,20 @@ function installClickableElementMock({
     return undefined;
   };
   debuggerCommandHandler = async (target, method, params = {}) => {
+    const expression = String(params.expression || "");
+    if (method === "Runtime.evaluate" && expression.includes("__qzContentBuild")) {
+      return { result: { value: "2026-10-22-direct-node" } };
+    }
+    if (method === "Runtime.evaluate" && expression.includes("__qzCount")) return { result: { value: { matched: 1 } } };
+    if (method === "Runtime.evaluate" && expression.includes("__qzNode")) return { result: { objectId: "node-1" } };
+    if (method === "Runtime.callFunctionOn") {
+      const payload = params.arguments?.[0]?.value || { action: "inspectElement" };
+      const response = typeof contentMessageHandler === "function" ? await contentMessageHandler(target.tabId, payload) : {};
+      return { result: { value: response ?? {} } };
+    }
+    if (method === "DOM.resolveNode") return { object: { objectId: "node-1" } };
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", loaderId: "loader" } } };
+    if (method === "Runtime.releaseObject" || method === "Runtime.enable") return {};
     if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
       const nextUrl = typeof afterUrl === "function" ? afterUrl(activeHref) : afterUrl;
       if (nextUrl) setMockTabUrl(target.tabId, nextUrl);
@@ -1135,7 +1161,10 @@ test("act_on_element blocks known click href before dispatching the click", asyn
   const session = installSessionTabResolver(tools);
   const runtime = session.createRuntime();
   await assertRejectsWithCode(
-    runtime.execute("act_on_element", { tabId: 81, target: "css:a.blocked", action: "click" }, null, session.context),
+    runtime.execute("act_on_element", { tabId: 81, target: "css:a.blocked", action: "click" }, null, {
+      ...session.context,
+      runId: "run_blocked_click",
+    }),
     "SECURITY_GUARDRAIL_BLOCKED",
   );
 

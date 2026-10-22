@@ -26,6 +26,7 @@ registerAccessibilityTools({
   backendNodeIdForSelector: async () => 2,
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => input,
+  callElement: async () => input,
   withDebugger: async (id, fn, context) => {
     assert.equal(id, 8); assert.equal(context.sessionId, "owner");
     return fn({}, async () => ({ nodes: [
