@@ -1,8 +1,8 @@
 {
   "name": "qingzhou-eval-v0.1",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "created": "2026-10-23",
-  "revised": "2026-10-23T04:10:00+08:00",
+  "revised": "2026-10-23T04:37:29+08:00",
   "seed": 20261023,
   "policy": {
     "curated_target": "~30",
@@ -16,13 +16,13 @@
     "total": 30,
     "ready": 30,
     "by_source": {
-      "open:online-mind2web": 8,
+      "open:online-mind2web": 7,
       "open:webvoyager": 4,
-      "self": 18
+      "self": 19
     },
     "by_judge": {
-      "human": 8,
-      "rule": 20,
+      "human": 7,
+      "rule": 21,
       "llm_judge": 2
     }
   },
@@ -557,27 +557,35 @@
       "status": "ready"
     },
     {
-      "id": "om2w:3adeea7627f4343069f38adae40f73d0_110325",
-      "source": "open:online-mind2web",
-      "source_task_id": "3adeea7627f4343069f38adae40f73d0_110325",
+      "id": "self:form-httpbin-pizza-001",
+      "source": "self",
       "core_task": "form_fill",
-      "prompt": "Within 25 Miles of 96817, find a nursing home that accepts medicare.",
-      "start_url": "https://www.medicare.gov/",
       "difficulty": "medium",
-      "judge": "human",
+      "prompt": "Open https://httpbin.org/forms/post and submit the pizza order form with ALL of these exact values, then report the echoed form fields from the JSON response (do not invent values):\n- Customer name: Qingzhou Tester\n- Telephone: 555-0100\n- E-mail: qz@example.com\n- Pizza Size: large\n- Toppings: bacon AND mushroom (check both)\n- Preferred delivery time: 12:15\n- Delivery instructions: leave at door\nAfter submit, finish with one line: custname=<...>; size=<...>; topping=<comma-separated sorted>; delivery=<...>; comments=<...>",
+      "start_url": "https://httpbin.org/forms/post",
+      "judge": "rule",
       "success_criteria": {
-        "type": "task_completion",
-        "reference_length": 8,
-        "notes": "Must use Medicare Care Compare search form: nursing homes, ZIP 96817, 25 mi radius; report one facility."
+        "type": "must_include",
+        "must_include": [
+          "custname=Qingzhou Tester",
+          "size=large",
+          "bacon",
+          "mushroom",
+          "delivery=12:15",
+          "leave at door"
+        ],
+        "notes": "v0: agent must submit httpbin HTML5 pizza form and read back echoed JSON/form fields. Rule judge matches readback line (and any pasted JSON)."
       },
-      "timeout_s": 600,
-      "license_note": "CC BY 4.0 Online-Mind2Web; website from public mirror (datasets/opensource/om2w_website_join.json)",
-      "website_status": "public_mirror_official",
-      "reference_length": 8,
+      "timeout_s": 300,
+      "license_note": "self-authored; target httpbin.org public demo form",
+      "website_status": "verified_200",
+      "reference_length": null,
       "tags": [
-        "navigation",
         "form",
-        "filter",
+        "multi_field",
+        "radio",
+        "checkbox",
+        "submit",
         "difficulty:medium"
       ],
       "temporal": false,

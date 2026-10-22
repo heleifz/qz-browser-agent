@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build qingzhou-eval curated set (v0.2.0, five-category rebalance).
+"""Build qingzhou-eval curated set (v0.2.3).
 
 Single source of truth for task definitions. Regenerates:
   datasets/opensource/online_mind2web_curated.jsonl
@@ -17,7 +17,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.2.0"
+VERSION = "0.2.3"
 
 OM_LIC = "CC BY 4.0 Online-Mind2Web; website from public mirror (datasets/opensource/om2w_website_join.json)"
 WV_LIC = "Apache-2.0 (MinorJerry/WebVoyager)"
@@ -154,10 +154,20 @@ om("bc2ce7f206045dd2d322e5695a947219", "form_fill", "medium",
    "https://smartasset.com/", 6,
    criteria_notes="Must fill SmartAsset income tax calculator (income, ZIP, filing status) and report the federal tax estimate shown.",
    tags=["form", "calculator"])
-om("3adeea7627f4343069f38adae40f73d0_110325", "form_fill", "medium",
-   "Within 25 Miles of 96817, find a nursing home that accepts medicare.", "https://www.medicare.gov/", 8,
-   criteria_notes="Must use Medicare Care Compare search form: nursing homes, ZIP 96817, 25 mi radius; report one facility.",
-   tags=["form", "filter"])
+add(id="self:form-httpbin-pizza-001", source="self", core_task="form_fill", difficulty="medium",
+    prompt=("Open https://httpbin.org/forms/post and submit the pizza order form with ALL of these exact values, "
+            "then report the echoed form fields from the JSON response (do not invent values):\n"
+            "- Customer name: Qingzhou Tester\n- Telephone: 555-0100\n- E-mail: qz@example.com\n"
+            "- Pizza Size: large\n- Toppings: bacon AND mushroom (check both)\n"
+            "- Preferred delivery time: 12:15\n- Delivery instructions: leave at door\n"
+            "After submit, finish with one line: custname=<...>; size=<...>; topping=<comma-separated sorted>; delivery=<...>; comments=<...>"),
+    start_url="https://httpbin.org/forms/post", judge="rule", timeout_s=300,
+    tags=["form", "multi_field", "radio", "checkbox", "submit"],
+    website_status="verified_200",
+    license_note="self-authored; target httpbin.org public demo form",
+    success_criteria={"type": "must_include", "must_include": [
+        "custname=Qingzhou Tester", "size=large", "bacon", "mushroom", "delivery=12:15", "leave at door"],
+        "notes": "v0: agent must submit httpbin HTML5 pizza form and read back echoed JSON/form fields. Rule judge matches readback line (and any pasted JSON)."})
 add(id="self:form-inputs-hard-001", source="self", core_task="form_fill", difficulty="hard",
     prompt=("Open /inputs and type 42 into the number input. Then go to /dropdown and select Option 1. Then go to /checkboxes and leave only the first checkbox checked. "
             "Finally open /login, fill username tomsmith and password SuperSecretPassword! and submit. "

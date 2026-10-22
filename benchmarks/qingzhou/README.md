@@ -5,20 +5,20 @@
 
 本地路径（box）：`/workspace/qingzhou-benchmark/`  
 仓库路径（fork）：`benchmarks/qingzhou/`  
-当前版本：**0.2.0**（五类再平衡，30 ready；含 runner + judge）。
+当前版本：**0.2.3**（30 ready；含 runner + judge；medicare→httpbin 表单）。
 
 ## 原则
 
 调研 → 收集 → 验证 → 思考 → 抽象。决策靠数据：先有可重复测量，再谈成功率门槛。
 
-## 配额（v0.2.0）
+## 配额（v0.2.3）
 
 | 块 | 数量 | 说明 |
 |---|---|---|
-| Online-Mind2Web | 8 | website 来自公开镜像 join |
+| Online-Mind2Web | 7 | website 来自公开镜像 join |
 | WebVoyager | 4 | 2 道调研 + 2 道 compare |
-| 自建 | 18 | 确定性沙盒站（books/quotes.toscrape、the-internet、Wikipedia），规则判分 |
-| **合计** | **30** | 全部 `status=ready`；20 题规则自动判，10 题进人工/LLM 清单 |
+| 自建 | 19 | 确定性沙盒站（books/quotes.toscrape、the-internet、Wikipedia、httpbin），规则判分 |
+| **合计** | **30** | 全部 `status=ready`；21 题规则自动判，9 题进人工/LLM 清单 |
 
 ## 五类 × 难度
 
@@ -77,7 +77,7 @@ cd benchmarks/qingzhou   # 或 /workspace/qingzhou-benchmark
 
 ## 文件
 
-- `manifest.json` — 精选清单汇总（version 0.2.0）
+- `manifest.json` — 精选清单汇总（version 0.2.3）
 - `schema.json` — 统一任务字段（含 `compare`）
 - `datasets/opensource/*.jsonl` — 开源精选
 - `datasets/opensource/om2w_website_join.json` — OM2W website 回填子集

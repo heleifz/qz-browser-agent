@@ -1,7 +1,7 @@
 {
   "seed": 20261023,
-  "revised_at_asia_shanghai": "2026-10-23T03:40:00+08:00",
-  "revision": "v0.2.1-skill-overflow-fix",
+  "revised_at_asia_shanghai": "2026-10-23T04:37:29+08:00",
+  "revision": "v0.2.3-medicare-httpbin-replace",
   "website_source": {
     "kind": "public_third_party_mirror",
     "files": "raw/Online_Mind2Web.public_mirror.json",
@@ -52,6 +52,10 @@
     {
       "id": "self:skill-wiki-designers",
       "reason": "v0.2.1: create-stage context_overflow on large Wikipedia pages during Skill authoring; replaced by short quotes.toscrape author-bio pages skill-author-bio"
+    },
+    {
+      "id": "om2w:3adeea7627f4343069f38adae40f73d0_110325",
+      "reason": "v0.2.3: medicare.gov stable HTTP 403 (Akamai) from box/eval egress; replaced by self:form-httpbin-pizza-001 (rule-judgeable)"
     }
   ],
   "updates": [
@@ -129,6 +133,12 @@
     {
       "id": "self:skill-author-bio",
       "reason": "v0.2.1 hard skill_reuse: short author bio pages (Einstein create → Austen+Rowling reuse table); avoids Wikipedia"
+    },
+    {
+      "id": "self:form-httpbin-pizza-001",
+      "core": "form_fill",
+      "difficulty": "medium",
+      "reason": "v0.2.3: httpbin.org pizza form multi-field fill+submit; verified_200; rule must_include"
     }
   ],
   "rewrites": [
@@ -167,13 +177,13 @@
   "url_probe_notes": "curl from box egress; 403/000 treated as unreliable for gate. Browser may still open some; we still replaced for gate stability.",
   "final_counts": {
     "total": 30,
-    "online_mind2web": 8,
+    "online_mind2web": 7,
     "webvoyager": 4,
-    "self": 18,
+    "self": 19,
     "ready": 30,
     "partial_or_pending": 0,
-    "auto_judged_rule": 20,
-    "needs_review": 10,
+    "auto_judged_rule": 21,
+    "needs_review": 9,
     "temporal": 1
   },
   "by_core_task": {
@@ -195,8 +205,7 @@
     "71f8de1834599fba443f40dbbfab8edd",
     "bf3b311cc8dce16d3de844f4b5875dfd",
     "1b867afecf072cb877ebfa4069263746",
-    "bc2ce7f206045dd2d322e5695a947219",
-    "3adeea7627f4343069f38adae40f73d0_110325"
+    "bc2ce7f206045dd2d322e5695a947219"
   ],
   "picked_wv_ids": [
     "Google Search--2",
@@ -222,7 +231,8 @@
     "self:skill-login-check",
     "self:skill-tag-quotes",
     "self:skill-cat-cheapest",
-    "self:skill-author-bio"
+    "self:skill-author-bio",
+    "self:form-httpbin-pizza-001"
   ],
   "webvoyager": {
     "source_file": "raw/webvoyager.jsonl",
@@ -472,5 +482,37 @@
         "reason": "love/inspirational tag pages require pagination and risk ~112k context_overflow on Skill create (same failure mode as v0.2.1 hard skills). friendship/reading are verified single-page with stable gold."
       }
     ]
+  },
+  "v0_2_3_medicare_httpbin_replace": {
+    "revised_at_asia_shanghai": "2026-10-23T04:37:29+08:00",
+    "goal": "Replace unreachable medicare.gov medium form_fill with rule-judgeable httpbin multi-field pizza form; keep form_fill 6 = 2e/3m/1h, total 30",
+    "reason": "https://www.medicare.gov/ returns stable HTTP 403 (Akamai) from box/eval egress; cannot run or auto-judge",
+    "dropped": {
+      "id": "om2w:3adeea7627f4343069f38adae40f73d0_110325",
+      "source": "open:online-mind2web",
+      "core_task": "form_fill",
+      "difficulty": "medium",
+      "judge": "human",
+      "start_url": "https://www.medicare.gov/"
+    },
+    "added": {
+      "id": "self:form-httpbin-pizza-001",
+      "source": "self",
+      "core_task": "form_fill",
+      "difficulty": "medium",
+      "judge": "rule",
+      "start_url": "https://httpbin.org/forms/post"
+    },
+    "count_deltas": {
+      "open:online-mind2web": "8->7",
+      "self": "18->19",
+      "by_judge.rule": "20->21",
+      "by_judge.human": "8->7",
+      "form_fill": "unchanged 6 (2/3/1)"
+    },
+    "url_probe": {
+      "medicare.gov": "403",
+      "httpbin.org/forms/post": "200"
+    }
   }
 }
