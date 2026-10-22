@@ -507,7 +507,9 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
       chrome.scripting.executeScript = async options => {
         const source = String(options?.func || "");
         if (source.includes("__qzInputReceipts") && options.args?.[1] === false) {
-          return receiptMode === "zero" ? [{ result: 0 }, { result: 0 }] : [{ result: null }];
+          const real = await original(options);
+          const result = receiptMode === "zero" ? 0 : null;
+          return real.map(frame => ({ ...frame, result }));
         }
         return original(options);
       };

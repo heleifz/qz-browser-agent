@@ -6,7 +6,13 @@ let runInPage = null;
 globalThis.chrome = {
   scripting: {
     async executeScript(options) {
-      if (runInPage) return [{ result: runInPage(options) }];
+      if (runInPage) {
+        return [{
+          frameId: 0,
+          documentId: String(globalThis.document?.documentId || ""),
+          result: runInPage(options),
+        }];
+      }
       return [{ result: sizes.shift() }];
     },
   },
@@ -48,11 +54,16 @@ test("a replaced document is not counted as a missed click", async () => {
     assert.ok(op().n > 0);
     const seen = await readPageInputReceipt(7, id);
     assert.ok(seen > 0);
+    assert.equal(op(), undefined, "reading the receipt drops that operation");
     pointerdown.listener({ isTrusted: true });
-    assert.equal(await readPageInputReceipt(7, id), seen);
-
-    const next = installPage();
+    assert.equal(op(), undefined);
     assert.equal(await readPageInputReceipt(7, id), null);
+
+    const follow = await armPageInputReceipt(7);
+    pointerdown.listener({ isTrusted: true });
+    assert.ok(page.document.__qzInputReceiptsV2.ops[follow].n > 0);
+    const next = installPage();
+    assert.equal(await readPageInputReceipt(7, follow), null);
     assert.equal(next.document.__qzInputReceiptsV2Bound, undefined);
   } finally {
     runInPage = null;
@@ -98,12 +109,28 @@ test("a delivered iframe is not cancelled by a top frame that saw nothing", asyn
   });
 });
 
-test("every frame at zero is a missed click, and an unreadable frame is not", async () => {
-  await withFrames([{ result: 0 }, { result: 0 }], async () => {
+test("every armed frame at zero is a missed click, and an unreadable armed frame is not", async () => {
+  await withFrames([
+    { frameId: 0, documentId: "main", result: 0 },
+    { frameId: 1, documentId: "child", result: 0 },
+  ], async () => {
     const id = await armPageInputReceipt(7);
     assert.equal(await readPageInputReceipt(7, id), 0);
   });
-  await withFrames([{ result: 0 }, { result: null }], async () => {
+  let calls = 0;
+  await withFrames(() => {
+    calls += 1;
+    if (calls === 1) {
+      return [
+        { frameId: 0, documentId: "main", result: 0 },
+        { frameId: 1, documentId: "child", result: 0 },
+      ];
+    }
+    return [
+      { frameId: 0, documentId: "main", result: 0 },
+      { frameId: 1, documentId: "child", result: null },
+    ];
+  }, async () => {
     const id = await armPageInputReceipt(7);
     assert.equal(await readPageInputReceipt(7, id), null);
   });
@@ -113,16 +140,52 @@ test("every frame at zero is a missed click, and an unreadable frame is not", as
   });
 });
 
+test("a removed iframe does not turn the remaining zero into a miss", async () => {
+  let calls = 0;
+  await withFrames(() => {
+    calls += 1;
+    const main = { frameId: 0, documentId: "main", result: 0 };
+    if (calls === 1) return [main, { frameId: 4, documentId: "popup", result: 0 }];
+    return [main];
+  }, async () => {
+    const id = await armPageInputReceipt(7);
+    assert.notEqual(id, "");
+    assert.equal(await readPageInputReceipt(7, id), null);
+  });
+});
+
+test("a frame that appears after the click does not hide a real miss", async () => {
+  let calls = 0;
+  await withFrames(() => {
+    calls += 1;
+    const main = { frameId: 0, documentId: "main", result: 0 };
+    if (calls === 1) return [main];
+    return [main, { frameId: 8, documentId: "ad", result: null }];
+  }, async () => {
+    const id = await armPageInputReceipt(7);
+    assert.notEqual(id, "");
+    assert.equal(await readPageInputReceipt(7, id), 0);
+  });
+});
+
 async function withFrames(results, run) {
   const original = chrome.scripting.executeScript;
-  chrome.scripting.executeScript = typeof results === "function" ? results : async () => results;
+  chrome.scripting.executeScript = async () => {
+    const produced = typeof results === "function" ? await results() : results;
+    return produced.map((item, index) => ({
+      frameId: item.frameId ?? index,
+      documentId: item.documentId ?? `doc-${index}`,
+      result: item.result,
+    }));
+  };
   try { await run(); }
   finally { chrome.scripting.executeScript = original; }
 }
 
+let documentSerial = 0;
 function installPage() {
   const listeners = [];
-  const document = {};
+  const document = { documentId: `doc-${++documentSerial}` };
   globalThis.document = document;
   globalThis.addEventListener = (type, listener, capture) => {
     listeners.push({ type, listener, capture });
