@@ -1,6 +1,7 @@
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
 import { createContentLanguageSnapshot } from "../shared/i18n/content.js";
+import { createSessionImportLabels } from "./services/session-import-labels.js";
 import { t } from "../shared/i18n/backend.js";
 import type { Agent } from "./agent/agent.js";
 /**
@@ -838,6 +839,11 @@ const backgroundApi = createBackgroundApi({
       await whenLanguageReady();
       return createContentLanguageSnapshot();
     },
+    sessionImportLabels: async (language: unknown) => {
+      await languageReady;
+      await whenLanguageReady();
+      return createSessionImportLabels(typeof language === "string" ? language : "");
+    },
     acceptDataConsent: dataConsent.accept,
     acceptLocationConsent: locationService.accept,
     ready: async () => sessionRuntimeReady,
@@ -975,7 +981,7 @@ const backgroundApi = createBackgroundApi({
     stream: sidepanelChannel.recordStreamTrace,
   },
 }, path => {
-  if (["system.ready", "system.contentLanguage", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
+  if (["system.ready", "system.contentLanguage", "system.sessionImportLabels", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 

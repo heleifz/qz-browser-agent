@@ -28,6 +28,8 @@ const [extension, runtime] = await Promise.all([
 const pages = new Map([
   ["/pending.html", exportHtml("未同意自动导入", "pending-source", "未同意的会话正文")],
   ["/consented.html", exportHtml("已同意直接导入", "consented-source", "已同意的会话正文")],
+  ["/english.html", exportHtml("English page", "english-source", "English body", "en")],
+  ["/nolang.html", exportHtml("No lang", "nolang-source", "No lang body", "")],
 ]);
 const server = createServer((request, response) => {
   const body = pages.get(new URL(request.url || "/", "http://127.0.0.1").pathname);
@@ -67,9 +69,26 @@ try {
   await worker.evaluate(() => chrome.storage.local.set({ _qingzhou_mcp_bridge: { enabled: false } }));
   assert.deepEqual(await sidePanelContexts(worker), [], "a fresh profile has no side panel");
 
+  const english = await openExport(context, `${origin}/english.html`);
+  const englishButton = await waitUntil("english page label", () => buttonState(english.page), state => state.text === "Continue in qz");
+  assert.equal(englishButton.text, "Continue in qz");
+  await english.page.evaluate(() => window.postMessage({ type: "qingzhou:session-export:result", action: "import", status: "working" }, "*"));
+  await waitUntil("english importing", () => buttonState(english.page), state => state.text === "Importing");
+  await english.page.evaluate(() => window.postMessage({ type: "qingzhou:session-export:result", action: "import", ok: true, sessionId: "english-session" }, "*"));
+  const englishDone = await waitUntil("english imported", () => buttonState(english.page), state => state.text === "Imported" && state.imported === "english-session");
+  assert.equal(englishDone.text, "Imported");
+  await english.page.screenshot({ path: "/tmp/qingzhou-import-english-cta.png" });
+
+  const nolang = await openExport(context, `${origin}/nolang.html`);
+  assert.equal(await nolang.page.locator("html").getAttribute("lang"), null);
+  const uiLanguage = await worker.evaluate(() => chrome.i18n.getUILanguage());
+  const extensionLabel = /^zh/i.test(uiLanguage) ? "导入轻舟继续对话" : "Continue in qz";
+  const extensionLanguage = await waitUntil(`extension language ${uiLanguage}`, () => buttonState(nolang.page), state => state.text === extensionLabel);
+  assert.equal(extensionLanguage.text, extensionLabel);
+
   const pending = await openExport(context, `${origin}/pending.html`);
-  const before = await buttonState(pending.page);
-  assert.equal(before.text, "导入轻舟");
+  const before = await waitUntil("localized idle", () => buttonState(pending.page), state => state.text === "导入轻舟继续对话");
+  assert.equal(before.text, "导入轻舟继续对话");
   assert.equal(before.disabled, false);
   assert.deepEqual(before.results, []);
   assert.deepEqual(await sessionTitles(worker), []);
@@ -106,8 +125,8 @@ try {
   await pending.page.screenshot({ path: DONE_SCREENSHOT });
 
   const consented = await openExport(context, `${origin}/consented.html`);
-  const ready = await buttonState(consented.page);
-  assert.equal(ready.text, "导入轻舟");
+  const ready = await waitUntil("consented idle", () => buttonState(consented.page), state => state.text === "导入轻舟继续对话");
+  assert.equal(ready.text, "导入轻舟继续对话");
   assert.equal(ready.disabled, false);
   assert.deepEqual(ready.results, []);
   const stillConsented = await consentSnapshot(context, worker);
@@ -135,8 +154,8 @@ try {
   await waitUntil("side panel closed", () => sidePanelContexts(worker), contexts => contexts.length === 0, 8000);
   await consented.page.reload({ waitUntil: "domcontentloaded" });
   await consented.page.locator("#qingzhou-session-cta[data-qingzhou-session-import]").waitFor({ timeout: 10000 });
-  const reloaded = await buttonState(consented.page);
-  assert.equal(reloaded.text, "导入轻舟");
+  const reloaded = await waitUntil("reloaded idle", () => buttonState(consented.page), state => state.text === "导入轻舟继续对话");
+  assert.equal(reloaded.text, "导入轻舟继续对话");
   await consented.page.locator("#qingzhou-session-cta").click();
   const repeated = await waitUntil("repeat import", () => buttonState(consented.page), state => {
     if (state.text === "重试导入") throw new Error(`repeat import failed: ${state.title} ${JSON.stringify(state.results)}`);
@@ -167,7 +186,7 @@ try {
   await rm(profile, { recursive: true, force: true });
 }
 
-function exportHtml(title, sourceId, content) {
+function exportHtml(title, sourceId, content, lang = "zh-CN") {
   const payload = createSessionExchangePayload({
     session: { id: sourceId, title },
     conversation: serializeConversation([{ role: "user", content }]),
@@ -185,7 +204,8 @@ function exportHtml(title, sourceId, content) {
     close: "关闭",
   };
   const script = runtime.replace(/<\/script/giu, "<\\/script");
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body>
+  const langAttr = lang ? ` lang="${lang}"` : "";
+  return `<!DOCTYPE html><html${langAttr}><head><meta charset="utf-8"><title>${title}</title></head><body>
     ${renderSessionExchangeScript(payload)}
     <script type="application/json" id="qingzhou-export-messages">${JSON.stringify(messages)}</script>
     <button id="qingzhou-session-cta" type="button" hidden></button>
@@ -235,7 +255,7 @@ async function buttonState(page) {
 }
 
 function assertIdle(state, label) {
-  assert.equal(state.text, "导入轻舟", label);
+  assert.equal(state.text, "导入轻舟继续对话", label);
   assert.equal(state.disabled, false, label);
   assert.equal(state.busy, "", label);
   assert.equal(state.imported, "", label);

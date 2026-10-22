@@ -73,6 +73,16 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
       return true;
     }
 
+    if (type === "session_export_import_labels") {
+      respondAsync(
+        () => call("system.sessionImportLabels", typeof message.language === "string" ? message.language : ""),
+        result => ({ ok: true, labels: result }),
+        error => failure(error, "SESSION_IMPORT_LABELS_UNAVAILABLE"),
+        sendResponse,
+      );
+      return true;
+    }
+
     if (type === "offscreen_keepalive") {
       sendResponse({ ok: true, at: clock() });
       return false;

@@ -127,6 +127,15 @@ def open_routed_export(context, html):
     return page
 
 
+def expected_import_label(page):
+    lang = (page.locator("html").get_attribute("lang") or "").lower()
+    if lang.startswith("zh"):
+        return "导入轻舟继续对话"
+    if lang.startswith("en"):
+        return "Continue in qz"
+    raise AssertionError(f"unexpected export language {lang!r}")
+
+
 def assert_allowlisted_https_page_offers_import(context, html):
     allowed_url = "https://alibaba.github.io/qz-browser-agent/examples/travel/"
     allowed = open_routed_export(context, html)
@@ -136,7 +145,7 @@ def assert_allowlisted_https_page_offers_import(context, html):
         allowed.on("console", lambda message: allowed_errors.append(message.text) if message.type == "error" else None)
         allowed.goto(allowed_url, wait_until="domcontentloaded")
         allowed.wait_for_selector("#qingzhou-session-cta[data-qingzhou-session-import]", timeout=10000)
-        assert allowed.locator("#qingzhou-session-cta").text_content() == "导入轻舟"
+        assert allowed.locator("#qingzhou-session-cta").text_content() == expected_import_label(allowed)
         allowed.screenshot(path=str(PAGES_ALLOWED_SCREENSHOT_PATH))
         assert allowed_errors == [], json.dumps(allowed_errors, ensure_ascii=False)
     finally:
@@ -480,7 +489,7 @@ def run():
                 bridge.goto(bridge_url, wait_until="domcontentloaded")
                 bridge.wait_for_selector("#qingzhou-session-cta[data-qingzhou-session-import]", timeout=10000)
                 bridge_cta = bridge.locator("#qingzhou-session-cta")
-                assert bridge_cta.text_content() == "导入轻舟"
+                assert bridge_cta.text_content() == expected_import_label(bridge)
                 bridge.screenshot(path=str(BRIDGE_SCREENSHOT_PATH), full_page=True)
                 bridge_cta.click()
                 bridge.wait_for_function(
@@ -556,7 +565,7 @@ def run():
             assert exported.locator("mjx-container").count() >= 1
 
             exported_cta = exported.locator("#qingzhou-session-cta")
-            assert exported_cta.text_content() == "导入轻舟"
+            assert exported_cta.text_content() == expected_import_label(exported)
             exported_cta.click()
             exported.wait_for_function(
                 "document.getElementById('qingzhou-session-cta')?.textContent === '已导入'",
