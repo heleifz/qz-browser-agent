@@ -86,10 +86,10 @@ om("6ca20f1da01edeb49a7a42c816d8c6fe", "research", "medium",
 add(id="self:shadowdom-001", source="self", core_task="research", difficulty="medium",
     prompt="Open the shadow DOM page. Read both lines of text rendered inside shadow roots. Quote both lines exactly in your final answer, one per line. Do not invent text.",
     start_url=f"{TIS}/shadowdom", judge="rule", timeout_s=180, tags=["extraction", "shadow_dom"],
-    success_criteria={"type": "must_include", "must_include": ["Let's have some different text!", "My default text"],
+    success_criteria={"type": "must_include", "must_include": ["Let's have some different text!", "In a list!"],
                       "notes": "Shadow-root text; both lines required."})
 om("b4aa7315e31dfcdc52baf7771be260c9", "research", "hard",
-   "Find the HGX H100 driver for Ubuntu 22.04 on AMD64 CPU.", "https://www.nvidia.com/", 11,
+   "Find the HGX H100 driver for Ubuntu 22.04 on AMD64 CPU.", "https://www.nvidia.com/en-us/drivers/", 11,
    criteria_notes="Must reach NVIDIA driver search results / download page matching HGX H100 + Ubuntu 22.04 + x86_64; report driver version.",
    tags=["extraction", "multi_constraint"])
 om("71f8de1834599fba443f40dbbfab8edd", "research", "hard",

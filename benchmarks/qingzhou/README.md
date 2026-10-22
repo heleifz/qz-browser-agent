@@ -5,13 +5,13 @@
 
 本地路径（box）：`/workspace/qingzhou-benchmark/`  
 仓库路径（fork）：`benchmarks/qingzhou/`  
-当前版本：**0.2.4**（30 ready；含 runner + judge；medicare→httpbin 表单）。
+当前版本：**0.2.5**（30 ready；含 runner + judge；HGX start_url→en-us/drivers）。
 
 ## 原则
 
 调研 → 收集 → 验证 → 思考 → 抽象。决策靠数据：先有可重复测量，再谈成功率门槛。
 
-## 配额（v0.2.4）
+## 配额（v0.2.5）
 
 | 块 | 数量 | 说明 |
 |---|---|---|
@@ -77,7 +77,7 @@ cd benchmarks/qingzhou   # 或 /workspace/qingzhou-benchmark
 
 ## 文件
 
-- `manifest.json` — 精选清单汇总（version 0.2.4）
+- `manifest.json` — 精选清单汇总（version 0.2.5）
 - `schema.json` — 统一任务字段（含 `compare`）
 - `datasets/opensource/*.jsonl` — 开源精选
 - `datasets/opensource/om2w_website_join.json` — OM2W website 回填子集

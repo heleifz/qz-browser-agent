@@ -1,7 +1,7 @@
 {
   "seed": 20261023,
-  "revised_at_asia_shanghai": "2026-10-23T05:04:13+08:00",
-  "revision": "v0.2.4-shadowdom-slot-gold",
+  "revised_at_asia_shanghai": "2026-10-23T06:03:37+08:00",
+  "revision": "v0.2.5-nvidia-drivers-start-url",
   "website_source": {
     "kind": "public_third_party_mirror",
     "files": "raw/Online_Mind2Web.public_mirror.json",
@@ -184,6 +184,13 @@
         "Let's have some different text!",
         "In a list!"
       ]
+    },
+    {
+      "id": "om2w:b4aa7315e31dfcdc52baf7771be260c9",
+      "at": "2026-10-23T06:03:37+08:00",
+      "reason": "v0.2.5 scheme A (user approved): box egress hits nvidia.com root → 307 nvidia.cn (GeForce-biased); direct en-us/drivers stays 200 and product lookup lists Tesla|HGX-Series|HGX H100. Keep OM2W prompt/criteria; only change start_url.",
+      "from_start_url": "https://www.nvidia.com/",
+      "to_start_url": "https://www.nvidia.com/en-us/drivers/"
     }
   ],
   "url_probe_asia_shanghai": "2026-10-23T02:49:00+08:00",
@@ -527,5 +534,15 @@
       "medicare.gov": "403",
       "httpbin.org/forms/post": "200"
     }
+  },
+  "v0_2_5_nvidia_drivers_start_url": {
+    "revised_at_asia_shanghai": "2026-10-23T06:03:37+08:00",
+    "goal": "Restore executability of hard research om2w HGX H100 driver task under Asia egress without replacing the OM2W item.",
+    "decision": "user approved scheme A",
+    "change": {
+      "id": "om2w:b4aa7315e31dfcdc52baf7771be260c9",
+      "start_url": "https://www.nvidia.com/en-us/drivers/"
+    },
+    "probe": "curl en-us/drivers → 200; root nvidia.com → 307 nvidia.cn"
   }
 }

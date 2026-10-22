@@ -1,8 +1,8 @@
 {
   "name": "qingzhou-eval-v0.1",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "created": "2026-10-23",
-  "revised": "2026-10-23T05:04:13+08:00",
+  "revised": "2026-10-23T06:03:37+08:00",
   "seed": 20261023,
   "policy": {
     "curated_target": "~30",
@@ -215,7 +215,7 @@
       "source_task_id": "b4aa7315e31dfcdc52baf7771be260c9",
       "core_task": "research",
       "prompt": "Find the HGX H100 driver for Ubuntu 22.04 on AMD64 CPU.",
-      "start_url": "https://www.nvidia.com/",
+      "start_url": "https://www.nvidia.com/en-us/drivers/",
       "difficulty": "hard",
       "judge": "human",
       "success_criteria": {
