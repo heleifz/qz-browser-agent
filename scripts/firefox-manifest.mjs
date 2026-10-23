@@ -4,6 +4,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromeMessageId, decodeChromeMessage, encodeChromeMessage, HISTORICAL_LABELS_MESSAGE_ID } from "../src/shared/i18n/definition.ts";
+import { readTranslationVariants } from "./capability-locales.mjs";
 
 export const FIREFOX_GECKO_ID = "qz-browser-agent@heleifz.github.io";
 export const FIREFOX_MIN_VERSION = "139.0";
@@ -152,11 +153,17 @@ body {
 `;
 }
 
-/** Rewrite catalog sentences that name Chrome, its URLs, or a side panel. */
+const FALLBACK_LOCALE_LANGUAGE = Object.freeze({
+  en: "en",
+  zh_CN: "zh-CN",
+});
+
+/** Rewrite catalog sentences that name Chrome, its URLs, a side panel, or chrome.debugger. */
 export function firefoxUserText(text) {
   let next = String(text);
   next = next.replaceAll("ChromeOS", "\u0000OS");
   next = next.replaceAll("chrome-extension://", "moz-extension://");
+  next = next.replaceAll("chrome.debugger", "debugger");
   next = next.replaceAll("chrome://extensions/shortcuts", "about:addons");
   next = next.replaceAll("chrome://extensions", "about:addons");
   next = next.replaceAll("chrome://downloads", "about:downloads");
@@ -172,11 +179,34 @@ export function firefoxUserText(text) {
   return next;
 }
 
+/**
+ * English and zh-CN catalogs omit most authored sentences, so the loader falls back to the
+ * shared bundle. Add the sentences whose Firefox wording differs. Other locales already ship
+ * a full catalog and are rewritten in place.
+ */
+export function firefoxFallbackSupplements(locale, variants) {
+  const language = FALLBACK_LOCALE_LANGUAGE[locale];
+  if (!language || !variants) return {};
+  const supplements = {};
+  for (const [qualified, value] of variants) {
+    if (!value || typeof value !== "object") continue;
+    const authored = typeof value[language] === "string" ? value[language] : value.en;
+    if (typeof authored !== "string") continue;
+    const updated = firefoxUserText(authored);
+    if (updated === authored) continue;
+    const manifestMessage = String(qualified).startsWith("manifest.");
+    const name = manifestMessage ? String(qualified).slice("manifest.".length) : chromeMessageId(qualified);
+    if (!name || name === "qz_language" || name === HISTORICAL_LABELS_MESSAGE_ID) continue;
+    supplements[name] = encodeChromeMessage(updated, { substitutions: !manifestMessage });
+  }
+  return supplements;
+}
+
 export function firefoxFileAccessMessageId() {
   return chromeMessageId(FILE_ACCESS_MESSAGE_KEY);
 }
 
-export function rewriteFirefoxMessages(locale, messages) {
+export function rewriteFirefoxMessages(locale, messages, supplements = {}) {
   const id = firefoxFileAccessMessageId();
   if (!messages || typeof messages !== "object" || Array.isArray(messages)) return messages;
   // English and zh-CN keep the Chrome sentence in the shared bundle. Their catalogs omit the key,
@@ -188,6 +218,11 @@ export function rewriteFirefoxMessages(locale, messages) {
   }
   let changed = next !== messages;
   const rewritten = { ...next };
+  for (const [key, value] of Object.entries(supplements || {})) {
+    if (key === "qz_language" || key === HISTORICAL_LABELS_MESSAGE_ID || rewritten[key]) continue;
+    rewritten[key] = value;
+    changed = true;
+  }
   for (const [key, value] of Object.entries(rewritten)) {
     if (key === "qz_language" || key === HISTORICAL_LABELS_MESSAGE_ID) continue;
     const text = decodeChromeMessage(value);
@@ -208,7 +243,8 @@ export async function writeFirefoxSidebarSkin(root) {
 }
 
 /** Rewrite generated locale catalogs in a Firefox build output. */
-export async function rewriteFirefoxLocaleFiles(root) {
+export async function rewriteFirefoxLocaleFiles(root, sourceDir) {
+  const variants = sourceDir ? readTranslationVariants(sourceDir) : null;
   const locales = resolve(root, "_locales");
   let names = [];
   try { names = await readdir(locales); } catch (error) {
@@ -222,7 +258,8 @@ export async function rewriteFirefoxLocaleFiles(root) {
       if (error.code === "ENOENT") continue;
       throw error;
     }
-    const rewritten = rewriteFirefoxMessages(locale, messages);
+    const supplements = variants ? firefoxFallbackSupplements(locale, variants) : {};
+    const rewritten = rewriteFirefoxMessages(locale, messages, supplements);
     if (rewritten === messages) continue;
     await writeFile(path, `${JSON.stringify(rewritten, null, 2)}\n`);
   }

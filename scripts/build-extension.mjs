@@ -154,7 +154,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
       const panelPath = resolve(compiled, "sidepanel/sidepanel.html");
       await writeFile(panelPath, rewriteFirefoxSidepanelHtml(await readFile(panelPath, "utf8")));
       await writeFirefoxSidebarSkin(compiled);
-      await rewriteFirefoxLocaleFiles(compiled);
+      await rewriteFirefoxLocaleFiles(compiled, source);
     }
     const files = (await allFiles(compiled)).map(path => posix(relative(compiled, path)));
     const summary = {

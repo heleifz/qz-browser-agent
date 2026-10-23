@@ -11,6 +11,7 @@ import {
   FIREFOX_DROPPED_PERMISSIONS,
   FIREFOX_GECKO_ID,
   FIREFOX_MIN_VERSION,
+  firefoxFallbackSupplements,
   firefoxFileAccessMessageId,
   firefoxManifest,
   firefoxSidebarCss,
@@ -19,6 +20,7 @@ import {
   rewriteFirefoxMessages,
   rewriteFirefoxSidepanelHtml,
 } from "../../scripts/firefox-manifest.mjs";
+import { readTranslationVariants } from "../../scripts/capability-locales.mjs";
 import { chromeMessageId, HISTORICAL_LABELS_MESSAGE_ID } from "../../src/shared/i18n/definition.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -113,6 +115,11 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
     "ChromeOS uses Firefox, about:addons, about:downloads, the sidebar, and the Add-ons Manager.",
   );
   assert.equal(firefoxUserText("chrome-extension://abc and Android Chrome and Chrome DevTools MCP"), "moz-extension://abc and an Android layout and a browser snapshot");
+  assert.equal(firefoxUserText("The chrome.debugger API and Die chrome.debugger-API"), "The debugger API and Die debugger-API");
+  const accessId = firefoxFileAccessMessageId();
+  const kept = rewriteFirefoxMessages("en", { qz_language: { message: "en" } }, { [accessId]: { message: "should not replace" } });
+  assert.match(kept[accessId].message, /about:addons/);
+  assert.equal(kept[accessId].message.includes("should not replace"), false);
   const catalogs = rewriteFirefoxMessages("en", {
     qz_language: { message: "en" },
     [HISTORICAL_LABELS_MESSAGE_ID]: { message: "Chrome" },
@@ -121,4 +128,34 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.equal(catalogs[HISTORICAL_LABELS_MESSAGE_ID].message, "Chrome");
   assert.equal(catalogs.qz_language.message, "en");
   assert.equal(catalogs.qz_example.message, "Use Firefox and about:downloads");
+});
+
+test("english and simplified chinese catalogs receive firefox wording the bundle would show", () => {
+  const variants = readTranslationVariants(join(repoRoot, "src"));
+  const english = firefoxFallbackSupplements("en", variants);
+  const chinese = firefoxFallbackSupplements("zh_CN", variants);
+  assert.equal(Object.keys(firefoxFallbackSupplements("fr", variants)).length, 0);
+  const startup = chromeMessageId("core.startupFailed");
+  const pdf = chromeMessageId("documents.temporaryPdfRenderingRequiresTheChromeDebuggerRuntime");
+  const unavailable = chromeMessageId("backend.toolError.DEBUGGER_UNAVAILABLE.message");
+  assert.equal(english[startup].message, "Could not start qz. Reopen the sidebar.");
+  assert.equal(chinese[startup], undefined);
+  assert.equal(english[pdf].message, "Creating the PDF requires access to the Firefox debugger.");
+  assert.equal(chinese[pdf].message, "临时 PDF 渲染需要 Firefox 调试服务。");
+  assert.equal(english[unavailable].message, "The debugger API is unavailable in this environment.");
+  assert.equal(chinese[unavailable].message, "当前环境不可用 debugger API。");
+  const merged = rewriteFirefoxMessages("de", {
+    qz_language: { message: "de" },
+    [unavailable]: { message: "Die chrome.debugger-API ist in dieser Umgebung nicht verfügbar." },
+  });
+  assert.equal(merged[unavailable].message, "Die debugger-API ist in dieser Umgebung nicht verfügbar.");
+  for (const pack of [english, chinese]) {
+    for (const value of Object.values(pack)) {
+      assert.equal(value.message.includes("chrome://"), false, value.message);
+      assert.equal(value.message.includes("chrome.debugger"), false, value.message);
+      assert.equal(value.message.includes("side panel"), false, value.message);
+      assert.equal(value.message.includes("Side Panel"), false, value.message);
+      assert.equal(/\bChrome\b/.test(value.message), false, value.message);
+    }
+  }
 });

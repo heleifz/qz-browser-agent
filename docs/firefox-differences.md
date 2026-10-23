@@ -184,12 +184,14 @@ extension's UUID host as the initiator, the header is still missing.
 ## Copy and settings links
 
 Catalogs in the Firefox package are rewritten. `chrome-extension://` becomes `moz-extension://`.
-`chrome://extensions`, including the shortcuts URL, becomes `about:addons`. `chrome://downloads`
-becomes `about:downloads`. A remaining `chrome://` becomes `about:`. `Chrome Web Store` becomes
-`Add-ons Manager`. `Chrome` becomes `Firefox`. `ChromeOS` is left as `ChromeOS`. `Side Panel`
-and `side panel` become `Sidebar` and `sidebar`. Historical label catalogs are not rewritten.
-Sentences that are not in a catalog use `productText`, which returns the Chrome sentence unless
-the caller is a Firefox extension page.
+`chrome.debugger` becomes `debugger`. `chrome://extensions`, including the shortcuts URL, becomes
+`about:addons`. `chrome://downloads` becomes `about:downloads`. A remaining `chrome://` becomes
+`about:`. `Chrome Web Store` becomes `Add-ons Manager`. `Chrome` becomes `Firefox`. `ChromeOS`
+is left as `ChromeOS`. `Side Panel` and `side panel` become `Sidebar` and `sidebar`. Historical
+label catalogs are not rewritten. English and Simplified Chinese catalogs ship only the strings
+that differ from the shared bundle, because those packs omit the full catalog and the loader
+would otherwise show the Chrome sentence. Sentences that are not in a catalog use `productText`,
+which returns the Chrome sentence unless the caller is a Firefox extension page.
 
 | Feature | Firefox behavior | Known limitation |
 | --- | --- | --- |
@@ -264,7 +266,7 @@ call would be a non-Firefox argument, a warning, or a second menu.
 | System colors, not a copied Chrome palette | The shared theme stays in the Chrome package. The Firefox skin overrides tokens with `Canvas` and `AccentColor` so light and dark follow the browser theme. |
 | No `resetScrollPosition` | Firefox treats it as non-standard and ignores it unless the add-on is Mozilla-signed. |
 | No `saveAsPDF` | The file picker interrupts the task and does not return PDF bytes. |
-| Catalog rewrite plus `productText` | Firefox pages say Firefox, `about:addons`, and `about:downloads`. Chrome pages keep the Chrome sentence. The page-mode user agent stays a Chrome string so the site receives the layout the tool requested. |
+| Catalog rewrite plus `productText` | Firefox pages say Firefox, sidebar, `about:addons`, and `about:downloads`. `chrome.debugger` in a catalog becomes `debugger`. English and Simplified Chinese receive the rewritten sentences the shared bundle would otherwise show. Chrome pages keep the Chrome sentence. The page-mode user agent stays a Chrome string so the site receives the layout the tool requested. |
 
 ## What this check did not run
 
