@@ -51,7 +51,7 @@ window.QZ_EXAMPLES = {
         alt: "Comparison table saved from several model pages",
       },
       "hn-skill": {
-        title: "HN posts → Skill",
+        title: "Turn hacker news into a Skill",
         summary: "Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence.",
         alt: "Building a Skill from the HN front page",
         sessionAlt: {
@@ -88,7 +88,7 @@ window.QZ_EXAMPLES = {
       {
         slug: "hn-skill",
         session: "first",
-        title: "HN 热帖 → Skill",
+        title: "将 hacker news 变成 Skill",
         summary: "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
         file: "examples/sessions/hn-skill-zh.html",
         video: "assets/examples/hn-skill-zh.mp4",
@@ -101,7 +101,7 @@ window.QZ_EXAMPLES = {
         group: "hn-skill",
         session: "reuse",
         card: false,
-        title: "HN 热帖 → Skill",
+        title: "将 hacker news 变成 Skill",
         summary: "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
         file: "examples/sessions/hn-skill-reuse-zh.html",
         video: "assets/examples/hn-skill-reuse-zh.mp4",
