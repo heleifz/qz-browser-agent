@@ -466,15 +466,36 @@ function sessionView(part, root) {
   return `<qz-session-view><template shadowrootmode="open"><link rel="stylesheet" href="${root}assets/examples/session-view.css"><link rel="stylesheet" href="${root}assets/examples/session-view-overrides.css">${part.labels}<main id="messages">${lazyImages(part.messages)}</main></template></qz-session-view>`;
 }
 
-function relatedMarkup(entry) {
+// A group of examples that belong together (for example create and reuse) is
+// shown as a numbered step switch. Each member's label comes from the related
+// link another member holds to it, so the catalog data is unchanged.
+function stepsMarkup(entry, localeId) {
   const group = groupOf(entry);
-  const pack = englishPack(group);
-  const links = (entry.related || []).map((link) => {
-    const english = pack.related?.[link.id];
-    if (!english) throw new Error(`missing fallbackCopy.en.${group}.related.${link.id}`);
-    return `<a href="../${link.slug}/" data-i18n="example-${group}-${link.id}">${escapeHtml(english)}</a>`;
+  const members = catalog.locales[localeId].filter((item) => groupOf(item) === group);
+  if (members.length < 2) return "\n      ";
+  const items = members.map((member, index) => {
+    let label = "";
+    let key = "";
+    for (const holder of members) {
+      const link = (holder.related || []).find((item) => item.slug === member.slug);
+      if (!link) continue;
+      if (localeId === "zh") {
+        label = englishPack(group).related?.[link.id];
+        if (!label) throw new Error(`missing fallbackCopy.en.${group}.related.${link.id}`);
+        key = `example-${group}-${link.id}`;
+      } else {
+        label = link.label;
+        key = `example-en-${holder.slug}-${link.id}`;
+      }
+      break;
+    }
+    if (!label) throw new Error(`${member.slug} has no step label; add a related link to it from the same group`);
+    const inner = `<span class="example-step-n">${index + 1}</span><span class="example-step-label" data-i18n="${key}">${escapeHtml(label)}</span>`;
+    return member.slug === entry.slug
+      ? `<li><span class="example-step is-current" aria-current="step">${inner}</span></li>`
+      : `<li><a class="example-step" href="../${member.slug}/">${inner}</a></li>`;
   });
-  return links.length ? `\n      <p class="example-related">${links.join("")}</p>` : "\n      ";
+  return `\n      <ol class="example-steps">${items.join("")}</ol>`;
 }
 
 function pageView(entry, localeId) {
@@ -489,13 +510,10 @@ function pageView(entry, localeId) {
       summaryKey: `example-${group}-summary`,
       descriptionKey: `example-${group}-description`,
       mediaKey: `example-${entry.slug}-poster`,
-      related: relatedMarkup(entry),
+      related: stepsMarkup(entry, localeId),
     };
   }
   const key = `example-en-${entry.slug}`;
-  const links = (entry.related || []).map((link) => (
-    `<a href="../${link.slug}/" data-i18n="${key}-${link.id}">${escapeHtml(link.label)}</a>`
-  ));
   return {
     title: entry.title,
     summary: entry.summary,
@@ -504,7 +522,7 @@ function pageView(entry, localeId) {
     summaryKey: `${key}-summary`,
     descriptionKey: `${key}-description`,
     mediaKey: `${key}-poster`,
-    related: links.length ? `\n      <p class="example-related">${links.join("")}</p>` : "\n      ",
+    related: stepsMarkup(entry, localeId),
   };
 }
 

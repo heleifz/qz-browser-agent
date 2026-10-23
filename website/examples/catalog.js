@@ -57,7 +57,7 @@ window.QZ_EXAMPLES = {
         sessionAlt: {
           reuse: "Reusing the saved Skill in a new session to read Show HN",
         },
-        related: { first: "Create", reuse: "Reuse" },
+        related: { first: "Create the Skill", reuse: "Reuse in one sentence" },
       },
       "github-weekly": {
         title: "GitHub weekly roundup",
@@ -94,7 +94,7 @@ window.QZ_EXAMPLES = {
         video: "assets/examples/hn-skill-zh.mp4",
         posterTime: 30,
         alt: "整理 HN 热帖并生成 Skill 的过程",
-        related: [{ slug: "hn-skill-reuse", id: "reuse", label: "复用" }],
+        related: [{ slug: "hn-skill-reuse", id: "reuse", label: "一句话复用" }],
       },
       {
         slug: "hn-skill-reuse",
@@ -107,7 +107,7 @@ window.QZ_EXAMPLES = {
         video: "assets/examples/hn-skill-reuse-zh.mp4",
         posterTime: 14,
         alt: "新会话里用已保存的 Skill 查看 Show HN 热帖",
-        related: [{ slug: "hn-skill", id: "first", label: "创建" }],
+        related: [{ slug: "hn-skill", id: "first", label: "创建 Skill" }],
       },
       {
         slug: "github-weekly",

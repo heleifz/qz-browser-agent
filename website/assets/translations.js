@@ -95,8 +95,8 @@ export const translations = {
       "example-llm-compare-summary": "Reads several model sites and builds one comparison table.",
       "example-hn-skill-title": "HN posts → Skill",
       "example-hn-skill-summary": "Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence.",
-      "example-hn-skill-first": "Create",
-      "example-hn-skill-reuse": "Reuse",
+      "example-hn-skill-first": "Create the Skill",
+      "example-hn-skill-reuse": "Reuse in one sentence",
       "example-github-weekly-title": "GitHub weekly roundup",
       "example-github-weekly-summary": "Reads this week's Trending list, builds a table, and writes a short weekly summary."
       /* example-html:en:end */
@@ -332,8 +332,8 @@ export const translations = {
       "example-llm-compare-summary": "读多个模型的官网，整理成一张对比表。",
       "example-hn-skill-title": "HN 热帖 → Skill",
       "example-hn-skill-summary": "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
-      "example-hn-skill-first": "创建",
-      "example-hn-skill-reuse": "复用",
+      "example-hn-skill-first": "创建 Skill",
+      "example-hn-skill-reuse": "一句话复用",
       "example-github-weekly-title": "GitHub 周榜整理",
       "example-github-weekly-summary": "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。"
       /* example-html:zh:end */
