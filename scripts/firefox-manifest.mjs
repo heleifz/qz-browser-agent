@@ -1,16 +1,51 @@
 // Firefox rejects permission names it does not implement. This rewrites a built copy.
 // src/manifest.json and the Chrome output stay on the Chrome manifest.
 
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { chromeMessageId } from "../src/shared/i18n/definition.ts";
+
 export const FIREFOX_GECKO_ID = "qz-browser-agent@heleifz.github.io";
 export const FIREFOX_MIN_VERSION = "139.0";
+export const FIREFOX_BACKGROUND_SCRIPT = "background/firefox-boot.js";
+export const FIREFOX_PANEL_SCRIPT = "sidepanel/firefox-boot.js";
 export const FIREFOX_DROPPED_PERMISSIONS = Object.freeze([
   "debugger",
   "desktopCapture",
   "offscreen",
   "sidePanel",
 ]);
+export const FIREFOX_ADDED_PERMISSIONS = Object.freeze([
+  "webNavigation",
+  "webRequest",
+  "webRequestBlocking",
+]);
+export const FIREFOX_DATA_COLLECTION = Object.freeze({
+  required: Object.freeze(["websiteContent"]),
+  optional: Object.freeze(["locationInfo", "browsingActivity", "bookmarksInfo"]),
+});
+export const FILE_ACCESS_MESSAGE_KEY = "backend.toolError.FILE_ACCESS_REQUIRED.message";
 
 const droppedPermissions = new Set(FIREFOX_DROPPED_PERMISSIONS);
+const FILE_ACCESS_TEXT = Object.freeze({
+  en: "Open qz in about:addons, open Permissions, enable Access local files on your computer, then retry.",
+  zh_CN: "请在 about:addons 中打开轻舟，进入权限页，开启“访问您计算机上的本地文件”，然后重试。",
+  zh_TW: "請在 about:addons 中開啟輕舟，進入權限頁，開啟「存取您電腦上的本機檔案」，然後重試。",
+  ja: "about:addons で軽舟を開き、権限ページで「コンピューター上のローカルファイルへのアクセス」を有効にしてから再試行してください。",
+  ko: "about:addons에서 qz를 열고 권한 페이지에서 컴퓨터의 로컬 파일 액세스를 켠 다음 다시 시도하세요.",
+  de: "Öffnen Sie qz unter about:addons, öffnen Sie die Berechtigungen, aktivieren Sie den Zugriff auf lokale Dateien auf Ihrem Computer und versuchen Sie es erneut.",
+  es: "Abra qz en about:addons, abra Permisos, active el acceso a los archivos locales del equipo y vuelva a intentarlo.",
+  fr: "Ouvrez qz dans about:addons, ouvrez Autorisations, activez l’accès aux fichiers locaux de votre ordinateur, puis réessayez.",
+  pt_BR: "Abra o qz em about:addons, abra Permissões, ative o acesso a arquivos locais no computador e tente novamente.",
+  ru: "Откройте qz на странице about:addons, откройте разрешения, включите доступ к локальным файлам на компьютере и повторите попытку.",
+  ar: "افتح qz في about:addons، ثم افتح الأذونات، وفعّل الوصول إلى الملفات المحلية على جهاز الكمبيوتر، ثم أعد المحاولة.",
+  hi: "about:addons में qz खोलें, अनुमतियाँ खोलें, अपने कंप्यूटर पर स्थानीय फ़ाइलों की पहुँच चालू करें और फिर से कोशिश करें।",
+});
+
+/** True for sources that exist only in the Firefox package. */
+export function isFirefoxOnlySource(path) {
+  return /^(?:background|sidepanel)\/firefox(?:-boot\.ts|\/)/.test(String(path || "").replaceAll("\\", "/"));
+}
 
 /** Return a Manifest V3 document Firefox can load as a temporary add-on. */
 export function firefoxManifest(manifest) {
@@ -29,15 +64,18 @@ export function firefoxManifest(manifest) {
   delete next.side_panel;
   if (Array.isArray(next.permissions)) {
     next.permissions = next.permissions.filter(permission => !droppedPermissions.has(permission));
+    for (const permission of FIREFOX_ADDED_PERMISSIONS) {
+      if (!next.permissions.includes(permission)) next.permissions.push(permission);
+    }
   }
   if (Array.isArray(next.optional_permissions)) {
     next.optional_permissions = next.optional_permissions.filter(permission => !droppedPermissions.has(permission));
     if (!next.optional_permissions.length) delete next.optional_permissions;
   }
   // Firefox starts background.scripts and does not run background.service_worker.
-  // Keeping both matches the cross-browser manifest shape; Chrome is a separate output.
+  // The boot module patches Firefox APIs, then loads the shared service worker.
   next.background = {
-    scripts: [worker],
+    scripts: [FIREFOX_BACKGROUND_SCRIPT],
     service_worker: worker,
     type: "module",
   };
@@ -54,7 +92,51 @@ export function firefoxManifest(manifest) {
     gecko: {
       id: FIREFOX_GECKO_ID,
       strict_min_version: FIREFOX_MIN_VERSION,
+      data_collection_permissions: {
+        required: [...FIREFOX_DATA_COLLECTION.required],
+        optional: [...FIREFOX_DATA_COLLECTION.optional],
+      },
     },
   };
   return next;
+}
+
+/** Point the sidebar document at the Firefox boot module. The Chrome file is unchanged. */
+export function rewriteFirefoxSidepanelHtml(html) {
+  return String(html).replace(/(<script\b[^>]*\bsrc=["'])sidepanel\.js(["'])/i, `$1${FIREFOX_PANEL_SCRIPT.split("/").pop()}$2`);
+}
+
+export function firefoxFileAccessMessageId() {
+  return chromeMessageId(FILE_ACCESS_MESSAGE_KEY);
+}
+
+export function rewriteFirefoxMessages(locale, messages) {
+  const id = firefoxFileAccessMessageId();
+  if (!messages || typeof messages !== "object" || Array.isArray(messages)) return messages;
+  // English and zh-CN keep this sentence in the shared bundle. Their catalogs omit the key,
+  // so the Firefox package adds it and the loader prefers the catalog over that sentence.
+  if (!messages[id] && !messages.qz_language) return messages;
+  const text = FILE_ACCESS_TEXT[locale] || FILE_ACCESS_TEXT.en;
+  return { ...messages, [id]: { message: text } };
+}
+
+/** Rewrite generated locale catalogs in a Firefox build output. */
+export async function rewriteFirefoxLocaleFiles(root) {
+  const locales = resolve(root, "_locales");
+  let names = [];
+  try { names = await readdir(locales); } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  for (const locale of names) {
+    const path = resolve(locales, locale, "messages.json");
+    let messages;
+    try { messages = JSON.parse(await readFile(path, "utf8")); } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    const rewritten = rewriteFirefoxMessages(locale, messages);
+    if (rewritten === messages) continue;
+    await writeFile(path, `${JSON.stringify(rewritten, null, 2)}\n`);
+  }
 }

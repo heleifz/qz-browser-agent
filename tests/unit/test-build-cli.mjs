@@ -111,7 +111,7 @@ test("firefox packaging rewrites only the firefox output manifest", async t => {
   assert.deepEqual(chromeManifest, source);
   assert.deepEqual(firefoxBuilt, firefoxManifest(source));
   assert.equal(firefoxBuilt.sidebar_action.default_panel, "sidepanel/sidepanel.html");
-  assert.deepEqual(firefoxBuilt.background.scripts, ["background/service-worker.js"]);
+  assert.deepEqual(firefoxBuilt.background.scripts, ["background/firefox-boot.js"]);
   assert.equal(chromeManifest.sidebar_action, undefined);
   assert.equal(chromeManifest.background.scripts, undefined);
   assert.equal(extensionOutputDirectory("chrome").endsWith(`${join("dist", "extension")}`), true);

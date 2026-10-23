@@ -14,7 +14,7 @@ import { acquireBuildOutput, BuildOutputLockedError, getBuildProcessParentPid, i
 import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
-import { firefoxManifest } from "./firefox-manifest.mjs";
+import { firefoxManifest, isFirefoxOnlySource, rewriteFirefoxLocaleFiles, rewriteFirefoxSidepanelHtml } from "./firefox-manifest.mjs";
 import { copyRuntimeAssets, createDependencyGraph, encodeSourceMapPath, originalInputPath, originalSourceMapPath, packageAssets, recordDependencyBuild, stablePackagePaths, writeDependencyProvenance } from "./vendor/assets.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -84,6 +84,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
   for (const [path, contents] of localeAssets.assets) profile.overrides.set(path, contents);
   profile.plugins.unshift(capabilities.plugin, modelsDevIndexPlugin(source));
   const paths = [...(await sourceFiles(source)).filter(path => profile.includes(path)
+    && (browser === "firefox" || !isFirefoxOnlySource(path))
     && !uiAssets.resources.has(resolve(source, path)) && !localeAssets.resources.has(resolve(source, path))
     && !capabilities.declarations.has(resolve(source, path))), ...capabilities.paths,
     ...[...localeAssets.assets.keys()].map(path => posix(relative(source, path)))];
@@ -150,6 +151,9 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
       const manifestPath = resolve(compiled, "manifest.json");
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
       await writeFile(manifestPath, `${JSON.stringify(firefoxManifest(manifest), null, 2)}\n`);
+      const panelPath = resolve(compiled, "sidepanel/sidepanel.html");
+      await writeFile(panelPath, rewriteFirefoxSidepanelHtml(await readFile(panelPath, "utf8")));
+      await rewriteFirefoxLocaleFiles(compiled);
     }
     const files = (await allFiles(compiled)).map(path => posix(relative(compiled, path)));
     const summary = {
