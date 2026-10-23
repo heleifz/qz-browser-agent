@@ -141,9 +141,16 @@ function bindImport() {
   });
 }
 
+const transcriptScrollKeys = new Set(["PageDown", "PageUp", "ArrowDown", "ArrowUp", "Home", "End", " "]);
+
 function pinTranscriptToTop() {
   const bodies = [...document.querySelectorAll(".example-thread-body")];
   if (!bodies.length) return;
+  const keyListeners = [];
+  const releaseScrollKeys = () => {
+    for (const [target, handler] of keyListeners) target.removeEventListener("keydown", handler);
+    keyListeners.length = 0;
+  };
   const reset = () => {
     for (const body of bodies) {
       if (body.dataset.userScrolled === "true") continue;
@@ -155,17 +162,35 @@ function pinTranscriptToTop() {
   const mark = (event) => {
     const node = event.currentTarget instanceof ShadowRoot ? event.currentTarget.host : event.currentTarget;
     const body = node?.closest?.(".example-thread-body");
-    if (body) body.dataset.userScrolled = "true";
+    if (!body) return;
+    body.dataset.userScrolled = "true";
+    if (bodies.every((item) => item.dataset.userScrolled === "true")) releaseScrollKeys();
+  };
+  const onScrollKey = (event) => {
+    if (!transcriptScrollKeys.has(event.key) && event.code !== "Space") return;
+    mark(event);
+  };
+  const watchScrollKeys = (target) => {
+    target.addEventListener("keydown", onScrollKey);
+    keyListeners.push([target, onScrollKey]);
   };
   reset();
   requestAnimationFrame(reset);
   window.addEventListener("load", reset);
-  for (const delay of [50, 300, 1000]) window.setTimeout(reset, delay);
+  for (const delay of [50, 300, 1000]) {
+    window.setTimeout(() => {
+      reset();
+      if (delay === 1000) releaseScrollKeys();
+    }, delay);
+  }
   for (const body of bodies) {
+    if (!body.hasAttribute("tabindex")) body.tabIndex = -1;
+    watchScrollKeys(body);
     body.addEventListener("wheel", mark, { passive: true });
     body.addEventListener("touchmove", mark, { passive: true });
     body.addEventListener("pointerdown", mark);
     const root = body.querySelector("qz-session-view")?.shadowRoot;
+    if (root) watchScrollKeys(root);
     root?.addEventListener("wheel", mark, { passive: true });
     root?.addEventListener("touchmove", mark, { passive: true });
     root?.addEventListener("pointerdown", mark);
