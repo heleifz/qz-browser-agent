@@ -10,7 +10,7 @@ export const translations = {
       "navStart": "Install<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>OPEN SOURCE · LOCAL FIRST",
       "heroTitle": "An agent that<br><span>actually uses<br>the browser.</span>",
-      "heroIntro": "An AI agent in the Chrome browser you already use and are signed in to. Bring your own model or sign in with ChatGPT. Delegate tasks through CLI, Skill, or MCP.",
+      "heroIntro": "Anything you can do in a browser, it can do better. It works inside your own signed-in Chrome, with the model you choose.",
       "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
