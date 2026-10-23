@@ -15,6 +15,7 @@ These rules apply throughout the repository. Capability changes also follow
 | Languages and interface copy | [Localization](docs/localization.md) |
 | Tests and performance | [Tests](tests/README.md), [benchmarks](docs/benchmarks.md) |
 | Local MCP service | [MCP bridge](services/mcp-bridge/README.md) |
+| Firefox and Chrome packages | [Firefox packaging](docs/firefox-packaging.md) (proposal) |
 
 Use Node.js 24 LTS and locked dependencies installed with `npm ci`. Source lives in `src/`; Chrome
 loads the compiled extension from `dist/extension/`.

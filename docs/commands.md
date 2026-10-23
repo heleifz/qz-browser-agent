@@ -56,7 +56,8 @@ manifest: the background starts from `background/firefox-boot.js`, the side pane
 sidebar, and permission names Firefox rejects are omitted. The toolbar button and `Ctrl+Shift+K`
 open the sidebar. Firefox chooses the side and shows one sidebar. Remaining differences are in
 [Firefox differences from Chrome](firefox-differences.md). The API survey is in
-[Firefox capability gap](firefox-capability-gap.md).
+[Firefox capability gap](firefox-capability-gap.md). The packaging convention under review is in
+[Firefox packaging](firefox-packaging.md).
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on**.
@@ -206,6 +207,8 @@ preserves the source manifest and writes the ZIP, README, and metadata to
 `dist/releases/<version>/`. The install archive is `qz-browser-agent-extension-<version>.zip`,
 with the extension under `qz-browser-agent-extension/`. The debug archive is
 `qz-browser-agent-extension-<version>.debug.zip`. Distribution and Git tags are separate maintainer steps.
+This command packages Chrome. A Firefox archive is proposed in
+[Firefox packaging](firefox-packaging.md) and is not produced here.
 
 For a Chrome Web Store upload, select the `webstore` target:
 

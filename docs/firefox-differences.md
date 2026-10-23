@@ -3,7 +3,8 @@
 The Firefox package loads the same tools as Chrome. A boot module installs Firefox stand-ins
 before those tools run. The Chrome package does not include that module. Its manifest and the
 Chrome sentences in shared code stay on the Chrome path. Shared copy that a person can read
-chooses a Firefox sentence only when `runtime.getURL("")` starts with `moz-extension:`.
+chooses a Firefox sentence only when `runtime.getURL("")` starts with `moz-extension:`. How the
+two packages are separated is proposed in [Firefox packaging](firefox-packaging.md).
 
 This list is what a person or a tool result can still observe. Each row names the Firefox
 behavior and the limit that remains. Platform limits cite the Firefox 158.0.1 APIs that were
