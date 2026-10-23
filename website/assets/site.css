@@ -57,6 +57,7 @@ h1 { font-size: clamp(64px, 6.6vw, 92px); font-weight: 540; line-height: 1.03; l
 h1 span { color: #8d8d88; }
 .hero-aside { padding-bottom: 4px; max-width: 380px; justify-self: end; }
 .intro { color: var(--secondary); font-size: 17px; line-height: 1.65; letter-spacing: -.2px; white-space: pre-line; }
+:lang(zh-CN) .intro { text-wrap: balance; word-break: auto-phrase; }
 .actions { display: flex; align-items: center; gap: 25px; margin-top: 25px; }
 .source-link { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .source-link:hover { text-decoration: underline; text-underline-offset: 5px; }
