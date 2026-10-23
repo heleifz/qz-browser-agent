@@ -42,7 +42,7 @@ test("sidebarAction.open runs inside the user-gesture turn", async () => {
     action: { onClicked: { addListener(listener) { browser.clicked = listener; } } },
     windows: { update() { updateCalled = true; return new Promise(() => {}); } },
   };
-  installWorkspacePanel(browser);
+  installWorkspacePanel(browser, {});
   await browser.sidePanel.open({ windowId: 4, tabId: 9 });
   assert.deepEqual(calls, ["open"]);
   assert.deepEqual(panels, [{ tabId: 9, panel: "moz-extension://uuid/sidepanel/sidepanel.html" }]);
@@ -54,6 +54,7 @@ test("sidebarAction.open runs inside the user-gesture turn", async () => {
 
 test("sidebar open outside a user gesture explains the failure and does not retry", async () => {
   const calls = [];
+  const host = {};
   const browser = {
     sidebarAction: {
       open(options) {
@@ -63,130 +64,250 @@ test("sidebar open outside a user gesture explains the failure and does not retr
     },
     action: { onClicked: { addListener(listener) { browser.clicked = listener; } } },
   };
-  installWorkspacePanel(browser);
-  await assert.rejects(
-    browser.sidePanel.open({ windowId: 4, tabId: 9 }),
-    /Firefox opens the sidebar only during a user gesture, such as a toolbar click, shortcut, or notification click/,
-  );
-  assert.deepEqual(calls, [{}]);
-  browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  const errors = [];
-  const original = console.error;
-  console.error = (...args) => { errors.push(args.map(String).join(" ")); };
+  const errors = captureErrors();
   try {
+    installWorkspacePanel(browser, host);
+    await assert.rejects(
+      browser.sidePanel.open({ windowId: 4, tabId: 9 }),
+      /Firefox opens the sidebar only from the toolbar button, the sidebar shortcut, or a menu item/,
+    );
+    assert.deepEqual(calls, [{}]);
+    browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
     browser.clicked();
     for (let step = 0; step < 5; step += 1) await Promise.resolve();
   } finally {
-    console.error = original;
+    errors.restore();
   }
-  assert.match(errors[0], /firefox sidebar did not open/);
-  assert.match(errors[0], /user gesture/);
+  assert.match(errors.lines[0], /firefox sidebarAction failed \(api\): sidebarAction\.open may only be called from a user input handler/);
+  assert.match(errors.lines[1], /firefox sidebarAction failed \(toolbar\): sidebarAction\.open may only be called from a user input handler/);
+  assert.equal(host.qzFirefoxSidebar.attempts, 2);
+  assert.equal(host.qzFirefoxSidebar.refused, 2);
+  assert.equal(host.qzFirefoxSidebar.lastSource, "toolbar");
 });
 
-test("a sidebar open outside a user gesture asks for a click and keeps the imported session", async () => {
-  const badges = [];
-  const notes = [];
-  const opens = [];
-  const createdTabs = [];
-  let notificationClick = () => {};
-  let allowOpen = false;
-  const browser = sidebarPromptBrowser({
-    badges,
-    notes,
-    opens,
-    createdTabs,
-    language: "en-US",
-    allowOpen: () => allowOpen,
-    onNotificationClick(listener) { notificationClick = listener; },
-  });
-  installWorkspacePanel(browser);
-  const bridge = createSessionExchangeBridge({
-    sidePanel: browser.sidePanel,
-    importSessionExchange: async () => ({ session: { id: "imported", title: "Imported" } }),
-    channel: { hasPorts: () => false, broadcast() {}, remember() {} },
-    logger: { debug() {} },
-    consentAccepted: () => true,
-  });
-  const payload = createSessionExchangePayload({
-    session: { id: "source", title: "Imported" },
-    conversation: serializeConversation([{ role: "user", content: "import me" }]),
-    transcript: [],
-    exportedAt: "2026-07-12 12:00:00",
-  });
-  const result = await bridge.importFromPage({ payload }, {
-    tab: { url: "http://127.0.0.1/export.html", id: 3, windowId: 4 },
-  });
-  assert.equal(result.session.id, "imported");
-  assert.deepEqual(createdTabs, []);
-  assert.deepEqual(opens, [0]);
-  assert.deepEqual(badges, ["!"]);
-  assert.equal(notes[0].id, "qz-open-sidebar");
-  assert.equal(Object.hasOwn(notes[0].options, "requireInteraction"), false);
-  assert.equal(notes[0].options.message, "Click this notification to open the sidebar.");
-  assert.equal(notes[0].options.iconUrl, "moz-extension://uuid/icons/icon128.png");
+test("an import outside a user gesture points at the toolbar icon and keeps the imported session", async () => {
+  const prompt = sidebarPromptBrowser({ language: "en-US" });
+  const { browser, badges, titles, notes, opens, createdTabs, host } = prompt;
+  const errors = captureErrors();
+  try {
+    installWorkspacePanel(browser, host);
+    const bridge = createSessionExchangeBridge({
+      sidePanel: browser.sidePanel,
+      importSessionExchange: async () => ({ session: { id: "imported", title: "Imported" } }),
+      channel: { hasPorts: () => false, broadcast() {}, remember() {} },
+      logger: { debug() {} },
+      consentAccepted: () => true,
+    });
+    const payload = createSessionExchangePayload({
+      session: { id: "source", title: "Imported" },
+      conversation: serializeConversation([{ role: "user", content: "import me" }]),
+      transcript: [],
+      exportedAt: "2026-07-12 12:00:00",
+    });
+    const result = await bridge.importFromPage({ payload }, {
+      tab: { url: "http://127.0.0.1/export.html", id: 3, windowId: 4 },
+    });
+    assert.equal(result.session.id, "imported");
+    await settle();
+    assert.deepEqual(createdTabs, []);
+    assert.deepEqual(opens, [0]);
+    assert.deepEqual(badges, ["!"]);
+    assert.deepEqual(titles, ["qz: click to open the sidebar"]);
+    assert.equal(notes[0].id, "qz-open-sidebar");
+    assert.equal(Object.hasOwn(notes[0].options, "requireInteraction"), false);
+    assert.equal(notes[0].options.message, "Click the qz icon in the toolbar to view.");
+    assert.equal(/notification/i.test(notes[0].options.message), false);
+    assert.equal(notes[0].options.iconUrl, "moz-extension://uuid/icons/icon128.png");
 
-  bridge.revealForImport({ tab: { id: 3, windowId: 4, url: "http://127.0.0.1/export.html" } });
-  for (let step = 0; step < 4; step += 1) await Promise.resolve();
-  assert.equal(notes.filter(item => item.id).length, 1);
-  notificationClick("qz_completed_root_run");
-  assert.deepEqual(opens, [0, 0]);
+    bridge.revealForImport({ tab: { id: 3, windowId: 4, url: "http://127.0.0.1/export.html" } });
+    for (let step = 0; step < 4; step += 1) await Promise.resolve();
+    assert.equal(notes.filter(item => item.id).length, 1);
 
-  allowOpen = true;
-  notificationClick("qz-open-sidebar");
-  assert.equal(opens.at(-1), 0);
-  assert.equal(badges.at(-1), "");
-  assert.equal(notes.some(item => item.clear === "qz-open-sidebar"), true);
+    prompt.click("qz-open-sidebar");
+    await settle();
+    assert.deepEqual(opens, [0, 0, 0]);
+    assert.equal(notes.filter(item => item.id).length, 1, "a notification click never raises another notification");
+    assert.equal(notes.at(-1).clear, "qz-open-sidebar");
+    assert.equal(badges.at(-1), "!", "the badge stays until the sidebar opens");
+    assert.deepEqual(prompt.focused, [4]);
+    assert.equal(host.qzFirefoxSidebar.notificationClicks, 1);
+    assert.equal(host.qzFirefoxSidebar.lastSource, "notification");
+    assert.equal(host.qzFirefoxSidebar.lastError, "sidebarAction.open may only be called from a user input handler");
+    assert.match(errors.lines.at(-1), /firefox sidebarAction failed \(notification\): sidebarAction\.open may only be called from a user input handler/);
 
-  browser.sidePanel.setPanelBehavior({});
-  allowOpen = false;
-  await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /user gesture/);
-  assert.equal(badges.at(-1), "!");
-  allowOpen = true;
-  browser.toolbar();
-  assert.equal(badges.at(-1), "");
-  assert.equal(opens.at(-1), "toggle");
+    prompt.allowOpen = true;
+    browser.sidePanel.setPanelBehavior({});
+    browser.toolbar();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(opens.at(-1), "toggle");
+    assert.equal(badges.at(-1), "");
+    assert.equal(titles.at(-1), null);
+  } finally {
+    errors.restore();
+  }
+});
+
+test("a sidebar open inside a notification click logs the real error and raises no second notification", async () => {
+  const prompt = sidebarPromptBrowser({ language: "en-US" });
+  const { browser, badges, titles, notes, host } = prompt;
+  const errors = captureErrors();
+  try {
+    installWorkspacePanel(browser, host);
+    browser.notifications.onClicked.addListener(() => {
+      void browser.sidePanel.open({ windowId: 4 }).catch(() => {});
+    });
+    prompt.click("qz_completed_root_run-1");
+    await settle();
+    assert.deepEqual(notes, []);
+    assert.deepEqual(badges, ["!"]);
+    assert.deepEqual(titles, ["qz: click to open the sidebar"]);
+    assert.equal(host.qzFirefoxSidebar.refused, 1);
+    assert.equal(host.qzFirefoxSidebar.lastSource, "notification");
+    assert.equal(host.qzFirefoxSidebar.prompts, 1);
+    assert.equal(host.qzFirefoxSidebar.notified, 0);
+    assert.match(errors.lines[0], /\(notification\): sidebarAction\.open may only be called from a user input handler/);
+
+    await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /toolbar button/);
+    await settle();
+    assert.deepEqual(notes, [], "the same prompt is not raised twice");
+  } finally {
+    errors.restore();
+  }
+});
+
+test("opening the sidebar by any route clears the badge and lets a later import prompt again", async () => {
+  const prompt = sidebarPromptBrowser({ language: "en-US" });
+  const { browser, badges, titles, notes, host } = prompt;
+  const errors = captureErrors();
+  try {
+    installWorkspacePanel(browser, host);
+    await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /toolbar button/);
+    await settle();
+    assert.deepEqual(badges, ["!"]);
+    prompt.connect({ name: "sidepanel", sender: { url: "moz-extension://uuid/sidepanel/sidepanel.html", tab: { id: 1 } } });
+    prompt.connect({ name: "runtime-request", sender: { url: "moz-extension://uuid/sidepanel/sidepanel.html" } });
+    prompt.connect({ name: "sidepanel", sender: { url: "moz-extension://other/sidepanel/sidepanel.html" } });
+    assert.deepEqual(badges, ["!"]);
+    prompt.connect({ name: "sidepanel", sender: { url: "moz-extension://uuid/sidepanel/sidepanel.html?embedded=1" } });
+    assert.deepEqual(badges, ["!", ""]);
+    assert.deepEqual(titles, ["qz: click to open the sidebar", null]);
+    assert.equal(notes.at(-1).clear, "qz-open-sidebar");
+
+    await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /toolbar button/);
+    await settle();
+    assert.equal(notes.filter(item => item.id).length, 2);
+    assert.equal(badges.at(-1), "!");
+    assert.equal(host.qzFirefoxSidebar.prompts, 2);
+    assert.equal(host.qzFirefoxSidebar.notified, 2);
+  } finally {
+    errors.restore();
+  }
+});
+
+test("a refused open while the sidebar is already showing leaves no badge or notification", async () => {
+  const prompt = sidebarPromptBrowser({ language: "en-US" });
+  const { browser, badges, notes, host } = prompt;
+  prompt.showing = true;
+  const errors = captureErrors();
+  try {
+    installWorkspacePanel(browser, host);
+    await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /toolbar button/);
+    prompt.click("qz_completed_root_run-1");
+    await settle();
+  } finally {
+    errors.restore();
+  }
+  assert.deepEqual(badges, []);
+  assert.deepEqual(notes, []);
+  assert.equal(host.qzFirefoxSidebar.refused, 1);
+  assert.equal(host.qzFirefoxSidebar.prompts, 0);
+  assert.equal(host.qzFirefoxSidebar.notificationClicks, 1);
+  assert.match(errors.lines[0], /\(api\): sidebarAction\.open may only be called from a user input handler/);
 });
 
 test("the sidebar prompt uses Chinese when the Firefox UI language is Chinese", async () => {
-  const notes = [];
-  const browser = sidebarPromptBrowser({ notes, language: "zh-CN", allowOpen: () => false });
-  installWorkspacePanel(browser);
-  await assert.rejects(browser.sidePanel.open({ windowId: 1 }), /user gesture/);
+  const { browser, notes, titles, host } = sidebarPromptBrowser({ language: "zh-CN" });
+  const errors = captureErrors();
+  try {
+    installWorkspacePanel(browser, host);
+    await assert.rejects(browser.sidePanel.open({ windowId: 1 }), /toolbar button/);
+    await settle();
+  } finally {
+    errors.restore();
+  }
   assert.equal(notes[0].options.title, "轻舟");
-  assert.equal(notes[0].options.message, "点击此通知打开侧边栏。");
+  assert.equal(notes[0].options.message, "点击工具栏中的轻舟图标查看。");
+  assert.deepEqual(titles, ["轻舟：点击打开侧边栏"]);
 });
 
-function sidebarPromptBrowser({ badges = [], notes = [], opens = [], createdTabs = [], language = "en-US", allowOpen = () => false, onNotificationClick = () => {} } = {}) {
+function sidebarPromptBrowser({ language = "en-US" } = {}) {
+  const state = {
+    badges: [],
+    titles: [],
+    notes: [],
+    opens: [],
+    createdTabs: [],
+    focused: [],
+    host: {},
+    allowOpen: false,
+    showing: false,
+    clickListeners: [],
+    connectListeners: [],
+    click(id) { for (const listener of state.clickListeners) listener(id); },
+    connect(port) { for (const listener of state.connectListeners) listener(port); },
+  };
   const browser = {
-    runtime: { getURL: path => `moz-extension://uuid/${path}` },
+    runtime: {
+      getURL: path => `moz-extension://uuid/${path}`,
+      onConnect: { addListener(listener) { state.connectListeners.push(listener); } },
+    },
     i18n: { getUILanguage: () => language },
     sidebarAction: {
       open() {
-        opens.push(arguments.length);
-        if (!allowOpen()) return Promise.reject(new Error("sidebarAction.open may only be called from a user input handler"));
+        state.opens.push(arguments.length);
+        if (!state.allowOpen) return Promise.reject(new Error("sidebarAction.open may only be called from a user input handler"));
         return Promise.resolve();
       },
       toggle() {
-        opens.push("toggle");
+        state.opens.push("toggle");
         return Promise.resolve();
       },
+      isOpen() { return Promise.resolve(state.showing); },
     },
     action: {
       onClicked: { addListener(listener) { browser.toolbar = listener; } },
-      setBadgeText(details) { badges.push(details.text); return Promise.resolve(); },
+      setBadgeText(details) { state.badges.push(details.text); return Promise.resolve(); },
+      setTitle(details) { state.titles.push(details.title); return Promise.resolve(); },
     },
     notifications: {
       create(id, options) {
-        notes.push({ id, options });
+        state.notes.push({ id, options });
         return Promise.resolve(id);
       },
-      clear(id) { notes.push({ clear: id }); return Promise.resolve(true); },
-      onClicked: { addListener(listener) { onNotificationClick(listener); } },
+      clear(id) { state.notes.push({ clear: id }); return Promise.resolve(true); },
+      onClicked: { addListener(listener) { state.clickListeners.push(listener); } },
     },
-    tabs: { create(properties) { createdTabs.push(properties); return Promise.resolve({ id: 1 }); } },
-    windows: { create(properties) { createdTabs.push(properties); return Promise.resolve({ id: 2 }); } },
+    tabs: { create(properties) { state.createdTabs.push(properties); return Promise.resolve({ id: 1 }); } },
+    windows: {
+      create(properties) { state.createdTabs.push(properties); return Promise.resolve({ id: 2 }); },
+      getLastFocused() { return Promise.resolve({ id: 4 }); },
+      update(windowId, info) { if (info.focused) state.focused.push(windowId); return Promise.resolve({ id: windowId }); },
+    },
   };
-  return browser;
+  state.browser = browser;
+  return state;
+}
+
+function settle() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function captureErrors() {
+  const lines = [];
+  const original = console.error;
+  console.error = (...args) => { lines.push(args.map(String).join(" ")); };
+  return { lines, restore() { console.error = original; } };
 }
 
 test("initiatorDomains use the moz-extension host on Firefox and stay unchanged on Chrome", async () => {
@@ -286,7 +407,7 @@ test("an inherited requireInteraction is removed before Firefox validates the op
   assert.equal("requireInteraction" in seen[1], false);
 });
 
-test("a completion notification is created without requireInteraction and its click opens the sidebar", async () => {
+test("a completion notification is created without requireInteraction and its click calls sidebarAction.open in the click turn", async () => {
   const seen = [];
   const opens = [];
   const browser = {
@@ -319,7 +440,7 @@ test("a completion notification is created without requireInteraction and its cl
       async getAll() { return [{ id: 4, type: "normal", focused: false }]; },
     },
   };
-  installWorkspacePanel(browser);
+  installWorkspacePanel(browser, {});
   installNotificationRenewal(browser);
   const notifications = createChromeNotificationService({
     notifications: browser.notifications,
