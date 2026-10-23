@@ -23,9 +23,17 @@ test("full verification inventories production coverage and includes indexed ext
   assert.match(pkg.scripts.verify, /typecheck/);
   assert.match(pkg.scripts.verify, /npm test -- --all --coverage/);
   assert.equal(pkg.scripts["verify:quick"], "npm run typecheck && npm test -- --all");
-  assert.doesNotMatch(pkg.scripts["verify:quick"], /--coverage/);
+  assert.doesNotMatch(pkg.scripts["verify:quick"], /--coverage|firefox/);
+  assert.equal(pkg.scripts["verify:firefox"], "npm run typecheck && npm test -- firefox");
   assert.match(listed, /Coverage: c8 \+ full runtime critical gate/);
   assert.doesNotMatch(listed, /tests\/live\/|agent-behavior-e2e/);
+  assert.doesNotMatch(listed, /tests\/firefox\/run\.mjs|playwright\.firefox\.config/);
+  const firefox = execFileSync(process.execPath, ["tests/run.mjs", "firefox", "--list"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  assert.match(firefox, /tests\/firefox\/run\.mjs/);
+  assert.doesNotMatch(firefox, /tests\/config\/playwright\.config\.mjs/);
 });
 
 test("Playwright loads production modules from the browser build, not its Node collector", () => {

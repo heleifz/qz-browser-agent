@@ -26,7 +26,11 @@ npm run verify
 | `browser` | Playwright, Python page smoke tests and Data Grid behavior |
 | `e2e` | The loaded extension, Session exchange, documents and tool timelines |
 | `release` | Deterministic builds, ZIP contents and the packaged extension |
-| `visual` | Tool timelines and conversation streaming |
+| `visual` | Tool timelines and conversation streaming in Chromium |
+| `firefox` | Firefox unit tests and Playwright in Mozilla Firefox against `dist/extension-firefox/` |
+
+`firefox` is not part of `npm test` or `--all`. `npm run verify:firefox` runs it. The other suites
+stay on Chromium and the Chrome package.
 
 `npm test` selects `unit contracts services browser`; `--all` also selects E2E, release and visual.
 `verify:quick` adds type checking to `--all` and omits coverage gates. `verify` adds those gates.
@@ -56,7 +60,8 @@ alongside Playwright. Each extension check owns its profile; timing measurements
 `QINGZHOU_TEST_CONCURRENCY` and `QINGZHOU_PLAYWRIGHT_WORKERS` override their respective pools; suite
 ownership stays in [`runner/suites.mjs`](runner/suites.mjs).
 
-The runner uses the locked Chromium, including its full headless mode for Playwright page tests.
+The Chromium runner uses the locked Chromium, including its full headless mode for Playwright page tests.
+The Firefox suite uses Mozilla Firefox selected by `FIREFOX_EXECUTABLE` and does not reuse that Chromium.
 Native keyboard, clipboard and control fixtures retain Chromium Headless Shell.
 Page tests can select `QINGZHOU_PLAYWRIGHT_CHANNEL=chrome`;
 other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed for comparisons.

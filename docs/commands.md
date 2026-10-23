@@ -11,7 +11,8 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run typecheck` | Check TypeScript without a production build |
 | `npm test` | Run unit, contract, service, and browser tests |
 | `npm run verify` | Run type checking, all automated test suites, and coverage checks |
-| `npm run verify:quick` | Run type checking and all automated test suites, omitting coverage gates |
+| `npm run verify:quick` | Type-check and run the Chromium suites. They load the Chrome package, not `dist/extension-firefox/` |
+| `npm run verify:firefox` | Type-check, build `dist/extension-firefox/`, run the Firefox unit tests, and run Playwright in Firefox |
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
@@ -87,10 +88,30 @@ npm test -- playwright renderer-lifecycle.spec.mjs --workers 1
 npm test -- grid
 ```
 
-The suites are `unit`, `contracts`, `services`, `browser`, `e2e`, `release`, and `visual`. `--match`
-filters unit filenames or suite commands. `--list` shows what would run. `browser` includes
-Playwright, Python page smoke tests, and Data Grid tests; `playwright` runs only Playwright and
-accepts its own options.
+The Chromium suites are `unit`, `contracts`, `services`, `browser`, `e2e`, `release`, and `visual`.
+`--match` filters unit filenames or suite commands. `--list` shows what would run. `browser` includes
+Chromium Playwright, Python page smoke tests, and Data Grid tests. `playwright` runs only that
+Chromium Playwright config and accepts its own options. `npm test` and `npm run verify:quick` do not
+select the Firefox suite and do not launch Firefox.
+
+### Firefox package
+
+`npm run verify:firefox` is separate from the Chromium suites. It type-checks, builds
+`dist/extension-firefox/`, runs `tests/unit/test-firefox-*.mjs`, and runs Playwright against that
+directory in Mozilla Firefox. The browser is Firefox's WebDriver BiDi channel (`moz-firefox`), not
+Chromium and not Playwright's bundled Firefox. Set `FIREFOX_EXECUTABLE` when Firefox is not on
+`PATH`. `QINGZHOU_FIREFOX_PLAYWRIGHT_WORKERS` bounds that Playwright process; it does not read
+`QINGZHOU_PLAYWRIGHT_WORKERS`.
+
+```bash
+npm run verify:firefox
+npm test -- firefox
+```
+
+Reports go to `tests/results/playwright-firefox/` and `tests/results/firefox-suite.json`. The JSON
+record names `browser=firefox` and `package=dist/extension-firefox`. The Chromium Playwright report
+stays in `tests/results/playwright-report/`. A log line at the start of each suite names the browser
+and package. `QINGZHOU_PLAYWRIGHT_CHANNEL` cannot point the Chromium suites at Firefox.
 
 Before submitting ordinary code changes, run `npm run verify:quick` and set
 `QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux). Run `npm run verify`
@@ -104,9 +125,11 @@ index](../tests/BEHAVIOR_INDEX.md). See [tests/README.md](../tests/README.md) fo
 
 ### Continuous integration
 
-[GitHub Actions](../.github/workflows/ci.yml) runs type-checked builds and focused Tool and Renderer
-browser contract tests on Linux, macOS and Windows. Run `npm run verify` locally for the full
-test suites and coverage gates.
+[GitHub Actions](../.github/workflows/ci.yml) runs two browser gates. The portable build job
+type-checks, builds the Chrome package, and runs the focused Tool and Renderer contracts in
+Chromium on Linux, macOS, and Windows. The Firefox job builds `dist/extension-firefox/` and runs
+`npm run verify:firefox` on Linux. Run `npm run verify` locally for the full Chromium suites and
+coverage gates. Run `npm run verify:firefox` for the Firefox package.
 
 ## Run against a real model
 

@@ -131,6 +131,14 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
         "tests/release/chrome-smoke.mjs",
       ),
     ],
+    // Firefox is outside --all. verify:quick keeps the Chromium suites on dist/extension.
+    firefox: [
+      commandWith(
+        { id: "firefox-package", resource: "general" },
+        "node",
+        "tests/firefox/run.mjs",
+      ),
+    ],
     visual: [
       commandWith(
         { resource: "browser-secondary", after: ["playwright-browser", "mcp-tab-ownership-e2e"] },
