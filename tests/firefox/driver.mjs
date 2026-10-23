@@ -10,11 +10,25 @@ export function shortcutKeyId(extensionId) {
   return `ext-key-id-${widgetId(extensionId)}-sidebar-action`;
 }
 
+/**
+ * A chrome-scope expression over `win` that holds once the extension's sidebar is selected and laid out.
+ * A hidden sidebar keeps its panel browser and URL, so the URL alone does not show that it opened.
+ */
+function sidebarShown(extensionId) {
+  return `(() => {
+    const box = win.document.getElementById("sidebar-box");
+    const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
+    return win.SidebarController.currentID === ${JSON.stringify(sidebarCommandId(extensionId))}
+      && !!box && !box.hidden && box.getBoundingClientRect().width > 0
+      && panel?.currentURI?.spec === ${JSON.stringify(SIDEBAR_URL)};
+  })()`;
+}
+
 /** Read the focused window's sidebar browser and every tab URL. */
 export function readSidebar(session) {
   const command = sidebarCommandId(session.geckoId);
   return session.chrome(`
-    const win = Services.focus.activeWindow || window;
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
     const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
     const tabs = [];
     for (const browserWin of Services.wm.getEnumerator("navigator:browser")) {
@@ -36,7 +50,7 @@ export async function hideSidebars(session) {
     }
     const started = Date.now();
     while (Date.now() - started < 2000) {
-      const win = Services.focus.activeWindow || window;
+      const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
       if (!win.SidebarController?.currentID) break;
       await new Promise(resolve => setTimeout(resolve, 50));
     }
@@ -50,7 +64,7 @@ export async function openFromToolbar(session) {
   return session.chrome(`
     const { ExtensionParent } = ChromeUtils.importESModule("resource://gre/modules/ExtensionParent.sys.mjs");
     const policy = WebExtensionPolicy.getByID(${JSON.stringify(session.geckoId)});
-    const win = Services.focus.activeWindow || window;
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
     const button = win.document.getElementById(${JSON.stringify(`${widgetId(session.geckoId)}-browser-action`)});
     ExtensionParent.apiManager.global.browserActionFor(policy.extension).triggerAction(win);
     const started = Date.now();
@@ -58,7 +72,7 @@ export async function openFromToolbar(session) {
     while (Date.now() - started < 5000) {
       const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
       snap = { current: win.SidebarController.currentID || "", panel: panel?.currentURI?.spec || "", button: !!button };
-      if (snap.panel === ${JSON.stringify(SIDEBAR_URL)}) break;
+      if (${sidebarShown(session.geckoId)}) break;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     const tabs = [];
@@ -75,7 +89,7 @@ export async function openFromShortcut(session) {
   await hideSidebars(session);
   const keyId = shortcutKeyId(session.geckoId);
   return session.chrome(`
-    const win = Services.focus.activeWindow || window;
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
     const key = win.document.getElementById(${JSON.stringify(keyId)});
     if (!key) throw new Error("Firefox did not register the sidebar shortcut");
     key.doCommand();
@@ -89,7 +103,7 @@ export async function openFromShortcut(session) {
         key: key.getAttribute("key"),
         modifiers: key.getAttribute("modifiers"),
       };
-      if (snap.panel === ${JSON.stringify(SIDEBAR_URL)}) break;
+      if (${sidebarShown(session.geckoId)}) break;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     const tabs = [];
@@ -118,129 +132,6 @@ export function extensionManifest(session) {
   `);
 }
 
-const BUTTON_STATE_SCRIPT = `
-  const started = Date.now();
-  let button = null;
-  while (Date.now() - started < 4000) {
-    button = content.document.querySelector("#onboarding-primary-btn") || content.document.querySelector(".qz-btn--primary");
-    if (button) break;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  if (!button) {
-    return {
-      missing: true,
-      href: String(content.location && content.location.href || ""),
-      buttons: content.document.querySelectorAll("button").length,
-    };
-  }
-  const read = () => {
-    const style = content.getComputedStyle(button);
-    return { color: style.color, background: style.backgroundColor, image: style.backgroundImage, opacity: style.opacity };
-  };
-  const rest = read();
-  let hover = { error: "pseudo lock unavailable" };
-  let active = { error: "pseudo lock unavailable" };
-  let utils = null;
-  try {
-    if (typeof InspectorUtils !== "undefined" && InspectorUtils.addPseudoClassLock) utils = InspectorUtils;
-    else utils = Cc["@mozilla.org/inspector/dom-utils;1"].getService(Ci.inIDOMUtils);
-    const target = Cu.waiveXrays(button);
-    utils.addPseudoClassLock(target, ":hover");
-    hover = read();
-    utils.clearPseudoClassLocks(target);
-    utils.addPseudoClassLock(target, ":active");
-    active = read();
-    utils.clearPseudoClassLocks(target);
-  } catch (error) {
-    hover = { error: String(error) };
-    active = { error: String(error) };
-    try { if (utils && utils.clearPseudoClassLocks) utils.clearPseudoClassLocks(Cu.waiveXrays(button)); }
-    catch { /* The next sample sets its own lock. */ }
-  }
-  const wasDisabled = button.disabled;
-  button.disabled = true;
-  const disabled = read();
-  button.disabled = wasDisabled;
-  const rootStyle = content.getComputedStyle(content.document.documentElement);
-  return {
-    rest, hover, active, disabled,
-    veil: rootStyle.getPropertyValue("--qz-ff-primary-hover-veil").trim(),
-    activeVeil: rootStyle.getPropertyValue("--qz-ff-primary-active-veil").trim(),
-    disabledVeil: rootStyle.getPropertyValue("--qz-ff-primary-disabled-veil").trim(),
-    disabledOpacity: rootStyle.getPropertyValue("--control-disabled-opacity").trim(),
-    accent: rootStyle.getPropertyValue("--qz-ff-accent").trim(),
-    scheme: rootStyle.colorScheme,
-  };
-`;
-
-export function buttonColors(session) {
-  return session.extension("sidebar", `
-    const sample = await (async () => { ${BUTTON_STATE_SCRIPT} })();
-    sample.dark = view.matchMedia("(prefers-color-scheme: dark)").matches;
-    return sample;
-  `);
-}
-
-export function readTheme(session) {
-  return session.extension("sidebar", `
-    const style = content.getComputedStyle(content.document.documentElement);
-    const root = content.document.documentElement;
-    let current = { missing: true };
-    const theme = view.browser && view.browser.theme;
-    if (typeof theme?.getCurrent === "function") {
-      try { current = await theme.getCurrent(); }
-      catch (error) { current = { error: String(error) }; }
-    }
-    return {
-      colorScheme: style.colorScheme,
-      toolbar: style.getPropertyValue("--qz-ff-toolbar").trim(),
-      accent: style.getPropertyValue("--qz-ff-accent").trim(),
-      inlineAccent: root.style.getPropertyValue("--qz-ff-accent").trim(),
-      inlineToolbar: root.style.getPropertyValue("--qz-ff-toolbar").trim(),
-      sheets: [...content.document.querySelectorAll("link[rel=stylesheet]")].map(link => link.getAttribute("href")),
-      theme: current,
-    };
-  `);
-}
-
-export async function colorSchemes(session) {
-  // Extension pages ignore layout.css.prefers-color-scheme.content-override.
-  // Firefox applies prefers-color-scheme to the sidebar browser through
-  // browsingContext.prefersColorSchemeOverride, the same field the window theme uses.
-  const samples = [];
-  try {
-    for (const name of ["light", "dark"]) {
-      await session.chrome(`
-        const win = Services.focus.activeWindow || window;
-        const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
-        if (!panel?.browsingContext) throw new Error("Firefox sidebar has no browsing context");
-        panel.browsingContext.prefersColorSchemeOverride = ${JSON.stringify(name)};
-        await new Promise(resolve => setTimeout(resolve, 50));
-        return panel.browsingContext.prefersColorSchemeOverride;
-      `);
-      const colors = await session.extension("sidebar", `
-        content.document.documentElement.style.removeProperty("color-scheme");
-        void content.document.documentElement.offsetWidth;
-        const sample = await (async () => { ${BUTTON_STATE_SCRIPT} })();
-        sample.name = ${JSON.stringify(name)};
-        sample.dark = content.matchMedia("(prefers-color-scheme: dark)").matches;
-        sample.light = content.matchMedia("(prefers-color-scheme: light)").matches;
-        sample.body = content.getComputedStyle(content.document.body).backgroundColor;
-        return sample;
-      `);
-      samples.push(colors);
-    }
-  } finally {
-    await session.chrome(`
-      const win = Services.focus.activeWindow || window;
-      const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
-      if (panel?.browsingContext) panel.browsingContext.prefersColorSchemeOverride = "none";
-      return true;
-    `).catch(() => undefined);
-  }
-  return samples;
-}
-
 export function createNotification(session, id, options) {
   return session.extension("background", `
     const api = extensionApi();
@@ -264,12 +155,186 @@ export function createNotification(session, id, options) {
   `);
 }
 
+/** A dark window theme with a light popup, so popover text has to follow popup_text. */
+export const TEST_THEME = Object.freeze({
+  frame: "#2a2148",
+  tab_background_text: "#fbfbfe",
+  toolbar: "#3b2f63",
+  toolbar_text: "#fbfbfe",
+  sidebar: "#2a2148",
+  sidebar_text: "#ece8ff",
+  sidebar_border: "rgba(236, 232, 255, 0.2)",
+  sidebar_highlight: "#b9a5ff",
+  sidebar_highlight_text: "#15141a",
+  focus_outline: "#7cf0d0",
+  toolbar_field: "#3b2f63",
+  toolbar_field_text: "#ece8ff",
+  toolbar_field_border: "#5b5285",
+  popup: "#f6f3ff",
+  popup_text: "#1c1b22",
+  popup_border: "#c6bddc",
+});
+
+const PANEL_SCRIPT = `
+  const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
+  const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
+`;
+
+/** The sidebar switcher and View menu call SidebarController.show with the extension's command id. */
+export async function openFromSwitcher(session) {
+  await hideSidebars(session);
+  return session.chrome(`
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
+    await win.SidebarController.show(${JSON.stringify(sidebarCommandId(session.geckoId))});
+    const started = Date.now();
+    let current = "";
+    while (Date.now() - started < 5000) {
+      const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
+      current = panel?.currentURI?.spec || "";
+      if (${sidebarShown(session.geckoId)}) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return { current: win.SidebarController.currentID || "", panel: current };
+  `);
+}
+
+/** Force prefers-color-scheme on the sidebar browser: "light", "dark", or "none". */
+export async function setColorScheme(session, name) {
+  await session.chrome(`
+    ${PANEL_SCRIPT}
+    if (!panel?.browsingContext) throw new Error("Firefox sidebar has no browsing context");
+    panel.browsingContext.prefersColorSchemeOverride = ${JSON.stringify(name)};
+    return true;
+  `);
+  await new Promise(resolve => setTimeout(resolve, 250));
+}
+
+/** Resize the sidebar box the way dragging its splitter does and return the panel's width. */
+export async function setSidebarWidth(session, width) {
+  return session.chrome(`
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
+    const box = win.document.getElementById("sidebar-box");
+    box.style.width = ${JSON.stringify(`${width}px`)};
+    const panel = win.document.getElementById("sidebar")?.contentDocument?.getElementById("webext-panels-browser");
+    const started = Date.now();
+    while (Date.now() - started < 3000) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (Math.abs(panel.getBoundingClientRect().width - ${width}) <= 4) break;
+    }
+    return Math.round(panel.getBoundingClientRect().width);
+  `);
+}
+
+/** Override the system accent the way macOS reports it; null restores the platform color. */
+export function setAccentColor(session, accent, text = "#ffffff") {
+  return session.chrome(accent
+    ? `Services.prefs.setStringPref("ui.accentcolor", ${JSON.stringify(accent)}); Services.prefs.setStringPref("ui.accentcolortext", ${JSON.stringify(text)}); return true;`
+    : `Services.prefs.clearUserPref("ui.accentcolor"); Services.prefs.clearUserPref("ui.accentcolortext"); return true;`);
+}
+
+/** Install a static theme from `directory` as a temporary add-on and return its id. */
+export function installTheme(session, directory) {
+  return session.chrome(`
+    const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+    const { FileUtils } = ChromeUtils.importESModule("resource://gre/modules/FileUtils.sys.mjs");
+    const addon = await AddonManager.installTemporaryAddon(new FileUtils.File(${JSON.stringify(directory)}));
+    if (!addon.isActive) await addon.enable();
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return addon.id;
+  `);
+}
+
+export function uninstallTheme(session, id) {
+  return session.chrome(`
+    const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+    const addon = await AddonManager.getAddonByID(${JSON.stringify(id)});
+    if (addon) await addon.uninstall();
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return true;
+  `);
+}
+
+/** Read the theme overrides and palette the sidebar wrote on its root. */
+export function readSidebarRoot(session) {
+  return session.extension("sidebar", `
+    const root = content.document.documentElement;
+    const style = content.getComputedStyle(root);
+    const inline = {};
+    for (let index = 0; index < root.style.length; index += 1) {
+      const name = root.style.item(index);
+      inline[name] = root.style.getPropertyValue(name).trim();
+    }
+    return {
+      inline,
+      colorScheme: style.colorScheme,
+      sheets: [...content.document.querySelectorAll("link[rel=stylesheet]")].map(link => link.getAttribute("href")),
+    };
+  `);
+}
+
+/** Measure a popover's text on its own surface while it is shown. */
+export function readPopover(session) {
+  return session.extension("sidebar", `
+    const popover = content.document.querySelector("#chat-text-size-popover");
+    if (!popover) return { missing: true };
+    const hidden = popover.classList.contains("hidden");
+    popover.classList.remove("hidden");
+    const style = content.getComputedStyle(popover);
+    const label = popover.querySelector("output, span, button") || popover;
+    const result = { color: style.color, labelColor: content.getComputedStyle(label).color, background: style.backgroundColor };
+    if (hidden) popover.classList.add("hidden");
+    return result;
+  `);
+}
+
+/** The background's sidebar diagnostics, toolbar badge and tooltip, and live notifications. */
+export function sidebarState(session) {
+  return session.extension("background", `
+    const api = view.chrome;
+    const diagnostics = view.qzFirefoxSidebar ? JSON.parse(JSON.stringify(view.qzFirefoxSidebar)) : null;
+    const badge = await api.action.getBadgeText(Cu.cloneInto({}, content));
+    const title = await api.action.getTitle(Cu.cloneInto({}, content));
+    const notifications = Object.keys(await api.notifications.getAll());
+    return { diagnostics, badge, title, notifications, errors: [...(view.__qzTestErrors || [])] };
+  `);
+}
+
+/** Record background console.error lines in view.__qzTestErrors. */
+export function captureBackgroundErrors(session) {
+  return session.extension("background", `
+    if (!view.__qzTestErrors) {
+      view.__qzTestErrors = Cu.cloneInto([], view);
+      const original = view.console.error;
+      view.console.error = Cu.exportFunction(function(...args) {
+        view.__qzTestErrors.push(args.map(String).join(" "));
+        return original.call(view.console, ...args);
+      }, view);
+    }
+    return true;
+  `);
+}
+
+/** Poll sidebarState until `predicate(state)` holds or the timeout passes, and return the last state. */
+export async function waitForSidebarState(session, predicate, timeout = 4000) {
+  const started = Date.now();
+  let state = await sidebarState(session);
+  while (!predicate(state) && Date.now() - started < timeout) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    state = await sidebarState(session);
+  }
+  return state;
+}
+
+/**
+ * Call sidePanel.open from the background outside any user input, as an import does, and
+ * capture the hint notification the wrapper creates.
+ */
 export function refuseSidebarOpen(session) {
   return session.extension("background", `
-    const api = view.chrome && view.chrome.sidePanel ? view.chrome : view.browser;
+    const api = view.chrome;
     const original = api.notifications.create;
     let captured = null;
-    api.notifications.create = function(notificationId, options) {
+    api.notifications.create = Cu.exportFunction(function(notificationId, options) {
       const value = Cu.waiveXrays(options) || options || {};
       if (notificationId === "qz-open-sidebar") {
         captured = {
@@ -278,23 +343,20 @@ export function refuseSidebarOpen(session) {
           requireInteraction: Object.prototype.hasOwnProperty.call(value, "requireInteraction"),
         };
       }
-      return original.apply(this, arguments);
-    };
+      return original.call(this, notificationId, options);
+    }, view);
     let openError = "";
     try {
       await api.sidePanel.open(Cu.cloneInto({}, content));
       openError = "opened";
     } catch (error) {
       openError = String(error && error.message || error);
-    } finally {
-      api.notifications.create = original;
     }
-    let badge = "";
-    try { badge = await api.action.getBadgeText(Cu.cloneInto({}, content)); }
-    catch (error) { badge = String(error); }
+    const started = Date.now();
+    while (!captured && Date.now() - started < 1500) await new Promise(resolve => content.setTimeout(resolve, 50));
+    api.notifications.create = original;
     return {
       openError,
-      badge,
       message: captured ? captured.message : "",
       title: captured ? captured.title : "",
       requireInteraction: captured ? captured.requireInteraction : false,
@@ -302,40 +364,44 @@ export function refuseSidebarOpen(session) {
   `);
 }
 
-export function parseRgb(value) {
-  const match = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(String(value || ""));
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+/** Register a notification click listener that opens the sidebar in the click turn, like a completion notification. */
+export function addNotificationOpener(session, notificationId) {
+  return session.extension("background", `
+    const api = view.chrome;
+    view.__qzTestOpens = Cu.cloneInto([], view);
+    api.notifications.onClicked.addListener(Cu.exportFunction(function(id) {
+      if (id !== ${JSON.stringify(notificationId)}) return;
+      api.sidePanel.open(Cu.cloneInto({}, view)).then(
+        Cu.exportFunction(() => { view.__qzTestOpens.push("opened"); }, view),
+        Cu.exportFunction(error => { view.__qzTestOpens.push(String(error && error.message || error)); }, view),
+      );
+    }, view));
+    await api.notifications.create(${JSON.stringify(notificationId)}, Cu.cloneInto({ type: "basic", title: "qz", message: "done" }, content));
+    return true;
+  `);
 }
 
-export function gradientVeil(image) {
-  const match = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?/.exec(String(image || ""));
-  if (!match || image === "none") return null;
-  const raw = match[4];
-  const alpha = raw == null ? 1 : Number(String(raw).replace("%", "")) / (String(raw).includes("%") ? 100 : 1);
-  if (!Number.isFinite(alpha)) return null;
-  return { color: [Number(match[1]), Number(match[2]), Number(match[3])], alpha };
+export function notificationOpens(session) {
+  return session.extension("background", `return [...(view.__qzTestOpens || [])];`);
 }
 
-/** Composite a black or colored veil over an opaque background. */
-export function paint(background, image) {
-  const base = parseRgb(background);
-  if (!base) return null;
-  const veil = gradientVeil(image);
-  if (!veil || veil.alpha <= 0) return base;
-  return base.map((channel, index) => Math.round(channel * (1 - veil.alpha) + veil.color[index] * veil.alpha));
+/**
+ * Headless Linux has no notification server, so the system backend closes each alert at once.
+ * Firefox's own alert window keeps it open until it is clicked or cleared.
+ */
+export function keepNotifications(session) {
+  return session.chrome(`Services.prefs.setBoolPref("alerts.useSystemBackend", false); return true;`);
 }
 
-export function contrastRatio(foreground, background) {
-  const ratio = (relativeLuminance(foreground) + 0.05) / (relativeLuminance(background) + 0.05);
-  const inverse = (relativeLuminance(background) + 0.05) / (relativeLuminance(foreground) + 0.05);
-  return Math.max(ratio, inverse);
-}
-
-function relativeLuminance(rgb) {
-  const [red, green, blue] = rgb.map(channel => {
-    const value = channel / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+/** Click a notification through the alert observer Firefox calls when the user clicks it. */
+export function clickNotification(session, notificationId) {
+  return session.chrome(`
+    const { ExtensionParent } = ChromeUtils.importESModule("resource://gre/modules/ExtensionParent.sys.mjs");
+    const policy = WebExtensionPolicy.getByID(${JSON.stringify(session.geckoId)});
+    const api = ExtensionParent.apiManager.getAPI("notifications", policy.extension, "addon_parent");
+    const notification = api.notificationsMap.get(${JSON.stringify(notificationId)});
+    if (!notification) return { clicked: false, ids: [...api.notificationsMap.keys()] };
+    notification.observe(null, "alertclickcallback");
+    return { clicked: true };
+  `);
 }

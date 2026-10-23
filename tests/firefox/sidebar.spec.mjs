@@ -1,20 +1,39 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test, expect } from "./fixture.mjs";
 import { FIREFOX_EXTENSION_UUID } from "./launch.mjs";
 import {
-  buttonColors,
-  colorSchemes,
-  contrastRatio,
+  TEST_THEME,
+  addNotificationOpener,
+  captureBackgroundErrors,
+  clickNotification,
   createNotification,
   extensionManifest,
+  hideSidebars,
+  installTheme,
+  keepNotifications,
+  notificationOpens,
   openFromShortcut,
+  openFromSwitcher,
   openFromToolbar,
-  paint,
-  parseRgb,
+  readPopover,
   readSidebar,
-  readTheme,
+  readSidebarRoot,
   refuseSidebarOpen,
+  setAccentColor,
+  setColorScheme,
+  setSidebarWidth,
   sidebarCommandId,
+  sidebarState,
+  uninstallTheme,
+  waitForSidebarState,
 } from "./driver.mjs";
+import { auditSkin, contrast, measureSamples, parseColor, readOverflow } from "./skin-audit.mjs";
+
+const HINT_MESSAGES = ["Click the qz icon in the toolbar to view.", "点击工具栏中的轻舟图标查看。"];
+const HINT_TOOLTIPS = ["qz: click to open the sidebar", "轻舟：点击打开侧边栏"];
+const GESTURE_ERROR = /may only be called from a user input handler/;
 
 test.describe.configure({ mode: "serial" });
 
@@ -44,19 +63,22 @@ test("a temporary add-on opens the sidebar from the toolbar, not a tab", async (
   expect(identity.permissions).not.toContain("theme");
 
   const booted = await firefoxSidebar.extension("sidebar", `
-    const accept = content.document.querySelector("[data-consent-accept]");
-    if (accept) accept.click();
+    const doc = content.document;
+    const ready = app => !!app && !app.hasAttribute("data-workspace-booting") && !app.hasAttribute("data-consent-pending");
     const started = Date.now();
-    let app = null;
-    let input = null;
-    while (Date.now() - started < 12000) {
-      app = content.document.querySelector("#app");
-      input = content.document.querySelector("#input");
-      if (input && app && !app.hasAttribute("data-consent-pending")) break;
-      await new Promise(resolve => setTimeout(resolve, 100));
+    let accepted = false;
+    while (Date.now() - started < 12000 && !ready(doc.querySelector("#app"))) {
+      const accept = doc.querySelector("[data-consent-accept]");
+      if (accept && !accepted) {
+        accept.click();
+        accepted = true;
+      }
+      await new Promise(resolve => content.setTimeout(resolve, 100));
     }
+    const app = doc.querySelector("#app");
     return {
-      booted: !!(input && app && !app.hasAttribute("data-consent-pending")),
+      booted: ready(app) && !!doc.querySelector("#input"),
+      accepted,
       pending: app ? app.getAttribute("data-consent-pending") : "missing",
     };
   `);
@@ -70,42 +92,105 @@ test("the sidebar shortcut opens the real sidebar", async ({ firefoxSidebar }) =
   expect(opened.modifiers).toBe("accel,shift");
 });
 
-test("primary buttons stay readable in light and dark", async ({ firefoxSidebar }) => {
+test("text keeps 4.5:1, icons and focus rings 3:1, and disabled controls stand apart in light and dark", async ({ firefoxSidebar }) => {
   await openFromToolbar(firefoxSidebar);
-  const theme = await readTheme(firefoxSidebar);
-  expect(theme.theme.error || "", JSON.stringify(theme.theme)).toBe("");
-  expect(theme.theme.missing).toBeUndefined();
-  expect(theme.colorScheme).toBe("light dark");
-  expect(theme.sheets).toContain("firefox-sidebar.css");
-  const themeColors = theme.theme?.colors;
-  const themed = Boolean(themeColors && typeof themeColors === "object" && Object.keys(themeColors).length > 0);
-  if (themed && themeColors.toolbar) expect(normalizeThemeColor(theme.toolbar)).toBe(normalizeThemeColor(themeColors.toolbar));
-  else expect(theme.toolbar).toBe("Canvas");
-  if (themed && themeColors.accentcolor) {
-    expect(normalizeThemeColor(theme.accent)).toBe(normalizeThemeColor(themeColors.accentcolor));
-    expect(theme.inlineAccent.length).toBeGreaterThan(0);
-  } else expect(theme.accent).toBe("AccentColor");
-  if (themed && themeColors.toolbar) expect(theme.inlineToolbar.length).toBeGreaterThan(0);
+  const root = await readSidebarRoot(firefoxSidebar);
+  expect(root.colorScheme).toBe("light dark");
+  expect(root.sheets).toContain("firefox-sidebar.css");
+  const sidebars = new Set();
+  try {
+    for (const scheme of ["light", "dark"]) {
+      await setColorScheme(firefoxSidebar, scheme);
+      const audit = await auditSkin(firefoxSidebar);
+      expect(audit.dark, scheme).toBe(scheme === "dark");
+      sidebars.add(audit.sidebar);
+      expectSkin(audit, scheme);
+    }
+  } finally {
+    await setColorScheme(firefoxSidebar, "none");
+  }
+  expect(sidebars.size, "light and dark paint different sidebars").toBe(2);
+});
 
-  const colors = await buttonColors(firefoxSidebar);
-  expect(colors.missing, JSON.stringify(colors)).toBeUndefined();
-  expect(colors.disabledOpacity).toBe("1");
-  expect(colors.veil).toBe("14%");
-  expect(colors.activeVeil).toBe("22%");
-  expect(colors.disabledVeil).toBe("14%");
-  expectButtonContrast(colors, "resting");
+test("a macOS system accent gets a darker primary fill that keeps a 4.5:1 label", async ({ firefoxSidebar }) => {
+  await setAccentColor(firefoxSidebar, "#007aff");
+  try {
+    await openFromToolbar(firefoxSidebar);
+    for (const scheme of ["light", "dark"]) {
+      await setColorScheme(firefoxSidebar, scheme);
+      const audit = await auditSkin(firefoxSidebar);
+      expect(audit.accent).toBe("rgb(0, 122, 255)");
+      expect(contrast([255, 255, 255], [0, 122, 255]), "the raw accent is below 4.5:1").toBeLessThan(4.5);
+      expect(audit.palette["--qz-ff-primary"]).toBe("rgb(0, 112, 235)");
+      expect(audit.palette["--qz-ff-primary-text"]).toBe("rgb(255, 255, 255)");
+      expectSkin(audit, `macOS accent ${scheme}`);
+    }
+  } finally {
+    await setColorScheme(firefoxSidebar, "none");
+    await setAccentColor(firefoxSidebar, null);
+    await openFromToolbar(firefoxSidebar);
+  }
+});
 
-  const schemes = await colorSchemes(firefoxSidebar);
-  expect(schemes.map(sample => sample.name)).toEqual(["light", "dark"]);
-  const media = new Set(schemes.map(sample => sample.dark));
-  expect(media.size, JSON.stringify(schemes.map(sample => ({ name: sample.name, dark: sample.dark, light: sample.light, body: sample.body })))).toBe(2);
-  if (!themed) expect(schemes[0].body).not.toBe(schemes[1].body);
-  const dark = schemes.find(sample => sample.name === "dark");
-  const light = schemes.find(sample => sample.name === "light");
-  expect(dark.dark).toBe(true);
-  expect(light.dark).toBe(false);
-  expect(light.light).toBe(true);
-  for (const sample of schemes) expectButtonContrast(sample, sample.name);
+test("a window theme recolors the sidebar, its popups, and the primary fill", async ({ firefoxSidebar }) => {
+  const directory = mkdtempSync(join(tmpdir(), "qz-firefox-theme-"));
+  writeFileSync(join(directory, "manifest.json"), JSON.stringify({
+    manifest_version: 2,
+    name: "qz test theme",
+    version: "1.0",
+    browser_specific_settings: { gecko: { id: "qz-test-theme@example.test" } },
+    theme: { colors: TEST_THEME },
+  }));
+  await openFromToolbar(firefoxSidebar);
+  const id = await installTheme(firefoxSidebar, directory);
+  try {
+    let root = await readSidebarRoot(firefoxSidebar);
+    const started = Date.now();
+    while (!root.inline["--qz-ff-sidebar"] && Date.now() - started < 4000) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      root = await readSidebarRoot(firefoxSidebar);
+    }
+    expect(root.inline["--qz-ff-sidebar"]).toBe("rgb(42, 33, 72)");
+    expect(root.inline["--qz-ff-sidebar-text"]).toBe("rgb(236, 232, 255)");
+    expect(root.inline["--qz-ff-accent"]).toBe("rgb(185, 165, 255)");
+    expect(root.inline["--qz-ff-focus"]).toBe("#7cf0d0");
+    expect(root.inline["--qz-ff-popup"]).toBe("rgb(246, 243, 255)");
+    expect(root.inline["--qz-ff-primary-text"]).toBe("rgb(21, 20, 26)");
+    expect(root.colorScheme).toBe("dark");
+
+    const audit = await auditSkin(firefoxSidebar);
+    expect(audit.sidebar).toBe("rgb(42, 33, 72)");
+    expectSkin(audit, "theme");
+    const popover = await readPopover(firefoxSidebar);
+    expect(popover.missing).toBeUndefined();
+    const surface = parseColor(popover.background).slice(0, 3);
+    expect(surface).toEqual([246, 243, 255]);
+    for (const color of [popover.color, popover.labelColor]) {
+      const ratio = contrast(parseColor(color), surface);
+      expect(ratio, `popover text ${color} on ${popover.background} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    }
+  } finally {
+    await uninstallTheme(firefoxSidebar, id);
+  }
+  const cleared = await readSidebarRoot(firefoxSidebar);
+  expect(cleared.inline["--qz-ff-sidebar"]).toBeUndefined();
+});
+
+test("the sidebar has no horizontal overflow at 320 and 400 pixels", async ({ firefoxSidebar }) => {
+  await openFromToolbar(firefoxSidebar);
+  for (const width of [320, 400]) {
+    const panel = await setSidebarWidth(firefoxSidebar, width);
+    expect(Math.abs(panel - width), `sidebar is ${panel}px`).toBeLessThanOrEqual(4);
+    for (const settings of [false, true]) {
+      const layout = await readOverflow(firefoxSidebar, { settings });
+      const label = `${width}px ${settings ? "settings" : "chat"}: ${JSON.stringify(layout)}`;
+      expect(layout.settings, label).toBe(settings);
+      expect(layout.scrollWidth, label).toBeLessThanOrEqual(layout.clientWidth);
+      expect(layout.bodyScrollWidth, label).toBeLessThanOrEqual(layout.width);
+      expect(layout.offenders, label).toEqual([]);
+    }
+  }
+  await readOverflow(firefoxSidebar, { settings: false });
 });
 
 test("creating a notification without requireInteraction does not throw", async ({ firefoxSidebar }) => {
@@ -131,13 +216,94 @@ test("creating a notification without requireInteraction does not throw", async 
   expect(sticky.created).toBe("qz-firefox-sticky");
 });
 
-test("refusing sidebar open sets the badge and the click prompt", async ({ firefoxSidebar }) => {
+test("a refused sidebar open sets the badge, the toolbar hint, and the real error", async ({ firefoxSidebar }) => {
+  await keepNotifications(firefoxSidebar);
+  await captureBackgroundErrors(firefoxSidebar);
+  await hideSidebars(firefoxSidebar);
+  const before = await sidebarState(firefoxSidebar);
   const prompt = await refuseSidebarOpen(firefoxSidebar);
-  expect(prompt.openError).toMatch(/user gesture/);
-  expect(prompt.badge).toBe("!");
+  expect(prompt.openError).toMatch(/only from the toolbar button, the sidebar shortcut, or a menu item/);
+  expect(prompt.openError).toMatch(GESTURE_ERROR);
   expect(prompt.requireInteraction).toBe(false);
-  expect(["Click this notification to open the sidebar.", "点击此通知打开侧边栏。"]).toContain(prompt.message);
+  expect(HINT_MESSAGES).toContain(prompt.message);
   expect(["qz", "轻舟"]).toContain(prompt.title);
+  const state = await waitForSidebarState(firefoxSidebar, next => next.badge === "!");
+  expect(state.badge).toBe("!");
+  expect(HINT_TOOLTIPS).toContain(state.title);
+  expect(state.notifications).toContain("qz-open-sidebar");
+  expect(state.diagnostics.refused).toBe(before.diagnostics.refused + 1);
+  expect(state.diagnostics.notified).toBe(before.diagnostics.notified + 1);
+  expect(state.diagnostics.lastSource).toBe("api");
+  expect(state.diagnostics.lastError).toMatch(GESTURE_ERROR);
+  expect(state.errors.at(-1)).toMatch(/firefox sidebarAction failed \(api\):.*may only be called from a user input handler/);
+});
+
+test("clicking the hint notification logs Firefox's error and raises no second notification", async ({ firefoxSidebar }) => {
+  const before = await sidebarState(firefoxSidebar);
+  expect(before.notifications).toContain("qz-open-sidebar");
+  const clicked = await clickNotification(firefoxSidebar, "qz-open-sidebar");
+  expect(clicked.clicked, JSON.stringify(clicked)).toBe(true);
+  const state = await waitForSidebarState(firefoxSidebar, next => next.diagnostics.notificationClicks > before.diagnostics.notificationClicks
+    && next.diagnostics.refused > before.diagnostics.refused);
+  expect(state.diagnostics.notificationClicks).toBe(before.diagnostics.notificationClicks + 1);
+  expect(state.diagnostics.lastSource).toBe("notification");
+  expect(state.diagnostics.lastError).toMatch(GESTURE_ERROR);
+  expect(state.diagnostics.opened).toBe(before.diagnostics.opened);
+  expect(state.diagnostics.notified).toBe(before.diagnostics.notified);
+  expect(state.notifications).not.toContain("qz-open-sidebar");
+  expect(state.badge, "the badge keeps pointing at the toolbar button").toBe("!");
+  expect(state.errors.at(-1)).toMatch(/firefox sidebarAction failed \(notification\):.*may only be called from a user input handler/);
+  const sidebar = await readSidebar(firefoxSidebar);
+  expect(sidebar.panel).not.toBe(firefoxSidebar.sidebarUrl);
+});
+
+test("a completion notification click that tries to open the sidebar raises no notification", async ({ firefoxSidebar }) => {
+  await keepNotifications(firefoxSidebar);
+  await addNotificationOpener(firefoxSidebar, "qz-test-done");
+  const before = await sidebarState(firefoxSidebar);
+  const clicked = await clickNotification(firefoxSidebar, "qz-test-done");
+  expect(clicked.clicked, JSON.stringify(clicked)).toBe(true);
+  const state = await waitForSidebarState(firefoxSidebar, next => next.diagnostics.refused > before.diagnostics.refused);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const settled = await sidebarState(firefoxSidebar);
+  expect(state.diagnostics.lastSource).toBe("notification");
+  expect(settled.diagnostics.notified).toBe(before.diagnostics.notified);
+  expect(settled.notifications).not.toContain("qz-open-sidebar");
+  expect((await notificationOpens(firefoxSidebar)).at(-1)).toMatch(/only from the toolbar button/);
+});
+
+test("opening the sidebar by shortcut, switcher, or toolbar clears the badge and re-arms the hint", async ({ firefoxSidebar }) => {
+  await keepNotifications(firefoxSidebar);
+  const openers = [["shortcut", openFromShortcut], ["switcher", openFromSwitcher], ["toolbar", openFromToolbar]];
+  for (const [route, open] of openers) {
+    await hideSidebars(firefoxSidebar);
+    const before = await sidebarState(firefoxSidebar);
+    if (before.badge !== "!") {
+      await refuseSidebarOpen(firefoxSidebar);
+      const prompted = await waitForSidebarState(firefoxSidebar, next => next.badge === "!");
+      expect(prompted.badge, `${route} prompt`).toBe("!");
+      expect(prompted.diagnostics.notified, `${route} re-arms the hint`).toBe(before.diagnostics.notified + 1);
+    }
+    const opened = await open(firefoxSidebar);
+    expect(opened.panel, route).toBe(firefoxSidebar.sidebarUrl);
+    const cleared = await waitForSidebarState(firefoxSidebar, next => next.badge === "");
+    expect(cleared.badge, `${route} clears the badge`).toBe("");
+    expect(HINT_TOOLTIPS, `${route} restores the tooltip`).not.toContain(cleared.title);
+    expect(cleared.notifications).not.toContain("qz-open-sidebar");
+  }
+});
+
+test("a refused open while the sidebar is showing leaves no badge", async ({ firefoxSidebar }) => {
+  await openFromToolbar(firefoxSidebar);
+  const before = await sidebarState(firefoxSidebar);
+  expect(before.badge).toBe("");
+  const prompt = await refuseSidebarOpen(firefoxSidebar);
+  expect(prompt.openError).toMatch(GESTURE_ERROR);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const state = await sidebarState(firefoxSidebar);
+  expect(state.diagnostics.refused).toBe(before.diagnostics.refused + 1);
+  expect(state.badge).toBe("");
+  expect(state.diagnostics.notified).toBe(before.diagnostics.notified);
 });
 
 function expectSidebar(snapshot, session) {
@@ -147,43 +313,41 @@ function expectSidebar(snapshot, session) {
   expect(snapshot.tabs.some(url => String(url).includes("/sidepanel/sidepanel.html"))).toBe(false);
 }
 
-function expectButtonContrast(sample, label) {
-  expect(sample.missing, JSON.stringify(sample)).toBeUndefined();
-  const hover = resolvedState(sample.rest, sample.hover, sample.veil);
-  const active = resolvedState(sample.rest, sample.active, sample.activeVeil);
-  const disabled = resolvedState(sample.rest, sample.disabled, sample.disabledVeil);
-  expect(readable(sample.rest, `${label} rest`)).toBeGreaterThanOrEqual(4.5);
-  expect(readable(hover, `${label} hover`)).toBeGreaterThanOrEqual(4.5);
-  expect(readable(active, `${label} active`)).toBeGreaterThanOrEqual(4.5);
-  expect(readable(disabled, `${label} disabled`)).toBeGreaterThanOrEqual(4.5);
+function expectSkin(audit, label) {
+  const missing = audit.samples.filter(sample => sample.missing).map(sample => sample.name);
+  expect(missing, `${label} missing samples`).toEqual([]);
+  const measured = measureSamples(audit);
+  const find = (name, state = "rest") => measured.find(sample => sample.name === name && sample.state === state);
+  for (const sample of measured) {
+    const floor = sample.kind === "icon" ? 3 : 4.5;
+    const detail = `${label} ${sample.name} ${sample.state}: ${sample.ratio.toFixed(2)}:1 for ${sample.ink} on ${sample.background}`;
+    expect(sample.ratio, detail).toBeGreaterThanOrEqual(floor);
+    if (sample.state === ":focus-visible") expect(sample.ring, `${label} ${sample.name} focus ring ${sample.ring}`).toBeGreaterThanOrEqual(3);
+  }
+  for (const state of ["rest", ":hover", ":active"]) {
+    expect(find("primary", state).ratio, `${label} primary ${state}`).toBeGreaterThanOrEqual(4.5);
+    expect(find("send", state).ratio, `${label} send ${state}`).toBeGreaterThanOrEqual(4.5);
+  }
+  for (const [enabled, disabled] of [["primary", "primary disabled"], ["send", "send disabled"]]) {
+    const on = find(enabled);
+    const off = find(disabled);
+    expect(off.cursor, `${label} ${disabled} cursor`).toBe("not-allowed");
+    expect(distance(on.background, off.background), `${label} ${disabled} surface ${off.background} vs ${on.background}`).toBeGreaterThan(60);
+    expect(chroma(off.background), `${label} ${disabled} surface is neutral`).toBeLessThanOrEqual(chroma(parseColor(audit.sidebar)) + 12);
+  }
+  expect(find("send disabled").ratio, `${label} send disabled mark`).toBeGreaterThanOrEqual(4.5);
+  expect(find("primary disabled").ratio, `${label} primary disabled label`).toBeGreaterThanOrEqual(4.5);
 }
 
-function resolvedState(rest, state, veil) {
-  if (state && !state.error && (state.image && state.image !== "none" || state.background)) return state;
-  const amount = Number.parseFloat(veil);
-  const alpha = Number.isFinite(amount) ? amount / 100 : 0.14;
-  return {
-    color: rest.color,
-    background: rest.background,
-    image: `linear-gradient(rgba(0, 0, 0, ${alpha}), rgba(0, 0, 0, ${alpha}))`,
-  };
+function distance(first, second) {
+  return Math.hypot(...first.map((channel, index) => channel - second[index]));
 }
 
-function readable(sample, label) {
-  const text = parseRgb(sample.color);
-  const fill = paint(sample.background, sample.image) || parseRgb(sample.background);
-  expect(text, label).toBeTruthy();
-  expect(fill, `${label} fill`).toBeTruthy();
-  const ratio = contrastRatio(text, fill);
-  expect(ratio, `${label} contrast ${ratio.toFixed(2)}:1 for ${sample.color} on ${fill.join(",")} image ${sample.image}`).toBeGreaterThanOrEqual(4.5);
-  return ratio;
+function chroma(rgb) {
+  const channels = rgb.slice(0, 3);
+  return Math.max(...channels) - Math.min(...channels);
 }
 
 function firefoxManifestPath(path) {
   return `moz-extension://${FIREFOX_EXTENSION_UUID}/${path}`;
-}
-
-function normalizeThemeColor(value) {
-  if (Array.isArray(value)) return `rgb(${value.slice(0, 3).join(",")})`;
-  return String(value || "").trim().toLowerCase().replaceAll(" ", "");
 }

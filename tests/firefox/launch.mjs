@@ -130,7 +130,7 @@ async function evaluateExtension(session, target, expression) {
     const dataUrl = ${JSON.stringify(dataUrl)};
     const messageName = ${JSON.stringify(message)};
     const geckoId = ${JSON.stringify(FIREFOX_GECKO_ID)};
-    const win = Services.focus.activeWindow || window;
+    const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
     let browser;
     if (target === "background") {
       browser = WebExtensionPolicy.getByID(geckoId).extension.backgroundContext.xulBrowser;
