@@ -251,7 +251,7 @@ export const translations = {
       "heroAction": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · 阅读页面与执行 JavaScript",
       "filmAction": "观看演示",
-      "overviewTitle": "把网页资料整理成数据。",
+      "overviewTitle": "网页再乱，也能整理成一张表。",
       "extendTitle": "脚本、工具，<br>还有自定义界面。",
       "extendDescription": "这个 Wikipedia Skill 提取城市照片，并用图片网格展示结果。指令、脚本与界面保存在一起，换一个城市页面也能复用。",
       "ownershipTitle": "本地存储，自选模型。",
