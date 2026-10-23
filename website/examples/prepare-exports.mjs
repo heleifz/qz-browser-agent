@@ -1,5 +1,7 @@
 // Copy qz session exports into the website and clear runtime.ownedTabs.
-// PNG data URLs inside the exchange JSON are re-encoded to WebP when that is smaller.
+// PNG and JPEG data URLs, in the exchange JSON and in the page around it, are re-encoded
+// to WebP when that is smaller. --scale (default 1) and --quality (default 80) tune it.
+// Re-encoding needs ffmpeg with libwebp on PATH.
 // The script tag stays id-before-type. <, U+2028, and U+2029 stay escaped.
 import fs from "node:fs";
 import path from "node:path";
@@ -133,17 +135,18 @@ function findLastArrayProperty(json, key) {
   return last;
 }
 
-const PNG_DATA_URL = /data:image\/png;base64,[A-Za-z0-9+/]+=*/g;
+const IMAGE_DATA_URL = /data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+=*/g;
 
 // v1 stores every screenshot inline. Import copies dataUrl through and has no asset id,
 // so two identical images stay as two strings.
-export function prepareExport(html) {
+export function prepareExport(html, options = {}) {
   const cleared = clearOwnedTabs(html);
   const match = SCRIPT_PATTERN.exec(cleared);
   const payload = JSON.parse(match[3]);
   const stats = { seen: 0, replaced: 0, duplicateStrings: 0 };
   const seenUrls = new Map();
-  const next = mapStrings(payload, (value) => recompressPngs(value, stats, seenUrls));
+  const settings = { scale: options.scale ?? 1, quality: options.quality ?? 80 };
+  const next = mapStrings(payload, (value) => recompressImages(value, stats, seenUrls, settings));
   if (!Array.isArray(next?.runtime?.ownedTabs) || next.runtime.ownedTabs.length !== 0) {
     throw new Error("runtime.ownedTabs was not empty after prepare");
   }
@@ -153,7 +156,7 @@ export function prepareExport(html) {
   const typeAt = open.indexOf("type=");
   if (idAt < 0 || typeAt < 0 || idAt > typeAt) throw new Error("script id must come before type");
   return {
-    html: `${cleared.slice(0, match.index)}${open}${json}</script>${cleared.slice(match.index + match[0].length)}`,
+    html: `${recompressImages(cleared.slice(0, match.index), stats, seenUrls, settings)}${open}${json}</script>${recompressImages(cleared.slice(match.index + match[0].length), stats, seenUrls, settings)}`,
     stats,
   };
 }
@@ -169,27 +172,27 @@ function mapStrings(value, visit) {
   return value;
 }
 
-function recompressPngs(value, stats, seenUrls) {
-  if (!value.includes("data:image/png;base64,")) return value;
-  return value.replace(PNG_DATA_URL, (url) => {
+function recompressImages(value, stats, seenUrls, settings) {
+  if (!value.includes("data:image/")) return value;
+  return value.replace(IMAGE_DATA_URL, (url) => {
     stats.seen += 1;
     if (seenUrls.has(url)) {
       stats.duplicateStrings += 1;
       return seenUrls.get(url);
     }
-    const next = pngDataUrlToWebp(url);
+    const next = imageDataUrlToWebp(url, settings);
     seenUrls.set(url, next);
     if (next !== url) stats.replaced += 1;
     return next;
   });
 }
 
-function pngDataUrlToWebp(url) {
-  const png = Buffer.from(url.slice("data:image/png;base64,".length), "base64");
-  const result = spawnSync("convert", ["png:-", "-quality", "80", "webp:-"], {
-    input: png,
-    maxBuffer: 64 * 1024 * 1024,
-  });
+function imageDataUrlToWebp(url, { scale, quality }) {
+  const image = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
+  const args = ["-v", "error", "-i", "pipe:0"];
+  if (scale !== 1) args.push("-vf", `scale=trunc(iw*${scale}/2)*2:trunc(ih*${scale}/2)*2:flags=lanczos`);
+  args.push("-frames:v", "1", "-c:v", "libwebp", "-quality", String(quality), "-f", "webp", "pipe:1");
+  const result = spawnSync("ffmpeg", args, { input: image, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0 || !result.stdout?.length) {
     throw new Error(`webp encode failed: ${result.stderr?.toString() || "no output"}`);
   }
@@ -211,7 +214,7 @@ function minifyExchangeJson(payload) {
 }
 
 function printUsage() {
-  console.log("Usage: node website/examples/prepare-exports.mjs --out website/examples/sessions <export.html>...");
+  console.log("Usage: node website/examples/prepare-exports.mjs --out website-src/sessions [--scale 0.75] [--quality 70] <export.html>...");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -219,20 +222,32 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (args[0] === "--self-test") {
     runSelfTest();
   } else {
-    const outFlag = args.indexOf("--out");
-    if (outFlag < 0 || args.length < 2) {
+    const flags = new Map();
+    const inputs = [];
+    for (let index = 0; index < args.length; index += 1) {
+      if (args[index].startsWith("--")) {
+        flags.set(args[index], args[index + 1]);
+        index += 1;
+      } else {
+        inputs.push(args[index]);
+      }
+    }
+    if (!flags.has("--out") || !inputs.length) {
       printUsage();
       process.exit(1);
     }
-    const outDir = path.resolve(args[outFlag + 1]);
-    const inputs = args.filter((arg, index) => index !== outFlag && index !== outFlag + 1 && !arg.startsWith("--"));
+    const outDir = path.resolve(flags.get("--out"));
+    const options = {};
+    if (flags.has("--scale")) options.scale = Number(flags.get("--scale"));
+    if (flags.has("--quality")) options.quality = Number(flags.get("--quality"));
+    if (!(options.scale ?? 1) || (options.scale ?? 1) > 1 || (options.scale ?? 1) < 0.1) throw new Error("--scale must be between 0.1 and 1");
     fs.mkdirSync(outDir, { recursive: true });
     for (const input of inputs) {
       const before = fs.readFileSync(input);
-      const prepared = prepareExport(before.toString("utf8"));
+      const prepared = prepareExport(before.toString("utf8"), options);
       const name = path.basename(input);
       fs.writeFileSync(path.join(outDir, name), prepared.html);
-      console.log(`${name}: ${before.length} -> ${Buffer.byteLength(prepared.html)} bytes, png ${prepared.stats.seen}, webp ${prepared.stats.replaced}, repeated ${prepared.stats.duplicateStrings}`);
+      console.log(`${name}: ${before.length} -> ${Buffer.byteLength(prepared.html)} bytes, images ${prepared.stats.seen}, webp ${prepared.stats.replaced}, repeated ${prepared.stats.duplicateStrings}`);
     }
   }
 }
@@ -253,7 +268,7 @@ function runSelfTest() {
   if (payload.runtime.ownedTabs.length !== 0 || payload.session.ownedTabs.length !== 1) {
     throw new Error("the wrong ownedTabs array was replaced");
   }
-  const png = spawnSync("convert", ["-size", "32x32", "gradient:red-blue", "png:-"], { maxBuffer: 1024 * 1024 });
+  const png = spawnSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "mandelbrot=s=192x192", "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "pipe:1"], { maxBuffer: 1024 * 1024 });
   if (png.status !== 0 || !png.stdout?.length) throw new Error("could not build a PNG fixture");
   const dataUrl = `data:image/png;base64,${png.stdout.toString("base64")}`;
   const fixture = {
@@ -266,7 +281,7 @@ function runSelfTest() {
     },
     runtime: { ownedTabs: [{ url: "https://example.com" }] },
   };
-  const source = `<!doctype html><script id="qingzhou-session-exchange" type="application/json">${JSON.stringify(fixture, null, 2)}</script>`;
+  const source = `<!doctype html><script id="qingzhou-session-exchange" type="application/json">${JSON.stringify(fixture, null, 2)}</script><main id="messages"><img src="${dataUrl}"></main>`;
   const first = prepareExport(source);
   const second = prepareExport(first.html);
   if (second.html !== first.html) throw new Error("prepare was not stable");
@@ -287,6 +302,9 @@ function runSelfTest() {
   }
   if (prepared.session.note.includes("\"$ref\"") || prepared.session.note.includes("asset:")) {
     throw new Error("prepare replaced a screenshot with a reference");
+  }
+  if (first.html.includes("data:image/png") || !first.html.includes('<img src="data:image/webp;base64,')) {
+    throw new Error("the screenshot outside the exchange JSON was not re-encoded");
   }
   console.log("prepare-exports self-test passed");
 }

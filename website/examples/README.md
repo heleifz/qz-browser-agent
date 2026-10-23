@@ -16,22 +16,24 @@ An example is a session export and, when you have one, a full-browser recording.
 The poster is optional.
 
 1. Put the files in place.
-   - Session export: `website/examples/sessions/<slug>-<locale>.html`
+   - Session export: `website-src/sessions/<slug>-<locale>.html`. It lives outside `website/` on purpose: the generator reads it and embeds what the page needs, so it is not published.
    - Recording: `website/assets/examples/<slug>-<locale>.mp4`
    - Poster, only to override the extracted frame: `website/assets/examples/<slug>-<locale>.webp`
 
    `<locale>` is `zh` or `en`. For a new export, clear `runtime.ownedTabs` and shrink images first:
 
    ```bash
-   node website/examples/prepare-exports.mjs --out website/examples/sessions path/to/export.html
+   node website/examples/prepare-exports.mjs --out website-src/sessions path/to/export.html
    ```
+
+   This needs `ffmpeg` with libwebp. It re-encodes PNG and JPEG screenshots to WebP everywhere in the file. For an export with many screenshots, shrink them too, for example `--scale 0.75 --quality 70` (a 12.9MB export became 4.6MB). Each page carries the screenshots twice, once in the transcript and once in the import data, so check `website/` stays under 45MB.
 
 2. Add or edit one object in `locales.zh` or `locales.en`:
 
    ```js
    {
      slug: "travel",
-     file: "examples/sessions/travel-zh.html",
+     file: "../website-src/sessions/travel-zh.html",
      video: "assets/examples/travel-zh.mp4",
      // title and summary are optional. They default to the session title and
      // the first user message. Set them to override that text.

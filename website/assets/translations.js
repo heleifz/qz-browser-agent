@@ -88,11 +88,11 @@ export const translations = {
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
       "exampleDownload": "Import into qz to continue",
-      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-zh.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Hangzhou photo gallery</h3>\n      <p>Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"Comparison table saved from several model pages\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Model comparison</h3>\n      <p>Goes through several model sites and lines up specs and prices in one table.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-zh.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"Building a Skill from the HN front page\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Turn Hacker News into a Skill</h3>\n      <p>Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-zh.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>GitHub weekly roundup</h3>\n      <p>Reads this week's Trending list, puts it into a table, and writes a short weekly summary.</p>\n    </a>",
+      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-zh.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Hangzhou photo gallery</h3>\n      <p>Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/pelican/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/pelican-zh.webp\"><img src=\"./assets/examples/pelican-zh-card.gif\" width=\"840\" height=\"558\" alt=\"A pelican on a bicycle, drawn with the mouse on a canvas\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Draw a pelican riding a bicycle with the mouse</h3>\n      <p>It doesn't only read web pages. It also picks up the mouse and draws on the canvas, stroke by stroke.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-zh.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"Building a Skill from the HN front page\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Turn Hacker News into a Skill</h3>\n      <p>Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-zh.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>GitHub weekly roundup</h3>\n      <p>Reads this week's Trending list, puts it into a table, and writes a short weekly summary.</p>\n    </a>",
       "example-travel-title": "Hangzhou photo gallery",
       "example-travel-summary": "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.",
-      "example-llm-compare-title": "Model comparison",
-      "example-llm-compare-summary": "Goes through several model sites and lines up specs and prices in one table.",
+      "example-pelican-title": "Draw a pelican riding a bicycle with the mouse",
+      "example-pelican-summary": "It doesn't only read web pages. It also picks up the mouse and draws on the canvas, stroke by stroke.",
       "example-hn-skill-title": "Turn Hacker News into a Skill",
       "example-hn-skill-summary": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
       "example-hn-skill-first": "Create the Skill",
@@ -206,8 +206,8 @@ export const translations = {
       "example-travel-description": {
         "content": "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery."
       },
-      "example-llm-compare-description": {
-        "content": "Goes through several model sites and lines up specs and prices in one table."
+      "example-pelican-description": {
+        "content": "It doesn't only read web pages. It also picks up the mouse and draws on the canvas, stroke by stroke."
       },
       "example-hn-skill-description": {
         "content": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence."
@@ -219,9 +219,9 @@ export const translations = {
         "alt": "The gallery of Hangzhou photos from the session",
         "aria-label": "The gallery of Hangzhou photos from the session"
       },
-      "example-llm-compare-poster": {
-        "alt": "Comparison table saved from several model pages",
-        "aria-label": "Comparison table saved from several model pages"
+      "example-pelican-poster": {
+        "alt": "A pelican on a bicycle, drawn with the mouse on a canvas",
+        "aria-label": "A pelican on a bicycle, drawn with the mouse on a canvas"
       },
       "example-hn-skill-poster": {
         "alt": "Building a Skill from the HN front page",
@@ -325,11 +325,11 @@ export const translations = {
       "examplesTitle": "真实任务，完整过程。",
       "examplesLede": "每个例子都是轻舟的一次真实会话。左边是这次会话自己的画面，右边是它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
       "exampleDownload": "导入轻舟继续对话",
-      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-zh.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"并行找图后汇成的杭州景点图集\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>杭州景点图集</h3>\n      <p>5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"多站对比后落成的模型表\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>模型对比表</h3>\n      <p>翻遍多家模型的官网，把参数和价格对齐成一张表。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-zh.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"整理 HN 热帖并生成 Skill 的过程\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>将 Hacker News 变成 Skill</h3>\n      <p>整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-zh.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"本周榜单和整理出的项目表\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>GitHub 周榜整理</h3>\n      <p>读完本周 Trending 榜单，整理成表，再写好一段周报总结。</p>\n    </a>",
+      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-zh.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"并行找图后汇成的杭州景点图集\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>杭州景点图集</h3>\n      <p>5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/pelican/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/pelican-zh.webp\"><img src=\"./assets/examples/pelican-zh-card.gif\" width=\"840\" height=\"558\" alt=\"用鼠标在画布上画出的骑自行车的鹈鹕\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>用鼠标画一只骑自行车的鹈鹕</h3>\n      <p>它不只会读网页，也会真的拿起鼠标，在画布上一笔一笔画出来。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-zh.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"整理 HN 热帖并生成 Skill 的过程\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>将 Hacker News 变成 Skill</h3>\n      <p>整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-zh.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"本周榜单和整理出的项目表\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>GitHub 周榜整理</h3>\n      <p>读完本周 Trending 榜单，整理成表，再写好一段周报总结。</p>\n    </a>",
       "example-travel-title": "杭州景点图集",
       "example-travel-summary": "5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。",
-      "example-llm-compare-title": "模型对比表",
-      "example-llm-compare-summary": "翻遍多家模型的官网，把参数和价格对齐成一张表。",
+      "example-pelican-title": "用鼠标画一只骑自行车的鹈鹕",
+      "example-pelican-summary": "它不只会读网页，也会真的拿起鼠标，在画布上一笔一笔画出来。",
       "example-hn-skill-title": "将 Hacker News 变成 Skill",
       "example-hn-skill-summary": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。",
       "example-hn-skill-first": "创建 Skill",
@@ -443,8 +443,8 @@ export const translations = {
       "example-travel-description": {
         "content": "5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。"
       },
-      "example-llm-compare-description": {
-        "content": "翻遍多家模型的官网，把参数和价格对齐成一张表。"
+      "example-pelican-description": {
+        "content": "它不只会读网页，也会真的拿起鼠标，在画布上一笔一笔画出来。"
       },
       "example-hn-skill-description": {
         "content": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。"
@@ -456,9 +456,9 @@ export const translations = {
         "alt": "并行找图后汇成的杭州景点图集",
         "aria-label": "并行找图后汇成的杭州景点图集"
       },
-      "example-llm-compare-poster": {
-        "alt": "多站对比后落成的模型表",
-        "aria-label": "多站对比后落成的模型表"
+      "example-pelican-poster": {
+        "alt": "用鼠标在画布上画出的骑自行车的鹈鹕",
+        "aria-label": "用鼠标在画布上画出的骑自行车的鹈鹕"
       },
       "example-hn-skill-poster": {
         "alt": "整理 HN 热帖并生成 Skill 的过程",
