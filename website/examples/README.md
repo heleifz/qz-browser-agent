@@ -56,6 +56,14 @@ The poster is optional.
    Aim for 20–40 seconds and 5MB or less. The poster, whether you supply it or the
    generator extracts it, should be WebP about 840 pixels wide and 80KB or less.
 
+   Optional animated homepage cover: cut a 4–6 second loop that already shows work in progress, and set `cardGif` on the entry. The detail page keeps the still poster, and so does the card under `prefers-reduced-motion`.
+
+   ```bash
+   ffmpeg -ss 14 -t 6 -i website/assets/examples/<slug>-<locale>.mp4 -vf "fps=12,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" -loop 0 website/assets/examples/<slug>-<locale>-card.gif
+   ```
+
+   Keep each GIF near 2MB; lower the width or fps if it grows. Keep `website/` under 45MB.
+
 4. Regenerate:
 
    ```bash

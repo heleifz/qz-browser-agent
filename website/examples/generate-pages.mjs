@@ -84,8 +84,14 @@ function cardsHtml(localeId) {
     // Keep a clearly wider shot whole so side text is not cropped. A frame only
     // slightly wider than 16/10 fills the card; its radius clips the corners.
     const wide = entry.poster && entry.imageWidth / entry.imageHeight > 1.75;
+    // An optional animated cover for the homepage card. The still poster stays
+    // for the detail page and for visitors who prefer reduced motion.
+    const still = entry.poster ? `<img src="./${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">` : "";
+    const art = entry.cardGif && entry.poster
+      ? `<picture><source media="(prefers-reduced-motion: reduce)" srcset="./${entry.poster}"><img src="./${entry.cardGif}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></picture>`
+      : still;
     const cover = entry.poster
-      ? `<span class="example-cover${wide ? " is-wide" : ""}"><img src="./${entry.poster}" width="${entry.imageWidth}" height="${entry.imageHeight}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async"></span>`
+      ? `<span class="example-cover${wide ? " is-wide" : ""}">${art}</span>`
       : `<span class="example-cover example-cover-empty" role="img" aria-label="${escapeHtml(alt)}"></span>`;
     return `    <a class="example-card" href="${cardHref(view.source, entry.slug)}">
       ${cover}
@@ -219,6 +225,9 @@ function resolveMedia(entry, localeId) {
     throw new Error(`${entry.slug} poster was not found at ${poster}`);
   }
   const image = poster ? readImageSize(path.join(websiteRoot, poster)) : null;
+  if (entry.cardGif && !fs.existsSync(path.join(websiteRoot, entry.cardGif))) {
+    throw new Error(`${entry.slug} cardGif was not found at ${entry.cardGif}`);
+  }
   return {
     video,
     poster,

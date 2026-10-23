@@ -4,6 +4,8 @@
 // An entry needs `slug` and `file` (the session export). `video` is an optional
 // mp4. `poster` is an optional image; with a video and no poster, the generator
 // extracts a frame. `posterTime` is the extract point in seconds (default 1).
+// `cardGif` is an optional animated cover for the homepage card only; the detail
+// page keeps the still poster, and so do visitors who prefer reduced motion.
 // `title` and `summary` override the session title and the first user message.
 //
 // fallback: while a locale list is empty, the homepage shows that locale's
@@ -74,6 +76,7 @@ window.QZ_EXAMPLES = {
         summary: "5 个景点各开一个子任务并行，找图汇成一个图集。",
         file: "examples/sessions/travel-zh.html",
         video: "assets/examples/travel-zh.mp4",
+        cardGif: "assets/examples/travel-zh-card.gif",
         posterTime: 42,
         alt: "并行找图后汇成的杭州景点图集",
       },
@@ -92,6 +95,7 @@ window.QZ_EXAMPLES = {
         summary: "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
         file: "examples/sessions/hn-skill-zh.html",
         video: "assets/examples/hn-skill-zh.mp4",
+        cardGif: "assets/examples/hn-skill-zh-card.gif",
         posterTime: 30,
         alt: "整理 HN 热帖并生成 Skill 的过程",
         related: [{ slug: "hn-skill-reuse", id: "reuse", label: "一句话复用" }],
@@ -115,6 +119,7 @@ window.QZ_EXAMPLES = {
         summary: "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。",
         file: "examples/sessions/github-weekly-zh.html",
         video: "assets/examples/github-weekly-zh.mp4",
+        cardGif: "assets/examples/github-weekly-zh-card.gif",
         posterTime: 28,
         alt: "本周榜单和整理出的项目表",
       },
