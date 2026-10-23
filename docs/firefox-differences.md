@@ -32,9 +32,24 @@ when a tab id is present, then `sidebarAction.open()` with no arguments. Firefox
 `sidebar_action.json` defines `open`, `close`, and `toggle` with an empty parameter list and
 `requireUserInput: true`. Passing `{ windowId }` is not in that schema.
 
+A content-script message is not a user-input handler, so the session-import jump cannot call
+`sidebarAction.open()` on that turn. The import still stores the session. The failed open sets
+the toolbar badge to `!` and creates notification `qz-open-sidebar`. English UI copy is
+`Click this notification to open the sidebar.` Chinese UI copy is `点击此通知打开侧边栏。`
+The notification click calls `sidebarAction.open()` with no arguments and clears the badge. The
+toolbar click clears the badge and toggles the sidebar. `action.openPopup` is not used: this
+package has no `default_popup`, and `openPopup` has the same user-input requirement. Content
+scripts do not receive `sidebarAction`. The import event stays available for 15 seconds, so a
+prompt click in that window still selects the imported session.
+
+No extension entry opens `sidepanel/sidepanel.html` as a browser tab. The toolbar button,
+`_execute_sidebar_action`, the sidebar menu, and a later open after consent use Firefox's sidebar
+browser. about:debugging Inspect opens a toolbox. A tab whose address is the panel URL is a
+manual navigation.
+
 | Feature | Firefox behavior | Known limitation |
 | --- | --- | --- |
-| Opening | `open()` runs inside the user-gesture turn and is not preceded by `windows.update`. `setPanel` records the sidebar document for that tab and is not awaited, so the gesture is still current when `open()` runs. The toolbar path calls `toggle()` when Firefox provides it. | Firefox draws one sidebar for the window and chooses the side. `open()` cannot target a tab or a window. A call outside a user gesture is not retried. The error is `Firefox opens the sidebar only during a user gesture, such as a toolbar click, shortcut, or notification click.` The toolbar listener logs `[轻舟] firefox sidebar did not open:` when that call fails. |
+| Opening | `open()` runs inside the user-gesture turn and is not preceded by `windows.update`. `setPanel` records the sidebar document for that tab and is not awaited, so the gesture is still current when `open()` runs. The toolbar path calls `toggle()` when Firefox provides it. A call Firefox rejects for lack of user input keeps that rejection, sets badge `!`, and shows `qz-open-sidebar`. The notification click opens the sidebar. | Firefox draws one sidebar for the window and chooses the side. `open()` cannot target a tab or a window. A call outside a user gesture is not retried and does not open a tab. The error is `Firefox opens the sidebar only during a user gesture, such as a toolbar click, shortcut, or notification click.` The toolbar listener logs `[轻舟] firefox sidebar did not open:` and that sentence. The deferred open logs the same prefix and the notification sentence. |
 | Per-tab panel | `setPanel({ tabId, panel })` is Firefox's tab-scoped panel URL. Other tabs keep the default panel. The package does not call `setPanel` with an empty string. | The open or closed state is still one per window. Firefox 158 has no API that opens the sidebar for one tab and leaves it closed in another. Switching tabs can show that tab's panel document, which for this package is the same `sidepanel.html`. |
 | Focus | Composer focus still uses `visibilitychange` and `focus`. | There is no `sidePanel.onOpened`. |
 | Closing | A programmatic open does not close a sidebar that is already open. The toolbar button toggles, which matches Firefox's toolbar convention and Chrome's `openPanelOnActionClick` toggle. | Chrome's side panel and Firefox's sidebar are different frames. |
@@ -199,13 +214,20 @@ a new capture stops a stream that was still held. The picker was not opened in t
 
 ## Notifications
 
-`requireInteraction` and `priority` are ignored by Firefox. When `requireInteraction` is true, a
-notification that closes with `byUser !== true` is created again, up to 12 times, with the same
-id and options. A click, a close with `byUser === true`, or a recreate that throws stops the
-renewals. `priority` has no substitute: the notification looks like any other Firefox notification.
+Firefox 158 `CreateNotificationOptions` has no `requireInteraction`. Passing that property makes
+`notifications.create` fail with `Unexpected property "requireInteraction"`, so the completion
+toast and an automation failure toast never appear. The Firefox notification wrapper deletes
+`requireInteraction` before `create` and before each renewal. `priority`, `contextMessage`, and
+the other schema fields stay. `ext-notifications.js` builds the alert from the title, message, and
+icon, so `priority` does not change the toast.
 
-If Firefox does not fire `onClosed` until the user dismisses the toast, the renewal does not run
-and the toast still disappears on Firefox's own timer.
+When the caller passed `requireInteraction: true`, a notification that closes with
+`byUser !== true` is created again, up to 12 times, with the stripped options. A click, a close
+with `byUser === true`, or a recreate that throws stops the renewals. Firefox 158's `onClosed`
+always reports `byUser: true` (the `byUser` argument is still the Bug 1413188 placeholder), so a
+system dismissal does not renew. The toast still disappears on Firefox's own timer. A notification
+click remains a user-input handler, and the completion click calls `sidebarAction.open()` on that
+turn.
 
 ## Platform limits
 
@@ -235,6 +257,7 @@ call would be a non-Firefox argument, a warning, or a second menu.
 | --- | --- |
 | `sidebarAction.open()` takes no arguments | Firefox 158's schema has an empty parameter list. An extra `windowId` is non-standard. |
 | Toolbar uses `toggle()` | That is Firefox's toolbar behavior, and Chrome's action click toggles the side panel too. A notification open still only opens, so it does not close a sidebar the user already has open. |
+| Import jump asks for one click | A page message cannot satisfy `requireUserInput`. The badge and `qz-open-sidebar` use Firefox's own toolbar and notification click, which are user-input handlers. The session is already stored. |
 | `_execute_sidebar_action` owns the shortcut | Firefox toggles a sidebar from that reserved command. `_execute_action` would not. |
 | No custom context menu | The sidebar menu and the toolbar button are already Firefox's. A `menus` permission would add a warning and a second entry. |
 | `open_at_install: false` | Firefox would otherwise open the sidebar during install. The Chrome task does not. |

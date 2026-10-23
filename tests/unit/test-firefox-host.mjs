@@ -12,7 +12,11 @@ import { installOffscreenHost } from "../../src/background/firefox/offscreen-hos
 import { jpegsToPdf, jpegSize } from "../../src/background/firefox/pdf-raster.js";
 import { stitchTiles } from "../../src/background/firefox/screenshot-image.js";
 import { installWorkspacePanel } from "../../src/background/firefox/workspace-panel.js";
+import { createChromeNotificationService, createSessionCompletionNotifier } from "../../src/background/services/chrome-notifications.js";
+import { createSessionExchangeBridge } from "../../src/background/services/session-exchange-bridge.js";
 import { productText } from "../../src/shared/product-text.js";
+import { serializeConversation } from "../../src/shared/session/session-codec.js";
+import { createSessionExchangePayload } from "../../src/shared/session/session-exchange.js";
 import { installSidepanelFirefoxHost } from "../../src/sidepanel/firefox/host.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -79,6 +83,112 @@ test("sidebar open outside a user gesture explains the failure and does not retr
   assert.match(errors[0], /user gesture/);
 });
 
+test("a sidebar open outside a user gesture asks for a click and keeps the imported session", async () => {
+  const badges = [];
+  const notes = [];
+  const opens = [];
+  const createdTabs = [];
+  let notificationClick = () => {};
+  let allowOpen = false;
+  const browser = sidebarPromptBrowser({
+    badges,
+    notes,
+    opens,
+    createdTabs,
+    language: "en-US",
+    allowOpen: () => allowOpen,
+    onNotificationClick(listener) { notificationClick = listener; },
+  });
+  installWorkspacePanel(browser);
+  const bridge = createSessionExchangeBridge({
+    sidePanel: browser.sidePanel,
+    importSessionExchange: async () => ({ session: { id: "imported", title: "Imported" } }),
+    channel: { hasPorts: () => false, broadcast() {}, remember() {} },
+    logger: { debug() {} },
+    consentAccepted: () => true,
+  });
+  const payload = createSessionExchangePayload({
+    session: { id: "source", title: "Imported" },
+    conversation: serializeConversation([{ role: "user", content: "import me" }]),
+    transcript: [],
+    exportedAt: "2026-07-12 12:00:00",
+  });
+  const result = await bridge.importFromPage({ payload }, {
+    tab: { url: "http://127.0.0.1/export.html", id: 3, windowId: 4 },
+  });
+  assert.equal(result.session.id, "imported");
+  assert.deepEqual(createdTabs, []);
+  assert.deepEqual(opens, [0]);
+  assert.deepEqual(badges, ["!"]);
+  assert.equal(notes[0].id, "qz-open-sidebar");
+  assert.equal(Object.hasOwn(notes[0].options, "requireInteraction"), false);
+  assert.equal(notes[0].options.message, "Click this notification to open the sidebar.");
+  assert.equal(notes[0].options.iconUrl, "moz-extension://uuid/icons/icon128.png");
+
+  bridge.revealForImport({ tab: { id: 3, windowId: 4, url: "http://127.0.0.1/export.html" } });
+  for (let step = 0; step < 4; step += 1) await Promise.resolve();
+  assert.equal(notes.filter(item => item.id).length, 1);
+  notificationClick("qz_completed_root_run");
+  assert.deepEqual(opens, [0, 0]);
+
+  allowOpen = true;
+  notificationClick("qz-open-sidebar");
+  assert.equal(opens.at(-1), 0);
+  assert.equal(badges.at(-1), "");
+  assert.equal(notes.some(item => item.clear === "qz-open-sidebar"), true);
+
+  browser.sidePanel.setPanelBehavior({});
+  allowOpen = false;
+  await assert.rejects(browser.sidePanel.open({ windowId: 4 }), /user gesture/);
+  assert.equal(badges.at(-1), "!");
+  allowOpen = true;
+  browser.toolbar();
+  assert.equal(badges.at(-1), "");
+  assert.equal(opens.at(-1), "toggle");
+});
+
+test("the sidebar prompt uses Chinese when the Firefox UI language is Chinese", async () => {
+  const notes = [];
+  const browser = sidebarPromptBrowser({ notes, language: "zh-CN", allowOpen: () => false });
+  installWorkspacePanel(browser);
+  await assert.rejects(browser.sidePanel.open({ windowId: 1 }), /user gesture/);
+  assert.equal(notes[0].options.title, "轻舟");
+  assert.equal(notes[0].options.message, "点击此通知打开侧边栏。");
+});
+
+function sidebarPromptBrowser({ badges = [], notes = [], opens = [], createdTabs = [], language = "en-US", allowOpen = () => false, onNotificationClick = () => {} } = {}) {
+  const browser = {
+    runtime: { getURL: path => `moz-extension://uuid/${path}` },
+    i18n: { getUILanguage: () => language },
+    sidebarAction: {
+      open() {
+        opens.push(arguments.length);
+        if (!allowOpen()) return Promise.reject(new Error("sidebarAction.open may only be called from a user input handler"));
+        return Promise.resolve();
+      },
+      toggle() {
+        opens.push("toggle");
+        return Promise.resolve();
+      },
+    },
+    action: {
+      onClicked: { addListener(listener) { browser.toolbar = listener; } },
+      setBadgeText(details) { badges.push(details.text); return Promise.resolve(); },
+    },
+    notifications: {
+      create(id, options) {
+        notes.push({ id, options });
+        return Promise.resolve(id);
+      },
+      clear(id) { notes.push({ clear: id }); return Promise.resolve(true); },
+      onClicked: { addListener(listener) { onNotificationClick(listener); } },
+    },
+    tabs: { create(properties) { createdTabs.push(properties); return Promise.resolve({ id: 1 }); } },
+    windows: { create(properties) { createdTabs.push(properties); return Promise.resolve({ id: 2 }); } },
+  };
+  return browser;
+}
+
 test("initiatorDomains use the moz-extension host on Firefox and stay unchanged on Chrome", async () => {
   const seen = [];
   const firefox = rulesChrome("qz-browser-agent@heleifz.github.io", "moz-extension://uuid/", seen);
@@ -103,9 +213,14 @@ test("initiatorDomains use the moz-extension host on Firefox and stay unchanged 
 test("requireInteraction renews a notification until the user closes it", async () => {
   let created = 0;
   let fail = false;
+  const seen = [];
   const browser = {
     notifications: {
-      async create(id) {
+      async create(id, options) {
+        if (options && Object.hasOwn(options, "requireInteraction")) {
+          throw new Error('Unexpected property "requireInteraction"');
+        }
+        seen.push(options || {});
         created += 1;
         if (fail) throw new Error("notifications are unavailable");
         return id;
@@ -115,10 +230,15 @@ test("requireInteraction renews a notification until the user closes it", async 
     },
   };
   installNotificationRenewal(browser);
-  await browser.notifications.create("done", { requireInteraction: true, priority: 2 });
+  await browser.notifications.create("done", { requireInteraction: true, priority: 2, title: "done" });
+  assert.equal(seen[0].requireInteraction, undefined);
+  assert.equal(seen[0].priority, 2);
+  assert.equal(seen[0].title, "done");
   browser.closed("done", false);
   await Promise.resolve();
   assert.equal(created, 2);
+  assert.equal(seen[1].requireInteraction, undefined);
+  assert.equal(seen[1].priority, 2);
   browser.closed("done", true);
   await Promise.resolve();
   assert.equal(created, 2);
@@ -135,6 +255,72 @@ test("requireInteraction renews a notification until the user closes it", async 
   browser.closed("again", false);
   await Promise.resolve();
   assert.equal(created, before);
+});
+
+test("a completion notification is created without requireInteraction and its click opens the sidebar", async () => {
+  const seen = [];
+  const opens = [];
+  const browser = {
+    runtime: { getURL: path => `moz-extension://uuid/${path}` },
+    sidebarAction: {
+      open() {
+        opens.push(arguments.length);
+        return Promise.resolve();
+      },
+    },
+    action: { onClicked: { addListener() {} } },
+    notifications: {
+      create(id, options, callback) {
+        if (options && Object.hasOwn(options, "requireInteraction")) {
+          throw new Error('Unexpected property "requireInteraction"');
+        }
+        seen.push(options);
+        if (callback) callback(id);
+        return Promise.resolve(id);
+      },
+      clear(_id, callback) {
+        if (callback) callback(true);
+        return Promise.resolve(true);
+      },
+      onClosed: { addListener() {} },
+      onClicked: { addListener() {} },
+    },
+    windows: {
+      async getLastFocused() { return { id: 4, type: "normal", focused: false }; },
+      async getAll() { return [{ id: 4, type: "normal", focused: false }]; },
+    },
+  };
+  installWorkspacePanel(browser);
+  installNotificationRenewal(browser);
+  const notifications = createChromeNotificationService({
+    notifications: browser.notifications,
+    runtime: {},
+    windows: browser.windows,
+  });
+  const notifier = createSessionCompletionNotifier({
+    notifications,
+    iconUrl: "moz-extension://uuid/icons/icon128.png",
+    getRuntime: () => ({ status: "completed", running: false, runId: "run-1" }),
+    getRuntimeCheckpoint: () => ({}),
+    getSessions: async () => ({ root: { id: "root", title: "Trip", parentSessionId: "0" } }),
+    getTranscript: async () => [],
+    getLastToolName: () => "",
+    setRuntime: () => {},
+    activateWorkingTab: async () => ({ activated: false }),
+    openSession: () => {
+      browser.sidePanel.open({ windowId: 4 });
+      return true;
+    },
+    now: () => "2026-07-12 12:00:00",
+  });
+  assert.equal(await notifier.notifyCompleted("root"), true);
+  assert.equal(seen[0].requireInteraction, undefined);
+  assert.equal(seen[0].priority, 2);
+  assert.equal(seen[0].title.length > 0, true);
+  assert.equal(seen[0].message, "Trip");
+  const click = notifier.handleClick("qz_completed_root_run-1");
+  assert.deepEqual(opens, [0], "the notification click calls sidebarAction.open with no arguments");
+  assert.equal(await click, true);
 });
 
 test("the offscreen host loads the shared document in a hidden frame", async () => {
