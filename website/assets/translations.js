@@ -294,7 +294,7 @@ export const translations = {
       "navStart": "安装<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>开源 · 本地优先",
       "heroTitle": "一个真正<br><span>会用浏览器的<br>智能体。</span>",
-      "heroIntro": "在你日常使用、已登录的 Chrome 里运行 AI Agent。自选模型或用 ChatGPT 账号登录，通过 CLI、Skill 或 MCP 委派任务。",
+      "heroIntro": "把 Coding Agent 装进浏览器，十几个标签页的活，它一次干完。读网页，跑脚本，汇总表格图集，并能总结 Skill。",
       "heroAction": "添加至 Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · 阅读页面与执行 JavaScript",
       "filmAction": "观看演示",
