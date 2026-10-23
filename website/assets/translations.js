@@ -88,15 +88,15 @@ export const translations = {
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
       "exampleDownload": "Import into qz to continue",
-      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/travel-zh.webp\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Hangzhou photo gallery</h3>\n      <p>Five sights run as parallel tasks and collect their photos into one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"Comparison table saved from several model pages\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Model comparison</h3>\n      <p>Reads several model sites and builds one comparison table.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/arxiv/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/arxiv-zh.webp\" width=\"840\" height=\"2011\" alt=\"Paper table and saved Skill from the briefing\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Paper table → Skill</h3>\n      <p>Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/github-weekly-zh.webp\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>GitHub weekly roundup</h3>\n      <p>Reads this week's Trending list, builds a table, and writes a short weekly summary.</p>\n    </a>",
+      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/travel-zh.webp\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Hangzhou photo gallery</h3>\n      <p>Five sights run as parallel tasks and collect their photos into one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"Comparison table saved from several model pages\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>Model comparison</h3>\n      <p>Reads several model sites and builds one comparison table.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/hn-skill-zh.webp\" width=\"840\" height=\"510\" alt=\"Building a Skill from the HN front page\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>HN posts → Skill</h3>\n      <p>Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/github-weekly-zh.webp\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>GitHub weekly roundup</h3>\n      <p>Reads this week's Trending list, builds a table, and writes a short weekly summary.</p>\n    </a>",
       "example-travel-title": "Hangzhou photo gallery",
       "example-travel-summary": "Five sights run as parallel tasks and collect their photos into one gallery.",
       "example-llm-compare-title": "Model comparison",
       "example-llm-compare-summary": "Reads several model sites and builds one comparison table.",
-      "example-arxiv-title": "Paper table → Skill",
-      "example-arxiv-summary": "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence.",
-      "example-arxiv-first": "First run",
-      "example-arxiv-reuse": "A week later",
+      "example-hn-skill-title": "HN posts → Skill",
+      "example-hn-skill-summary": "Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence.",
+      "example-hn-skill-first": "Create",
+      "example-hn-skill-reuse": "Reuse",
       "example-github-weekly-title": "GitHub weekly roundup",
       "example-github-weekly-summary": "Reads this week's Trending list, builds a table, and writes a short weekly summary."
       /* example-html:en:end */
@@ -209,8 +209,8 @@ export const translations = {
       "example-llm-compare-description": {
         "content": "Reads several model sites and builds one comparison table."
       },
-      "example-arxiv-description": {
-        "content": "Builds an arXiv paper table, then saves it as a reusable Skill in one sentence."
+      "example-hn-skill-description": {
+        "content": "Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence."
       },
       "example-github-weekly-description": {
         "content": "Reads this week's Trending list, builds a table, and writes a short weekly summary."
@@ -223,13 +223,13 @@ export const translations = {
         "alt": "Comparison table saved from several model pages",
         "aria-label": "Comparison table saved from several model pages"
       },
-      "example-arxiv-poster": {
-        "alt": "Paper table and saved Skill from the briefing",
-        "aria-label": "Paper table and saved Skill from the briefing"
+      "example-hn-skill-poster": {
+        "alt": "Building a Skill from the HN front page",
+        "aria-label": "Building a Skill from the HN front page"
       },
-      "example-arxiv-reuse-poster": {
-        "alt": "This week's papers retrieved with the saved Skill",
-        "aria-label": "This week's papers retrieved with the saved Skill"
+      "example-hn-skill-reuse-poster": {
+        "alt": "Reusing the saved Skill in a new session to read Show HN",
+        "aria-label": "Reusing the saved Skill in a new session to read Show HN"
       },
       "example-github-weekly-poster": {
         "alt": "This week's trending list and the project table",
@@ -325,15 +325,15 @@ export const translations = {
       "examplesTitle": "真实任务，完整过程。",
       "examplesLede": "每个例子都是轻舟的一次真实会话。左边是这次会话自己的画面，右边是它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
       "exampleDownload": "导入轻舟继续对话",
-      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/travel-zh.webp\" width=\"840\" height=\"510\" alt=\"并行找图后汇成的杭州景点图集\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>杭州景点图集</h3>\n      <p>5 个景点各开一个子任务并行，找图汇成一个图集。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"多站对比后落成的模型表\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>模型对比表</h3>\n      <p>读多个模型的官网，整理成一张对比表。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/arxiv/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/arxiv-zh.webp\" width=\"840\" height=\"2011\" alt=\"Browser Agent 论文速览的论文表与 Skill\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>论文表 → Skill</h3>\n      <p>整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/github-weekly-zh.webp\" width=\"840\" height=\"510\" alt=\"本周榜单和整理出的项目表\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>GitHub 周榜整理</h3>\n      <p>读 GitHub Trending 本周榜单，整理成表并写一段周报总结。</p>\n    </a>",
+      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/travel-zh.webp\" width=\"840\" height=\"510\" alt=\"并行找图后汇成的杭州景点图集\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>杭州景点图集</h3>\n      <p>5 个景点各开一个子任务并行，找图汇成一个图集。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/llm-compare/\">\n      <span class=\"example-cover is-wide\"><img src=\"./assets/examples/llm-compare-zh.webp\" width=\"1200\" height=\"648\" alt=\"多站对比后落成的模型表\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>模型对比表</h3>\n      <p>读多个模型的官网，整理成一张对比表。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/hn-skill-zh.webp\" width=\"840\" height=\"510\" alt=\"整理 HN 热帖并生成 Skill 的过程\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>HN 热帖 → Skill</h3>\n      <p>整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><img src=\"./assets/examples/github-weekly-zh.webp\" width=\"840\" height=\"510\" alt=\"本周榜单和整理出的项目表\" loading=\"lazy\" decoding=\"async\"></span>\n      <h3>GitHub 周榜整理</h3>\n      <p>读 GitHub Trending 本周榜单，整理成表并写一段周报总结。</p>\n    </a>",
       "example-travel-title": "杭州景点图集",
       "example-travel-summary": "5 个景点各开一个子任务并行，找图汇成一个图集。",
       "example-llm-compare-title": "模型对比表",
       "example-llm-compare-summary": "读多个模型的官网，整理成一张对比表。",
-      "example-arxiv-title": "论文表 → Skill",
-      "example-arxiv-summary": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。",
-      "example-arxiv-first": "第一次跑",
-      "example-arxiv-reuse": "一周后再用",
+      "example-hn-skill-title": "HN 热帖 → Skill",
+      "example-hn-skill-summary": "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
+      "example-hn-skill-first": "创建",
+      "example-hn-skill-reuse": "复用",
       "example-github-weekly-title": "GitHub 周榜整理",
       "example-github-weekly-summary": "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。"
       /* example-html:zh:end */
@@ -446,8 +446,8 @@ export const translations = {
       "example-llm-compare-description": {
         "content": "读多个模型的官网，整理成一张对比表。"
       },
-      "example-arxiv-description": {
-        "content": "整理一张 arXiv 论文表，一句话存成 Skill，下次直接复用。"
+      "example-hn-skill-description": {
+        "content": "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。"
       },
       "example-github-weekly-description": {
         "content": "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。"
@@ -460,13 +460,13 @@ export const translations = {
         "alt": "多站对比后落成的模型表",
         "aria-label": "多站对比后落成的模型表"
       },
-      "example-arxiv-poster": {
-        "alt": "Browser Agent 论文速览的论文表与 Skill",
-        "aria-label": "Browser Agent 论文速览的论文表与 Skill"
+      "example-hn-skill-poster": {
+        "alt": "整理 HN 热帖并生成 Skill 的过程",
+        "aria-label": "整理 HN 热帖并生成 Skill 的过程"
       },
-      "example-arxiv-reuse-poster": {
-        "alt": "用已保存的 Skill 检出的本周论文表",
-        "aria-label": "用已保存的 Skill 检出的本周论文表"
+      "example-hn-skill-reuse-poster": {
+        "alt": "新会话里用已保存的 Skill 查看 Show HN 热帖",
+        "aria-label": "新会话里用已保存的 Skill 查看 Show HN 热帖"
       },
       "example-github-weekly-poster": {
         "alt": "本周榜单和整理出的项目表",
