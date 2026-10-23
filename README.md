@@ -205,7 +205,10 @@ Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Codin
 
 ### Does qz support Edge or Firefox?
 
-qz works in Chrome and Edge. Firefox is not supported.
+qz releases run in Chrome and Edge. A Firefox release is not published. Temporary loading for
+development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
+Gaps that still need a decision are in
+[Firefox capability gap](docs/firefox-capability-gap.md).
 
 ## Development
 
@@ -221,7 +224,8 @@ npm run build
 ```
 
 Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select
-`dist/extension/`.
+`dist/extension/`. To load the same sources in Firefox temporarily, follow
+[Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
 
 ### Develop and test
 

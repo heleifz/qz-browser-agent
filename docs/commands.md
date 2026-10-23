@@ -7,6 +7,7 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | --- | --- |
 | `npm run dev` | Watch source files and rebuild `dist/extension/` |
 | `npm run build` | Type-check and build the extension |
+| `npm run build -- --browser firefox` | Build a temporary Firefox add-on in `dist/extension-firefox/` |
 | `npm run typecheck` | Check TypeScript without a production build |
 | `npm test` | Run unit, contract, service, and browser tests |
 | `npm run verify` | Run type checking, all automated test suites, and coverage checks |
@@ -38,6 +39,30 @@ scripts.
 The public `key` in [`src/manifest.json`](../src/manifest.json) fixes the unpacked extension ID to
 `ghbaodmonhcgkfeejcpffknlggbjhjgj` across checkout and installation paths. Preserve this key across
 builds and releases. See Chrome's [manifest key reference](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+
+## Load temporarily in Firefox
+
+```bash
+npm run build -- --browser firefox
+```
+
+The command writes `dist/extension-firefox/` and leaves `dist/extension/` for Chrome. Omit
+`--browser` for the Chrome package. `npm run dev -- --browser firefox` rebuilds the Firefox
+directory. Pass `--output-dir` when that directory must stay separate from another watcher.
+
+Firefox 139 or later is required. The package reuses the Chrome module graph and rewrites the
+manifest: the background is declared as an event-page script, the side panel page is declared as a
+sidebar, and permission names Firefox rejects are omitted. Behavior that cannot match Chrome is
+listed in [Firefox capability gap](firefox-capability-gap.md).
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on**.
+3. Select `dist/extension-firefox/manifest.json`.
+4. Open Firefox's sidebar and choose qz.
+
+The toolbar button does not open the workspace. `sidePanel.open` is the Chrome opener, and this
+build does not replace it. Reload the temporary add-on after a rebuild. Temporary add-ons are
+removed when Firefox exits.
 
 ## Run tests
 

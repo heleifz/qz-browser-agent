@@ -199,7 +199,9 @@ npx qz-browser-agent@latest create "你的任务" --stream
 
 ### 支持 Edge 或 Firefox 吗？
 
-支持 Chrome 和 Edge，暂不支持 Firefox。
+发布版本运行在 Chrome 和 Edge。Firefox 尚未发布。开发时的临时加载见
+[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。仍待确认的能力差见
+[Firefox 能力差](docs/firefox-capability-gap.md)。
 
 ## 开发
 
@@ -215,6 +217,7 @@ npm run build
 ```
 
 打开 `chrome://extensions`，启用**开发者模式**，点击**加载已解压的扩展程序**，选择 `dist/extension/`。
+在 Firefox 中临时加载同一套源码，见[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。
 
 ### 开发与测试
 
