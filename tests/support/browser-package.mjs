@@ -1,5 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export const FIREFOX_INSTALL_HINT = "Install Mozilla Firefox 139 or newer with npx playwright install firefox and npx playwright install-deps firefox, or set FIREFOX_EXECUTABLE to a Mozilla Firefox binary.";
 
 const FIREFOX_CHANNEL = /firefox|gecko/i;
 
@@ -43,7 +47,7 @@ export function resolveFirefoxExecutable() {
   if (process.env.FIREFOX_EXECUTABLE) candidates.push(process.env.FIREFOX_EXECUTABLE);
   const onPath = firefoxOnPath();
   if (onPath) candidates.push(onPath);
-  candidates.push("/tmp/ff/firefox/firefox", "/usr/bin/firefox", "/snap/bin/firefox");
+  candidates.push(...playwrightFirefoxCandidates(), "/tmp/ff/firefox/firefox", "/usr/bin/firefox", "/snap/bin/firefox");
   const seen = new Set();
   const errors = [];
   for (const candidate of candidates) {
@@ -66,7 +70,28 @@ export function resolveFirefoxExecutable() {
       errors.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw new Error(`Firefox Playwright needs Mozilla Firefox for dist/extension-firefox. Set FIREFOX_EXECUTABLE. Chromium is not used.${errors.length ? `\n${errors.join("\n")}` : ""}`);
+  throw new Error(`Firefox Playwright needs Mozilla Firefox for dist/extension-firefox. ${FIREFOX_INSTALL_HINT} Chromium is not used.${errors.length ? `\n${errors.join("\n")}` : ""}`);
+}
+
+function playwrightFirefoxCandidates() {
+  const roots = [];
+  const override = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (override && override !== "0") roots.push(override);
+  roots.push(join(homedir(), ".cache", "ms-playwright"));
+  roots.push(join(homedir(), "Library", "Caches", "ms-playwright"));
+  if (process.env.LOCALAPPDATA) roots.push(join(process.env.LOCALAPPDATA, "ms-playwright"));
+  const found = [];
+  for (const root of roots) {
+    if (!root || !existsSync(root)) continue;
+    let names = [];
+    try { names = readdirSync(root); } catch { continue; }
+    for (const name of names.filter(entry => entry.startsWith("firefox-")).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))) {
+      const directory = join(root, name);
+      found.push(join(directory, "firefox", "firefox"));
+      found.push(join(directory, "firefox", "Firefox.app", "Contents", "MacOS", "firefox"));
+    }
+  }
+  return found;
 }
 
 function firefoxOnPath() {

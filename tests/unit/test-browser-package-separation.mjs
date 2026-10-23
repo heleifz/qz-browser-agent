@@ -70,4 +70,18 @@ test("the Firefox suite is outside the Chromium verification plan", () => {
   assert.match(firefoxConfig, /channel: "moz-firefox"/);
   assert.match(firefoxConfig, /playwright-firefox/);
   assert.doesNotMatch(firefoxConfig, /browserName: "chromium"|ensureTestExtension|chromium\.launch/);
+  const locator = readFileSync(join(root, "tests/support/browser-package.mjs"), "utf8");
+  assert.match(locator, /npx playwright install firefox/);
+  assert.match(locator, /npx playwright install-deps firefox/);
+  const sidebar = readFileSync(join(root, "tests/firefox/sidebar.spec.mjs"), "utf8");
+  const launch = readFileSync(join(root, "tests/firefox/launch.mjs"), "utf8");
+  assert.match(sidebar, /openFromToolbar/);
+  assert.match(sidebar, /openFromShortcut/);
+  assert.match(sidebar, /requireInteraction:\s*true/);
+  assert.match(sidebar, /refuseSidebarOpen/);
+  assert.doesNotMatch(sidebar, /page\.goto/);
+  assert.doesNotMatch(launch, /page\.goto/);
+  const commands = readFileSync(join(root, "docs/commands.md"), "utf8");
+  assert.match(commands, /npx playwright install firefox/);
+  assert.match(commands, /npx playwright install-deps firefox/);
 });

@@ -221,10 +221,12 @@ a new capture stops a stream that was still held. The picker was not opened in t
 
 Firefox 158 `CreateNotificationOptions` has no `requireInteraction`. Passing that property makes
 `notifications.create` fail with `Unexpected property "requireInteraction"`, so the completion
-toast and an automation failure toast never appear. The Firefox notification wrapper deletes
-`requireInteraction` before `create` and before each renewal. `priority`, `contextMessage`, and
-the other schema fields stay. `ext-notifications.js` builds the alert from the title, message, and
-icon, so `priority` does not change the toast.
+toast and an automation failure toast never appear. The Firefox notification wrapper copies the
+options into a new plain object and deletes `requireInteraction` before `create` and before each
+renewal, including when the field is inherited. Firefox still validates the object passed to the
+original `create`. `priority`, `contextMessage`, and the other schema fields stay.
+`ext-notifications.js` builds the alert from the title, message, and icon, so `priority` does not
+change the toast.
 
 When the caller passed `requireInteraction: true`, a notification that closes with
 `byUser !== true` is created again, up to 12 times, with the stripped options. A click, a close
@@ -275,8 +277,11 @@ The sidebar title and close control are Firefox's header, outside this document.
 
 ## What this check did not run
 
-`npm run verify:firefox` loads `dist/extension-firefox/` in Firefox, opens the sidebar document,
-accepts the data consent, and checks the system-color skin. These paths are still not exercised
-in that window: a provider request, the display-capture picker, a real-page click, an
-accessibility snapshot, a PDF of a page, mobile resize, the `about:debugging` button, and the
-geolocation prompt.
+`npm run verify:firefox` loads `dist/extension-firefox/` in Mozilla Firefox. The Playwright suite
+temporarily installs that package, opens the sidebar from the toolbar button and from the
+`_execute_sidebar_action` shortcut, and checks that the panel is Firefox's sidebar browser rather
+than a tab at `sidepanel.html`. It checks light and dark `prefers-color-scheme`, primary-button
+contrast, `notifications.create` with `requireInteraction`, and a `sidePanel.open()` call outside a
+user gesture. These paths are still not exercised in that window: a provider request, the
+display-capture picker, a real-page click, an accessibility snapshot, a PDF of a page, mobile
+resize, the `about:debugging` button, and the geolocation prompt.

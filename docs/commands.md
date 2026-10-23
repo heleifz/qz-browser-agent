@@ -98,15 +98,37 @@ select the Firefox suite and do not launch Firefox.
 
 `npm run verify:firefox` is separate from the Chromium suites. It type-checks, builds
 `dist/extension-firefox/`, runs `tests/unit/test-firefox-*.mjs`, and runs Playwright against that
-directory in Mozilla Firefox. The browser is Firefox's WebDriver BiDi channel (`moz-firefox`), not
-Chromium and not Playwright's bundled Firefox. Set `FIREFOX_EXECUTABLE` when Firefox is not on
-`PATH`. `QINGZHOU_FIREFOX_PLAYWRIGHT_WORKERS` bounds that Playwright process; it does not read
+directory in Mozilla Firefox. `npm run build -- --browser firefox` only writes the package. The
+Firefox tests run from `npm run verify:firefox` or `npm test -- firefox`. `npm run verify:quick`
+does not launch Firefox.
+
+Install Mozilla Firefox 139 or newer, including its system libraries:
+
+```bash
+npx playwright install firefox
+npx playwright install-deps firefox
+```
+
+The suite launches that binary headless on Firefox's WebDriver BiDi channel (`moz-firefox`) and
+passes `executablePath`. It does not launch Chromium. Set `FIREFOX_EXECUTABLE` to choose a binary.
+Otherwise the locator uses `firefox` on `PATH`, then a Firefox build from `npx playwright install
+firefox` whose `--version` prints `Mozilla Firefox` 139 or newer, then
+`/tmp/ff/firefox/firefox`, `/usr/bin/firefox`, and `/snap/bin/firefox`. A missing binary stops the
+suite with those install commands in the error. Set `QINGZHOU_FIREFOX_HEADED=1` to show the window.
+`QINGZHOU_FIREFOX_PLAYWRIGHT_WORKERS` bounds that Playwright process; it does not read
 `QINGZHOU_PLAYWRIGHT_WORKERS`.
 
 ```bash
 npm run verify:firefox
 npm test -- firefox
 ```
+
+The Playwright file temporarily installs `dist/extension-firefox/`. It checks that the toolbar
+button and the `_execute_sidebar_action` shortcut open Firefox's sidebar, and that no tab is
+`moz-extension://…/sidepanel.html`. It checks light and dark `prefers-color-scheme`, primary-button
+text contrast of at least 4.5:1, `notifications.create` with and without `requireInteraction`, and a
+`sidePanel.open()` call outside a user gesture. That call must set the `!` badge and the click
+notification.
 
 Reports go to `tests/results/playwright-firefox/` and `tests/results/firefox-suite.json`. The JSON
 record names `browser=firefox` and `package=dist/extension-firefox`. The Chromium Playwright report
@@ -127,7 +149,8 @@ index](../tests/BEHAVIOR_INDEX.md). See [tests/README.md](../tests/README.md) fo
 
 [GitHub Actions](../.github/workflows/ci.yml) runs two browser gates. The portable build job
 type-checks, builds the Chrome package, and runs the focused Tool and Renderer contracts in
-Chromium on Linux, macOS, and Windows. The Firefox job builds `dist/extension-firefox/` and runs
+Chromium on Linux, macOS, and Windows. The Firefox job installs Firefox with `npx playwright install firefox` and
+`npx playwright install-deps firefox`, builds `dist/extension-firefox/`, and runs
 `npm run verify:firefox` on Linux. Run `npm run verify` locally for the full Chromium suites and
 coverage gates. Run `npm run verify:firefox` for the Firefox package.
 

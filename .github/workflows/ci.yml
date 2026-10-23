@@ -72,8 +72,10 @@ jobs:
           tar -xJf /tmp/firefox.tar.xz -C "$RUNNER_TEMP/firefox"
           echo "FIREFOX_EXECUTABLE=$RUNNER_TEMP/firefox/firefox/firefox" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/firefox/firefox/firefox" --version
-      - name: Firefox system libraries
-        run: npm exec playwright install-deps firefox
+      - name: Playwright Firefox and system libraries
+        run: |
+          npx playwright install firefox
+          npm exec playwright install-deps firefox
       - name: Firefox unit tests and Playwright (package dist/extension-firefox)
         run: npm run verify:firefox
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

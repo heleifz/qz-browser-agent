@@ -8,7 +8,8 @@ runner options.
 
 Install the locked browser binaries with `npx playwright install chromium`. Playwright and extension
 tests use Chromium; standalone page fixtures also use Chromium Headless Shell. Python browser tests
-use `tests/python/uv.lock` through uv. Missing dependencies fail the run.
+use `tests/python/uv.lock` through uv. Missing dependencies fail the run. The Firefox suite needs
+Mozilla Firefox 139 or newer: `npx playwright install firefox` and `npx playwright install-deps firefox`.
 
 ```bash
 npm test -- unit contracts
@@ -61,7 +62,9 @@ alongside Playwright. Each extension check owns its profile; timing measurements
 ownership stays in [`runner/suites.mjs`](runner/suites.mjs).
 
 The Chromium runner uses the locked Chromium, including its full headless mode for Playwright page tests.
-The Firefox suite uses Mozilla Firefox selected by `FIREFOX_EXECUTABLE` and does not reuse that Chromium.
+The Firefox suite uses Mozilla Firefox selected by `FIREFOX_EXECUTABLE`, `PATH`, or
+`npx playwright install firefox`, and does not reuse that Chromium. `npx playwright install-deps firefox`
+installs the system libraries. The suite is headless unless `QINGZHOU_FIREFOX_HEADED=1`.
 Native keyboard, clipboard and control fixtures retain Chromium Headless Shell.
 Page tests can select `QINGZHOU_PLAYWRIGHT_CHANNEL=chrome`;
 other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed for comparisons.
