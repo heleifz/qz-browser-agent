@@ -1,4 +1,9 @@
 /* Examples section and detail pages. Tokens come from site.css. */
+/* Tighter gap between the last example row and the next section: 70% of the default section padding. */
+.examples.section { padding-bottom: 67px; }
+.examples + .results { padding-top: 67px; }
+@media (max-width: 1000px) { .examples.section { padding-bottom: 63px; } .examples + .results { padding-top: 63px; } }
+@media (max-width: 700px) { .examples.section { padding-bottom: 52px; } .examples + .results { padding-top: 52px; } }
 .example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; margin-top: 38px; }
 .example-card { display: block; min-width: 0; color: inherit; }
 .example-cover { display: block; aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
