@@ -44,17 +44,17 @@ window.QZ_EXAMPLES = {
     en: {
       travel: {
         title: "Hangzhou photo gallery",
-        summary: "Five sights run as parallel tasks and collect their photos into one gallery.",
+        summary: "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.",
         alt: "The gallery of Hangzhou photos from the session",
       },
       "llm-compare": {
         title: "Model comparison",
-        summary: "Reads several model sites and builds one comparison table.",
+        summary: "Goes through several model sites and lines up specs and prices in one table.",
         alt: "Comparison table saved from several model pages",
       },
       "hn-skill": {
         title: "Turn Hacker News into a Skill",
-        summary: "Collects the top 5 on the HN front page, then saves it as a reusable Skill in one sentence.",
+        summary: "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
         alt: "Building a Skill from the HN front page",
         sessionAlt: {
           reuse: "Reusing the saved Skill in a new session to read Show HN",
@@ -63,7 +63,7 @@ window.QZ_EXAMPLES = {
       },
       "github-weekly": {
         title: "GitHub weekly roundup",
-        summary: "Reads this week's Trending list, builds a table, and writes a short weekly summary.",
+        summary: "Reads this week's Trending list, puts it into a table, and writes a short weekly summary.",
         alt: "This week's trending list and the project table",
       },
     },
@@ -73,7 +73,7 @@ window.QZ_EXAMPLES = {
       {
         slug: "travel",
         title: "杭州景点图集",
-        summary: "5 个景点各开一个子任务并行，找图汇成一个图集。",
+        summary: "5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。",
         file: "examples/sessions/travel-zh.html",
         video: "assets/examples/travel-zh.mp4",
         cardGif: "assets/examples/travel-zh-card.gif",
@@ -83,7 +83,7 @@ window.QZ_EXAMPLES = {
       {
         slug: "llm-compare",
         title: "模型对比表",
-        summary: "读多个模型的官网，整理成一张对比表。",
+        summary: "翻遍多家模型的官网，把参数和价格对齐成一张表。",
         file: "examples/sessions/llm-compare-zh.html",
         poster: "assets/examples/llm-compare-zh.webp",
         alt: "多站对比后落成的模型表",
@@ -92,7 +92,7 @@ window.QZ_EXAMPLES = {
         slug: "hn-skill",
         session: "first",
         title: "将 Hacker News 变成 Skill",
-        summary: "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
+        summary: "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。",
         file: "examples/sessions/hn-skill-zh.html",
         video: "assets/examples/hn-skill-zh.mp4",
         cardGif: "assets/examples/hn-skill-zh-card.gif",
@@ -106,7 +106,7 @@ window.QZ_EXAMPLES = {
         session: "reuse",
         card: false,
         title: "将 Hacker News 变成 Skill",
-        summary: "整理 HN 首页前 5 条，一句话存成 Skill，下次直接复用。",
+        summary: "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。",
         file: "examples/sessions/hn-skill-reuse-zh.html",
         video: "assets/examples/hn-skill-reuse-zh.mp4",
         posterTime: 14,
@@ -116,7 +116,7 @@ window.QZ_EXAMPLES = {
       {
         slug: "github-weekly",
         title: "GitHub 周榜整理",
-        summary: "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。",
+        summary: "读完本周 Trending 榜单，整理成表，再写好一段周报总结。",
         file: "examples/sessions/github-weekly-zh.html",
         video: "assets/examples/github-weekly-zh.mp4",
         cardGif: "assets/examples/github-weekly-zh-card.gif",
