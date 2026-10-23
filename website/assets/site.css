@@ -46,6 +46,7 @@ h1, h2, h3, p, figure { margin: 0; }
 .button:hover { background: #333; transform: translateY(-2px); }
 .button-small { min-height: 36px; padding: 9px 14px; font-size: 12px; gap: 18px; }
 .button-small svg { width: 15px; height: 15px; }
+.hero { container-type: inline-size; }
 .hero-copy { padding: 64px 0 57px; }
 .eyebrow { display: flex; align-items: center; gap: 9px; font-size: 10px; font-weight: 550; line-height: 1.5; letter-spacing: 1.5px; }
 .square { display: inline-block; width: 5px; height: 5px; background: currentColor; }
@@ -58,8 +59,8 @@ h1 span { color: #8d8d88; }
 .source-link { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .source-link:hover { text-decoration: underline; text-underline-offset: 5px; }
 .source-link svg { width: 19px; height: 19px; }
-.showcase { overflow: hidden; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); }
-.workspace-link { display: block; background: #fff; }
+.showcase { overflow: hidden; border: 1px solid var(--line); border-radius: 1.6cqi 1.6cqi 8px 8px / calc(1572 / 2880 * 2.9cqi) calc(1572 / 2880 * 2.9cqi) 8px 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); }
+.workspace-link { display: block; overflow: hidden; background: transparent; border-top-left-radius: 1.6% 2.9%; border-top-right-radius: 1.6% 2.9%; }
 .workspace { display: block; width: 100%; height: auto; }
 .workspace-link:focus-visible { outline-offset: -4px; }
 .film-strip { display: flex; align-items: center; justify-content: space-between; min-height: 72px; padding: 14px 24px; border-top: 1px solid var(--line); gap: 24px; }

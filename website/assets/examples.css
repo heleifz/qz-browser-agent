@@ -1,8 +1,9 @@
 /* Examples section and detail pages. Tokens come from site.css. */
 .example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; margin-top: 38px; }
 .example-card { display: block; min-width: 0; color: inherit; }
-.example-cover { display: block; aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: #212121; }
+.example-cover { display: block; aspect-ratio: 16 / 10; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
 .example-cover img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.example-cover.is-wide { background: #212121; }
 .example-cover.is-wide img { object-fit: contain; object-position: center center; }
 .example-card h3 { margin-top: 16px; font-size: 16px; font-weight: 600; letter-spacing: -.2px; line-height: 1.4; }
 .example-card p { margin-top: 6px; color: var(--secondary); font-size: 14px; line-height: 1.7; }
@@ -14,8 +15,9 @@
 .example-page .button span { min-width: 0; }
 .example-stage { display: block; }
 .example-frame { position: relative; width: 100%; margin-top: 28px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); box-shadow: 0 14px 40px rgba(0, 0, 0, .055); aspect-ratio: 16 / 10; }
-.example-frame :is(.example-poster, .example-video) { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
-.example-video { opacity: 0; }
+.example-frame:has(.example-video) { border: 0; border-radius: 2% / 3.4%; background: transparent; box-shadow: 0 0 0 1px var(--line), 0 14px 40px rgba(0, 0, 0, .055); }
+.example-frame :is(.example-poster, .example-video) { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; background: transparent; }
+.example-video { opacity: 0; max-height: none; aspect-ratio: auto; }
 .example-video.is-playing { opacity: 1; }
 .example-cover-empty { background: var(--soft); }
 .example-related { margin-top: 14px; color: var(--muted); font-size: 13px; line-height: 1.5; }
@@ -64,5 +66,6 @@ qz-session-view { display: block; min-width: 0; max-width: 100%; }
 
 @media (prefers-color-scheme: dark) {
   .example-frame { box-shadow: 0 14px 40px rgba(0, 0, 0, .15); }
+  .example-frame:has(.example-video) { box-shadow: 0 0 0 1px var(--line), 0 14px 40px rgba(0, 0, 0, .15); }
   .example-thread { box-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 12px 32px rgba(0, 0, 0, .28), 0 32px 64px rgba(0, 0, 0, .2); }
 }

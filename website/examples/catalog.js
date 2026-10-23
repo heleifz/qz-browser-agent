@@ -60,8 +60,8 @@ window.QZ_EXAMPLES = {
         related: { first: "First run", reuse: "A week later" },
       },
       "github-weekly": {
-        title: "AI agent weekly",
-        summary: "Picks five AI-agent projects from this week's trending list and writes a short report.",
+        title: "GitHub weekly roundup",
+        summary: "Reads this week's Trending list, builds a table, and writes a short weekly summary.",
         alt: "This week's trending list and the project table",
       },
     },
@@ -108,6 +108,8 @@ window.QZ_EXAMPLES = {
       },
       {
         slug: "github-weekly",
+        title: "GitHub 周榜整理",
+        summary: "读 GitHub Trending 本周榜单，整理成表并写一段周报总结。",
         file: "examples/sessions/github-weekly-zh.html",
         video: "assets/examples/github-weekly-zh.mp4",
         posterTime: 28,
