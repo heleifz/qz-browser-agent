@@ -168,20 +168,21 @@ and the toast still disappears on Firefox's own timer.
 
 ## Not approximated
 
-These calls fail or stay absent. The tool receives the existing error path.
+These calls fail or stay absent. The tool receives the existing error path. The user accepted
+the five rows marked **user-accepted**. Those paths stay as described.
 
 | Feature | What happens |
 | --- | --- |
-| `Network.loadNetworkResource` and `IO.read` | `sendCommand` rejects with `<method> is not available in Firefox`. The Git Skill archive download that uses those methods fails. |
+| `Network.loadNetworkResource` and `IO.read` (**user-accepted**) | `sendCommand` rejects with `<method> is not available in Firefox`. The Git Skill archive download that uses those methods fails. |
 | Chrome debugger infobar | `debugger.attach` does not show a debugging banner. |
-| Trusted input | Clicks, keys, and touch are DOM events. |
-| Browser accessibility tree | The tree is the DOM walk above. |
-| Vector PDF | The PDF is JPEG pages. |
-| Per-tab side panel | The sidebar is one per window. |
+| Trusted input (**user-accepted**) | Clicks, keys, and touch are DOM events. |
+| Browser accessibility tree (**user-accepted**) | The tree is the DOM walk above. |
+| Vector PDF (**user-accepted**) | The PDF is JPEG pages. |
+| Per-tab side panel (**user-accepted**) | The sidebar is one per window. |
 | Notification priority | Ignored. |
 | `Runtime.terminateExecution` | Returns `{}` and does not stop script. |
-| MCP settings sender | `assertMcpSettingsSender` still requires a `chrome-extension://<id>/` URL. A Firefox settings page is `moz-extension://…`, so that check still fails. |
-| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox may clamp it. The one-minute automation alarm is unchanged. |
+| MCP settings sender | `assertMcpSettingsSender` accepts `chrome-extension://<extension id>/` and a `moz-extension://<host>/` page. Firefox's host is an internal UUID, and `sender.id` must still be this extension. A web page URL is still rejected. |
+| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox 158.0.1 does not clamp that value: the shipped alarm implementation stores it and schedules `periodInMinutes * 60` seconds. A temporary add-on that created `{ periodInMinutes: 0.5 }` read back `periodInMinutes` `0.5` and a first fire 30047 ms later. The one-minute automation alarm is unchanged. |
 | Geolocation prompt | The in-app consent card is unchanged. Whether Firefox also shows its own location prompt was not checked. |
 | Tab groups | The same `tabGroups` calls run. The group chrome is Firefox's. `TabGroup.shared` is unsupported and unused. |
 
