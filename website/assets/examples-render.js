@@ -122,8 +122,11 @@ function labelImportButton() {
   const button = document.querySelector("#qingzhou-session-cta");
   if (!(button instanceof HTMLButtonElement) || !button.hasAttribute("data-qingzhou-session-import")) return;
   if (button.disabled || button.getAttribute("aria-busy") === "true") return;
+  if (button.dataset.qzLabeled) return;
   const label = importLabel();
-  if (label && button.textContent !== label) button.textContent = label;
+  if (!label) return;
+  button.dataset.qzLabeled = "1";
+  if (button.textContent !== label) button.textContent = label;
 }
 
 function bindImport() {
