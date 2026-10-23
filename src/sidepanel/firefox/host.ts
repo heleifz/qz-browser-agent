@@ -19,7 +19,7 @@ function rewriteExtensionPages(chromeApi: SidepanelChrome) {
   if (typeof tabs?.create === "function") {
     const original = tabs.create.bind(tabs);
     tabs.create = properties => {
-      const url = typeof properties?.url === "string" && properties.url.startsWith("chrome://extensions") ? "about:addons" : properties?.url;
+      const url = firefoxPageUrl(properties?.url);
       return original({ ...properties, url });
     };
   }
@@ -37,6 +37,10 @@ function rewriteExtensionPages(chromeApi: SidepanelChrome) {
 function installDisplayCapture(chromeApi: SidepanelChrome, media: MediaHost | undefined) {
   if (!media?.getDisplayMedia || chromeApi.desktopCapture?.chooseDesktopMedia) return;
   let held: MediaStream | null = null;
+  const hold = (stream: MediaStream) => {
+    if (held && held !== stream) stopStream(held);
+    held = stream;
+  };
   if (typeof media.getUserMedia === "function") {
     const original = media.getUserMedia.bind(media);
     media.getUserMedia = constraints => {
@@ -53,18 +57,39 @@ function installDisplayCapture(chromeApi: SidepanelChrome, media: MediaHost | un
   }
   chromeApi.desktopCapture = {
     chooseDesktopMedia(sources, callback) {
-      const request = media.getDisplayMedia({ video: true, audio: sources.includes("audio") })
-        .catch(() => media.getDisplayMedia({ video: true, audio: false }));
-      void request.then(stream => {
-        held = stream;
+      const audio = sources.includes("audio");
+      const deliver = (stream: MediaStream) => {
+        hold(stream);
         callback(STREAM_ID, { canRequestAudioTrack: stream.getAudioTracks().length > 0 });
-      }, () => {
+      };
+      const cancel = () => {
         held = null;
         callback("", {});
+      };
+      void media.getDisplayMedia({ video: true, audio }).then(deliver, (error: unknown) => {
+        if (!audio || userDismissed(error)) { cancel(); return; }
+        void media.getDisplayMedia({ video: true, audio: false }).then(deliver, cancel);
       });
       return 1;
     },
   };
+}
+
+function firefoxPageUrl(url: string | undefined): string | undefined {
+  if (typeof url !== "string") return url;
+  if (url.startsWith("chrome://extensions")) return "about:addons";
+  if (url.startsWith("chrome://downloads")) return "about:downloads";
+  return url;
+}
+
+function userDismissed(error: unknown): boolean {
+  const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
+  return name === "NotAllowedError" || name === "AbortError";
+}
+
+function stopStream(stream: MediaStream) {
+  const tracks = typeof stream.getTracks === "function" ? stream.getTracks() : stream.getAudioTracks();
+  for (const track of tracks) track.stop();
 }
 
 interface TabProperties { url?: string }

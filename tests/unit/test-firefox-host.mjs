@@ -6,10 +6,13 @@ import { fileURLToPath } from "node:url";
 import { installFirefoxDebugger } from "../../src/background/firefox/debugger-host.js";
 import { installInitiatorRewrite } from "../../src/background/firefox/dnr-initiator.js";
 import { installFirefoxHost } from "../../src/background/firefox/host.js";
+import { createNetworkWatch } from "../../src/background/firefox/network-watch.js";
 import { installNotificationRenewal } from "../../src/background/firefox/notifications.js";
 import { installOffscreenHost } from "../../src/background/firefox/offscreen-host.js";
 import { jpegsToPdf, jpegSize } from "../../src/background/firefox/pdf-raster.js";
+import { stitchTiles } from "../../src/background/firefox/screenshot-image.js";
 import { installWorkspacePanel } from "../../src/background/firefox/workspace-panel.js";
+import { productText } from "../../src/shared/product-text.js";
 import { installSidepanelFirefoxHost } from "../../src/sidepanel/firefox/host.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -23,25 +26,57 @@ test("the firefox boot modules load the host before the shared entries", () => {
 
 test("sidebarAction.open runs inside the user-gesture turn", async () => {
   const calls = [];
+  const panels = [];
   let updateCalled = false;
   const browser = {
+    runtime: { getURL: path => `moz-extension://uuid/${path}` },
     sidebarAction: {
-      open(options) {
-        calls.push(options || {});
-        if (options?.windowId) return Promise.reject(new Error("windowId rejected"));
-        return Promise.resolve();
-      },
+      open() { calls.push("open"); return Promise.resolve(); },
+      toggle() { calls.push("toggle"); return Promise.resolve(); },
+      setPanel(details) { panels.push(details); return Promise.resolve(); },
     },
     action: { onClicked: { addListener(listener) { browser.clicked = listener; } } },
     windows: { update() { updateCalled = true; return new Promise(() => {}); } },
   };
   installWorkspacePanel(browser);
   await browser.sidePanel.open({ windowId: 4, tabId: 9 });
-  assert.deepEqual(calls, [{ windowId: 4 }, {}]);
+  assert.deepEqual(calls, ["open"]);
+  assert.deepEqual(panels, [{ tabId: 9, panel: "moz-extension://uuid/sidepanel/sidepanel.html" }]);
   assert.equal(updateCalled, false);
   browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   browser.clicked();
-  assert.equal(calls.at(-1).windowId, undefined);
+  assert.deepEqual(calls, ["open", "toggle"]);
+});
+
+test("sidebar open outside a user gesture explains the failure and does not retry", async () => {
+  const calls = [];
+  const browser = {
+    sidebarAction: {
+      open(options) {
+        calls.push(options || {});
+        return Promise.reject(new Error("sidebarAction.open may only be called from a user input handler"));
+      },
+    },
+    action: { onClicked: { addListener(listener) { browser.clicked = listener; } } },
+  };
+  installWorkspacePanel(browser);
+  await assert.rejects(
+    browser.sidePanel.open({ windowId: 4, tabId: 9 }),
+    /Firefox opens the sidebar only during a user gesture, such as a toolbar click, shortcut, or notification click/,
+  );
+  assert.deepEqual(calls, [{}]);
+  browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  const errors = [];
+  const original = console.error;
+  console.error = (...args) => { errors.push(args.map(String).join(" ")); };
+  try {
+    browser.clicked();
+    for (let step = 0; step < 5; step += 1) await Promise.resolve();
+  } finally {
+    console.error = original;
+  }
+  assert.match(errors[0], /firefox sidebar did not open/);
+  assert.match(errors[0], /user gesture/);
 });
 
 test("initiatorDomains use the moz-extension host on Firefox and stay unchanged on Chrome", async () => {
@@ -50,17 +85,31 @@ test("initiatorDomains use the moz-extension host on Firefox and stay unchanged 
   installInitiatorRewrite(firefox);
   await firefox.declarativeNetRequest.updateSessionRules({ addRules: [{ id: 1, condition: { initiatorDomains: [firefox.runtime.id] } }] });
   assert.deepEqual(seen[0].addRules[0].condition.initiatorDomains, ["uuid"]);
+  await firefox.declarativeNetRequest.updateSessionRules({ removeRuleIds: [7] });
+  assert.deepEqual(seen[1], { removeRuleIds: [7] });
+  assert.equal("addRules" in seen[1], false);
+  await firefox.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [3],
+    addRules: [{ id: 4, condition: { initiatorDomains: [firefox.runtime.id, "example.test"] } }],
+  });
+  assert.deepEqual(seen[2].removeRuleIds, [3]);
+  assert.deepEqual(seen[2].addRules[0].condition.initiatorDomains, ["uuid", "example.test"]);
   const chrome = rulesChrome("abcdefghijklmnopabcdefghijklmnop", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/", seen);
   installInitiatorRewrite(chrome);
   await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [{ id: 2, condition: { initiatorDomains: [chrome.runtime.id] } }] });
-  assert.deepEqual(seen[1].addRules[0].condition.initiatorDomains, [chrome.runtime.id]);
+  assert.deepEqual(seen[3].addRules[0].condition.initiatorDomains, [chrome.runtime.id]);
 });
 
 test("requireInteraction renews a notification until the user closes it", async () => {
   let created = 0;
+  let fail = false;
   const browser = {
     notifications: {
-      async create(id) { created += 1; return id; },
+      async create(id) {
+        created += 1;
+        if (fail) throw new Error("notifications are unavailable");
+        return id;
+      },
       onClosed: { addListener(listener) { browser.closed = listener; } },
       onClicked: { addListener(listener) { browser.clicked = listener; } },
     },
@@ -77,6 +126,15 @@ test("requireInteraction renews a notification until the user closes it", async 
   browser.closed("done", false);
   await Promise.resolve();
   assert.equal(created, 2);
+  await browser.notifications.create("again", { requireInteraction: true });
+  fail = true;
+  browser.closed("again", false);
+  await Promise.resolve();
+  await Promise.resolve();
+  const before = created;
+  browser.closed("again", false);
+  await Promise.resolve();
+  assert.equal(created, before);
 });
 
 test("the offscreen host loads the shared document in a hidden frame", async () => {
@@ -96,6 +154,115 @@ test("the offscreen host loads the shared document in a hidden frame", async () 
   assert.equal(await browser.offscreen.hasDocument(), true);
 });
 
+test("the offscreen host waits for one load and retries after a failure", async () => {
+  const frames = [];
+  const doc = {
+    documentElement: {
+      appendChild(node) { node.isConnected = true; },
+      removeChild(node) { node.isConnected = false; },
+    },
+    createElement() {
+      const frame = {
+        src: "", hidden: false, style: {}, isConnected: false, href: "", listeners: {},
+        contentDocument: { get URL() { return frame.href; } },
+        addEventListener(type, listener) { this.listeners[type] = listener; },
+        removeEventListener(type) { delete this.listeners[type]; },
+        remove() { this.isConnected = false; doc.documentElement.removeChild(this); },
+      };
+      frames.push(frame);
+      return frame;
+    },
+  };
+  const browser = { runtime: { getURL: path => `moz-extension://uuid/${path}` } };
+  installOffscreenHost(browser, doc);
+  const settle = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+  const first = browser.offscreen.createDocument();
+  const second = browser.offscreen.createDocument();
+  await settle();
+  assert.equal(frames.length, 1);
+  assert.equal(await browser.offscreen.hasDocument(), false);
+  frames[0].href = "about:blank";
+  frames[0].listeners.load();
+  assert.equal(await browser.offscreen.hasDocument(), false);
+  frames[0].href = "moz-extension://uuid/offscreen.html";
+  frames[0].listeners.load();
+  await first;
+  await second;
+  assert.equal(frames.length, 1);
+  assert.equal(await browser.offscreen.hasDocument(), true);
+
+  frames[0].remove();
+  assert.equal(await browser.offscreen.hasDocument(), false);
+  const failed = browser.offscreen.createDocument();
+  await settle();
+  frames[1].listeners.error();
+  await assert.rejects(failed, /failed to load/);
+  assert.equal(frames[1].isConnected, false);
+  assert.equal(await browser.offscreen.hasDocument(), false);
+
+  const retried = browser.offscreen.createDocument();
+  await settle();
+  frames[2].href = "moz-extension://uuid/offscreen.html";
+  frames[2].listeners.load();
+  await retried;
+  assert.equal(await browser.offscreen.hasDocument(), true);
+});
+
+test("the offscreen popup fallback requires a real window id", async () => {
+  let created = 0;
+  const browser = {
+    runtime: { getURL: path => `moz-extension://uuid/${path}` },
+    windows: {
+      async create() { created += 1; return {}; },
+      async get() { return { id: 4 }; },
+    },
+  };
+  installOffscreenHost(browser, { documentElement: null });
+  await assert.rejects(browser.offscreen.createDocument(), /was not created/);
+  assert.equal(await browser.offscreen.hasDocument(), false);
+  browser.windows.create = async () => { created += 1; return { id: 4 }; };
+  await browser.offscreen.createDocument();
+  await browser.offscreen.createDocument();
+  assert.equal(created, 2);
+  assert.equal(await browser.offscreen.hasDocument(), true);
+});
+
+test("a loading event page waits for a document instead of opening a window", async () => {
+  let created = 0;
+  let frame;
+  const doc = {
+    readyState: "loading",
+    documentElement: null,
+    addEventListener(_type, listener) { doc.ready = listener; },
+    createElement() {
+      frame = {
+        src: "", hidden: false, style: {}, isConnected: false, listeners: {},
+        addEventListener(type, listener) { this.listeners[type] = listener; },
+      };
+      return frame;
+    },
+  };
+  const browser = {
+    runtime: { getURL: path => `moz-extension://uuid/${path}` },
+    windows: { async create() { created += 1; return { id: 1 }; }, async get() { return { id: 1 }; } },
+  };
+  installOffscreenHost(browser, doc);
+  const opening = browser.offscreen.createDocument();
+  await Promise.resolve();
+  assert.equal(created, 0);
+  assert.equal(frame, undefined);
+  doc.documentElement = { appendChild(node) { node.isConnected = true; node.listeners.load(); } };
+  doc.ready();
+  await opening;
+  assert.equal(created, 0);
+  assert.equal(frame.hidden, true);
+  assert.equal(await browser.offscreen.hasDocument(), true);
+});
+
 test("sidebar links and case recording use Firefox equivalents", async () => {
   let stopped = false;
   const stream = { getAudioTracks: () => [{ stop() { stopped = true; } }] };
@@ -109,6 +276,8 @@ test("sidebar links and case recording use Firefox equivalents", async () => {
   };
   installSidepanelFirefoxHost(browser, media);
   assert.equal((await browser.tabs.create({ url: "chrome://extensions/shortcuts" })).url, "about:addons");
+  assert.equal((await browser.tabs.create({ url: "chrome://downloads" })).url, "about:downloads");
+  assert.equal((await browser.tabs.create({ url: "https://example.test/" })).url, "https://example.test/");
   assert.equal(await browser.permissions.request({ permissions: ["desktopCapture"] }), true);
   assert.equal(await browser.permissions.request({ permissions: ["history"] }), false);
   const chosen = await new Promise(resolve => browser.desktopCapture.chooseDesktopMedia(["screen", "audio"], resolve));
@@ -116,6 +285,40 @@ test("sidebar links and case recording use Firefox equivalents", async () => {
   const recorded = await media.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: chosen } } });
   assert.equal(recorded, stream);
   assert.equal(stopped, true);
+});
+
+test("display capture does not reopen the picker after a dismissal", async () => {
+  let calls = 0;
+  const browser = { permissions: { async request() { return false; } } };
+  const denied = {
+    async getDisplayMedia() {
+      calls += 1;
+      throw Object.assign(new Error("denied"), { name: "NotAllowedError" });
+    },
+  };
+  installSidepanelFirefoxHost(browser, denied);
+  const dismissed = await new Promise(resolve => browser.desktopCapture.chooseDesktopMedia(["screen", "audio"], resolve));
+  assert.equal(dismissed, "");
+  assert.equal(calls, 1);
+
+  const first = { getTracks: () => [{ stop() { first.stopped = true; } }], getAudioTracks: () => [] };
+  const second = { getAudioTracks: () => [{ stop() {} }], getTracks: () => [] };
+  let attempt = 0;
+  const media = {
+    async getDisplayMedia(constraints) {
+      attempt += 1;
+      if (attempt === 1) throw Object.assign(new Error("no audio"), { name: "NotSupportedError" });
+      assert.equal(constraints.audio, false);
+      return attempt === 2 ? first : second;
+    },
+  };
+  const again = {};
+  installSidepanelFirefoxHost(again, media);
+  const chosen = await new Promise(resolve => again.desktopCapture.chooseDesktopMedia(["screen", "audio"], resolve));
+  assert.equal(chosen, "firefox-display");
+  await new Promise(resolve => again.desktopCapture.chooseDesktopMedia(["screen"], resolve));
+  assert.equal(first.stopped, true);
+  assert.equal(attempt, 3);
 });
 
 test("jpeg pages become a pdf", () => {
@@ -130,6 +333,9 @@ test("jpeg pages become a pdf", () => {
   assert.match(pdf, /\/Width 3/);
   assert.match(pdf, /\/Height 2/);
   assert.match(pdf, /%%EOF/);
+  const noted = new TextDecoder().decode(jpegsToPdf([jpeg], "Firefox kept 8 of 9 viewport pages. Content below that was omitted."));
+  assert.match(noted, /Firefox kept 8 of 9 viewport pages/);
+  assert.match(noted, /\/Count 2/);
 });
 
 test("the debugger shim reports frames, isolated contexts, clicks, and network bodies", async () => {
@@ -151,8 +357,6 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     execCommand() { return true; },
     defaultView: { scrollX: 0, scrollY: 0, innerWidth: 50, innerHeight: 40, getComputedStyle: () => ({ display: "block", visibility: "visible" }) },
   };
-  const previous = globalThis.document;
-  globalThis.document = document;
   const networkListeners = {};
   const browser = {
     runtime: { id: "qz-browser-agent@heleifz.github.io", onMessage: { addListener() {} } },
@@ -174,7 +378,7 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
       filterResponseData() { throw new Error("unavailable"); },
     },
   };
-  try {
+  await withPage(document, async () => {
     installFirefoxDebugger(browser);
     browser.debugger.onEvent.addListener((source, method, params) => events.push({ source, method, params }));
     browser.debugger.onDetach.addListener((_source, reason) => events.push({ reason }));
@@ -210,7 +414,33 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     assert.equal(started.params.timestamp, 1_700_000_000);
     assert.equal(started.source.sessionId, undefined);
     await assert.rejects(() => browser.debugger.sendCommand({ tabId: 3 }, "Network.getResponseBody", { requestId: "20" }), /No data found/);
-    await assert.rejects(() => browser.debugger.sendCommand({ tabId: 3 }, "Network.loadNetworkResource", {}), /not available in Firefox/);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      status: 200,
+      headers: { forEach(fn) { fn("text/plain", "content-type"); } },
+      async arrayBuffer() { return new TextEncoder().encode("hi").buffer; },
+    });
+    try {
+      const loaded = await browser.debugger.sendCommand({ tabId: 3 }, "Network.loadNetworkResource", {
+        url: "https://example.test/archive.zip",
+        options: { disableCache: true, includeCredentials: true },
+      });
+      assert.equal(loaded.resource.success, true);
+      assert.equal(loaded.resource.httpStatusCode, 200);
+      assert.equal(loaded.resource.headers[0].name, "content-type");
+      const read = await browser.debugger.sendCommand({ tabId: 3 }, "IO.read", { handle: loaded.resource.stream, size: 1 });
+      assert.equal(read.base64Encoded, true);
+      assert.equal(read.eof, false);
+      const rest = await browser.debugger.sendCommand({ tabId: 3 }, "IO.read", { handle: loaded.resource.stream });
+      assert.equal(rest.eof, true);
+      await browser.debugger.sendCommand({ tabId: 3 }, "IO.close", { handle: loaded.resource.stream });
+      await assert.rejects(() => browser.debugger.sendCommand({ tabId: 3 }, "IO.read", { handle: loaded.resource.stream }), /IO.read stream is closed/);
+      const bad = await browser.debugger.sendCommand({ tabId: 3 }, "Network.loadNetworkResource", { url: "file:///tmp/a" });
+      assert.equal(bad.resource.netErrorName, "ERR_INVALID_URL");
+      assert.equal(bad.resource.success, false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
     await browser.debugger.detach({ tabId: 3 });
     assert.equal(events.some(event => event.reason), false);
     browser.removed(3);
@@ -218,11 +448,376 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     await browser.debugger.attach({ tabId: 3 }, "1.3");
     browser.removed(3);
     assert.equal(events.some(event => event.reason === "target_closed"), true);
-  } finally {
-    if (previous === undefined) delete globalThis.document;
-    else globalThis.document = previous;
+  });
+});
+
+test("overflow screenshots scroll across and down, then restore", async () => {
+  const moves = [];
+  let pendingX = 0;
+  const scroller = {
+    scrollWidth: 4000, scrollHeight: 4000, clientWidth: 400, clientHeight: 300,
+    _x: 0, _y: 0,
+  };
+  Object.defineProperty(scroller, "scrollLeft", {
+    get() { return scroller._x; },
+    set(value) {
+      pendingX = Number(value);
+      const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      scroller._x = Math.max(0, Math.min(pendingX, max));
+    },
+  });
+  Object.defineProperty(scroller, "scrollTop", {
+    get() { return scroller._y; },
+    set(value) {
+      const requested = Number(value);
+      const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      scroller._y = Math.max(0, Math.min(requested, max));
+      moves.push([pendingX, requested]);
+    },
+  });
+  const document = {
+    nodeType: 9,
+    documentElement: {},
+    scrollingElement: scroller,
+    defaultView: {
+      get scrollX() { return scroller.scrollLeft; },
+      get scrollY() { return scroller.scrollTop; },
+      innerWidth: 400,
+      innerHeight: 300,
+    },
+  };
+  const browser = debuggerBrowser(async options => {
+    if (options?.rect) throw new Error("rect too large");
+    return "data:image/png;base64,aaaa";
+  });
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 4 }, "1.3");
+    await browser.debugger.sendCommand({ tabId: 4 }, "Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 100, y: 50, width: 500, height: 800, scale: 1 },
+    });
+    assert.deepEqual(moves, [
+      [100, 50], [500, 50], [100, 350], [500, 350], [100, 650], [500, 650], [0, 0],
+    ]);
+    moves.length = 0;
+    scroller.scrollWidth = 400;
+    scroller.scrollHeight = 300;
+    await browser.debugger.sendCommand({ tabId: 4 }, "Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 100, y: 50, width: 500, height: 800, scale: 1 },
+    });
+    assert.deepEqual(moves, [[100, 50], [400, 50], [100, 300], [0, 0]]);
+    moves.length = 0;
+    scroller.scrollWidth = 4000;
+    scroller.scrollHeight = 4000;
+    await browser.debugger.sendCommand({ tabId: 4 }, "Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 10, y: 12, width: 20, height: 24, scale: 1 },
+    });
+    assert.deepEqual(moves, []);
+  });
+});
+
+test("duplicate iframe src values follow the sibling index", async () => {
+  const iframe = (src, childUrl) => ({
+    nodeName: "IFRAME",
+    nodeType: 1,
+    getAttribute(name) { return name === "src" ? src : null; },
+    contentWindow: childUrl
+      ? { location: { href: childUrl } }
+      : { get location() { throw new Error("cross-origin"); } },
+  });
+  const frames = [
+    iframe("https://other.test/widget"),
+    iframe("https://other.test/widget"),
+    iframe("https://unique.test/only"),
+    iframe("https://decoy.test/a", "https://real.test/doc"),
+  ];
+  const document = {
+    nodeType: 9,
+    querySelectorAll: selector => String(selector).includes("iframe") ? frames : [],
+    documentElement: {},
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  let listed = [
+    { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
+    { frameId: 4, parentFrameId: 0, url: "https://other.test/widget" },
+    { frameId: 5, parentFrameId: 0, url: "https://other.test/widget" },
+    { frameId: 6, parentFrameId: 0, url: "https://unique.test/only" },
+    { frameId: 7, parentFrameId: 0, url: "https://real.test/doc" },
+  ];
+  const browser = debuggerBrowser();
+  browser.webNavigation = { async getAllFrames() { return listed; }, onCommitted: { addListener() {} } };
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 8 }, "1.3");
+    const owner = async frameId => browser.debugger.sendCommand({ tabId: 8 }, "DOM.getFrameOwner", { frameId });
+    assert.equal((await owner("4")).backendNodeId, 1);
+    assert.equal((await owner("5")).backendNodeId, 2);
+    assert.equal((await owner("6")).backendNodeId, 3);
+    assert.equal((await owner("7")).backendNodeId, 4);
     delete globalThis.__qzFirefoxPage;
+    frames.splice(0, frames.length, iframe("https://unique.test/only"), iframe("https://other.test/widget"), iframe("https://other.test/widget"));
+    listed = [
+      { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
+      { frameId: 4, parentFrameId: 0, url: "https://other.test/widget" },
+      { frameId: 5, parentFrameId: 0, url: "https://other.test/widget" },
+      { frameId: 6, parentFrameId: 0, url: "https://unique.test/only" },
+    ];
+    assert.equal((await owner("6")).backendNodeId, 1);
+  });
+});
+
+test("auto-attach announces a cross-origin frame once and detaches it when it leaves", async () => {
+  const events = [];
+  let frames = [
+    { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
+    { frameId: 2, parentFrameId: 0, url: "https://example.test/same" },
+    { frameId: 7, parentFrameId: 0, url: "https://other.test/frame" },
+    { frameId: 9, parentFrameId: 7, url: "https://nested.test/deep" },
+  ];
+  const browser = debuggerBrowser();
+  let committed;
+  browser.webNavigation = {
+    async getAllFrames() { return frames; },
+    onCommitted: { addListener(listener) { committed = listener; } },
+  };
+  installFirefoxDebugger(browser);
+  browser.debugger.onEvent.addListener((_source, method) => events.push(method));
+  await browser.debugger.attach({ tabId: 3 }, "1.3");
+  await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+  await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+  assert.deepEqual(events.filter(method => method === "Target.attachedToTarget"), ["Target.attachedToTarget", "Target.attachedToTarget"]);
+  assert.equal(events.includes("Target.detachedFromTarget"), false);
+  frames = frames.filter(frame => frame.frameId !== 9);
+  await committed({ tabId: 3, frameId: 0, url: "https://example.test/" });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(events.filter(method => method === "Target.detachedFromTarget").length, 1);
+  frames = frames.filter(frame => frame.frameId !== 7);
+  await committed({ tabId: 3, frameId: 0, url: "https://example.test/" });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(events.filter(method => method === "Target.detachedFromTarget").length, 2);
+});
+
+test("network listeners fall back when Firefox rejects extraInfoSpec", async () => {
+  const events = [];
+  let beforeAdds = 0;
+  let headerAdds = 0;
+  const listeners = {};
+  const watch = createNetworkWatch({
+    webRequest: {
+      onBeforeRequest: { addListener(listener, _filter, extra) {
+        beforeAdds += 1;
+        if (extra?.includes("blocking")) throw new Error("blocking is unavailable");
+        listeners.before = listener;
+      } },
+      onBeforeSendHeaders: { addListener(listener, _filter, extra) {
+        headerAdds += 1;
+        if (extra) throw new Error("requestHeaders is unavailable");
+        listeners.headers = listener;
+      } },
+      onHeadersReceived: { addListener(listener) { listeners.response = listener; } },
+      onCompleted: { addListener(listener) { listeners.completed = listener; } },
+      onErrorOccurred: { addListener() {} },
+      filterResponseData(requestId) {
+        const filter = { ondata: null, onstop: null, onerror: null, write() {}, disconnect() {} };
+        queueMicrotask(() => {
+          const bytes = new Uint8Array((1024 * 1024) + 32);
+          bytes.fill(97);
+          filter.ondata?.({ data: bytes.buffer });
+          filter.onstop?.();
+        });
+        return filter;
+      },
+    },
+  }, (tabId, method, params) => events.push({ tabId, method, params }));
+  watch.enable(5);
+  watch.enable(5);
+  assert.equal(beforeAdds, 2);
+  assert.equal(headerAdds, 2);
+  assert.equal(typeof listeners.headers, "function");
+  listeners.before({ requestId: "9", tabId: 5, url: "https://example.test/body", method: "GET", type: "xmlhttprequest", timeStamp: 10 });
+  listeners.headers({ requestId: "9", tabId: 5, url: "https://example.test/body", method: "GET", type: "xmlhttprequest", timeStamp: 10, requestHeaders: [{ name: "Accept", value: "text/plain" }] });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const body = watch.body(5, "9");
+  assert.equal(body.base64Encoded, false);
+  assert.equal(body.body.length, 1024 * 1024);
+  assert.equal(events.filter(event => event.method === "Network.requestWillBeSent").length, 1);
+});
+
+test("a screenshot grid without a canvas returns the first tile", async () => {
+  assert.equal(await stitchTiles([["aaa", "bbb"], ["ccc"]], 1, "png"), "aaa");
+  assert.equal(await stitchTiles([["only"]], 1, "png"), "only");
+});
+
+test("click, press, and paste failures name the missing target", async () => {
+  const input = {
+    nodeName: "INPUT", nodeType: 1, value: "hi", selectionStart: 2, selectionEnd: 2, readOnly: false, disabled: false,
+    dispatchEvent(event) { input.events.push(event.type); return true; },
+    focus() { input.focused = true; },
+    events: [],
+  };
+  const body = { nodeName: "BODY", nodeType: 1, dispatchEvent(event) { body.events.push(event.type); return true; }, events: [] };
+  const document = {
+    nodeType: 9, title: "Example", documentElement: body, body, activeElement: body,
+    execCommand(command) { return command === "selectAll"; },
+    createTextNode(text) { return { nodeType: 3, nodeValue: text }; },
+    elementFromPoint() { return input; },
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  const browser = debuggerBrowser();
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 6 }, "1.3");
+    await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 8, y: 9, button: "left", clickCount: 1 });
+    assert.equal(input.focused, true);
+    assert.ok(input.events.includes("mousedown"));
+    document.activeElement = input;
+    await browser.debugger.sendCommand({ tabId: 6 }, "Input.insertText", { text: "!" });
+    assert.equal(input.value, "hi!");
+    document.activeElement = body;
+    await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", text: "\r" });
+    assert.ok(body.events.includes("keydown"));
+    await assert.rejects(
+      browser.debugger.sendCommand({ tabId: 6 }, "Input.insertText", { text: "x" }),
+      /Firefox could not insert text/,
+    );
+    await assert.rejects(
+      browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchKeyEvent", { type: "keyDown", key: "v", code: "KeyV", modifiers: 2, commands: ["paste"] }),
+      /Firefox could not paste/,
+    );
+    document.documentElement = null;
+    document.body = null;
+    document.activeElement = null;
+    document.elementFromPoint = () => null;
+    await assert.rejects(
+      browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 2, button: "left", clickCount: 1 }),
+      /Firefox could not dispatch mousedown: the page has no element at \(1, 2\)/,
+    );
+    await assert.rejects(
+      browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA" }),
+      /Firefox could not press a: the page has no focused element/,
+    );
+  });
+});
+
+test("the accessibility walk names shadow and nested-frame boundaries", async () => {
+  const inner = {
+    nodeName: "BUTTON", nodeType: 1, textContent: "Inner",
+    children: [], childNodes: [{ nodeType: 3, nodeValue: "Inner" }],
+    getAttribute() { return null; },
+  };
+  const host = {
+    nodeName: "DIV", nodeType: 1, shadowRoot: { nodeType: 11, children: [inner], childNodes: [inner] }, children: [], childNodes: [],
+    getAttribute() { return null; }, textContent: "",
+  };
+  const closed = {
+    nodeName: "DIV", nodeType: 1, children: [], childNodes: [],
+    getAttribute() { return null; }, textContent: "",
+    get shadowRoot() { throw new Error("closed"); },
+  };
+  const frame = {
+    nodeName: "IFRAME", nodeType: 1, children: [], childNodes: [],
+    getAttribute() { return null; }, textContent: "",
+    get contentDocument() { throw new Error("blocked"); },
+  };
+  const nested = {
+    nodeName: "IFRAME", nodeType: 1, children: [], childNodes: [],
+    getAttribute() { return null; }, textContent: "", contentDocument: { nodeType: 9 },
+  };
+  const linked = {
+    nodeName: "A", nodeType: 1, textContent: "In",
+    children: [], childNodes: [{ nodeType: 3, nodeValue: "In" }],
+    getAttribute(name) { return name === "href" ? "https://in.test/" : null; },
+    hasAttribute(name) { return name === "href"; },
+  };
+  const readable = {
+    nodeName: "IFRAME", nodeType: 1, children: [], childNodes: [],
+    getAttribute() { return null; }, textContent: "",
+    contentDocument: { nodeType: 9, documentElement: linked },
+  };
+  const root = {
+    nodeName: "HTML", nodeType: 1, children: [host, closed, frame, nested, readable], childNodes: [host, closed, frame, nested, readable],
+    getAttribute() { return null; }, textContent: "",
+  };
+  const document = { nodeType: 9, title: "Example", documentElement: root, defaultView: { getComputedStyle: () => ({}) } };
+  const browser = debuggerBrowser();
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 6 }, "1.3");
+    const tree = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", {});
+    const values = node => (node.properties || []).map(property => property.value.value);
+    assert.ok(tree.nodes.some(node => node.role.value === "button" && node.name?.value === "Inner"));
+    assert.equal(tree.nodes.some(node => values(node).includes("open shadow tree is not included")), false);
+    assert.ok(tree.nodes.some(node => values(node).includes("shadow root could not be read: closed")));
+    assert.ok(tree.nodes.some(node => values(node).includes("cross-origin nested frame is not included")));
+    assert.ok(tree.nodes.some(node => values(node).includes("nested frame has no document")));
+    assert.equal(tree.nodes.some(node => values(node).includes("nested frame document is not included")), false);
+    assert.ok(tree.nodes.some(node => node.role.value === "link"));
+    delete globalThis.__qzFirefoxPage;
+    const button = {
+      nodeName: "BUTTON", nodeType: 1, textContent: "Go",
+      children: [{ nodeName: "SPAN", nodeType: 1, children: [], childNodes: [], getAttribute() { return null; }, textContent: "Go" }],
+      childNodes: [],
+      getAttribute() { return null; },
+    };
+    document.documentElement = button;
+    const limited = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", { depth: 1 });
+    const bounded = limited.nodes.find(node => values(node).includes("children below this depth were omitted"));
+    assert.equal(bounded.role.value, "button");
+  });
+});
+
+test("Runtime.disable leaves the session hook enabled", async () => {
+  const events = [];
+  let onMessage;
+  const browser = debuggerBrowser();
+  browser.runtime.onMessage = { addListener(listener) { onMessage = listener; } };
+  installFirefoxDebugger(browser);
+  browser.debugger.onEvent.addListener((_source, method, params) => events.push({ method, params }));
+  await browser.debugger.attach({ tabId: 3 }, "1.3");
+  await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+  assert.deepEqual(await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.disable"), {});
+  const agent = await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.evaluate", { expression: "navigator.userAgent", returnByValue: true });
+  assert.match(agent.result.value, /Chrome\/131\.0\.0\.0/);
+  onMessage({ type: "qz-firefox-console", record: { kind: "console", type: "log", args: ["still"] } }, { tab: { id: 3 } });
+  assert.equal(events.filter(event => event.method === "Runtime.consoleAPICalled").length, 1);
+});
+
+test("a screenshot that exceeds the tile budget says what was omitted", async () => {
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => { warnings.push(args.map(String).join(" ")); };
+  const scroller = { scrollWidth: 20000, scrollHeight: 20000, clientWidth: 400, clientHeight: 300, scrollLeft: 0, scrollTop: 0 };
+  const document = {
+    nodeType: 9,
+    documentElement: {},
+    scrollingElement: scroller,
+    defaultView: {
+      get scrollX() { return scroller.scrollLeft; },
+      get scrollY() { return scroller.scrollTop; },
+      innerWidth: 400,
+      innerHeight: 300,
+    },
+  };
+  const browser = debuggerBrowser(async options => {
+    if (options?.rect) throw new Error("rect too large");
+    return "data:image/jpeg;base64,aaaa";
+  });
+  try {
+    await withPage(document, async () => {
+      installFirefoxDebugger(browser);
+      await browser.debugger.attach({ tabId: 4 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 4 }, "Page.captureScreenshot", {
+        format: "jpeg", captureBeyondViewport: true, clip: { x: 0, y: 0, width: 10000, height: 10000, scale: 1 },
+      });
+    });
+  } finally {
+    console.warn = original;
   }
+  assert.match(warnings[0], /firefox screenshot kept 8 viewport pieces; the rest of the clip was omitted/);
 });
 
 test("installing the host is idempotent and leaves a real debugger in place", () => {
@@ -232,6 +827,177 @@ test("installing the host is idempotent and leaves a real debugger in place", ()
   installFirefoxHost(browser);
   assert.equal(browser.debugger, real);
 });
+
+test("a beyond-viewport screenshot uses one captureTab rect before scrolling", async () => {
+  const shots = [];
+  const scroller = { scrollWidth: 4000, scrollHeight: 4000, clientWidth: 400, clientHeight: 300, scrollLeft: 0, scrollTop: 0 };
+  const document = {
+    nodeType: 9,
+    documentElement: {},
+    scrollingElement: scroller,
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 400, innerHeight: 300 },
+  };
+  const browser = debuggerBrowser(async options => {
+    shots.push(options);
+    return "data:image/png;base64,aaaa";
+  });
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 4 }, "1.3");
+    const shot = await browser.debugger.sendCommand({ tabId: 4 }, "Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 100, y: 50, width: 500, height: 800, scale: 1 },
+    });
+    assert.equal(shot.data, "aaaa");
+    assert.equal(scroller.scrollLeft, 0);
+    assert.equal(scroller.scrollTop, 0);
+    assert.equal(shots.length, 1);
+    assert.deepEqual(shots[0].rect, { x: 100, y: 50, width: 500, height: 800 });
+    assert.equal(shots[0].scale, 1);
+  });
+});
+
+test("a full-document capture becomes one pdf page", async () => {
+  const jpeg = Buffer.from([
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x02, 0x00, 0x03,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0xd9,
+  ]);
+  const shots = [];
+  let scrolled = 0;
+  const scroller = { scrollWidth: 300, scrollHeight: 2000, clientWidth: 300, clientHeight: 400, scrollLeft: 0, scrollTop: 0 };
+  Object.defineProperty(scroller, "scrollTop", { get() { return 0; }, set() { scrolled += 1; } });
+  const document = {
+    nodeType: 9,
+    documentElement: {},
+    scrollingElement: scroller,
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 300, innerHeight: 400 },
+  };
+  const browser = debuggerBrowser(async options => {
+    shots.push(options);
+    return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+  });
+  await withPage(document, async () => {
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 4 }, "1.3");
+    const pdf = await browser.debugger.sendCommand({ tabId: 4 }, "Page.printToPDF", {});
+    const text = Buffer.from(pdf.data, "base64").toString("latin1");
+    assert.match(text, /^%PDF-1\.4/);
+    assert.match(text, /\/Width 3/);
+    assert.match(text, /\/Height 2/);
+    assert.equal(text.includes("viewport pages"), false);
+    assert.equal(scrolled, 0);
+    assert.deepEqual(shots[0].rect, { x: 0, y: 0, width: 300, height: 2000 });
+    assert.equal(shots[0].scale, 1);
+  });
+});
+
+test("a click follows a link and skips a cancelled click", async () => {
+  const assigned = [];
+  const submitted = [];
+  const link = {
+    nodeName: "A", nodeType: 1, href: "https://example.test/next",
+    getAttribute(name) { return name === "href" ? link.href : null; },
+    dispatchEvent() { return link.allow; },
+    closest() { return link; },
+    focus() {},
+    allow: true,
+  };
+  const button = {
+    nodeName: "BUTTON", nodeType: 1, textContent: "Go",
+    getAttribute() { return null; },
+    dispatchEvent() { return true; },
+    closest(selector) { return selector === "form" ? button.form : null; },
+    form: { requestSubmit(target) { submitted.push(target); } },
+    focus() {},
+  };
+  let target = link;
+  const document = {
+    nodeType: 9, title: "Example", documentElement: link, body: link, activeElement: link,
+    elementFromPoint() { return target; },
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  const browser = debuggerBrowser();
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true, writable: true, value: { assign(url) { assigned.push(url); } },
+  });
+  try {
+    await withPage(document, async () => {
+      installFirefoxDebugger(browser);
+      await browser.debugger.attach({ tabId: 6 }, "1.3");
+      const click = async () => {
+        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount: 1 });
+        await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount: 1 });
+      };
+      await click();
+      assert.deepEqual(assigned, ["https://example.test/next"]);
+      assigned.length = 0;
+      link.allow = false;
+      await click();
+      assert.deepEqual(assigned, []);
+      link.href = "javascript:alert(1)";
+      link.allow = true;
+      await click();
+      assert.deepEqual(assigned, []);
+      target = button;
+      await click();
+      assert.equal(submitted.length, 1);
+      assert.equal(submitted[0], button);
+    });
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "location", previous);
+    else delete globalThis.location;
+  }
+});
+
+test("product text stays on the Chrome sentence outside a Firefox extension page", () => {
+  const previous = globalThis.chrome;
+  try {
+    delete globalThis.chrome;
+    assert.equal(productText("Chrome side panel", "Firefox sidebar"), "Chrome side panel");
+    globalThis.chrome = { runtime: { getURL: () => "chrome-extension://id/" } };
+    assert.equal(productText("Chrome side panel", "Firefox sidebar"), "Chrome side panel");
+    globalThis.chrome = { runtime: { getURL: () => "moz-extension://uuid/" } };
+    assert.equal(productText("Chrome side panel", "Firefox sidebar"), "Firefox sidebar");
+  } finally {
+    if (previous === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previous;
+  }
+});
+
+function debuggerBrowser(capture) {
+  return {
+    runtime: { id: "qz-browser-agent@heleifz.github.io", onMessage: { addListener() {} } },
+    tabs: {
+      onRemoved: { addListener() {} },
+      async get() { return { windowId: 1, url: "https://example.test/" }; },
+      async captureTab(_id, options) { return capture ? capture(options) : "data:image/png;base64,aaaa"; },
+    },
+    webNavigation: { async getAllFrames() { return []; }, onCommitted: { addListener() {} } },
+    scripting: { async executeScript({ func, args }) {
+      if (func.name !== "firefoxPageCommand") return [{ result: undefined }];
+      return [{ result: await func(...(args || [])) }];
+    } },
+  };
+}
+
+let pageLock = Promise.resolve();
+async function withPage(document, fn) {
+  const wait = pageLock;
+  let release;
+  pageLock = new Promise(resolve => { release = resolve; });
+  await wait;
+  const previous = globalThis.document;
+  globalThis.document = document;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+    delete globalThis.__qzFirefoxPage;
+    release();
+  }
+}
 
 function rulesChrome(id, url, seen) {
   return {

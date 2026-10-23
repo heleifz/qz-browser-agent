@@ -8,7 +8,7 @@ import {
 } from "./page-command.js";
 import type { PageCommand } from "./page-command.js";
 import { bytesToBase64, jpegsToPdf } from "./pdf-raster.js";
-import { cropDataUrl, decodeDataUrl, stackTiles, stripDataUrl } from "./screenshot-image.js";
+import { cropDataUrl, decodeDataUrl, stitchTiles, stripDataUrl } from "./screenshot-image.js";
 import type { ImageClip } from "./screenshot-image.js";
 
 const MARK = Symbol.for("qz.firefox.debugger");
@@ -29,7 +29,10 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   const generations = new Map<string, number>();
   const emulation = new Map<number, { userAgent: string; touch: boolean }>();
   const savedWindows = new Map<number, SavedWindow>();
+  const announced = new Map<number, Map<string, string>>();
+  const streams = new Map<string, { bytes: Uint8Array; offset: number }>();
   let nextContext = 1;
+  let nextStream = 1;
   const emit = (tabId: number, method: string, params?: object) => onEvent.dispatch({ tabId }, method, params);
   const network = createNetworkWatch(chromeApi, emit);
 
@@ -72,7 +75,8 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   chromeApi.debugger = api;
 
   async function dispatch(tabId: number, frameId: number, method: string, params: Fields): Promise<unknown> {
-    if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.terminateExecution") return {};
+    // Runtime.disable must not drop the hook. It stays until the debugger detaches.
+    if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
     if (method === "Page.getFrameTree") return frameTree(tabId, frameId);
     if (method === "Page.reload") {
       await chromeApi.tabs?.reload?.(tabId, { bypassCache: params.ignoreCache === true });
@@ -122,6 +126,9 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "Network.enable") { network.enable(tabId); return {}; }
     if (method === "Network.disable") { network.disable(tabId); return {}; }
     if (method === "Network.getResponseBody") return network.body(tabId, String(params.requestId || ""));
+    if (method === "Network.loadNetworkResource") return loadNetworkResource(tabId, params);
+    if (method === "IO.read") return readStream(params);
+    if (method === "IO.close") return closeStream(params);
     if (method === "Target.setAutoAttach") { autoAttach.add(tabId); await publishAutoAttach(tabId); return {}; }
     throw new Error(`${method} is not available in Firefox`);
   }
@@ -131,7 +138,9 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     runtimeEnabled.delete(tabId);
     autoAttach.delete(tabId);
     contexts.delete(tabId);
+    announced.delete(tabId);
     network.disable(tabId);
+    for (const handle of streams.keys()) if (handle.startsWith(`ff-io-${tabId}-`)) streams.delete(handle);
     if (restore) await restoreWindow(tabId).catch(() => {});
     emulation.delete(tabId);
   }
@@ -140,7 +149,8 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const all = await readFrames(tabId);
     if (frameId > 0) {
       const frame = all.find(item => item.frameId === frameId) || { frameId, parentFrameId: -1, url: "" };
-      return { frameTree: { frame: frameRecord(tabId, frame) } };
+      const children = all.filter(item => item.parentFrameId === frame.frameId && sameOrigin(frame.url, item.url));
+      return { frameTree: { frame: frameRecord(tabId, frame), childFrames: children.map(item => ({ frame: frameRecord(tabId, item) })) } };
     }
     const main = all.find(item => item.frameId === 0) || all[0] || { frameId: 0, parentFrameId: -1, url: "" };
     const children = all.filter(item => item.frameId !== main.frameId && item.parentFrameId === main.frameId && sameOrigin(main.url, item.url));
@@ -174,29 +184,37 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const listed = arrayValue(owners.frames).map(fields);
     const siblings = all.filter(item => item.parentFrameId === frame.parentFrameId).sort((left, right) => left.frameId - right.frameId);
     const index = siblings.findIndex(item => item.frameId === frame.frameId);
+    const at = index >= 0 ? listed[index] : undefined;
     const match = listed.find(item => item.childUrl && item.childUrl === frame.url)
-      || listed.find(item => item.url && frame.url && (frame.url === item.url || frame.url.startsWith(String(item.url))))
-      || listed[index];
+      || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
+      || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
+      || at;
     return { backendNodeId: numberValue(match?.backendNodeId) };
   }
 
   async function publishAutoAttach(tabId: number) {
     const all = await readFrames(tabId);
     const main = all.find(item => item.frameId === 0);
-    if (!main) return;
-    for (const frame of all) {
-      if (frame.parentFrameId !== main.frameId || frame.frameId === main.frameId) continue;
-      const sessionId = `ff-${tabId}-${frame.frameId}`;
-      const targetId = `ff-target-${tabId}-${frame.frameId}`;
-      if (sameOrigin(main.url, frame.url)) {
-        emit(tabId, "Target.detachedFromTarget", { sessionId, targetId });
-        continue;
+    const next = new Map<string, string>();
+    if (main) {
+      for (const frame of all) {
+        if (frame.frameId === main.frameId) continue;
+        if (sameOrigin(main.url, frame.url)) continue;
+        const sessionId = `ff-${tabId}-${frame.frameId}`;
+        const targetId = `ff-target-${tabId}-${frame.frameId}`;
+        next.set(sessionId, targetId);
+        if (announced.get(tabId)?.has(sessionId)) continue;
+        emit(tabId, "Target.attachedToTarget", {
+          sessionId, waitingForDebugger: false,
+          targetInfo: { type: "iframe", targetId, url: frame.url, parentFrameId: "0" },
+        });
       }
-      emit(tabId, "Target.attachedToTarget", {
-        sessionId, waitingForDebugger: false,
-        targetInfo: { type: "iframe", targetId, url: frame.url, parentFrameId: "0" },
-      });
     }
+    for (const [sessionId, targetId] of announced.get(tabId) || []) {
+      if (!next.has(sessionId)) emit(tabId, "Target.detachedFromTarget", { sessionId, targetId });
+    }
+    if (next.size) announced.set(tabId, next);
+    else announced.delete(tabId);
   }
 
   async function enableRuntime(tabId: number) {
@@ -320,19 +338,60 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (!outside) return { data: await cropDataUrl(await captureTabImage(tabId, format, quality), view, cssWidth, cssHeight, format) };
     const pageX = numberValue(layout.pageX);
     const pageY = numberValue(layout.pageY);
-    const tiles: string[] = [];
-    let covered = 0;
-    let previousY = pageY;
-    while (covered < view.height && tiles.length < SCREENSHOT_TILES) {
-      const scrolled = fields(await run(tabId, frameId, { op: "scroll", x: pageX + view.x, y: pageY + view.y + covered }));
-      if (tiles.length > 0 && numberValue(scrolled.scrollY) === previousY) break;
-      previousY = numberValue(scrolled.scrollY);
-      const localHeight = Math.min(cssHeight || view.height, view.height - covered);
-      tiles.push(await cropDataUrl(await captureTabImage(tabId, format, quality), { x: 0, y: 0, width: Math.min(view.width, cssWidth || view.width), height: localHeight, scale: 1 }, cssWidth, cssHeight, format));
-      covered += localHeight || view.height;
+    if (params.captureBeyondViewport === true) {
+      try {
+        const shot = await captureTabImage(tabId, format, quality, {
+          x: Math.max(0, pageX + view.x),
+          y: Math.max(0, pageY + view.y),
+          width: view.width,
+          height: view.height,
+        }, view.scale || 1);
+        return { data: stripDataUrl(shot) };
+      } catch { /* The document rect is too large for one capture. Stitch viewport pieces. */ }
+    }
+    const viewW = cssWidth > 0 ? cssWidth : view.width;
+    const viewH = cssHeight > 0 ? cssHeight : view.height;
+    const clipLeft = pageX + view.x;
+    const clipTop = pageY + view.y;
+    const rows: string[][] = [];
+    let coveredY = 0;
+    let coveredX = 0;
+    let tiles = 0;
+    while (coveredY < view.height && tiles < SCREENSHOT_TILES) {
+      const row: string[] = [];
+      coveredX = 0;
+      let rowAdvance = 0;
+      while (coveredX < view.width && tiles < SCREENSHOT_TILES) {
+        const docX = clipLeft + coveredX;
+        const docY = clipTop + coveredY;
+        const scrolled = fields(await run(tabId, frameId, { op: "scroll", x: docX, y: docY }));
+        const scrollX = numberValue(scrolled.scrollX);
+        const scrollY = numberValue(scrolled.scrollY);
+        const left = Math.max(docX, scrollX);
+        const top = Math.max(docY, scrollY);
+        const right = Math.min(scrollX + viewW, clipLeft + view.width);
+        const bottom = Math.min(scrollY + viewH, clipTop + view.height);
+        const advanceX = right - clipLeft - coveredX;
+        const advanceY = bottom - clipTop - coveredY;
+        if (advanceX <= 0 || advanceY <= 0) break;
+        row.push(await cropDataUrl(
+          await captureTabImage(tabId, format, quality),
+          { x: left - scrollX, y: top - scrollY, width: right - left, height: bottom - top, scale: 1 },
+          cssWidth, cssHeight, format,
+        ));
+        coveredX += advanceX;
+        if (rowAdvance === 0 || advanceY < rowAdvance) rowAdvance = advanceY;
+        tiles += 1;
+      }
+      if (!row.length || rowAdvance <= 0) break;
+      rows.push(row);
+      coveredY += rowAdvance;
     }
     await run(tabId, frameId, { op: "scroll", x: pageX, y: pageY }).catch(() => {});
-    return { data: await stackTiles(tiles, view.scale, format) };
+    if (tiles >= SCREENSHOT_TILES && (coveredY + 0.5 < view.height || coveredX < view.width)) {
+      console.warn(`[轻舟] firefox screenshot kept ${tiles} viewport pieces; the rest of the clip was omitted`);
+    }
+    return { data: await stitchTiles(rows, view.scale, format) };
   }
 
   async function printToPdf(tabId: number, frameId: number) {
@@ -343,26 +402,84 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const pageY = numberValue(visual.pageY);
     const height = Math.max(1, numberValue(visual.clientHeight) || 800);
     const total = Math.max(height, numberValue(content.height));
+    const contentWidth = Math.max(1, numberValue(content.width) || numberValue(visual.clientWidth) || 800);
+    try {
+      const image = decodeDataUrl(await captureTabImage(tabId, "jpeg", 60, { x: 0, y: 0, width: contentWidth, height: total }, 1));
+      return { data: bytesToBase64(jpegsToPdf([image])) };
+    } catch { /* A full-document capture can exceed the canvas limit. Slice the viewport. */ }
     const images: Uint8Array[] = [];
+    const pageCount = Math.ceil(total / height);
     for (let y = 0; y < total && images.length < PDF_PAGES; y += height) {
       await run(tabId, frameId, { op: "scroll", x: 0, y });
       images.push(decodeDataUrl(await captureTabImage(tabId, "jpeg", 60)));
     }
     await run(tabId, frameId, { op: "scroll", x: pageX, y: pageY }).catch(() => {});
-    return { data: bytesToBase64(jpegsToPdf(images)) };
+    const truncated = pageCount > images.length;
+    if (truncated) console.warn(`[轻舟] firefox pdf kept ${images.length} of ${pageCount} viewport pages; content below that was omitted`);
+    const note = truncated ? `Firefox kept ${images.length} of ${pageCount} viewport pages. Content below that was omitted.` : "";
+    return { data: bytesToBase64(jpegsToPdf(images, note)) };
   }
 
-  async function captureTabImage(tabId: number, format: string, quality: number): Promise<string> {
-    const options = { format, quality };
+  async function captureTabImage(tabId: number, format: string, quality: number, rect?: CaptureRect, scale?: number): Promise<string> {
+    const options: CaptureOptions = { format, quality };
+    if (rect) {
+      options.rect = rect;
+      if (scale && scale > 0) options.scale = scale;
+    }
     if (chromeApi.tabs?.captureTab) {
       try { return await chromeApi.tabs.captureTab(tabId, options); }
-      catch { /* Fall through to the visible tab. */ }
-    }
+      catch (error) {
+        if (rect) throw error;
+      }
+    } else if (rect) throw new Error("Firefox cannot capture this document area");
     const tab = await chromeApi.tabs?.get?.(tabId);
     await chromeApi.tabs?.update?.(tabId, { active: true });
     if (tab?.windowId != null) await chromeApi.windows?.update?.(tab.windowId, { focused: true });
     if (!chromeApi.tabs?.captureVisibleTab) throw new Error("Firefox cannot capture this tab");
     return chromeApi.tabs.captureVisibleTab(tab?.windowId, options);
+  }
+
+  async function loadNetworkResource(tabId: number, params: Fields) {
+    const url = String(params.url || "");
+    const options = fields(params.options);
+    if (!/^https?:\/\//i.test(url)) {
+      return { resource: { success: false, netError: -1, netErrorName: "ERR_INVALID_URL", httpStatusCode: 0, headers: [] } };
+    }
+    if (typeof fetch !== "function") {
+      return { resource: { success: false, netError: -1, netErrorName: "ERR_FAILED", httpStatusCode: 0, headers: [] } };
+    }
+    try {
+      const response = await fetch(url, {
+        credentials: options.includeCredentials === false ? "omit" : "include",
+        cache: options.disableCache === true ? "reload" : "default",
+        redirect: "follow",
+      });
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const handle = `ff-io-${tabId}-${nextStream}`;
+      nextStream += 1;
+      streams.set(handle, { bytes, offset: 0 });
+      const headers: { name: string; value: string }[] = [];
+      response.headers?.forEach?.((value, name) => headers.push({ name, value }));
+      return { resource: { success: true, httpStatusCode: response.status, stream: handle, headers } };
+    } catch {
+      return { resource: { success: false, netError: -1, netErrorName: "ERR_FAILED", httpStatusCode: 0, headers: [] } };
+    }
+  }
+
+  function readStream(params: Fields) {
+    const stream = streams.get(String(params.handle || ""));
+    if (!stream) throw new Error("IO.read stream is closed");
+    const requested = numberValue(params.size);
+    const size = requested > 0 ? requested : stream.bytes.length - stream.offset;
+    const end = Math.min(stream.bytes.length, stream.offset + Math.max(0, size));
+    const slice = stream.bytes.subarray(stream.offset, end);
+    stream.offset = end;
+    return { data: bytesToBase64(slice), base64Encoded: true, eof: stream.offset >= stream.bytes.length };
+  }
+
+  function closeStream(params: Fields) {
+    streams.delete(String(params.handle || ""));
+    return {};
   }
 
   async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED") {
@@ -422,6 +539,12 @@ function stackFrame(stack: unknown) {
   return { functionName: line || "", url: "", lineNumber: 0, columnNumber: 0 };
 }
 
+function preferOwner(matches: Fields[], at: Fields | undefined): Fields | undefined {
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return at && matches.includes(at) ? at : matches[0];
+  return undefined;
+}
+
 function sameOrigin(parentUrl: string, url: string): boolean {
   if (!url || url === "about:blank") return true;
   try {
@@ -479,6 +602,8 @@ function numberList(value: unknown): number[] { return arrayValue(value).map(num
 function stringList(value: unknown): string[] { return arrayValue(value).map(item => String(item)); }
 
 interface Fields { [key: string]: unknown }
+interface CaptureRect { x: number; y: number; width: number; height: number }
+interface CaptureOptions { format?: string; quality?: number; rect?: CaptureRect; scale?: number }
 interface DebugSource { tabId?: number; sessionId?: string }
 interface FrameInfo { frameId: number; parentFrameId: number; url: string }
 interface ContextRecord { id: number; uniqueId: string; frameId: number; world: ScriptWorld }
@@ -501,7 +626,7 @@ interface DebuggerChrome {
     get?(tabId: number): Promise<{ windowId?: number; url?: string } | undefined>;
     reload?(tabId: number, options?: { bypassCache?: boolean }): Promise<void>;
     update?(tabId: number, options: { active?: boolean }): Promise<unknown>;
-    captureTab?(tabId: number, options: { format?: string; quality?: number }): Promise<string>;
+    captureTab?(tabId: number, options: CaptureOptions): Promise<string>;
     captureVisibleTab?(windowId: number | undefined, options: { format?: string; quality?: number }): Promise<string>;
     onRemoved?: { addListener(listener: (tabId: number) => void): void };
   };

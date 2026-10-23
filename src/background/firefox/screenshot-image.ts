@@ -24,6 +24,37 @@ export async function cropDataUrl(dataUrl: string, clip: ImageClip, cssWidth: nu
   return blobToBase64(await canvas.convertToBlob({ type: imageType(format), quality: 0.9 }));
 }
 
+/** Place captured pieces in rows, then apply the screenshot scale. */
+export async function stitchTiles(rows: readonly (readonly string[])[], scale: number, format: string): Promise<string> {
+  const flat = rows.flatMap(row => row.filter(tile => tile));
+  if (!flat.length) return "";
+  if (rows.every(row => row.length <= 1)) return stackTiles(flat, scale, format);
+  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function") return flat[0];
+  const decoded = await Promise.all(rows.map(row => Promise.all(row.map(tile => createImageBitmap(bytesBlob(decodeBase64(tile)))))));
+  const rowWidths = decoded.map(row => row.reduce((sum, bitmap) => sum + bitmap.width, 0));
+  const rowHeights = decoded.map(row => row.reduce((max, bitmap) => Math.max(max, bitmap.height), 0));
+  const width = Math.max(1, ...rowWidths);
+  const height = rowHeights.reduce((sum, value) => sum + value, 0) || 1;
+  const ratio = scale > 0 ? scale : 1;
+  const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * ratio)), Math.max(1, Math.round(height * ratio)));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    for (const row of decoded) for (const bitmap of row) bitmap.close();
+    return flat[0];
+  }
+  let y = 0;
+  for (let rowIndex = 0; rowIndex < decoded.length; rowIndex += 1) {
+    let x = 0;
+    for (const bitmap of decoded[rowIndex]) {
+      context.drawImage(bitmap, x, y, bitmap.width * ratio, bitmap.height * ratio);
+      x += bitmap.width * ratio;
+      bitmap.close();
+    }
+    y += rowHeights[rowIndex] * ratio;
+  }
+  return blobToBase64(await canvas.convertToBlob({ type: imageType(format), quality: 0.9 }));
+}
+
 /** Stack viewport tiles from top to bottom and apply the screenshot scale. */
 export async function stackTiles(tiles: readonly string[], scale: number, format: string): Promise<string> {
   if (!tiles.length) return "";

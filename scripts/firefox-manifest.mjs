@@ -3,7 +3,7 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { chromeMessageId } from "../src/shared/i18n/definition.ts";
+import { chromeMessageId, decodeChromeMessage, encodeChromeMessage, HISTORICAL_LABELS_MESSAGE_ID } from "../src/shared/i18n/definition.ts";
 
 export const FIREFOX_GECKO_ID = "qz-browser-agent@heleifz.github.io";
 export const FIREFOX_MIN_VERSION = "139.0";
@@ -25,6 +25,7 @@ export const FIREFOX_DATA_COLLECTION = Object.freeze({
   optional: Object.freeze(["locationInfo", "browsingActivity", "bookmarksInfo"]),
 });
 export const FILE_ACCESS_MESSAGE_KEY = "backend.toolError.FILE_ACCESS_REQUIRED.message";
+export const FIREFOX_SIDEBAR_STYLESHEET = "sidepanel/firefox-sidebar.css";
 
 const droppedPermissions = new Set(FIREFOX_DROPPED_PERMISSIONS);
 const FILE_ACCESS_TEXT = Object.freeze({
@@ -79,6 +80,16 @@ export function firefoxManifest(manifest) {
     service_worker: worker,
     type: "module",
   };
+  if (next.action) next.action.default_area = "navbar";
+  if (next.commands?._execute_action) {
+    const suggested = next.commands._execute_action.suggested_key;
+    delete next.commands._execute_action;
+    // Firefox toggles a sidebar_action from this reserved command. It does not use _execute_action.
+    next.commands._execute_sidebar_action = {
+      description: next.action?.default_title || next.name,
+      ...(suggested ? { suggested_key: suggested } : {}),
+    };
+  }
   const sidebarAction = {
     default_panel: panel,
     open_at_install: false,
@@ -101,9 +112,64 @@ export function firefoxManifest(manifest) {
   return next;
 }
 
-/** Point the sidebar document at the Firefox boot module. The Chrome file is unchanged. */
+/** Point the sidebar document at the Firefox boot module and the sidebar skin. The Chrome file is unchanged. */
 export function rewriteFirefoxSidepanelHtml(html) {
-  return String(html).replace(/(<script\b[^>]*\bsrc=["'])sidepanel\.js(["'])/i, `$1${FIREFOX_PANEL_SCRIPT.split("/").pop()}$2`);
+  let next = String(html).replace(/(<script\b[^>]*\bsrc=["'])sidepanel\.js(["'])/i, `$1${FIREFOX_PANEL_SCRIPT.split("/").pop()}$2`);
+  if (!next.includes("firefox-sidebar.css")) {
+    const link = `  <link rel="stylesheet" href="firefox-sidebar.css">\n`;
+    next = next.includes("</head>") ? next.replace("</head>", `${link}</head>`) : `${next}\n${link}`;
+  }
+  return next;
+}
+
+/** System colors and the Firefox UI font. Loaded only after the shared sidebar skin. */
+export function firefoxSidebarCss() {
+  return `/* Firefox sidebar skin. The shared theme still draws the controls. */
+:root {
+  color-scheme: light dark;
+  --font-sans: system-ui, sans-serif;
+  --bg-primary: Canvas;
+  --bg-secondary: Canvas;
+  --bg-tertiary: ButtonFace;
+  --bg-elevated: ButtonFace;
+  --text-primary: CanvasText;
+  --text-secondary: CanvasText;
+  --border: color-mix(in srgb, CanvasText 24%, transparent);
+  --control-surface: ButtonFace;
+  --control-text: ButtonText;
+  --control-primary-surface: AccentColor;
+  --control-primary-text: AccentColorText;
+  --field-surface: Field;
+  accent-color: AccentColor;
+}
+
+html,
+body {
+  font: message-box;
+  background: Canvas;
+  color: CanvasText;
+}
+`;
+}
+
+/** Rewrite catalog sentences that name Chrome, its URLs, or a side panel. */
+export function firefoxUserText(text) {
+  let next = String(text);
+  next = next.replaceAll("ChromeOS", "\u0000OS");
+  next = next.replaceAll("chrome-extension://", "moz-extension://");
+  next = next.replaceAll("chrome://extensions/shortcuts", "about:addons");
+  next = next.replaceAll("chrome://extensions", "about:addons");
+  next = next.replaceAll("chrome://downloads", "about:downloads");
+  next = next.replaceAll("chrome://", "about:");
+  next = next.replaceAll("Chrome Web Store", "Add-ons Manager");
+  next = next.replaceAll("Android Chrome", "an Android layout");
+  next = next.replaceAll("Chrome DevTools MCP", "a browser snapshot");
+  next = next.replaceAll(/\bChrome\b/g, "Firefox");
+  next = next.replaceAll("\u0000OS", "ChromeOS");
+  next = next.replaceAll("the extension store", "Add-ons");
+  next = next.replaceAll("Side Panel", "Sidebar");
+  next = next.replaceAll("side panel", "sidebar");
+  return next;
 }
 
 export function firefoxFileAccessMessageId() {
@@ -113,11 +179,32 @@ export function firefoxFileAccessMessageId() {
 export function rewriteFirefoxMessages(locale, messages) {
   const id = firefoxFileAccessMessageId();
   if (!messages || typeof messages !== "object" || Array.isArray(messages)) return messages;
-  // English and zh-CN keep this sentence in the shared bundle. Their catalogs omit the key,
+  // English and zh-CN keep the Chrome sentence in the shared bundle. Their catalogs omit the key,
   // so the Firefox package adds it and the loader prefers the catalog over that sentence.
-  if (!messages[id] && !messages.qz_language) return messages;
-  const text = FILE_ACCESS_TEXT[locale] || FILE_ACCESS_TEXT.en;
-  return { ...messages, [id]: { message: text } };
+  let next = messages;
+  if (messages[id] || messages.qz_language) {
+    const text = FILE_ACCESS_TEXT[locale] || FILE_ACCESS_TEXT.en;
+    next = { ...messages, [id]: { message: text } };
+  }
+  let changed = next !== messages;
+  const rewritten = { ...next };
+  for (const [key, value] of Object.entries(rewritten)) {
+    if (key === "qz_language" || key === HISTORICAL_LABELS_MESSAGE_ID) continue;
+    const text = decodeChromeMessage(value);
+    if (text === undefined) continue;
+    const updated = firefoxUserText(text);
+    if (updated === text) continue;
+    const manifestMessage = !key.startsWith("qz_");
+    rewritten[key] = encodeChromeMessage(updated, { substitutions: !manifestMessage });
+    changed = true;
+  }
+  return changed ? rewritten : messages;
+}
+
+/** Write the Firefox-only sidebar skin next to the rewritten panel document. */
+export async function writeFirefoxSidebarSkin(root) {
+  const path = resolve(root, FIREFOX_SIDEBAR_STYLESHEET);
+  await writeFile(path, firefoxSidebarCss());
 }
 
 /** Rewrite generated locale catalogs in a Firefox build output. */

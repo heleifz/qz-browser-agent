@@ -87,15 +87,52 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     return { type, ...init };
   };
   const dispatch = (target: DomNode | null | undefined, type: string, init: Record<string, unknown>) => {
-    target?.dispatchEvent?.(makeEvent(type, init));
+    const x = Number(init.clientX);
+    const y = Number(init.clientY);
+    if (!target || typeof target.dispatchEvent !== "function") {
+      throw new Error(`Firefox could not dispatch ${type}: the page has no element at (${x}, ${y}).`);
+    }
+    try { target.dispatchEvent(makeEvent(type, init)); }
+    catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      throw new Error(`Firefox could not dispatch ${type} at (${x}, ${y}): ${text}`);
+    }
   };
   const buttonIndex = (button: unknown) => button === "right" ? 2 : button === "middle" ? 1 : 0;
+  const pointer = (target: DomNode | null | undefined, type: string, init: Record<string, unknown>) => {
+    const Ctor = page.PointerEvent;
+    if (!target || typeof target.dispatchEvent !== "function" || typeof Ctor !== "function") return;
+    try { target.dispatchEvent(new Ctor(type, { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })); }
+    catch { /* The page has no pointer events. Mouse events still fire. */ }
+  };
+  const activate = (target: DomNode | null | undefined) => {
+    if (!target) return;
+    const anchor = typeof target.closest === "function" ? target.closest("a[href]") : String(target.nodeName) === "A" ? target : null;
+    const href = anchor ? String(anchor.href || anchor.getAttribute?.("href") || "") : "";
+    if (anchor && href && !href.toLowerCase().startsWith("javascript:")) {
+      const where = String(anchor.target || anchor.getAttribute?.("target") || "");
+      if (where === "_blank") page.open?.(href, "_blank", "noopener");
+      else page.location?.assign?.(href);
+      return;
+    }
+    const control = String(target.nodeName || "").toUpperCase();
+    const inputType = String(target.getAttribute?.("type") || "").toLowerCase();
+    const form = target.form || (typeof target.closest === "function" ? target.closest("form") : null);
+    const requestSubmit = form && "requestSubmit" in form && typeof form.requestSubmit === "function" ? form.requestSubmit : undefined;
+    const submitter = control === "BUTTON" || inputType === "submit" || inputType === "image";
+    if (!requestSubmit || !submitter || inputType === "button" || inputType === "reset") return;
+    try { requestSubmit.call(form, target); }
+    catch { /* The form rejected the submit. The click listeners still ran. */ }
+  };
   const mouse = (input: MouseInput) => {
     const x = Number(input.x);
     const y = Number(input.y);
     const type = String(input.type || "");
     if (type === "mouseReleased" && (x < 0 || y < 0)) {
-      dispatch(state.mouseTarget, "mouseup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
+      if (state.mouseTarget) {
+        pointer(state.mouseTarget, "pointerup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
+        dispatch(state.mouseTarget, "mouseup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
+      }
       state.mouseTarget = null;
       return {};
     }
@@ -104,13 +141,31 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons: type === "mouseReleased" ? 0 : 1 };
     if (type === "mousePressed") {
       state.mouseTarget = target;
+      try { target?.focus?.(); } catch { /* The element is not focusable. */ }
+      pointer(target, "pointerdown", init);
       dispatch(target, "mousedown", init);
     } else if (type === "mouseReleased") {
+      pointer(target, "pointerup", init);
       dispatch(target, "mouseup", init);
-      if (state.mouseTarget === target) dispatch(target, Number(input.clickCount) > 1 ? "dblclick" : "click", init);
+      if (state.mouseTarget === target) {
+        const name = Number(input.clickCount) > 1 ? "dblclick" : "click";
+        const event = makeEvent(name, init);
+        let allowed = true;
+        if (!target || typeof target.dispatchEvent !== "function") {
+          throw new Error(`Firefox could not dispatch ${name}: the page has no element at (${x}, ${y}).`);
+        }
+        try { allowed = target.dispatchEvent(event) !== false; }
+        catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          throw new Error(`Firefox could not dispatch ${name} at (${x}, ${y}): ${text}`);
+        }
+        if (allowed && name === "click") activate(target);
+      }
       state.mouseTarget = null;
-    } else if (type === "mouseMoved") dispatch(target, "mousemove", init);
-    else if (type === "mouseWheel") {
+    } else if (type === "mouseMoved") {
+      pointer(target, "pointermove", init);
+      dispatch(target, "mousemove", init);
+    } else if (type === "mouseWheel") {
       dispatch(target, "wheel", { ...init, deltaX: Number(input.deltaX || 0), deltaY: Number(input.deltaY || 0) });
       const scroller = doc.scrollingElement;
       if (scroller) {
@@ -120,19 +175,54 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     }
     return {};
   };
-  const insertText = (target: DomNode | null, text: string) => {
-    if (doc.execCommand?.("insertText", false, text)) return;
-    if (target && "value" in target) {
+  const insertText = (target: DomNode | null, text: string, required: boolean) => {
+    if (!text) return;
+    try { if (doc.execCommand?.("insertText", false, text)) return; }
+    catch { /* The page rejected the untrusted insert. A value edit may still apply. */ }
+    if (target && "value" in target && target.readOnly !== true && target.disabled !== true) {
       const start = Number(target.selectionStart ?? String(target.value || "").length);
       const end = Number(target.selectionEnd ?? start);
       const current = String(target.value || "");
-      target.value = `${current.slice(0, start)}${text}${current.slice(end)}`;
+      const next = `${current.slice(0, start)}${text}${current.slice(end)}`;
+      const proto = String(target.nodeName) === "TEXTAREA" ? page.HTMLTextAreaElement?.prototype : page.HTMLInputElement?.prototype;
+      const setter = proto ? Object.getOwnPropertyDescriptor(proto, "value")?.set : undefined;
+      if (typeof setter === "function") setter.call(target, next);
+      else target.value = next;
+      const caret = start + text.length;
+      target.selectionStart = caret;
+      target.selectionEnd = caret;
+      const InputEvent = page.InputEvent;
+      if (typeof InputEvent === "function") {
+        try { target.dispatchEvent?.(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" })); }
+        catch { /* The value is updated even when the page refuses the input event. */ }
+      }
       return;
     }
-    target?.appendChild?.(doc.createTextNode?.(text) || { nodeType: 3, nodeValue: text });
+    if (target?.isContentEditable && target.appendChild) {
+      const node = doc.createTextNode?.(text);
+      if (node) { target.appendChild(node); return; }
+    }
+    if (required) throw new Error("Firefox could not insert text. Focus an editable element, or the page refused the untrusted insert.");
+  };
+  const applyCommand = (command: string) => {
+    let applied = false;
+    try { applied = doc.execCommand?.(command) === true; }
+    catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      throw new Error(`Firefox could not ${command}: ${text}`);
+    }
+    if (applied) return;
+    if (command === "paste") throw new Error("Firefox could not paste. The focused element is not editable, or the page has no clipboard permission.");
+    if (command === "copy" || command === "cut") throw new Error(`Firefox could not ${command}. The focused element has no selection, or the page has no clipboard permission.`);
+    throw new Error("Firefox could not select all. The focused element is not editable.");
   };
   const key = (input: KeyInput) => {
+    const releasing = input.type === "keyUp";
     const target = doc.activeElement || doc.body || doc.documentElement;
+    const label = String(input.key || input.code || "key");
+    if (!target || typeof target.dispatchEvent !== "function") {
+      throw new Error(`Firefox could not press ${label}: the page has no focused element.`);
+    }
     const modifiers = Number(input.modifiers || 0);
     const init = {
       bubbles: true,
@@ -146,11 +236,16 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
       shiftKey: (modifiers & 8) !== 0,
     };
     const ctor = page.KeyboardEvent;
-    const event = typeof ctor === "function" ? new ctor(input.type === "keyUp" ? "keyup" : "keydown", init) : { type: input.type === "keyUp" ? "keyup" : "keydown", ...init };
-    target?.dispatchEvent?.(event);
-    if (input.type !== "keyUp" && input.text) insertText(target || null, String(input.text));
+    const event = typeof ctor === "function" ? new ctor(releasing ? "keyup" : "keydown", init) : { type: releasing ? "keyup" : "keydown", ...init };
+    try { target.dispatchEvent(event); }
+    catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      throw new Error(`Firefox could not press ${label}: ${text}`);
+    }
+    if (releasing) return {};
+    if (input.text) insertText(target, String(input.text), false);
     for (const command of input.commands || []) {
-      if (command === "selectAll" || command === "copy" || command === "paste" || command === "cut") doc.execCommand?.(command);
+      if (command === "selectAll" || command === "copy" || command === "paste" || command === "cut") applyCommand(command);
     }
     return {};
   };
@@ -275,8 +370,11 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
       if (depthLimit != null && depth > depthLimit) return;
       const role = roleFor(node);
       const name = nameFor(node, role);
-      const keep = role !== "generic" && role !== "none" && role !== "";
+      const shadowBoundary = shadowNote(node);
+      const frameBoundary = frameNote(node);
+      const keep = (role !== "generic" && role !== "none" && role !== "") || shadowBoundary !== "" || frameBoundary !== "";
       const id = keep || name ? `ax-${nodes.length}` : parentId;
+      let marked: Ax | undefined;
       if (keep || name) {
         const properties: { name: string; value: { value: unknown } }[] = [];
         const flag = (key: string, value: unknown) => {
@@ -293,6 +391,8 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
         flag("readonly", node.readOnly === true);
         flag("required", node.required === true);
         if (role === "link") flag("url", attr(node, "href"));
+        if (shadowBoundary) properties.push({ name: "shadowBoundary", value: { value: shadowBoundary } });
+        if (frameBoundary) properties.push({ name: "frameBoundary", value: { value: frameBoundary } });
         const axNode: Ax = {
           nodeId: id,
           parentId,
@@ -303,16 +403,54 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
           properties,
         };
         nodes.push(axNode);
+        marked = axNode;
         const parent = nodes.find(item => item.nodeId === parentId);
         parent?.childIds?.push(id);
       }
-      if (depthLimit != null && depth >= depthLimit) return;
-      for (const child of asList(node.children || node.childNodes).filter(child => Number(child.nodeType) === 1)) {
-        visit(child, keep || name ? depth + 1 : depth, id);
+      const nested = frameDocument(node);
+      const shadows = shadowChildren(node);
+      const children = asList(node.children || node.childNodes).filter(child => Number(child.nodeType) === 1);
+      if (depthLimit != null && depth >= depthLimit) {
+        if (marked && (children.length || shadows.length || nested)) marked.properties?.push({ name: "depthBoundary", value: { value: "children below this depth were omitted" } });
+        return;
       }
+      const nextDepth = keep || name ? depth + 1 : depth;
+      for (const child of children) visit(child, nextDepth, id);
+      if (nested) visit(nested, nextDepth, id);
+      for (const child of shadows) visit(child, nextDepth, id);
     };
     if (doc.documentElement) visit(doc.documentElement, 1, rootId);
     return { nodes };
+  };
+  const elementChildren = (node: DomNode | null | undefined): DomNode[] => asList(node?.children || node?.childNodes).filter(child => Number(child.nodeType) === 1);
+  const shadowChildren = (node: DomNode): DomNode[] => {
+    try { return node.shadowRoot ? elementChildren(node.shadowRoot) : []; }
+    catch { return []; }
+  };
+  const frameDocument = (node: DomNode): DomNode | null => {
+    const name = String(node.nodeName || "").toUpperCase();
+    if (name !== "IFRAME" && name !== "FRAME") return null;
+    try { return node.contentDocument?.documentElement || null; }
+    catch { return null; }
+  };
+  const shadowNote = (node: DomNode): string => {
+    try {
+      void node.shadowRoot;
+      return "";
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      return `shadow root could not be read: ${text}`;
+    }
+  };
+  const frameNote = (node: DomNode): string => {
+    const name = String(node.nodeName || "").toUpperCase();
+    if (name !== "IFRAME" && name !== "FRAME") return "";
+    try {
+      if (node.contentDocument?.documentElement) return "";
+      return "nested frame has no document";
+    } catch {
+      return "cross-origin nested frame is not included";
+    }
   };
 
   try {
@@ -394,7 +532,7 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
           case "mouse": return mouse(input);
           case "key": return key(input);
           case "text":
-            insertText(doc.activeElement || doc.body || doc.documentElement || null, String(input.text || ""));
+            insertText(doc.activeElement || null, String(input.text || ""), true);
             return {};
           case "touch": return touch(input);
           default: {
@@ -520,7 +658,9 @@ interface DomNode {
   getAttribute?(name: string): string | null; setAttribute?(name: string, value: string): void;
   hasAttribute?(name: string): boolean; getBoundingClientRect?(): { x?: number; y?: number; left?: number; top?: number; width?: number; height?: number };
   querySelectorAll?(selector: string): ArrayLike<DomNode>; dispatchEvent?(event: unknown): boolean;
-  contentDocument?: DomNode | null; contentWindow?: { location?: { href?: string } } | null;
+  contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
+  shadowRoot?: DomNode | null; focus?(): void; closest?(selector: string): DomNode | null;
+  href?: string; target?: string; form?: { requestSubmit?(submitter?: DomNode): void } | null;
   value?: string; selectionStart?: number | null; selectionEnd?: number | null;
   disabled?: boolean; checked?: boolean; readOnly?: boolean; required?: boolean; isContentEditable?: boolean;
   appendChild?(node: DomNode): void; __qzConsoleSeen?: number; __qzConsoleBridge?: boolean;
@@ -538,7 +678,13 @@ interface PageScope {
   MouseEvent?: new (type: string, init?: unknown) => unknown;
   WheelEvent?: new (type: string, init?: unknown) => unknown;
   KeyboardEvent?: new (type: string, init?: unknown) => unknown;
+  PointerEvent?: new (type: string, init?: unknown) => unknown;
+  InputEvent?: new (type: string, init?: unknown) => unknown;
+  HTMLInputElement?: { prototype: object };
+  HTMLTextAreaElement?: { prototype: object };
   Touch?: new (init: unknown) => unknown;
+  location?: { assign?(url: string): void };
+  open?(url: string, target?: string, features?: string): void;
   TouchEvent?: new (type: string, init?: unknown) => unknown;
   Navigator?: { prototype: object };
   Error: new () => { stack?: string };

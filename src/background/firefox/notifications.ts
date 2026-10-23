@@ -23,7 +23,7 @@ export function installNotificationRenewal(chromeApi: NotificationChrome): void 
       return;
     }
     state.left -= 1;
-    void original(id, state.options);
+    void Promise.resolve(original(id, state.options)).catch(() => { pending.delete(id); });
   });
   notifications.onClicked?.addListener(id => { pending.delete(id); });
 }

@@ -22,13 +22,18 @@ export function jpegSize(bytes: Uint8Array): { width: number; height: number } |
   return null;
 }
 
-export function jpegsToPdf(images: readonly Uint8Array[]): Uint8Array {
+function pdfEscape(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+export function jpegsToPdf(images: readonly Uint8Array[], note = ""): Uint8Array {
   if (!images.length) throw new Error("PDF raster has no pages");
   const pages = images.map(image => {
     const size = jpegSize(image);
     if (!size) throw new Error("PDF raster JPEG is missing its size");
     return { image, ...size };
   });
+  const caption = note.trim();
   const encoder = new TextEncoder();
   const parts: Uint8Array[] = [];
   const offsets: number[] = [];
@@ -44,15 +49,18 @@ export function jpegsToPdf(images: readonly Uint8Array[]): Uint8Array {
   };
   const endObject = () => addText("\nendobj\n");
   addText("%PDF-1.4\n");
-  const count = pages.length;
+  const imageCount = pages.length;
+  const count = imageCount + (caption ? 1 : 0);
   const pageId = (index: number) => 3 + index;
   const contentId = (index: number) => 3 + count + index;
   const imageId = (index: number) => 3 + count * 2 + index;
+  const fontId = 3 + count * 2 + imageCount;
   startObject(1);
   addText("<< /Type /Catalog /Pages 2 0 R >>");
   endObject();
   startObject(2);
-  addText(`<< /Type /Pages /Count ${count} /Kids [${pages.map((_page, index) => `${pageId(index)} 0 R`).join(" ")}] >>`);
+  const kids = Array.from({ length: count }, (_value, index) => `${pageId(index)} 0 R`).join(" ");
+  addText(`<< /Type /Pages /Count ${count} /Kids [${kids}] >>`);
   endObject();
   pages.forEach((page, index) => {
     startObject(pageId(index));
@@ -72,8 +80,21 @@ export function jpegsToPdf(images: readonly Uint8Array[]): Uint8Array {
     addText("\nendstream");
     endObject();
   });
+  if (caption) {
+    const noteIndex = imageCount;
+    startObject(pageId(noteIndex));
+    addText(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 120] /Contents ${contentId(noteIndex)} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`);
+    endObject();
+    const content = `BT /F1 12 Tf 36 70 Td (${pdfEscape(caption)}) Tj ET`;
+    startObject(contentId(noteIndex));
+    addText(`<< /Length ${encoder.encode(content).length} >>\nstream\n${content}\nendstream`);
+    endObject();
+    startObject(fontId);
+    addText("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+    endObject();
+  }
   const xref = cursor;
-  const size = 3 + count * 3;
+  const size = caption ? fontId + 1 : 3 + imageCount * 3;
   let table = `xref\n0 ${size}\n0000000000 65535 f \n`;
   for (let id = 1; id < size; id += 1) table += `${String(offsets[id] || 0).padStart(10, "0")} 00000 n \n`;
   addText(`${table}trailer << /Size ${size} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);

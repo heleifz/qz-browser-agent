@@ -2,6 +2,7 @@
 
 const BODY_LIMIT = 1024 * 1024;
 const BODY_COUNT = 200;
+const STARTED_LIMIT = 2000;
 
 export interface NetworkWatch {
   enable(tabId: number): void;
@@ -28,8 +29,7 @@ export function createNetworkWatch(chromeApi: NetworkChrome | undefined, emit: N
   const emitStart = (details: WebRequestDetails, headers?: Record<string, unknown>) => {
     if (!tabs.has(details.tabId) || details.tabId < 0) return;
     const id = key(details.tabId, String(details.requestId));
-    if (started.has(id)) return;
-    started.add(id);
+    if (!noteStarted(id)) return;
     emit(details.tabId, "Network.requestWillBeSent", {
       requestId: String(details.requestId),
       timestamp: seconds(details.timeStamp),
@@ -53,8 +53,9 @@ export function createNetworkWatch(chromeApi: NetworkChrome | undefined, emit: N
       filter.ondata = event => {
         const bytes = new Uint8Array(event.data);
         if (size < BODY_LIMIT) {
-          chunks.push(bytes.subarray(0, BODY_LIMIT - size));
-          size += bytes.byteLength;
+          const kept = bytes.subarray(0, BODY_LIMIT - size);
+          chunks.push(kept);
+          size += kept.byteLength;
         }
         filter.write(event.data);
       };
@@ -107,6 +108,7 @@ export function createNetworkWatch(chromeApi: NetworkChrome | undefined, emit: N
       timestamp: seconds(details.timeStamp),
       encodedDataLength: Number.isFinite(length) ? length : 0,
     });
+    started.delete(key(details.tabId, String(details.requestId)));
   };
   const onFailed = (details: WebRequestDetails) => {
     if (!tabs.has(details.tabId)) return;
@@ -118,17 +120,36 @@ export function createNetworkWatch(chromeApi: NetworkChrome | undefined, emit: N
       canceled: details.error === "NS_ERROR_ABORT" || details.error === "net::ERR_ABORTED",
       type: resourceType(String(details.type || "")),
     });
+    started.delete(key(details.tabId, String(details.requestId)));
+  };
+  const noteStarted = (id: string) => {
+    if (started.has(id)) return false;
+    started.add(id);
+    while (started.size > STARTED_LIMIT) {
+      const oldest = started.keys().next().value;
+      if (oldest == null) break;
+      started.delete(oldest);
+    }
+    return true;
   };
 
   const ensure = () => {
     if (listening || !webRequest?.onBeforeRequest?.addListener) return;
     const filter = { urls: ["<all_urls>"] };
-    try { webRequest.onBeforeRequest.addListener(onBefore, filter, ["blocking"]); }
-    catch { webRequest.onBeforeRequest.addListener(onBefore, filter); }
-    webRequest.onBeforeSendHeaders?.addListener(onHeaders, filter, ["requestHeaders"]);
-    webRequest.onHeadersReceived?.addListener(onResponse, filter, ["responseHeaders"]);
-    webRequest.onCompleted?.addListener(onCompleted, filter, ["responseHeaders"]);
-    webRequest.onErrorOccurred?.addListener(onFailed, filter);
+    const add = (event: WebRequestEvent | undefined, listener: (details: WebRequestDetails) => unknown, extra?: string[]) => {
+      if (!event?.addListener) return;
+      if (extra) {
+        try { event.addListener(listener, filter, extra); return; }
+        catch { /* This Firefox build rejected the extra info spec. */ }
+      }
+      try { event.addListener(listener, filter); }
+      catch { /* This event cannot be observed. */ }
+    };
+    add(webRequest.onBeforeRequest, onBefore, ["blocking"]);
+    add(webRequest.onBeforeSendHeaders, onHeaders, ["requestHeaders"]);
+    add(webRequest.onHeadersReceived, onResponse, ["responseHeaders"]);
+    add(webRequest.onCompleted, onCompleted, ["responseHeaders"]);
+    add(webRequest.onErrorOccurred, onFailed);
     listening = true;
   };
   const stop = () => {

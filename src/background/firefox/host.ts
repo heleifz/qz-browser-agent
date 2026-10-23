@@ -23,7 +23,11 @@ interface HostChrome {
   qzFirefoxHost?: boolean;
   debugger?: { sendCommand?: unknown };
   runtime?: { id?: string; getURL?(path: string): string; onMessage?: { addListener(listener: (...args: never[]) => void): void } };
-  sidebarAction?: { open(options?: { windowId?: number }): unknown };
+  sidebarAction?: {
+    open(): unknown;
+    toggle?(): unknown;
+    setPanel?(details: { tabId?: number; panel?: string | null }): unknown;
+  };
   sidePanel?: { open?(options?: { windowId?: number; tabId?: number }): unknown };
   action?: { onClicked?: { addListener(listener: () => void): void } };
   offscreen?: { createDocument?: () => unknown };

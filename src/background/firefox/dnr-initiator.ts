@@ -13,7 +13,10 @@ function wrap(chromeApi: InitiatorChrome, dnr: DeclarativeNetRequest, name: "upd
   const current = dnr[name];
   if (typeof current !== "function" || (current as Marked)[MARK]) return;
   const original = current.bind(dnr);
-  const wrapped: Marked = (update: RuleUpdate) => original({ ...update, addRules: rewrite(chromeApi, update?.addRules) });
+  const wrapped: Marked = (update: RuleUpdate) => {
+    if (!Array.isArray(update?.addRules)) return original(update);
+    return original({ ...update, addRules: rewrite(chromeApi, update.addRules) });
+  };
   wrapped[MARK] = true;
   dnr[name] = wrapped;
 }
@@ -33,7 +36,7 @@ function rewrite(chromeApi: InitiatorChrome, rules: Rule[] | undefined): Rule[] 
 }
 
 interface Rule { condition?: { initiatorDomains?: string[] } }
-interface RuleUpdate { addRules?: Rule[] }
+interface RuleUpdate { addRules?: Rule[]; removeRuleIds?: number[] }
 type Marked = ((update: RuleUpdate) => unknown) & { [MARK]?: boolean };
 interface DeclarativeNetRequest {
   updateSessionRules?: Marked;

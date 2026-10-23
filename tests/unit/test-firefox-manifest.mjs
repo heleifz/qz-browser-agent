@@ -13,11 +13,13 @@ import {
   FIREFOX_MIN_VERSION,
   firefoxFileAccessMessageId,
   firefoxManifest,
+  firefoxSidebarCss,
+  firefoxUserText,
   isFirefoxOnlySource,
   rewriteFirefoxMessages,
   rewriteFirefoxSidepanelHtml,
 } from "../../scripts/firefox-manifest.mjs";
-import { chromeMessageId } from "../../src/shared/i18n/definition.js";
+import { chromeMessageId, HISTORICAL_LABELS_MESSAGE_ID } from "../../src/shared/i18n/definition.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const source = JSON.parse(readFileSync(join(repoRoot, "src/manifest.json"), "utf8"));
@@ -59,7 +61,15 @@ test("the firefox manifest drops rejected permissions and keeps the shared entri
   assert.deepEqual(firefox.sandbox, source.sandbox);
   assert.equal(firefox.content_security_policy.extension_pages, source.content_security_policy.extension_pages);
   assert.equal(firefox.content_security_policy.sandbox, source.content_security_policy.sandbox);
-  assert.deepEqual(firefox.commands, source.commands);
+  const commands = structuredClone(source.commands);
+  const suggested = commands._execute_action.suggested_key;
+  delete commands._execute_action;
+  commands._execute_sidebar_action = { description: source.action.default_title, suggested_key: suggested };
+  assert.deepEqual(firefox.commands, commands);
+  assert.equal(firefox.action.default_area, "navbar");
+  assert.equal(source.action.default_area, undefined);
+  assert.equal(firefox.update_url, undefined);
+  assert.equal(firefox.permissions.includes("menus"), false);
   assert.deepEqual(firefox.host_permissions, source.host_permissions);
 });
 
@@ -90,7 +100,25 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.match(inserted[id].message, /about:addons/);
   assert.equal(rewriteFirefoxMessages("en", { other: { message: "keep" } }).other.message, "keep");
   assert.equal(Object.hasOwn(rewriteFirefoxMessages("en", { other: { message: "keep" } }), id), false);
-  assert.equal(rewriteFirefoxSidepanelHtml('<script type="module" src="sidepanel.js"></script>'), '<script type="module" src="firefox-boot.js"></script>');
-  assert.equal(rewriteFirefoxSidepanelHtml('<script src="sidepanel.js" type="module"></script>'), '<script src="firefox-boot.js" type="module"></script>');
+  const moduleScript = rewriteFirefoxSidepanelHtml('<head>\n</head>\n<script type="module" src="sidepanel.js"></script>');
+  assert.match(moduleScript, /src="firefox-boot\.js"/);
+  assert.ok(moduleScript.indexOf('href="firefox-sidebar.css"') < moduleScript.indexOf("</head>"));
+  assert.match(rewriteFirefoxSidepanelHtml('<script src="sidepanel.js" type="module"></script>'), /src="firefox-boot\.js"/);
   assert.match(rewriteFirefoxSidepanelHtml('<script src="../shared/mathjax-config.js"></script>'), /mathjax-config\.js/);
+  assert.match(firefoxSidebarCss(), /color-scheme: light dark/);
+  assert.match(firefoxSidebarCss(), /font: message-box/);
+  assert.match(firefoxSidebarCss(), /background: Canvas/);
+  assert.equal(
+    firefoxUserText("ChromeOS uses Chrome, chrome://extensions/shortcuts, chrome://downloads, the side panel, and the Chrome Web Store."),
+    "ChromeOS uses Firefox, about:addons, about:downloads, the sidebar, and the Add-ons Manager.",
+  );
+  assert.equal(firefoxUserText("chrome-extension://abc and Android Chrome and Chrome DevTools MCP"), "moz-extension://abc and an Android layout and a browser snapshot");
+  const catalogs = rewriteFirefoxMessages("en", {
+    qz_language: { message: "en" },
+    [HISTORICAL_LABELS_MESSAGE_ID]: { message: "Chrome" },
+    qz_example: { message: "Use Chrome and chrome://downloads" },
+  });
+  assert.equal(catalogs[HISTORICAL_LABELS_MESSAGE_ID].message, "Chrome");
+  assert.equal(catalogs.qz_language.message, "en");
+  assert.equal(catalogs.qz_example.message, "Use Firefox and about:downloads");
 });

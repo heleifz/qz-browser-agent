@@ -14,7 +14,7 @@ import { acquireBuildOutput, BuildOutputLockedError, getBuildProcessParentPid, i
 import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
-import { firefoxManifest, isFirefoxOnlySource, rewriteFirefoxLocaleFiles, rewriteFirefoxSidepanelHtml } from "./firefox-manifest.mjs";
+import { firefoxManifest, isFirefoxOnlySource, rewriteFirefoxLocaleFiles, rewriteFirefoxSidepanelHtml, writeFirefoxSidebarSkin } from "./firefox-manifest.mjs";
 import { copyRuntimeAssets, createDependencyGraph, encodeSourceMapPath, originalInputPath, originalSourceMapPath, packageAssets, recordDependencyBuild, stablePackagePaths, writeDependencyProvenance } from "./vendor/assets.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -153,6 +153,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
       await writeFile(manifestPath, `${JSON.stringify(firefoxManifest(manifest), null, 2)}\n`);
       const panelPath = resolve(compiled, "sidepanel/sidepanel.html");
       await writeFile(panelPath, rewriteFirefoxSidepanelHtml(await readFile(panelPath, "utf8")));
+      await writeFirefoxSidebarSkin(compiled);
       await rewriteFirefoxLocaleFiles(compiled);
     }
     const files = (await allFiles(compiled)).map(path => posix(relative(compiled, path)));
