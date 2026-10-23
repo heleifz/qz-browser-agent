@@ -41,9 +41,9 @@ window.QZ_EXAMPLES = {
   fallbackCopy: {
     en: {
       travel: {
-        title: "Three days in Hangzhou",
-        summary: "Checks sights, hours, and tickets, then merges them into a day-by-day plan.",
-        alt: "Three-day Hangzhou route from the session",
+        title: "Hangzhou photo gallery",
+        summary: "Five sights run as parallel tasks and collect their photos into one gallery.",
+        alt: "The gallery of Hangzhou photos from the session",
       },
       "llm-compare": {
         title: "Model comparison",
@@ -70,11 +70,12 @@ window.QZ_EXAMPLES = {
     zh: [
       {
         slug: "travel",
-        title: "杭州三日游",
-        summary: "查景点、开放时间和门票，汇成每日路线表。",
+        title: "杭州景点图集",
+        summary: "5 个景点各开一个子任务并行，找图汇成一个图集。",
         file: "examples/sessions/travel-zh.html",
-        poster: "assets/examples/travel-zh.webp",
-        alt: "杭州三日游的行程速览",
+        video: "assets/examples/travel-zh.mp4",
+        posterTime: 42,
+        alt: "并行找图后汇成的杭州景点图集",
       },
       {
         slug: "llm-compare",

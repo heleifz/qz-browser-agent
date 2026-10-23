@@ -84,3 +84,8 @@ the extension changes that runtime, regenerate the example pages and check
 `adaptSessionScript` against the new script. The generator stops when an
 expected rewrite target is missing, so a changed runtime cannot ship as a
 broken page.
+
+The shared-sheet check accepts a 0.1.4 export that differs only by
+`#app[data-consent-pending]` using `display: none !important` and
+`.data-image-gallery-strip` omitting `scrollbar-gutter: stable`. It still
+writes the 0.1.2 spelling and rejects every other difference.

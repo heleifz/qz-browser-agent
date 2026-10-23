@@ -508,16 +508,32 @@ function pageView(entry, localeId) {
   };
 }
 
+// 0.1.4 exports differ from the shared 0.1.2 sheet by exactly these two rules.
+// Fold them back to the 0.1.2 spelling before the compare and before writing
+// the shared sheet. Any other difference still fails the check.
+function normalizeSharedPanel(css) {
+  return css
+    .replace(
+      "#app[data-consent-pending] {\n    display: none !important;\n  }",
+      "#app[data-consent-pending] {\n    display: none;\n  }",
+    )
+    .replace(
+      ".data-image-gallery-strip {\n    grid-column: 1 / -1;\n    min-width: 0;\n    display: flex;\n    gap: 8px;\n    overflow-x: auto;\n    padding: 4px 2px 2px;\n  }",
+      ".data-image-gallery-strip {\n    grid-column: 1 / -1;\n    min-width: 0;\n    display: flex;\n    gap: 8px;\n    overflow-x: auto;\n    padding: 4px 2px 2px;\n    scrollbar-gutter: stable;\n  }",
+    );
+}
+
 function writeSharedSessionAssets(parts) {
-  const [first] = parts;
-  for (const part of parts.slice(1)) {
-    if (part.styles[0] !== first.styles[0] || part.styles[1] !== first.styles[1] || part.runtime !== first.runtime || part.labels !== first.labels) {
+  const normalized = parts.map((part) => ({ ...part, panel: normalizeSharedPanel(part.styles[0]) }));
+  const [first] = normalized;
+  for (const part of normalized.slice(1)) {
+    if (part.panel !== first.panel || part.styles[1] !== first.styles[1] || part.runtime !== first.runtime || part.labels !== first.labels) {
       throw new Error("session exports do not share one stylesheet and interaction script");
     }
   }
   const dir = path.join(websiteRoot, "assets/examples");
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "session-view.css"), adaptSessionCss(first.styles[0], first.styles[1]));
+  fs.writeFileSync(path.join(dir, "session-view.css"), adaptSessionCss(first.panel, first.styles[1]));
   fs.writeFileSync(path.join(dir, "session-view.js"), adaptSessionScript(first.runtime));
 }
 
