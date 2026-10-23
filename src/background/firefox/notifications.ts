@@ -8,7 +8,8 @@ export function installNotificationRenewal(chromeApi: NotificationChrome): void 
   const original = notifications.create.bind(notifications);
   const pending = new Map<string, { options: NotificationOptions; left: number }>();
   const wrapped: Marked = (notificationId: string, options: NotificationOptions = {}, callback?: (createdId: string) => void) => {
-    // Firefox 158 rejects requireInteraction before the alert is shown. priority stays; the schema allows it.
+    // Firefox 158's schema rejects requireInteraction before this function's
+    // original implementation runs. priority stays; the schema allows it.
     const renew = options.requireInteraction === true;
     const firefoxOptions = stripRequireInteraction(options);
     let noted = false;
@@ -45,8 +46,15 @@ export function installNotificationRenewal(chromeApi: NotificationChrome): void 
 }
 
 function stripRequireInteraction(options: NotificationOptions): NotificationOptions {
-  if (!Object.prototype.hasOwnProperty.call(options, "requireInteraction")) return options;
-  const next = { ...options };
+  // Always return a new plain object. Firefox still reports the field when it
+  // is inherited or wrapped, and the schema rejects that object before showAlert.
+  let next: NotificationOptions;
+  try {
+    next = JSON.parse(JSON.stringify(options ?? {})) as NotificationOptions;
+  } catch {
+    next = {};
+    for (const key of Object.keys(options || {})) next[key] = options[key];
+  }
   delete next.requireInteraction;
   return next;
 }

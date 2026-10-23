@@ -257,6 +257,35 @@ test("requireInteraction renews a notification until the user closes it", async 
   assert.equal(created, before);
 });
 
+test("an inherited requireInteraction is removed before Firefox validates the options", async () => {
+  const seen = [];
+  const browser = {
+    notifications: {
+      async create(id, options) {
+        if (options && "requireInteraction" in options) throw new Error('Unexpected property "requireInteraction"');
+        seen.push(options || {});
+        return id;
+      },
+      onClosed: { addListener(listener) { browser.closed = listener; } },
+      onClicked: { addListener() {} },
+    },
+  };
+  installNotificationRenewal(browser);
+  const options = Object.create({ requireInteraction: true });
+  options.type = "basic";
+  options.title = "inherited";
+  options.priority = 1;
+  await browser.notifications.create("inherited", options);
+  assert.equal("requireInteraction" in seen[0], false);
+  assert.equal(seen[0].type, "basic");
+  assert.equal(seen[0].title, "inherited");
+  assert.equal(seen[0].priority, 1);
+  browser.closed("inherited", false);
+  await Promise.resolve();
+  assert.equal(seen.length, 2);
+  assert.equal("requireInteraction" in seen[1], false);
+});
+
 test("a completion notification is created without requireInteraction and its click opens the sidebar", async () => {
   const seen = [];
   const opens = [];
