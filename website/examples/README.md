@@ -51,7 +51,7 @@ The poster is optional.
    ffmpeg -i input.mp4 -an -c:v libx264 -crf 28 -preset slow -vf "scale=1280:-2" -pix_fmt yuv420p -movflags +faststart website/assets/examples/<slug>-<locale>.mp4
    ```
 
-   Record or crop the recording to the browser window only, with no outer black margin (`ffmpeg -i in.mp4 -vf cropdetect -f null -` finds the crop, then `-vf crop=w:h:x:y`).
+   Record or crop the recording to the browser window only, with no outer black margin. `ffmpeg -i in.mp4 -vf cropdetect -f null -` finds the crop. This recording uses `-vf crop=1464:890:68:46`, which also removes the 1px window border on each side.
 
    Aim for 20–40 seconds and 5MB or less. The poster, whether you supply it or the
    generator extracts it, should be WebP about 840 pixels wide and 80KB or less.
