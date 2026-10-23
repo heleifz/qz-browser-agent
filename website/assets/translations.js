@@ -14,7 +14,7 @@ export const translations = {
       "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
-      "overviewTitle": "However messy the page, it becomes one table.",
+      "overviewTitle": "Web research, delivered as data.",
       "extendTitle": "Scripts, tools,<br>and custom UI.",
       "extendDescription": "This Wikipedia Skill finds city photos and displays the results in an image grid. Its instructions, scripts, and UI can be reused on another city’s page.",
       "ownershipTitle": "Local storage. Your model.",
