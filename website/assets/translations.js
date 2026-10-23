@@ -14,12 +14,12 @@ export const translations = {
       "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
-      "overviewTitle": "Web research, saved as data.",
+      "overviewTitle": "However messy the page, it becomes one table.",
       "extendTitle": "Scripts, tools,<br>and custom UI.",
       "extendDescription": "This Wikipedia Skill finds city photos and displays the results in an image grid. Its instructions, scripts, and UI can be reused on another city’s page.",
       "ownershipTitle": "Local storage. Your model.",
       "ownershipDescription": "Sessions, Skills, and collected data are stored in your browser. Use a compatible model service with tool calling, a local model server, or OpenAI Codex with ChatGPT sign-in.",
-      "ownershipPrivacy": "Task context is sent to your configured model service. Skills and MCP connections may exchange data with services you configure.",
+      "ownershipPrivacy": "No usage reporting. No account to create. qz runs no servers of its own. Task content goes only to the model you choose.",
       "ownershipLink": "Permissions &amp; data flow<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "Install qz",
       "startDescription": "Install from the Chrome Web Store, then connect your model service or sign in with ChatGPT.",
@@ -88,17 +88,29 @@ export const translations = {
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
       "exampleDownload": "Import into qz to continue",
-      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-zh.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Hangzhou photo gallery</h3>\n      <p>Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-zh.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"Building a Skill from the HN front page\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Turn Hacker News into a Skill</h3>\n      <p>Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-zh.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>GitHub weekly roundup</h3>\n      <p>Reads this week's Trending list, puts it into a table, and writes a short weekly summary.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/pelican/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/pelican-zh.webp\"><img src=\"./assets/examples/pelican-zh-card.gif\" width=\"840\" height=\"558\" alt=\"A pelican on a bicycle, drawn with the mouse on a canvas\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>The beloved pelican on a bicycle</h3>\n      <p>Operating the interface like a person.</p>\n    </a>",
-      "example-travel-title": "Hangzhou photo gallery",
-      "example-travel-summary": "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.",
+      "examplesGrid": "    <a class=\"example-card\" href=\"./examples/en/travel/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/travel-en.webp\"><img src=\"./assets/examples/travel-zh-card.gif\" width=\"840\" height=\"510\" alt=\"The gallery of Hangzhou photos from the session\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Hangzhou attractions gallery</h3>\n      <p>5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/en/hn-skill/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/hn-skill-en.webp\"><img src=\"./assets/examples/hn-skill-zh-card.gif\" width=\"840\" height=\"510\" alt=\"Building a Skill from the HN front page\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Turn Hacker News into a Skill</h3>\n      <p>Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/en/github-weekly/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/github-weekly-en.webp\"><img src=\"./assets/examples/github-weekly-zh-card.gif\" width=\"840\" height=\"510\" alt=\"This week's trending list and the project table\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>Weekly GitHub trending digest</h3>\n      <p>Reads this week's Trending list, puts it into a table, and writes a short weekly summary.</p>\n    </a>\n    <a class=\"example-card\" href=\"./examples/en/pelican/\">\n      <span class=\"example-cover\"><picture><source media=\"(prefers-reduced-motion: reduce)\" srcset=\"./assets/examples/pelican-en.webp\"><img src=\"./assets/examples/pelican-zh-card.gif\" width=\"840\" height=\"558\" alt=\"A pelican on a bicycle, drawn with the mouse on a canvas\" loading=\"lazy\" decoding=\"async\"></picture></span>\n      <h3>A pelican riding a bicycle</h3>\n      <p>Operating the UI like a person.</p>\n    </a>",
+      "example-travel-title": "Hangzhou attractions gallery",
+      "example-travel-summary": "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.",
       "example-hn-skill-title": "Turn Hacker News into a Skill",
       "example-hn-skill-summary": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
       "example-hn-skill-first": "Create the Skill",
       "example-hn-skill-reuse": "Reuse in one sentence",
-      "example-github-weekly-title": "GitHub weekly roundup",
+      "example-github-weekly-title": "Weekly GitHub trending digest",
       "example-github-weekly-summary": "Reads this week's Trending list, puts it into a table, and writes a short weekly summary.",
-      "example-pelican-title": "The beloved pelican on a bicycle",
-      "example-pelican-summary": "Operating the interface like a person."
+      "example-pelican-title": "A pelican riding a bicycle",
+      "example-pelican-summary": "Operating the UI like a person.",
+      "example-en-travel-title": "Hangzhou attractions gallery",
+      "example-en-travel-summary": "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.",
+      "example-en-hn-skill-title": "Turn Hacker News into a Skill",
+      "example-en-hn-skill-summary": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
+      "example-en-hn-skill-reuse": "Reuse in one sentence",
+      "example-en-hn-skill-reuse-title": "Turn Hacker News into a Skill",
+      "example-en-hn-skill-reuse-summary": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
+      "example-en-hn-skill-reuse-first": "Create the Skill",
+      "example-en-github-weekly-title": "Weekly GitHub trending digest",
+      "example-en-github-weekly-summary": "Reads this week's Trending list, puts it into a table, and writes a short weekly summary.",
+      "example-en-pelican-title": "A pelican riding a bicycle",
+      "example-en-pelican-summary": "Operating the UI like a person."
       /* example-html:en:end */
     },
     "attributes": {
@@ -204,7 +216,7 @@ export const translations = {
       },
       /* example-attr:en:start */
       "example-travel-description": {
-        "content": "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery."
+        "content": "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery."
       },
       "example-hn-skill-description": {
         "content": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence."
@@ -213,7 +225,7 @@ export const translations = {
         "content": "Reads this week's Trending list, puts it into a table, and writes a short weekly summary."
       },
       "example-pelican-description": {
-        "content": "Operating the interface like a person."
+        "content": "Operating the UI like a person."
       },
       "example-travel-poster": {
         "alt": "The gallery of Hangzhou photos from the session",
@@ -232,6 +244,41 @@ export const translations = {
         "aria-label": "This week's trending list and the project table"
       },
       "example-pelican-poster": {
+        "alt": "A pelican on a bicycle, drawn with the mouse on a canvas",
+        "aria-label": "A pelican on a bicycle, drawn with the mouse on a canvas"
+      },
+      "example-en-travel-description": {
+        "content": "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery."
+      },
+      "example-en-travel-poster": {
+        "alt": "The gallery of Hangzhou photos from the session",
+        "aria-label": "The gallery of Hangzhou photos from the session"
+      },
+      "example-en-hn-skill-description": {
+        "content": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence."
+      },
+      "example-en-hn-skill-poster": {
+        "alt": "Building a Skill from the HN front page",
+        "aria-label": "Building a Skill from the HN front page"
+      },
+      "example-en-hn-skill-reuse-description": {
+        "content": "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence."
+      },
+      "example-en-hn-skill-reuse-poster": {
+        "alt": "Reusing the saved Skill in a new session to read Show HN",
+        "aria-label": "Reusing the saved Skill in a new session to read Show HN"
+      },
+      "example-en-github-weekly-description": {
+        "content": "Reads this week's Trending list, puts it into a table, and writes a short weekly summary."
+      },
+      "example-en-github-weekly-poster": {
+        "alt": "This week's trending list and the project table",
+        "aria-label": "This week's trending list and the project table"
+      },
+      "example-en-pelican-description": {
+        "content": "Operating the UI like a person."
+      },
+      "example-en-pelican-poster": {
         "alt": "A pelican on a bicycle, drawn with the mouse on a canvas",
         "aria-label": "A pelican on a bicycle, drawn with the mouse on a canvas"
       }
@@ -335,7 +382,19 @@ export const translations = {
       "example-github-weekly-title": "GitHub 周榜整理",
       "example-github-weekly-summary": "读完本周 Trending 榜单，整理成表，再写好一段周报总结。",
       "example-pelican-title": "喜闻乐见的鹈鹕骑自行车",
-      "example-pelican-summary": "像人一样操作界面"
+      "example-pelican-summary": "像人一样操作界面",
+      "example-en-travel-title": "杭州景点图集",
+      "example-en-travel-summary": "5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。",
+      "example-en-hn-skill-title": "将 Hacker News 变成 Skill",
+      "example-en-hn-skill-summary": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。",
+      "example-en-hn-skill-reuse": "一句话复用",
+      "example-en-hn-skill-reuse-title": "将 Hacker News 变成 Skill",
+      "example-en-hn-skill-reuse-summary": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。",
+      "example-en-hn-skill-reuse-first": "创建 Skill",
+      "example-en-github-weekly-title": "GitHub 周榜整理",
+      "example-en-github-weekly-summary": "读完本周 Trending 榜单，整理成表，再写好一段周报总结。",
+      "example-en-pelican-title": "喜闻乐见的鹈鹕骑自行车",
+      "example-en-pelican-summary": "像人一样操作界面"
       /* example-html:zh:end */
     },
     "attributes": {
@@ -469,6 +528,41 @@ export const translations = {
         "aria-label": "本周榜单和整理出的项目表"
       },
       "example-pelican-poster": {
+        "alt": "用鼠标在画布上画出的骑自行车的鹈鹕",
+        "aria-label": "用鼠标在画布上画出的骑自行车的鹈鹕"
+      },
+      "example-en-travel-description": {
+        "content": "5 个景点，5 个子任务同时开跑，各自找图，最后汇成一份图集。"
+      },
+      "example-en-travel-poster": {
+        "alt": "并行找图后汇成的杭州景点图集",
+        "aria-label": "并行找图后汇成的杭州景点图集"
+      },
+      "example-en-hn-skill-description": {
+        "content": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。"
+      },
+      "example-en-hn-skill-poster": {
+        "alt": "整理 HN 热帖并生成 Skill 的过程",
+        "aria-label": "整理 HN 热帖并生成 Skill 的过程"
+      },
+      "example-en-hn-skill-reuse-description": {
+        "content": "整理首页前 5 条帖子，再把这套做法存成 Skill，下次一句话就能用。"
+      },
+      "example-en-hn-skill-reuse-poster": {
+        "alt": "新会话里用已保存的 Skill 查看 Show HN 热帖",
+        "aria-label": "新会话里用已保存的 Skill 查看 Show HN 热帖"
+      },
+      "example-en-github-weekly-description": {
+        "content": "读完本周 Trending 榜单，整理成表，再写好一段周报总结。"
+      },
+      "example-en-github-weekly-poster": {
+        "alt": "本周榜单和整理出的项目表",
+        "aria-label": "本周榜单和整理出的项目表"
+      },
+      "example-en-pelican-description": {
+        "content": "像人一样操作界面"
+      },
+      "example-en-pelican-poster": {
         "alt": "用鼠标在画布上画出的骑自行车的鹈鹕",
         "aria-label": "用鼠标在画布上画出的骑自行车的鹈鹕"
       }

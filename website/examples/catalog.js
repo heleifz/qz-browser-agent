@@ -43,13 +43,13 @@ window.QZ_EXAMPLES = {
   fallbackCopy: {
     en: {
       travel: {
-        title: "Hangzhou photo gallery",
-        summary: "Five sights, five tasks running at once. Each finds its own photos, and they come together as one gallery.",
+        title: "Hangzhou attractions gallery",
+        summary: "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.",
         alt: "The gallery of Hangzhou photos from the session",
       },
       pelican: {
-        title: "The beloved pelican on a bicycle",
-        summary: "Operating the interface like a person.",
+        title: "A pelican riding a bicycle",
+        summary: "Operating the UI like a person.",
         alt: "A pelican on a bicycle, drawn with the mouse on a canvas",
       },
       "hn-skill": {
@@ -62,7 +62,7 @@ window.QZ_EXAMPLES = {
         related: { first: "Create the Skill", reuse: "Reuse in one sentence" },
       },
       "github-weekly": {
-        title: "GitHub weekly roundup",
+        title: "Weekly GitHub trending digest",
         summary: "Reads this week's Trending list, puts it into a table, and writes a short weekly summary.",
         alt: "This week's trending list and the project table",
       },
@@ -126,6 +126,65 @@ window.QZ_EXAMPLES = {
         alt: "用鼠标在画布上画出的骑自行车的鹈鹕",
       },
     ],
-    en: [],
+    // Placeholder English pages: English copy and page chrome, but they still
+    // point at the Chinese recordings and sessions. When the English recording
+    // and export for a slug exist, change its file, video, cardGif and posterTime.
+    en: [
+      {
+        slug: "travel",
+        title: "Hangzhou attractions gallery",
+        summary: "5 sub-tasks run at once, each finds its own pictures, and the results merge into one gallery.",
+        file: "../website-src/sessions/travel-zh.html",
+        video: "assets/examples/travel-zh.mp4",
+        cardGif: "assets/examples/travel-zh-card.gif",
+        posterTime: 42,
+        alt: "The gallery of Hangzhou photos from the session",
+      },
+      {
+        slug: "hn-skill",
+        session: "first",
+        title: "Turn Hacker News into a Skill",
+        summary: "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
+        file: "../website-src/sessions/hn-skill-zh.html",
+        video: "assets/examples/hn-skill-zh.mp4",
+        cardGif: "assets/examples/hn-skill-zh-card.gif",
+        posterTime: 30,
+        alt: "Building a Skill from the HN front page",
+        related: [{ slug: "hn-skill-reuse", id: "reuse", label: "Reuse in one sentence" }],
+      },
+      {
+        slug: "hn-skill-reuse",
+        group: "hn-skill",
+        session: "reuse",
+        card: false,
+        title: "Turn Hacker News into a Skill",
+        summary: "Sorts out the top 5 posts on the front page, then saves the method as a Skill you can reuse with one sentence.",
+        file: "../website-src/sessions/hn-skill-reuse-zh.html",
+        video: "assets/examples/hn-skill-reuse-zh.mp4",
+        posterTime: 14,
+        alt: "Reusing the saved Skill in a new session to read Show HN",
+        related: [{ slug: "hn-skill", id: "first", label: "Create the Skill" }],
+      },
+      {
+        slug: "github-weekly",
+        title: "Weekly GitHub trending digest",
+        summary: "Reads this week's Trending list, puts it into a table, and writes a short weekly summary.",
+        file: "../website-src/sessions/github-weekly-zh.html",
+        video: "assets/examples/github-weekly-zh.mp4",
+        cardGif: "assets/examples/github-weekly-zh-card.gif",
+        posterTime: 28,
+        alt: "This week's trending list and the project table",
+      },
+      {
+        slug: "pelican",
+        title: "A pelican riding a bicycle",
+        summary: "Operating the UI like a person.",
+        file: "../website-src/sessions/pelican-zh.html",
+        video: "assets/examples/pelican-zh.mp4",
+        cardGif: "assets/examples/pelican-zh-card.gif",
+        posterTime: 40,
+        alt: "A pelican on a bicycle, drawn with the mouse on a canvas",
+      },
+    ],
   },
 };

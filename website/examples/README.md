@@ -2,11 +2,12 @@
 
 Homepage cards and detail pages are generated from [`catalog.js`](catalog.js).
 Chinese and English are separate lists, `locales.zh` and `locales.en`. Pages are
-`examples/<slug>/` and `examples/en/<slug>/`. `fallback` is `"zh"`: while
-`locales.en` is empty, the English homepage shows the Chinese examples with the
-English title, summary, and alt in `fallbackCopy.en`, and those cards link to the
-Chinese pages. Adding any English entry turns that fallback off for the whole
-English list.
+`examples/<slug>/` and `examples/en/<slug>/`. For now the English entries are
+placeholders: English copy and page chrome, but they still point at the Chinese
+recordings and exports. When the English recording and export for a slug exist,
+change that entry's `file`, `video`, `cardGif`, and `posterTime`. `fallback` is
+`"zh"`: only while `locales.en` is empty does the English homepage show the
+Chinese examples with `fallbackCopy.en` and link to the Chinese pages.
 
 Do not hand-edit generated HTML or the marked blocks in `assets/translations.js`.
 
