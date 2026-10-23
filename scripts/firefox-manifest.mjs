@@ -149,6 +149,9 @@ const FIREFOX_SYSTEM_COLOR_VARS = `
  * variables; an empty built-in theme leaves this base in place.
  * Toolbar icon buttons stay transparent until hover (currentColor 17%, active
  * 30%). Filled buttons use ButtonFace until a toolbar color replaces it.
+ * Primary buttons keep AccentColor. Hover, active, and disabled paint a black
+ * veil over that fill. Mixing AccentColor into Canvas is not used: that
+ * interpolation can collapse to the light surface and leave white text on grey.
  * Focus is a 2px accent outline. Readable secondary text is a CanvasText mix
  * that stays at least 4.5:1 on light Canvas and on the dark sidebar. GrayText
  * is only a placeholder.
@@ -197,10 +200,16 @@ ${FIREFOX_SYSTEM_COLOR_VARS}
   --control-border: var(--qz-ff-popup-border);
   --control-border-hover: color-mix(in srgb, var(--qz-ff-toolbar-text) 28%, transparent);
   --control-primary-surface: var(--qz-ff-accent);
-  --control-primary-surface-hover: color-mix(in srgb, var(--qz-ff-accent) 86%, var(--qz-ff-toolbar));
+  --control-primary-surface-hover: var(--qz-ff-accent);
   --control-primary-text: var(--qz-ff-accent-text);
   --control-focus-ring: 0 0 0 2px var(--qz-ff-accent);
-  --control-radius: 4px;
+  --control-radius: 8px;
+  --control-disabled-opacity: 1;
+  --qz-ff-primary-hover-veil: 14%;
+  --qz-ff-primary-active-veil: 22%;
+  --qz-ff-primary-disabled-veil: 14%;
+  --qz-ff-button-hover-veil: 10%;
+  --qz-ff-button-active-veil: 18%;
   --field-surface: var(--qz-ff-toolbar-field);
   --field-text: var(--qz-ff-toolbar-field-text);
   --field-border: var(--qz-ff-popup-border);
@@ -239,7 +248,7 @@ ${FIREFOX_SYSTEM_COLOR_VARS}
   --send-standby-bg: color-mix(in srgb, var(--qz-ff-toolbar-text) 14%, var(--qz-ff-toolbar));
   --send-standby-mark: color-mix(in srgb, var(--qz-ff-toolbar-text) 62%, var(--qz-ff-toolbar));
   --qz-scrollbar-size: 8px;
-  --qz-scrollbar-thumb: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent);
+  --qz-scrollbar-thumb: color-mix(in srgb, var(--qz-ff-toolbar-text) 42%, transparent);
   --radius-sm: 4px;
   --radius-md: 4px;
   --radius-lg: 8px;
@@ -255,7 +264,7 @@ body,
   background: var(--qz-ff-toolbar);
   color: var(--qz-ff-toolbar-text);
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 42%, transparent) transparent;
 }
 
 ::selection {
@@ -352,22 +361,93 @@ body,
 }
 
 .qz-btn {
-  border-radius: 4px;
-  background: var(--qz-ff-button);
+  border-radius: 8px;
+  background-color: var(--qz-ff-button);
+  background-image: none;
   color: var(--qz-ff-button-text);
   box-shadow: none;
 }
 
 .qz-btn--primary {
-  background: var(--qz-ff-accent);
+  background-color: var(--qz-ff-accent);
+  background-image: none;
   color: var(--qz-ff-accent-text);
 }
 
 .qz-btn--ghost,
 .qz-btn--inline {
   border-color: transparent;
-  background: transparent;
+  background-color: transparent;
+  background-image: none;
   color: var(--qz-ff-toolbar-text);
+}
+
+.qz-btn--danger {
+  background-color: transparent;
+  background-image: none;
+  color: var(--red);
+}
+
+.qz-btn:not(:disabled):not(.qz-btn--primary):not(.qz-btn--ghost):not(.qz-btn--inline):not(.qz-btn--danger):hover {
+  background-color: var(--qz-ff-button);
+  background-image: linear-gradient(rgb(0 0 0 / var(--qz-ff-button-hover-veil)), rgb(0 0 0 / var(--qz-ff-button-hover-veil)));
+  color: var(--qz-ff-button-text);
+}
+
+.qz-btn:not(:disabled):not(.qz-btn--primary):not(.qz-btn--ghost):not(.qz-btn--inline):not(.qz-btn--danger):active {
+  background-color: var(--qz-ff-button);
+  background-image: linear-gradient(rgb(0 0 0 / var(--qz-ff-button-active-veil)), rgb(0 0 0 / var(--qz-ff-button-active-veil)));
+  color: var(--qz-ff-button-text);
+}
+
+.qz-btn--ghost:not(:disabled):hover,
+.qz-btn--inline:not(:disabled):hover,
+.qz-btn--danger:not(:disabled):hover {
+  background-color: transparent;
+  background-image: linear-gradient(color-mix(in srgb, currentColor 14%, transparent), color-mix(in srgb, currentColor 14%, transparent));
+}
+
+.qz-btn--danger:not(:disabled):hover,
+.qz-btn--danger:not(:disabled):active {
+  color: var(--red);
+}
+
+.qz-btn--ghost:not(:disabled):active,
+.qz-btn--inline:not(:disabled):active,
+.qz-btn--danger:not(:disabled):active {
+  background-image: linear-gradient(color-mix(in srgb, currentColor 24%, transparent), color-mix(in srgb, currentColor 24%, transparent));
+}
+
+.qz-btn--primary:not(:disabled):hover,
+.send-btn:not(:disabled):hover {
+  background-color: var(--qz-ff-accent);
+  background-image: linear-gradient(rgb(0 0 0 / var(--qz-ff-primary-hover-veil)), rgb(0 0 0 / var(--qz-ff-primary-hover-veil)));
+  color: var(--qz-ff-accent-text);
+}
+
+.qz-btn--primary:not(:disabled):active,
+.send-btn:not(:disabled):active {
+  background-color: var(--qz-ff-accent);
+  background-image: linear-gradient(rgb(0 0 0 / var(--qz-ff-primary-active-veil)), rgb(0 0 0 / var(--qz-ff-primary-active-veil)));
+  color: var(--qz-ff-accent-text);
+}
+
+.qz-btn:disabled,
+.qz-icon-btn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.qz-btn--primary:disabled,
+.send-btn:disabled {
+  background-color: var(--qz-ff-accent);
+  background-image: linear-gradient(rgb(0 0 0 / var(--qz-ff-primary-disabled-veil)), rgb(0 0 0 / var(--qz-ff-primary-disabled-veil)));
+  color: var(--qz-ff-accent-text);
+}
+
+.qz-btn:disabled:not(.qz-btn--primary),
+.qz-icon-btn:disabled {
+  color: color-mix(in srgb, var(--qz-ff-toolbar-text) 62%, var(--qz-ff-toolbar));
 }
 
 .qz-btn:focus-visible,
@@ -384,7 +464,32 @@ body,
 .qz-field,
 .input-wrapper,
 #input {
-  border-radius: 4px;
+  border-radius: 8px;
+}
+
+.qz-field:hover:not(:disabled):not(:focus),
+.input-wrapper:hover {
+  border-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 42%, transparent);
+  background-color: var(--qz-ff-toolbar-field);
+  color: var(--qz-ff-toolbar-field-text);
+}
+
+.qz-field:disabled,
+.qz-field[readonly] {
+  opacity: 1;
+  background-color: var(--qz-ff-toolbar-field);
+  color: var(--qz-ff-toolbar-field-text);
+}
+
+.tool-timeline-step:hover,
+.tool-timeline-step:focus-visible,
+.compact-node:hover,
+.tool-family-row:hover,
+.qz-menu-item:hover,
+.qz-list-toolbar-tab:hover,
+.waiting-option:hover {
+  background-color: color-mix(in srgb, var(--qz-ff-popup-text) 8%, var(--qz-ff-popup));
+  color: var(--qz-ff-popup-text);
 }
 
 .qz-field,
@@ -406,9 +511,10 @@ input::placeholder {
 }
 
 .send-btn {
-  background: var(--qz-ff-accent);
+  background-color: var(--qz-ff-accent);
+  background-image: none;
   color: var(--qz-ff-accent-text);
-  border-radius: 4px;
+  border-radius: 8px;
 }
 
 .msg-assistant .msg-content,
@@ -452,8 +558,8 @@ input::placeholder {
 }
 
 .tool-timeline-step.active {
-  background: color-mix(in srgb, var(--qz-ff-accent) 12%, var(--qz-ff-popup));
-  border-color: color-mix(in srgb, var(--qz-ff-accent) 45%, transparent);
+  background-color: color-mix(in srgb, var(--qz-ff-popup-text) 8%, var(--qz-ff-popup));
+  border-color: var(--qz-ff-accent);
   color: var(--qz-ff-popup-text);
   box-shadow: none;
 }
@@ -462,7 +568,7 @@ input::placeholder {
 .qz-scroll:not(.qz-scroll--native),
 .qz-scroll:not(.qz-scroll--native):is(:hover, :focus-within) {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 42%, transparent) transparent;
 }
 `;
 }
