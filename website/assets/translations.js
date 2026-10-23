@@ -256,7 +256,7 @@ export const translations = {
       "extendDescription": "这个 Wikipedia Skill 提取城市照片，并用图片网格展示结果。指令、脚本与界面保存在一起，换一个城市页面也能复用。",
       "ownershipTitle": "本地存储，自选模型。",
       "ownershipDescription": "会话、Skill 和采集的数据保存在浏览器中。选择支持工具调用的兼容模型服务、本地模型，或通过 OpenAI Codex 用 ChatGPT 账号登录。",
-      "ownershipPrivacy": "任务上下文会发送至你配置的模型服务。Skill 和 MCP 连接也可能与你配置的服务交换数据。",
+      "ownershipPrivacy": "不上报使用数据，不用注册账号，轻舟没有自己的服务器。任务内容只发给你选的模型。",
       "ownershipLink": "权限与数据流说明<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M6 18 18 6M6 6h12v12\"></path></svg>",
       "startTitle": "安装轻舟",
       "startDescription": "从 Chrome 应用商店安装，再连接模型服务或用 ChatGPT 账号登录。",
