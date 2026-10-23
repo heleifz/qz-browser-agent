@@ -25,7 +25,7 @@ does not launch Firefox. `npm run verify:firefox` builds this package and loads 
 | Storage | Sessions, settings, and Skills use `storage.local` and the extension origin, the same repository calls as Chrome. `unlimitedStorage` stays. | The data lives in the Firefox profile for this add-on. It does not follow a Chrome profile or a Google account. |
 | Identity | `browser_specific_settings.gecko.id` is `qz-browser-agent@heleifz.github.io`. `strict_min_version` is `139.0`. The Chrome `key` is omitted. | The id is provisional. Changing it later changes stored data. The minimum version exists because `tabGroups` starts in Firefox 139. |
 | Data collection | `data_collection_permissions.required` is `websiteContent`. `optional` is `locationInfo`, `browsingActivity`, and `bookmarksInfo`. | The field is Firefox-only. `none` is not declared: page content is sent to the configured model, and location, history, and bookmarks can be sent when those features are used. |
-| Appearance | `sidepanel/firefox-sidebar.css` sets `color-scheme: light dark`. Inside `@media (prefers-color-scheme)` the skin sets the shared tokens from the system colors `Canvas`, `CanvasText`, `ButtonFace`, `ButtonText`, `Field`, `FieldText`, `AccentColor`, `GrayText`, and `Highlight`. On load the sidebar calls `theme.getCurrent(windowId)` and listens to `theme.onUpdated` for that window. When `colors` is present it copies `frame`, `toolbar`, `toolbar_text`, `toolbar_field`, `toolbar_field_text`, `popup`, `popup_text`, `popup_border`, and `accentcolor` onto `:root`. Primary buttons use `AccentColor` and `AccentColorText`. Hover, active, and disabled paint a black veil over that fill. Secondary buttons veil `ButtonFace` the same way. Focus is a 2px `AccentColor` outline. Button radius is 8px. | Built-in Light, Dark, and System themes often return no colors (`{}` or `colors: null`). The system-color base covers those. The package does not call `theme.update`, does not declare the `theme` permission, and does not ship a static `theme` key. Primary hover does not mix `AccentColor` into `Canvas`: that mix can resolve to the light page surface while the label stays white. The controls are still the shared widgets. Firefox does not give an extension the browser's XUL widgets, and the sidebar title and close button are Firefox chrome outside this document. `browser_style` is not set; Firefox warns that it is deprecated. |
+| Appearance | `sidepanel/firefox-sidebar.css` sets `color-scheme: light dark` and replaces the shared tokens with `--qz-ff-*` tokens built from `Canvas`, `CanvasText`, `AccentColor`, and `AccentColorText`. See [Sidebar skin](#sidebar-skin). | Built-in Light, Dark, and System themes often return no colors (`{}` or `colors: null`), so the system colors apply. The controls are still the shared widgets: Firefox does not give an extension its XUL widgets, and the sidebar title and close button are Firefox chrome outside this document. `browser_style` is not set; Firefox warns that it is deprecated. |
 
 ## Sidebar
 
@@ -35,15 +35,45 @@ when a tab id is present, then `sidebarAction.open()` with no arguments. Firefox
 `sidebar_action.json` defines `open`, `close`, and `toggle` with an empty parameter list and
 `requireUserInput: true`. Passing `{ windowId }` is not in that schema.
 
-A content-script message is not a user-input handler, so the session-import jump cannot call
-`sidebarAction.open()` on that turn. The import still stores the session. The failed open sets
-the toolbar badge to `!` and creates notification `qz-open-sidebar`. English UI copy is
-`Click this notification to open the sidebar.` Chinese UI copy is `点击此通知打开侧边栏。`
-The notification click calls `sidebarAction.open()` with no arguments and clears the badge. The
-toolbar click clears the badge and toggles the sidebar. `action.openPopup` is not used: this
-package has no `default_popup`, and `openPopup` has the same user-input requirement. Content
-scripts do not receive `sidebarAction`. The import event stays available for 15 seconds, so a
-prompt click in that window still selects the imported session.
+Firefox runs `sidebarAction.open()` only while the extension handles user input. The child API
+checks `windowUtils.isHandlingUserInput` and otherwise rejects with
+`sidebarAction.open may only be called from a user input handler`. Firefox 158 sets that flag
+only for events declared with `inputHandling: true`: `browserAction.onClicked`,
+`commands.onCommand`, `pageAction.onClicked`, and `omnibox`. Menu clicks run inside
+`withHandlingUserInput`. `ext-notifications.js`
+declares `notifications.onClicked` without it, so a notification click is not user input on any
+platform. Focusing the window first with `windows.update({ focused: true })` does not change that
+flag. A content-script message is not user input either, so the session-import jump and
+"Continue in qz" cannot open the sidebar on that turn. The import still stores the session.
+
+When Firefox refuses an open, the wrapper does the following:
+
+1. It logs `[轻舟] firefox sidebarAction failed (<source>): <Firefox message>` with
+   `console.error` in the background console. `<source>` is `api`, `notification`, or `toolbar`.
+2. It updates the `qzFirefoxSidebar` counters on the background global.
+3. It rejects with `Firefox opens the sidebar only from the toolbar button, the sidebar shortcut,
+   or a menu item.` followed by Firefox's message.
+4. When `sidebarAction.isOpen({})` reports that the sidebar is closed, it sets the toolbar badge
+   to `!` and the tooltip to `qz: click to open the sidebar` (`轻舟：点击打开侧边栏`). An open
+   sidebar already shows the result, so it gets no badge.
+5. The first refusal in a cycle also creates notification `qz-open-sidebar` with
+   `Click the qz icon in the toolbar to view.` (`点击工具栏中的轻舟图标查看。`). A refusal that
+   started inside a notification click never creates a notification.
+
+Clicking `qz-open-sidebar` still calls `sidebarAction.open()` once. A future Firefox that marks
+the click as user input would open the sidebar. On Firefox 158 the click logs the real error with
+source `notification`, closes the notification, focuses the last browser window, and leaves the
+badge on the toolbar button.
+
+The badge, tooltip, and notification clear whenever the sidebar page connects its `sidepanel`
+runtime port. That covers the toolbar button, the `_execute_sidebar_action` shortcut, the sidebar
+switcher, and the View menu. A successful open also clears them. Clearing resets the prompt, so a
+later import prompts again.
+
+`action.openPopup` is not used: this package has no `default_popup`, and `openPopup` has the same
+user-input requirement. Content scripts do not receive `sidebarAction`. The import event stays
+available for 15 seconds, so opening the sidebar from the toolbar in that window still selects the
+imported session.
 
 No extension entry opens `sidepanel/sidepanel.html` as a browser tab. The toolbar button,
 `_execute_sidebar_action`, the sidebar menu, and a later open after consent use Firefox's sidebar
@@ -52,10 +82,66 @@ manual navigation.
 
 | Feature | Firefox behavior | Known limitation |
 | --- | --- | --- |
-| Opening | `open()` runs inside the user-gesture turn and is not preceded by `windows.update`. `setPanel` records the sidebar document for that tab and is not awaited, so the gesture is still current when `open()` runs. The toolbar path calls `toggle()` when Firefox provides it. A call Firefox rejects for lack of user input keeps that rejection, sets badge `!`, and shows `qz-open-sidebar`. The notification click opens the sidebar. | Firefox draws one sidebar for the window and chooses the side. `open()` cannot target a tab or a window. A call outside a user gesture is not retried and does not open a tab. The error is `Firefox opens the sidebar only during a user gesture, such as a toolbar click, shortcut, or notification click.` The toolbar listener logs `[轻舟] firefox sidebar did not open:` and that sentence. The deferred open logs the same prefix and the notification sentence. |
+| Opening | `open()` runs inside the user-gesture turn and is not preceded by `windows.update`. `setPanel` records the sidebar document for that tab and is not awaited, so the gesture is still current when `open()` runs. The toolbar path calls `toggle()` when Firefox provides it. A refused call follows the steps above. | Firefox draws one sidebar for the window and chooses the side. `open()` cannot target a tab or a window. A refused call is not retried and does not open a tab. A notification click cannot open the sidebar on Firefox 158. |
+| Diagnostics | `qzFirefoxSidebar` in the background console holds `attempts`, `opened`, `refused`, `prompts`, `notified`, `notificationClicks`, `lastSource`, `lastError`, and `lastAt`. Every refusal is also logged with `console.error`. No debug flag is needed. | The counters reset when Firefox restarts the event page. |
 | Per-tab panel | `setPanel({ tabId, panel })` is Firefox's tab-scoped panel URL. Other tabs keep the default panel. The package does not call `setPanel` with an empty string. | The open or closed state is still one per window. Firefox 158 has no API that opens the sidebar for one tab and leaves it closed in another. Switching tabs can show that tab's panel document, which for this package is the same `sidepanel.html`. |
 | Focus | Composer focus still uses `visibilitychange` and `focus`. | There is no `sidePanel.onOpened`. |
 | Closing | A programmatic open does not close a sidebar that is already open. The toolbar button toggles, which matches Firefox's toolbar convention and Chrome's `openPanelOnActionClick` toggle. | Chrome's side panel and Firefox's sidebar are different frames. |
+
+## Exported conversations
+
+An exported conversation shows **Continue in qz** when `content/session-export-bridge.js` finds
+its `qingzhou-session-exchange` payload. `isAllowedSessionExchangeLocation` accepts `file:`,
+loopback HTTP, and the HTTPS allowlist in both browsers. The click imports the session, then asks
+for the sidebar as described in [Sidebar](#sidebar).
+
+| Feature | Firefox behavior | Known limitation |
+| --- | --- | --- |
+| Local file | Firefox injects the bridge into a `file:` page only after the user turns on **Access local files on your computer** for the add-on in `about:addons` → Permissions. In Firefox 158.0.1 the same export page received no bridge reply before that switch and replied after `internal:fileSchemeAllowed` was granted. | Without the switch a `file:` export has no button. `http://127.0.0.1` and `http://localhost` pages work without it. The tool error for `file:` tabs names the same switch; the export page itself cannot show it, because no extension script runs there. |
+| Repeated imports | Each click imports a new session with the exported title. | Chrome behaves the same: the shared `importSessionExchangeRuntime` creates a session for every import and does not look for an earlier copy, so several sessions can share one title. |
+
+## Check on macOS
+
+Headless Linux runs the Firefox suite. Notification delivery, the macOS system accent, and focus
+handling still need a Mac. Load the package and read the background console:
+
+1. Run `npm run build -- --browser firefox`, open `about:debugging#/runtime/this-firefox`, choose
+   **Load Temporary Add-on**, and select `dist/extension-firefox/manifest.json`.
+2. Allow notifications for Firefox in macOS System Settings → Notifications.
+3. Choose **Inspect** next to qz. Close the sidebar, then run this in the console:
+
+   ```js
+   setTimeout(() => chrome.sidePanel.open({}).then(
+     () => console.log("PROBE opened"),
+     error => console.log("PROBE refused:", error.message),
+   ), 0);
+   ```
+
+   The console prints `[轻舟] firefox sidebarAction failed (api): …` and `PROBE refused: …`. The
+   toolbar icon shows `!` and the hint notification appears.
+4. Click the hint notification, then run `qzFirefoxSidebar`. `notificationClicks` grows by one,
+   `lastSource` is `notification`, and `lastError` is Firefox's own message. `notified` does not
+   change, and no second notification appears.
+5. Check the click without qz code in the path:
+
+   ```js
+   browser.notifications.onClicked.addListener(id => {
+     if (id !== "qz-probe") return;
+     browser.sidebarAction.open().then(
+       () => console.log("PROBE notification opened"),
+       error => console.error("PROBE notification refused:", error.message),
+     );
+   });
+   browser.notifications.create("qz-probe", { type: "basic", title: "qz probe", message: "Click me" });
+   ```
+
+   Click the notification and copy the console line. `refused` with
+   `may only be called from a user input handler` confirms the Firefox 158 source reading on
+   macOS. `opened` means macOS Firefox treats the click as input, and the hint copy can change.
+6. Open the sidebar with Cmd+Shift+K, the sidebar switcher, or the toolbar icon. The badge clears
+   each time. Repeat step 3 and the hint appears again.
+7. With the macOS accent set to blue, the primary button and the send button read white on a fill
+   at least 4.5:1. With an empty composer, the send button is gray with a not-allowed cursor.
 
 ## Offscreen work
 
@@ -232,9 +318,12 @@ When the caller passed `requireInteraction: true`, a notification that closes wi
 `byUser !== true` is created again, up to 12 times, with the stripped options. A click, a close
 with `byUser === true`, or a recreate that throws stops the renewals. Firefox 158's `onClosed`
 always reports `byUser: true` (the `byUser` argument is still the Bug 1413188 placeholder), so a
-system dismissal does not renew. The toast still disappears on Firefox's own timer. A notification
-click remains a user-input handler, and the completion click calls `sidebarAction.open()` on that
-turn.
+system dismissal does not renew. The toast still disappears on Firefox's own timer.
+
+A completion-notification click calls `chrome.sidePanel.open` like Chrome. Firefox 158 does not
+treat `notifications.onClicked` as user input, so that open is refused. If the sidebar is closed,
+the click leaves badge `!` and the toolbar tooltip. It does not create `qz-open-sidebar`, so one
+click never produces a second notification. See [Sidebar](#sidebar).
 
 ## Platform limits
 
@@ -247,6 +336,8 @@ available API opens a dialog or a privileged path this package does not use.
 | Browser accessibility tree | The tree is the DOM and ARIA walk above, including open shadow trees and same-origin frame documents. Firefox 158 ships no extension accessibility namespace. |
 | Vector PDF | The PDF is JPEG pages. `tabs.saveAsPDF` opens a file picker. `tabs.print` opens the print UI. There is no `tabs.printToPDF`. |
 | Per-tab side panel | `setPanel({ tabId })` selects that tab's panel document. `open()` and `toggle()` take no window or tab argument and affect the active window's one sidebar. |
+| Open from a notification or a page | `notifications.onClicked` and content-script messages are not user input, so `sidebarAction.open()` is refused there. The badge, tooltip, and `qz-open-sidebar` hint point to the toolbar button. |
+| Local export pages | Firefox runs content scripts on `file:` pages only after the user turns on **Access local files on your computer** for the add-on in `about:addons` → Permissions. That switch grants `internal:fileSchemeAllowed` while `extensions.webextensions.fileSchemeAccess.requireOptIn` is true, which is the Firefox 158 default. An extension cannot grant it to itself. |
 | Notification priority | Ignored. |
 | `Runtime.terminateExecution` | Returns `{}` and does not stop script. |
 | MCP settings sender | `assertMcpSettingsSender` accepts `chrome-extension://<extension id>/` and a `moz-extension://<host>/` page. Firefox's host is an internal UUID, and `sender.id` must still be this extension. A web page URL is still rejected. |
@@ -254,6 +345,57 @@ available API opens a dialog or a privileged path this package does not use.
 | Geolocation prompt | The in-app consent card is unchanged. Whether Firefox also shows its own location prompt was not checked. |
 | Tab groups | The same `tabGroups` calls run. The group chrome is Firefox's. `TabGroup.shared` is unsupported and unused. |
 | Chrome debugger infobar | `debugger.attach` does not show a debugging banner. Firefox has no `debugger` permission in this package. |
+
+## Sidebar skin
+
+`sidepanel/firefox-sidebar.css` loads after the shared skin and follows Firefox's own sidebar
+panels. Only the Firefox package contains it. The accent fills primary controls only and is
+never mixed into a surface.
+
+| Token | Source | Use |
+| --- | --- | --- |
+| `--qz-ff-sidebar`, `--qz-ff-sidebar-text` | `Canvas`, `CanvasText`; theme `sidebar`, `sidebar_text` | Surface and body text |
+| `--qz-ff-text-deemphasized`, `--qz-ff-text-muted` | 72% and 60% of the text over the surface, raised by the palette | Inactive tabs, secondary and muted text |
+| `--qz-ff-hairline`, `--qz-ff-border` | 12% and 24% of the text color; theme `sidebar_border` | 1px dividers and field borders |
+| `--qz-ff-row-hover`, `--qz-ff-fill`, `--qz-ff-selected`, `--qz-ff-fill-hover`, `--qz-ff-fill-active` | 6%, 7%, 11%, 14%, and 21% of the text color | Row hover, neutral buttons, selected tab, hover, pressed |
+| `--qz-ff-box`, `--qz-ff-box-hover`, `--qz-ff-box-active` | 3% (5% dark), 8%, and 12% of the text over the surface | Task rows and code blocks |
+| `--qz-ff-accent`, `--qz-ff-accent-text` | `AccentColor`, `AccentColorText`; theme `sidebar_highlight`, `sidebar_highlight_text` | Palette input |
+| `--qz-ff-primary`, `-hover`, `-active`, `-text` | Palette. Fallback: Firefox's `#0061e0`, `#0250bb`, `#053e94` under `#fbfbfe` in light, and `#00ddff`, `#80ebff`, `#aaf2ff` under `#15141a` in dark | Primary and send buttons, checked switches |
+| `--qz-ff-accent-ink`, `--qz-ff-focus` | Palette; theme `focus_outline` | Links, code accent, 2px focus ring |
+| `--qz-ff-field`, `-field-text`, `-field-border` | Theme `toolbar_field`, `toolbar_field_text`, `toolbar_field_border` | Composer and inputs |
+| `--qz-ff-popup`, `-popup-text`, `-popup-border` | Theme `popup`, `popup_text`, `popup_border` | Popovers and menus |
+| `--qz-ff-success`, `-warning`, `-critical` | Fixed light and dark pairs | Status text and 12% tints |
+
+Radii are 4px for tabs, icon buttons, and chips, 6px for buttons and code, and 8px for rows,
+popovers, and cards. Icon buttons have no border or fill until hover. The selected tab is a pill
+on an 11% fill. Task rows are list rows on a 3% fill. Disabled primary and send buttons use the neutral fill,
+deemphasized text, and a `not-allowed` cursor instead of opacity.
+
+`sidepanel/firefox/theme.ts` resolves the accent, sidebar, popup, and field colors through a
+hidden probe element and writes these values on `:root`:
+
+- Primary. The label candidates are `AccentColorText`, white, and `#15141a`. A light label
+  darkens the fill until the label reaches 4.6:1 at rest; hover and active darken 12% and 22%
+  more, so they only gain contrast. A dark label lightens the fill until the label reaches 4.6:1
+  on the active fill. The candidate that needs the smallest change wins. The macOS blue `#007aff`
+  (4.02:1 under white) becomes `#0070eb`, with hover `#0063cf` and active `#0057b7`. Firefox's
+  `#0060df` stays as is.
+- Accent ink. The accent moves away from the surface until it reaches 4.6:1 on the sidebar and on
+  a 5% tint.
+- Text tiers. Each tier starts from the stylesheet share and rises until the text reaches 4.6:1
+  on its surface and on the darkest fill it sits on.
+
+The palette is recomputed on load, on `theme.onUpdated` for this window, on a
+`prefers-color-scheme` change, and when the sidebar window regains focus. When the accent cannot
+be parsed, for example a `color(display-p3 …)` value, the palette is removed and the stylesheet
+fallback applies.
+
+The primary follows the window theme's `sidebar_highlight` when a theme supplies it and
+`AccentColor` otherwise. Firefox's built-in themes return no colors to `theme.getCurrent()`, so
+on macOS the default theme yields the system accent, not a Firefox brand color; an extension
+cannot read a built-in theme's own accent. The fill can be darker than the system accent so the
+label keeps 4.5:1. A macOS accent change while the sidebar is open applies when the sidebar
+regains focus or reopens.
 
 ## Native feel
 
@@ -264,24 +406,33 @@ call would be a non-Firefox argument, a warning, or a second menu.
 | --- | --- |
 | `sidebarAction.open()` takes no arguments | Firefox 158's schema has an empty parameter list. An extra `windowId` is non-standard. |
 | Toolbar uses `toggle()` | That is Firefox's toolbar behavior, and Chrome's action click toggles the side panel too. A notification open still only opens, so it does not close a sidebar the user already has open. |
-| Import jump asks for one click | A page message cannot satisfy `requireUserInput`. The badge and `qz-open-sidebar` use Firefox's own toolbar and notification click, which are user-input handlers. The session is already stored. |
+| Import jump points at the toolbar | A page message and a notification click cannot satisfy `requireUserInput` in Firefox 158. The badge, tooltip, and `qz-open-sidebar` name the toolbar button, which is user input. The session is already stored. |
 | `_execute_sidebar_action` owns the shortcut | Firefox toggles a sidebar from that reserved command. `_execute_action` would not. |
 | No custom context menu | The sidebar menu and the toolbar button are already Firefox's. A `menus` permission would add a warning and a second entry. |
 | `open_at_install: false` | Firefox would otherwise open the sidebar during install. The Chrome task does not. |
-| System colors, then the window theme | The shared theme stays in the Chrome package. The Firefox base is `color-scheme: light dark`, `@media (prefers-color-scheme)`, and the system colors `Canvas`, `CanvasText`, `ButtonFace`, `ButtonText`, `Field`, `FieldText`, `AccentColor`, `GrayText`, and `Highlight`. That covers built-in light, dark, and system when `theme.getCurrent()` has no colors. Built-in themes often return `{}` or `colors: null`. When a theme supplies colors, the sidebar copies `frame`, `toolbar`, `toolbar_text`, `toolbar_field`, `toolbar_field_text`, `popup`, `popup_text`, `popup_border`, and `accentcolor` into `:root` custom properties. `onUpdated` for another window is ignored. Primary hover, active, and disabled states darken `AccentColor` with a black veil and keep `AccentColorText`, matching the direction of Firefox's light-theme primary button. The package does not call `theme.update`, does not declare the `theme` permission, and does not ship a static `theme` key. |
+| System colors, then the window theme | The shared theme stays in the Chrome package. The Firefox base is `color-scheme: light dark` and the system colors, which cover built-in light, dark, and system themes when `theme.getCurrent()` has no colors. A theme's `sidebar`, `toolbar_field`, `popup`, and `focus_outline` keys recolor the matching tokens, the way Firefox themes its own sidebar panels. `onUpdated` for another window is ignored. The package does not call `theme.update`, does not declare the `theme` permission, and does not ship a static `theme` key. |
 | No `resetScrollPosition` | Firefox treats it as non-standard and ignores it unless the add-on is Mozilla-signed. |
 | No `saveAsPDF` | The file picker interrupts the task and does not return PDF bytes. |
 | Catalog rewrite plus `productText` | Firefox pages say Firefox, sidebar, `about:addons`, and `about:downloads`. `chrome.debugger` in a catalog becomes `debugger`. English and Simplified Chinese receive the rewritten sentences the shared bundle would otherwise show. Chrome pages keep the Chrome sentence. The page-mode user agent stays a Chrome string so the site receives the layout the tool requested. |
 
-The sidebar title and close control are Firefox's header, outside this document. Chat, Tasks, Data, and Skills stay a segmented control. Code stays monospace. Status colors are a fixed light pair and a fixed dark pair, so they can disagree with a custom theme. A custom theme's own contrast is left as that theme painted it. `GrayText` is a placeholder; body text uses a mix of the surface and its text color so the system theme stays at least 4.5:1.
+The sidebar title and close control are Firefox's header, outside this document. Chat, Tasks, Data, and Skills stay one row of tabs. Code stays monospace. Status colors are a fixed light pair and a fixed dark pair, so they can disagree with a custom theme. A theme's own `sidebar_text` on `sidebar` is used as painted; the derived text tiers, primary, and accent ink are raised to 4.5:1.
 
 ## What this check did not run
 
 `npm run verify:firefox` loads `dist/extension-firefox/` in Mozilla Firefox. The Playwright suite
 temporarily installs that package, opens the sidebar from the toolbar button and from the
 `_execute_sidebar_action` shortcut, and checks that the panel is Firefox's sidebar browser rather
-than a tab at `sidepanel.html`. It checks light and dark `prefers-color-scheme`, primary-button
-contrast, `notifications.create` with `requireInteraction`, and a `sidePanel.open()` call outside a
-user gesture. These paths are still not exercised in that window: a provider request, the
-display-capture picker, a real-page click, an accessibility snapshot, a PDF of a page, mobile
-resize, the `about:debugging` button, and the geolocation prompt.
+than a tab at `sidepanel.html`. In light and dark `prefers-color-scheme`, with a macOS accent of
+`#007aff`, and under a temporary theme add-on, it measures text at 4.5:1 and icons and focus rings
+at 3:1 in rest, hover, active, and focus-visible states. It also checks that disabled primary and
+send buttons are neutral and show a `not-allowed` cursor, and that the sidebar has no horizontal
+overflow at 320 and 400 pixels. It covers `notifications.create` with `requireInteraction`, a
+refused `sidePanel.open()`, a hint-notification click, a completion-notification click, and badge
+clearing from the shortcut, the sidebar switcher, and the toolbar.
+
+Headless Linux has no notification server, so the suite sets `alerts.useSystemBackend` to false
+and clicks Firefox's own alert window through its `alertclickcallback` observer. A macOS
+Notification Center click, the macOS system accent itself, and window focus on macOS need the
+[macOS check](#check-on-macos). These paths are still not exercised in that window: a provider
+request, the display-capture picker, a real-page click, an accessibility snapshot, a PDF of a
+page, mobile resize, the `about:debugging` button, and the geolocation prompt.

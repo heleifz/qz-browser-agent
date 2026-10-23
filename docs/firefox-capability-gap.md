@@ -38,8 +38,10 @@ starts the event page from `background.scripts`. This checkout was not loaded th
 | Sandbox declaration | `sandbox.pages` and `content_security_policy.sandbox` are copied through. Firefox documents `content_security_policy.sandbox` from version 154. The runner page is created from the hidden offscreen frame. |
 
 The toolbar button, the `_execute_action` shortcut, notification clicks, session-import reveal,
-and the model-preset shortcut call `sidePanel.open`. On Firefox that call opens the sidebar.
-Remaining differences are in [Firefox differences from Chrome](firefox-differences.md).
+and the model-preset shortcut call `sidePanel.open`. On Firefox the toolbar button and the
+shortcuts open the sidebar. A notification click or a session import is not user input, so it
+leaves a toolbar badge and a hint to click the toolbar icon. Remaining differences are in
+[Firefox differences from Chrome](firefox-differences.md).
 
 ## Portable as-is
 

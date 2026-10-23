@@ -125,10 +125,13 @@ npm test -- firefox
 
 The Playwright file temporarily installs `dist/extension-firefox/`. It checks that the toolbar
 button and the `_execute_sidebar_action` shortcut open Firefox's sidebar, and that no tab is
-`moz-extension://…/sidepanel.html`. It checks light and dark `prefers-color-scheme`, primary-button
-text contrast of at least 4.5:1, `notifications.create` with and without `requireInteraction`, and a
-`sidePanel.open()` call outside a user gesture. That call must set the `!` badge and the click
-notification.
+`moz-extension://…/sidepanel.html`. In light, dark, a macOS accent, and a temporary theme add-on,
+it measures text contrast of at least 4.5:1 and icon and focus-ring contrast of at least 3:1 in
+each control state, and checks the disabled primary and send buttons. It checks horizontal overflow
+at 320 and 400 pixels and `notifications.create` with and without `requireInteraction`. A
+`sidePanel.open()` call outside a user gesture must log Firefox's error and set the `!` badge and
+the hint notification. A notification click must not create a second notification, and opening
+the sidebar by shortcut, switcher, or toolbar must clear the badge.
 
 Reports go to `tests/results/playwright-firefox/` and `tests/results/firefox-suite.json`. The JSON
 record names `browser=firefox` and `package=dist/extension-firefox`. The Chromium Playwright report
