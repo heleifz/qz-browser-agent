@@ -14,10 +14,12 @@ import { acquireBuildOutput, BuildOutputLockedError, getBuildProcessParentPid, i
 import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
+import { firefoxManifest } from "./firefox-manifest.mjs";
 import { copyRuntimeAssets, createDependencyGraph, encodeSourceMapPath, originalInputPath, originalSourceMapPath, packageAssets, recordDependencyBuild, stablePackagePaths, writeDependencyProvenance } from "./vendor/assets.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_EXTENSION_OUTPUT = resolve(ROOT, "dist/extension");
+export const DEFAULT_FIREFOX_EXTENSION_OUTPUT = resolve(ROOT, "dist/extension-firefox");
 const BUILD_MANIFEST = ".qingzhou-build.json";
 const SCRIPT_EXTENSIONS = /\.(?:js|mjs|ts)$/;
 const ASSET_EXTENSIONS = /\.(?:html|css|json|png|svg|jpg|jpeg|gif|webp|ico|woff2?|ttf|wasm|txt)$/;
@@ -44,14 +46,22 @@ const EMBEDDED_SCRIPTS = [
   { entry: "sidepanel/features/export/session-export-runtime.ts", host: "sidepanel/features/export/session-export-feature.js", symbol: "SESSION_EXPORT_RUNTIME_SOURCE" },
 ];
 
+export function extensionOutputDirectory(browser = "chrome") {
+  if (browser === "firefox") return DEFAULT_FIREFOX_EXTENSION_OUTPUT;
+  if (browser === "chrome") return DEFAULT_EXTENSION_OUTPUT;
+  throw new Error(`unknown browser: ${browser}`);
+}
+
 async function prepareBuild(options) {
+  const browser = options.browser || "chrome";
+  if (!["chrome", "firefox"].includes(browser)) throw new Error(`unknown browser: ${browser}`);
   const sourceDir = await realpath(resolve(options.sourceDir || resolve(ROOT, "src")));
-  const outputDir = await canonicalPath(resolve(options.outputDir || DEFAULT_EXTENSION_OUTPUT));
+  const outputDir = await canonicalPath(resolve(options.outputDir || extensionOutputDirectory(browser)));
   const mode = options.mode || "development";
   if (!["development", "production"].includes(mode)) throw new Error(`unknown build mode: ${mode}`);
   if (isInside(sourceDir, outputDir) || isInside(outputDir, sourceDir)) throw new Error("source and output directories must not overlap");
   await assertOwnedOutput(outputDir);
-  return { ...options, sourceDir, outputDir, mode };
+  return { ...options, browser, sourceDir, outputDir, mode };
 }
 
 /** Compile a complete extension, publishing it only after every check succeeds. */
@@ -62,7 +72,7 @@ export async function buildExtension(options = {}) {
   finally { await release(); }
 }
 
-async function compileExtension({ sourceDir: source, outputDir: output, mode, bundle = mode === "production", product, debugMaps = false, signal }) {
+async function compileExtension({ sourceDir: source, outputDir: output, mode, bundle = mode === "production", product, debugMaps = false, browser = "chrome", signal }) {
   signal?.throwIfAborted();
   const profile = await readProductProfile(source, product);
   if (source === resolve(ROOT, "src")) generateCapabilityCatalogs(ROOT);
@@ -136,6 +146,11 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     }
     const bundling = bundle ? await bundleExtension({ extensionDir: compiled, preservedInputs, debugMaps }) : { enabled: false };
     await writeDependencyProvenance(compiled, dependencyGraph, bundling);
+    if (browser === "firefox") {
+      const manifestPath = resolve(compiled, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      await writeFile(manifestPath, `${JSON.stringify(firefoxManifest(manifest), null, 2)}\n`);
+    }
     const files = (await allFiles(compiled)).map(path => posix(relative(compiled, path)));
     const summary = {
       formatVersion: 1,
@@ -496,6 +511,7 @@ async function main() {
     "output-dir": { type: "string" },
     mode: { type: "string" },
     product: { type: "string" },
+    browser: { type: "string" },
   } });
   if (values.help) {
     console.log(`Usage: npm run dev -- [options]
@@ -503,11 +519,13 @@ async function main() {
 
 dev watches sources; build typechecks and creates a production bundle.
 Chrome loads the generated extension from dist/extension/.
+Firefox temporary loading uses dist/extension-firefox/.
 
 Options:
   --source-dir <path>          Source directory (default: src/)
-  --output-dir <path>          Output directory (default: dist/extension/)
+  --output-dir <path>          Output directory (default: dist/extension/, or dist/extension-firefox/ with --browser firefox)
   --mode <development|production>
+  --browser <chrome|firefox>   Package target (default: chrome)
   --product <public>  Override the source product manifest
   --watch                     Rebuild on source changes
   --typecheck                 Check repository TypeScript before building
@@ -521,6 +539,7 @@ Options:
     if (typeof value === "string" && !value.trim()) throw new Error(`--${name} requires a non-empty value`);
   }
   if (values.mode && !["development", "production"].includes(values.mode)) throw new Error(`unknown build mode: ${values.mode}`);
+  if (values.browser && !["chrome", "firefox"].includes(values.browser)) throw new Error(`unknown browser: ${values.browser}`);
   if (values.product && !["public"].includes(values.product)) throw new Error(`invalid product: ${values.product}`);
   if (values.typecheck) {
     // Keep the build gate in this CLI so npm can forward every option, including --help.
@@ -533,6 +552,7 @@ Options:
   }
   const options = {
     sourceDir: values["source-dir"], outputDir: values["output-dir"], mode: values.mode, product: values.product,
+    browser: values.browser,
     bundle: values["no-bundle"] ? false : undefined, debugMaps: values["debug-maps"] === true,
   };
   const report = result => console.log(values.json ? JSON.stringify(result)

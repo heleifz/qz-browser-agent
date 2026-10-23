@@ -1044,17 +1044,26 @@ chrome.commands?.onCommand?.addListener((command, tab) => {
 
 // ---------------------------------------------------------------------------
 // Toggle the Side Panel when the extension icon or _execute_action shortcut is used.
+// A missing sidePanel API must not throw during module evaluation.
 // ---------------------------------------------------------------------------
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-  .then(() => console.log("[轻舟] setPanelBehavior OK"))
-  .catch((e) => {
-    console.warn("[轻舟] setPanelBehavior failed, using fallback:", e);
-    chrome.action.onClicked.addListener(async (tab) => {
-      try {
-        await sessionExchangeBridge.openSidePanel(tab.windowId);
-      } catch (err) {
-        console.error("[轻舟] sidePanel.open failed:", err);
-      }
-    });
+function useToolbarClickToOpenSidePanel() {
+  chrome.action.onClicked.addListener(async (tab) => {
+    try {
+      await sessionExchangeBridge.openSidePanel(tab.windowId);
+    } catch (err) {
+      console.error("[轻舟] sidePanel.open failed:", err);
+    }
   });
+}
+
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    .then(() => console.log("[轻舟] setPanelBehavior OK"))
+    .catch((e) => {
+      console.warn("[轻舟] setPanelBehavior failed, using fallback:", e);
+      useToolbarClickToOpenSidePanel();
+    });
+} else {
+  useToolbarClickToOpenSidePanel();
+}

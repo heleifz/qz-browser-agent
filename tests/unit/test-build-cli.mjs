@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { EXTENSION_ENTRIES } from "../../scripts/build-extension.mjs";
+import { EXTENSION_ENTRIES, extensionOutputDirectory } from "../../scripts/build-extension.mjs";
+import { firefoxManifest } from "../../scripts/firefox-manifest.mjs";
 
 const CLI = fileURLToPath(new URL("../../scripts/build-extension.mjs", import.meta.url));
 const TYPECHECK = new URL("../../scripts/typecheck.mjs", import.meta.url).href;
@@ -21,6 +22,8 @@ test("build help is side-effect free, including npm's production/typecheck defau
     assert.match(result.stdout, /Usage: npm run dev/);
     assert.match(result.stdout, /npm run build/);
     assert.match(result.stdout, /dist\/extension\//);
+    assert.match(result.stdout, /--browser <chrome\|firefox>/);
+    assert.match(result.stdout, /dist\/extension-firefox\//);
     assert.equal(existsSync(fixture.output), false);
     assert.equal(existsSync(fixture.checked), false);
   }
@@ -30,7 +33,8 @@ test("build rejects invalid arguments before typechecking or creating output", a
   const fixture = await workspace(t);
   const env = await typecheckFixture(fixture, "process.exitCode = 23;");
   for (const args of [["--unknown"], ["unexpected"], ["--output-dir"], ["--mode"],
-    ["--mode", "--watch"], ["--mode=staging"], ["--product=unknown"], ["--source-dir="]]) {
+    ["--mode", "--watch"], ["--mode=staging"], ["--product=unknown"], ["--source-dir="],
+    ["--browser"], ["--browser="], ["--browser=safari"]]) {
     const result = run(["--typecheck", "--output-dir", fixture.output, ...args], { env });
     assert.equal(result.status, 1, args.join(" "));
     assert.ok(result.stderr.trim(), "invalid arguments explain the failure");
@@ -90,6 +94,29 @@ test("JSON build output remains parseable when the typecheck gate prints progres
   assert.ok(summary.files.includes("background/service-worker.js"));
   assert.match(result.stderr, /Typecheck fixture passed/);
   assert.equal(existsSync(fixture.checked), true);
+});
+
+test("firefox packaging rewrites only the firefox output manifest", async t => {
+  const fixture = await workspace(t);
+  await extensionFixture(fixture.source);
+  const chromeDir = join(fixture.work, "chrome");
+  const firefoxDir = join(fixture.work, "firefox");
+  const chrome = run(["--source-dir", fixture.source, "--output-dir", chromeDir, "--no-bundle"]);
+  assert.equal(chrome.status, 0, chrome.stderr);
+  const firefox = run(["--source-dir", fixture.source, "--output-dir", firefoxDir, "--browser", "firefox", "--no-bundle"]);
+  assert.equal(firefox.status, 0, firefox.stderr);
+  const source = JSON.parse(await readFile(join(fixture.source, "manifest.json"), "utf8"));
+  const chromeManifest = JSON.parse(await readFile(join(chromeDir, "manifest.json"), "utf8"));
+  const firefoxBuilt = JSON.parse(await readFile(join(firefoxDir, "manifest.json"), "utf8"));
+  assert.deepEqual(chromeManifest, source);
+  assert.deepEqual(firefoxBuilt, firefoxManifest(source));
+  assert.equal(firefoxBuilt.sidebar_action.default_panel, "sidepanel/sidepanel.html");
+  assert.deepEqual(firefoxBuilt.background.scripts, ["background/service-worker.js"]);
+  assert.equal(chromeManifest.sidebar_action, undefined);
+  assert.equal(chromeManifest.background.scripts, undefined);
+  assert.equal(extensionOutputDirectory("chrome").endsWith(`${join("dist", "extension")}`), true);
+  assert.equal(extensionOutputDirectory("firefox").endsWith(join("dist", "extension-firefox")), true);
+  assert.throws(() => extensionOutputDirectory("safari"), /unknown browser: safari/);
 });
 
 function run(args, options = {}) {
