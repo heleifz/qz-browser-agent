@@ -2174,11 +2174,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     // -- Interaction --
 
     scrollPage({ direction = "down", pixels = 500, selector }) {
+      // Hidden tabs do not produce frames, so a smooth scroll never moves.
+      const behavior = document.visibilityState === "hidden" ? "instant" : "smooth";
       if (selector) {
         const query = queryOne(selector);
         if (query.error) return query.error;
-        query.element.scrollIntoView({ behavior: "smooth", block: "center" });
-        return { scrolledTo: selector };
+        query.element.scrollIntoView({ behavior, block: "center" });
+        return behavior === "instant"
+          ? { scrolledTo: selector, scrollY: window.scrollY }
+          : { scrolledTo: selector };
       }
 
       const map: Record<string, number> = {
@@ -2187,10 +2191,18 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         top: -document.documentElement.scrollHeight,
         bottom: document.documentElement.scrollHeight,
       };
-      window.scrollBy({ top: map[direction] ?? pixels, behavior: "smooth" });
+      const top = map[direction] ?? pixels;
+      const scroller = document.scrollingElement || document.documentElement;
+      const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const target = Math.min(max, Math.max(0, scroller.scrollTop + top));
+      const start = window.scrollY;
+      window.scrollBy({ top, behavior });
+      // Foreground smooth scrolling settles over later frames. Report the clamped
+      // destination immediately so the receipt is not the pre-scroll offset.
+      const scrollY = behavior === "instant" || window.scrollY !== start ? window.scrollY : target;
       return {
         direction,
-        scrollY: window.scrollY,
+        scrollY,
         scrollHeight: document.documentElement.scrollHeight,
       };
     },
