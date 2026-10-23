@@ -1,10 +1,13 @@
 # Firefox capability gap
 
 This survey lists every Chrome-only or differing extension surface that a Firefox port has to
-account for. The Chrome experience is the target: interaction, copy, defaults, tool results, the
-side panel, and import/export. An item in this document stays here until someone confirms a
-different behavior. This change does not switch a tool onto a fallback, rewrite user-facing copy,
-or drop a Chrome permission.
+account for. The decisions from the confirmation list are now implemented in the Firefox package.
+What a person or a tool result can still observe is in
+[Firefox differences from Chrome](firefox-differences.md). The tables below record the API facts
+that led to those decisions. They are not a description of the current Firefox package.
+
+The Chrome package is unchanged: `src/manifest.json`, the Chrome side panel, and the Chrome
+debugger path stay as they are. Firefox-only modules are omitted from the Chrome compilation.
 
 The temporary-load package is built with
 [`npm run build -- --browser firefox`](commands.md#load-temporarily-in-firefox). It writes
@@ -17,30 +20,26 @@ reports no errors. It warns that `background.service_worker` is unsupported; Fir
 starts the event page from `background.scripts`. This checkout was not loaded through
 `about:debugging`. Confirm that step on Firefox 139 or later.
 
-## What this skeleton loads
+## What the Firefox package loads
 
 | Piece | Firefox package |
 | --- | --- |
-| Scripts | The Chrome module graph, including `background/service-worker.js`, the side panel page, content scripts, the offscreen page, and `runner-sandbox.html`. |
-| Background | `background.scripts` plus `background.service_worker`, both pointing at the same module, with `"type": "module"`. Firefox starts the event page and does not run the service worker ([bug 1573659](https://bugzilla.mozilla.org/show_bug.cgi?id=1573659)). From Firefox 121 the event page still starts when both keys are present. |
-| Workspace page | `sidebar_action.default_panel` is `sidepanel/sidepanel.html`. `open_at_install` is `false`, so install does not open the sidebar. |
+| Scripts | The Chrome module graph, plus `background/firefox-boot.js` and `sidepanel/firefox-boot.js`. Those boot modules patch Firefox APIs, then import the shared background and side panel. |
+| Background | `background.scripts` is `background/firefox-boot.js`. `background.service_worker` remains `background/service-worker.js` with `"type": "module"`. Firefox starts the event page and does not run the service worker ([bug 1573659](https://bugzilla.mozilla.org/show_bug.cgi?id=1573659)). From Firefox 121 the event page still starts when both keys are present. |
+| Workspace page | `sidebar_action.default_panel` is `sidepanel/sidepanel.html`. The copy in this package loads `firefox-boot.js`. `open_at_install` is `false`, so install does not open the sidebar. |
 | Content scripts | The same three registrations: MCP connect on loopback, session export at `document_start`, and the page tools at `document_idle`. |
 | Permissions kept | `activeTab`, `alarms`, `tabs`, `tabGroups`, `scripting`, `storage`, `downloads`, `geolocation`, `clipboardWrite`, `notifications`, `declarativeNetRequest`, `unlimitedStorage`, and optional `history`, `bookmarks`, `downloads.open`. |
-| Permissions removed from this package only | `sidePanel`, `debugger`, `offscreen`, and optional `desktopCapture`. Firefox rejects these names, so the temporary add-on would fail to install with them present. They remain in [`src/manifest.json`](../src/manifest.json). |
+| Permissions added in this package only | `webNavigation`, `webRequest`, and `webRequestBlocking`, used by the page and network approximations. |
+| Permissions removed from this package only | `sidePanel`, `debugger`, `offscreen`, and optional `desktopCapture`. Firefox rejects these names. They remain in [`src/manifest.json`](../src/manifest.json). |
+| Data collection | `websiteContent` is required. `locationInfo`, `browsingActivity`, and `bookmarksInfo` are optional. `none` is not declared. |
 | Minimum version | `browser_specific_settings.gecko.strict_min_version` is `139.0`, because `tabGroups` starts in Firefox 139. |
 | Add-on id | Provisional `qz-browser-agent@heleifz.github.io`. Confirm it before any signed build. Changing it later changes stored data and the AMO identity. |
 | Chrome `key` | Omitted from the Firefox manifest. The Chrome extension id stays `ghbaodmonhcgkfeejcpffknlggbjhjgj`. |
-| Sandbox declaration | `sandbox.pages` and `content_security_policy.sandbox` are copied through. Firefox documents `content_security_policy.sandbox` from version 154. The runner page is still created from the offscreen document. |
+| Sandbox declaration | `sandbox.pages` and `content_security_policy.sandbox` are copied through. Firefox documents `content_security_policy.sandbox` from version 154. The runner page is created from the hidden offscreen frame. |
 
-Startup calls `chrome.sidePanel.setPanelBehavior` only when that method exists. On Firefox the
-existing toolbar listener is registered instead, and that listener calls `sidePanel.open`. The API
-is absent, so the toolbar button and the `_execute_action` shortcut do not open the workspace.
-Open qz from Firefox's sidebar list. Notification clicks, session-import reveal, and the model
-preset shortcut use the same `sidePanel.open` call and also leave the sidebar closed.
-
-The sidebar document is the same side panel page. Its port to the background uses the existing
-runtime channel. `assertSidePanelSender` checks that page URL, so the consent button can still
-reach the background. End-to-end tasks were not run.
+The toolbar button, the `_execute_action` shortcut, notification clicks, session-import reveal,
+and the model-preset shortcut call `sidePanel.open`. On Firefox that call opens the sidebar.
+Remaining differences are in [Firefox differences from Chrome](firefox-differences.md).
 
 ## Portable as-is
 
@@ -73,10 +72,9 @@ where Firefox added the API later than Chrome.
 
 ## Needs a confirmed alternative
 
-These can be attempted with a different API or with a path the Chrome code already has. Using that
-path changes what the user sees or what a tool returns. Nothing in this list is enabled specially
-for Firefox in this change. Where the shared code already catches a debugger failure, that catch
-runs on Firefox because the debugger API is missing.
+These rows record the API facts from the survey. The Firefox package now uses the approximations
+in [Firefox differences from Chrome](firefox-differences.md). The rows below are not the current
+behavior.
 
 | Chrome API or feature | Firefox reality | User-visible effect |
 | --- | --- | --- |
@@ -102,7 +100,9 @@ runs on Firefox because the debugger API is missing.
 
 ## Not available on Firefox
 
-These have no API that preserves the current behavior. They are blocked, not quietly replaced.
+These rows record APIs Firefox does not provide. The package approximates the ones listed in
+[Firefox differences from Chrome](firefox-differences.md). The rows below describe the missing
+API, not the current tool result.
 
 | Chrome API or feature | Firefox reality | User-visible effect |
 | --- | --- | --- |
@@ -115,22 +115,14 @@ These have no API that preserves the current behavior. They are blocked, not qui
 | `background.service_worker` as the running context | Unsupported. The event page is the background. | Service-worker-only lifetime and `clients.matchAll` do not apply. The offscreen existence check already tolerates a missing `clients` global. |
 | Sandbox page as a live runner | Declaring the page does not create the offscreen iframe that loads it. | The inner runner stays unavailable even on Firefox 154+, where the sandbox manifest keys exist. |
 
-## Confirmation needed before any behavior change
+## Decisions
 
-1. **Sidebar host.** Can the Firefox sidebar stand in for the Chrome side panel? Firefox chooses the side, shows one sidebar at a time, and draws its own frame. This skeleton does not bind the toolbar button, the import flow, notification clicks, or the model-preset shortcut to `sidebarAction`.
-2. **Existing debugger catch paths.** Click and press can already return `content_fallback`. Page screenshots can already fall through to `captureVisibleTab`, which activates the tab and captures the viewport. Confirm whether those results must be rejected on Firefox until a matching mechanism exists.
-3. **Offscreen work.** `run_script`, SVG conversion, and background keepalive need a DOM host. An event-page document or a hidden window would be a different lifetime and may flash UI. Confirm before either is used.
-4. **Page understanding and input.** `get_ax_tree`, mobile page mode, PDF print, CDP network and console capture, `act_on_screen`, and cross-origin iframe targeting have no same-result API.
-5. **Case recording.** `getDisplayMedia` is a different picker from `desktopCapture.chooseDesktopMedia`.
-6. **Header rules.** `initiatorDomains: [runtime.id]` likely misses Firefox extension requests. Confirm the condition before changing which requests receive `qz-agent/1.0.0` or Skill headers.
-7. **Tab groups.** The same calls run on Firefox 139+. The group chrome is Firefox's. The skeleton requires Firefox 139 so the `tabGroups` permission is valid. An older Firefox would need that permission removed.
-8. **Chrome URLs in copy.** File-access errors and shortcut buttons still send the user to `chrome://extensions`. Firefox 153+ has its own local-file checkbox, and shortcuts are edited in `about:addons`.
-9. **Notifications.** Firefox ignores `requireInteraction` and `priority`. A click does not open the sidebar.
-10. **Identity and signing.** The provisional gecko id is `qz-browser-agent@heleifz.github.io`. AMO also requires `data_collection_permissions`, which the temporary manifest omits. Confirm both before a signed build.
-11. **Debugging infobar.** Chrome's debugger banner is part of what the user sees while a task drives a page. Firefox cannot show it.
+The confirmation list is implemented. The Firefox package uses the sidebar for the workspace,
+a hidden event-page frame for offscreen work, and page, capture, and `webRequest` approximations
+for the debugger tools. Header initiator domains, file-access copy, shortcut links, case
+recording, notification renewal, and `data_collection_permissions` are Firefox-only. The exact
+remaining differences, including the debugging infobar, are in
+[Firefox differences from Chrome](firefox-differences.md).
 
-## Out of scope for this skeleton
-
-Chrome's manifest, permissions, side panel opener, and tool paths are unchanged. No fallback was
-added or removed. The Firefox package is a second build output so `about:debugging` can load the
-shared scripts.
+Chrome's manifest, permissions, side panel opener, and debugger implementation are unchanged.
+The Firefox package is a second build output.

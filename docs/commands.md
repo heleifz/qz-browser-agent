@@ -51,18 +51,18 @@ The command writes `dist/extension-firefox/` and leaves `dist/extension/` for Ch
 directory. Pass `--output-dir` when that directory must stay separate from another watcher.
 
 Firefox 139 or later is required. The package reuses the Chrome module graph and rewrites the
-manifest: the background is declared as an event-page script, the side panel page is declared as a
-sidebar, and permission names Firefox rejects are omitted. Behavior that cannot match Chrome is
-listed in [Firefox capability gap](firefox-capability-gap.md).
+manifest: the background starts from `background/firefox-boot.js`, the side panel page is a
+sidebar, and permission names Firefox rejects are omitted. The toolbar button and `Ctrl+Shift+K`
+open the sidebar. Firefox chooses the side and shows one sidebar. Remaining differences are in
+[Firefox differences from Chrome](firefox-differences.md). The API survey is in
+[Firefox capability gap](firefox-capability-gap.md).
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on**.
 3. Select `dist/extension-firefox/manifest.json`.
-4. Open Firefox's sidebar and choose qz.
+4. Click the toolbar button, or open Firefox's sidebar and choose qz.
 
-The toolbar button does not open the workspace. `sidePanel.open` is the Chrome opener, and this
-build does not replace it. Reload the temporary add-on after a rebuild. Temporary add-ons are
-removed when Firefox exits.
+Reload the temporary add-on after a rebuild. Temporary add-ons are removed when Firefox exits.
 
 ## Run tests
 

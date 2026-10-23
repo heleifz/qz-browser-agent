@@ -200,7 +200,8 @@ npx qz-browser-agent@latest create "你的任务" --stream
 ### 支持 Edge 或 Firefox 吗？
 
 发布版本运行在 Chrome 和 Edge。Firefox 尚未发布。开发时的临时加载见
-[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。仍待确认的能力差见
+[在 Firefox 中临时加载](docs/commands.md#load-temporarily-in-firefox)。与 Chrome 仍有差异的行为见
+[Firefox 与 Chrome 的差异](docs/firefox-differences.md)。API 调查见
 [Firefox 能力差](docs/firefox-capability-gap.md)。
 
 ## 开发

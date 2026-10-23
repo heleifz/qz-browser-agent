@@ -207,7 +207,8 @@ Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Codin
 
 qz releases run in Chrome and Edge. A Firefox release is not published. Temporary loading for
 development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
-Gaps that still need a decision are in
+Remaining differences from Chrome are in
+[Firefox differences from Chrome](docs/firefox-differences.md). The API survey is in
 [Firefox capability gap](docs/firefox-capability-gap.md).
 
 ## Development
