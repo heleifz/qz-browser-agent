@@ -10,7 +10,7 @@ export const translations = {
       "navStart": "Install<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "heroBadge": "<span class=\"square\" aria-hidden=\"true\"></span>OPEN SOURCE · LOCAL FIRST",
       "heroTitle": "An agent that<br><span>actually uses<br>the browser.</span>",
-      "heroIntro": "Anything you can do in a browser, it can do better. It works inside your own signed-in Chrome, with the model you choose.",
+      "heroIntro": "A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill.",
       "heroAction": "Add to Chrome<svg viewBox=\"0 0 24 24\" fill=\"none\" aria-hidden=\"true\"><path d=\"M5 12h14M13 6l6 6-6 6\"></path></svg>",
       "filmCaption": "Wikipedia · Page reading and JavaScript execution",
       "filmAction": "Watch demo",
@@ -115,13 +115,13 @@ export const translations = {
     },
     "attributes": {
       "description": {
-        "content": "An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP."
+        "content": "A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill."
       },
       "ogTitle": {
         "content": "qz — Open-source browser agent"
       },
       "ogDescription": {
-        "content": "An open-source AI agent in your signed-in Chrome browser. Bring your own model or sign in with ChatGPT. Connect coding agents through CLI, Skill, or MCP."
+        "content": "A coding agent that lives in your browser. It opens tabs, reads pages, runs scripts, and turns what works into a Skill."
       },
       "ogImage": {
         "content": "https://alibaba.github.io/qz-browser-agent/assets/og-card.png"
