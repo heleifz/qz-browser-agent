@@ -123,32 +123,346 @@ export function rewriteFirefoxSidepanelHtml(html) {
   return next;
 }
 
-/** System colors and the Firefox UI font. Loaded only after the shared sidebar skin. */
+const FIREFOX_SYSTEM_COLOR_VARS = `
+  --qz-ff-frame: Canvas;
+  --qz-ff-toolbar: Canvas;
+  --qz-ff-toolbar-text: CanvasText;
+  --qz-ff-toolbar-field: Field;
+  --qz-ff-toolbar-field-text: FieldText;
+  --qz-ff-popup: Canvas;
+  --qz-ff-popup-text: CanvasText;
+  --qz-ff-popup-border: color-mix(in srgb, CanvasText 16%, transparent);
+  --qz-ff-accent: AccentColor;
+  --qz-ff-accent-text: AccentColorText;
+  --qz-ff-button: ButtonFace;
+  --qz-ff-button-text: ButtonText;
+  --qz-ff-muted: GrayText;
+  --qz-ff-highlight: Highlight;`;
+
+/**
+ * Firefox-only sidebar skin. Loaded after the shared theme and unlayered, so it
+ * repaints tokens without changing the shared Chrome stylesheet.
+ *
+ * The base layer is color-scheme plus the system colors, repeated inside
+ * prefers-color-scheme so those colors are recomputed for light, dark, and
+ * system. theme.getCurrent() copies a window theme onto the same --qz-ff-*
+ * variables; an empty built-in theme leaves this base in place.
+ * Toolbar icon buttons stay transparent until hover (currentColor 17%, active
+ * 30%). Filled buttons use ButtonFace until a toolbar color replaces it.
+ * Focus is a 2px accent outline. Readable secondary text is a CanvasText mix
+ * that stays at least 4.5:1 on light Canvas and on the dark sidebar. GrayText
+ * is only a placeholder.
+ */
 export function firefoxSidebarCss() {
+  const scheme = (name, green, orange, red) => `@media (prefers-color-scheme: ${name}) {
+  :root {${FIREFOX_SYSTEM_COLOR_VARS}
+    --green: ${green};
+    --orange: ${orange};
+    --red: ${red};
+  }
+}
+`;
   return `/* Firefox sidebar skin. The shared theme still draws the controls. */
 :root {
   color-scheme: light dark;
+  accent-color: var(--qz-ff-accent);
   --font-sans: system-ui, sans-serif;
-  --bg-primary: Canvas;
-  --bg-secondary: Canvas;
-  --bg-tertiary: ButtonFace;
-  --bg-elevated: ButtonFace;
-  --text-primary: CanvasText;
-  --text-secondary: CanvasText;
-  --border: color-mix(in srgb, CanvasText 24%, transparent);
-  --control-surface: ButtonFace;
-  --control-text: ButtonText;
-  --control-primary-surface: AccentColor;
-  --control-primary-text: AccentColorText;
-  --field-surface: Field;
-  accent-color: AccentColor;
+  --font-mono: ui-monospace, monospace;
+${FIREFOX_SYSTEM_COLOR_VARS}
+
+  --bg-primary: var(--qz-ff-toolbar);
+  --bg-secondary: var(--qz-ff-frame);
+  --bg-tertiary: color-mix(in srgb, var(--qz-ff-toolbar-text) 7%, var(--qz-ff-toolbar));
+  --bg-elevated: color-mix(in srgb, var(--qz-ff-popup-text) 8%, var(--qz-ff-popup));
+  --bg-glass: var(--qz-ff-toolbar);
+  --text-primary: var(--qz-ff-toolbar-text);
+  --text-secondary: color-mix(in srgb, var(--qz-ff-toolbar-text) 78%, var(--qz-ff-toolbar));
+  --text-muted: color-mix(in srgb, var(--qz-ff-toolbar-text) 62%, var(--qz-ff-toolbar));
+  --text-faint: var(--text-muted);
+  --border: var(--qz-ff-popup-border);
+  --border-focus: var(--qz-ff-accent);
+
+  --accent: var(--qz-ff-accent);
+  --accent-strong: var(--qz-ff-accent);
+  --accent-glow: color-mix(in srgb, var(--qz-ff-accent) 18%, transparent);
+  --accent-subtle: color-mix(in srgb, var(--qz-ff-accent) 10%, transparent);
+  --control-track: color-mix(in srgb, var(--qz-ff-toolbar-text) 7%, var(--qz-ff-toolbar));
+  --control-hover-fill: color-mix(in srgb, currentColor 17%, transparent);
+  --control-active-fill: color-mix(in srgb, currentColor 30%, transparent);
+  --control-surface: transparent;
+  --control-surface-hover: var(--control-hover-fill);
+  --control-surface-pressed: var(--control-active-fill);
+  --control-text: var(--qz-ff-toolbar-text);
+  --control-text-hover: var(--qz-ff-toolbar-text);
+  --control-border: var(--qz-ff-popup-border);
+  --control-border-hover: color-mix(in srgb, var(--qz-ff-toolbar-text) 28%, transparent);
+  --control-primary-surface: var(--qz-ff-accent);
+  --control-primary-surface-hover: color-mix(in srgb, var(--qz-ff-accent) 86%, var(--qz-ff-toolbar));
+  --control-primary-text: var(--qz-ff-accent-text);
+  --control-focus-ring: 0 0 0 2px var(--qz-ff-accent);
+  --control-radius: 4px;
+  --field-surface: var(--qz-ff-toolbar-field);
+  --field-text: var(--qz-ff-toolbar-field-text);
+  --field-border: var(--qz-ff-popup-border);
+  --field-border-hover: color-mix(in srgb, var(--qz-ff-toolbar-text) 28%, transparent);
+  --field-border-focus: var(--qz-ff-accent);
+  --field-placeholder: var(--qz-ff-muted);
+  --field-focus-ring: var(--control-focus-ring);
+
+  --user-bubble-bg: color-mix(in srgb, var(--qz-ff-toolbar-text) 7%, var(--qz-ff-toolbar));
+  --user-bubble-text: var(--qz-ff-toolbar-text);
+  --block-fill: color-mix(in srgb, var(--qz-ff-popup-text) 5%, var(--qz-ff-popup));
+  --block-fill-hover: color-mix(in srgb, var(--qz-ff-popup-text) 9%, var(--qz-ff-popup));
+  --block-radius: 4px;
+  --code-bg: color-mix(in srgb, var(--qz-ff-toolbar-text) 6%, var(--qz-ff-toolbar));
+  --code-inline-bg: color-mix(in srgb, var(--qz-ff-toolbar-text) 8%, var(--qz-ff-toolbar));
+  --code-border: color-mix(in srgb, var(--qz-ff-accent) 28%, transparent);
+  --modal-backdrop: color-mix(in srgb, var(--qz-ff-toolbar-text) 32%, transparent);
+  --modal-surface: var(--qz-ff-popup);
+  --modal-muted-surface: color-mix(in srgb, var(--qz-ff-popup-text) 6%, var(--qz-ff-popup));
+  --modal-card-surface: var(--qz-ff-popup);
+  --modal-card-border: var(--qz-ff-popup-border);
+  --modal-card-shadow: none;
+  --surface-porcelain: var(--qz-ff-popup);
+  --surface-porcelain-border: var(--qz-ff-popup-border);
+  --surface-porcelain-shadow: none;
+  --popover-surface: var(--qz-ff-popup);
+  --popover-border: var(--qz-ff-popup-border);
+  --shadow-sm: none;
+  --shadow-md: 0 2px 6px color-mix(in srgb, var(--qz-ff-toolbar-text) 18%, transparent);
+  --shadow-lg: 0 8px 24px color-mix(in srgb, var(--qz-ff-toolbar-text) 22%, transparent);
+  --green: #06674b;
+  --orange: #7a3e00;
+  --red: #c50042;
+  --danger-subtle: color-mix(in srgb, var(--red) 12%, transparent);
+  --success-border: color-mix(in srgb, var(--green) 45%, transparent);
+  --send-standby-bg: color-mix(in srgb, var(--qz-ff-toolbar-text) 14%, var(--qz-ff-toolbar));
+  --send-standby-mark: color-mix(in srgb, var(--qz-ff-toolbar-text) 62%, var(--qz-ff-toolbar));
+  --qz-scrollbar-size: 8px;
+  --qz-scrollbar-thumb: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent);
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
 }
 
+${scheme("light", "#06674b", "#7a3e00", "#c50042")}${scheme("dark", "#11ae84", "#ffb54c", "#ff848b")}
 html,
-body {
-  font: message-box;
-  background: Canvas;
-  color: CanvasText;
+body,
+#app {
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  background: var(--qz-ff-toolbar);
+  color: var(--qz-ff-toolbar-text);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent) transparent;
+}
+
+::selection {
+  background: var(--qz-ff-highlight);
+}
+
+#header {
+  background: var(--qz-ff-frame);
+  color: var(--qz-ff-toolbar-text);
+  border-color: var(--qz-ff-popup-border);
+  box-shadow: none;
+}
+
+.session-title-bar,
+.chat-dock {
+  background: var(--qz-ff-toolbar);
+  border-color: var(--qz-ff-popup-border);
+  box-shadow: none;
+}
+
+.header-tabs,
+.settings-tabs {
+  border-color: transparent;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.header-tabs {
+  background: color-mix(in srgb, var(--qz-ff-toolbar-text) 7%, var(--qz-ff-toolbar));
+}
+
+.settings-tabs {
+  background: color-mix(in srgb, var(--qz-ff-popup-text) 7%, var(--qz-ff-popup));
+}
+
+.tab-btn,
+.settings-tabs .qz-segment-item {
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tab-btn {
+  color: var(--qz-ff-toolbar-text);
+}
+
+.settings-tabs .qz-segment-item {
+  color: var(--qz-ff-popup-text);
+}
+
+.tab-btn:hover {
+  background: color-mix(in srgb, var(--qz-ff-toolbar-text) 8%, transparent);
+  color: var(--qz-ff-toolbar-text);
+}
+
+.settings-tabs .qz-segment-item:hover {
+  background: color-mix(in srgb, var(--qz-ff-popup-text) 8%, transparent);
+  color: var(--qz-ff-popup-text);
+}
+
+.tab-btn.active {
+  background: var(--qz-ff-toolbar);
+  color: var(--qz-ff-toolbar-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--qz-ff-toolbar-text) 14%, transparent);
+}
+
+.settings-tabs .qz-segment-item[aria-selected="true"] {
+  background: var(--qz-ff-popup);
+  color: var(--qz-ff-popup-text);
+  box-shadow: 0 0 0 1px var(--qz-ff-popup-border);
+}
+
+.qz-icon-btn,
+.qz-icon-btn--secondary,
+.icon-btn {
+  border-color: transparent;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--qz-ff-toolbar-text);
+  box-shadow: none;
+}
+
+.qz-icon-btn:not(:disabled):hover,
+.qz-icon-btn--secondary:not(:disabled):hover,
+.icon-btn:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, currentColor 17%, transparent);
+  color: var(--qz-ff-toolbar-text);
+}
+
+.qz-icon-btn:not(:disabled):active,
+.icon-btn:active {
+  background: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.qz-btn {
+  border-radius: 4px;
+  background: var(--qz-ff-button);
+  color: var(--qz-ff-button-text);
+  box-shadow: none;
+}
+
+.qz-btn--primary {
+  background: var(--qz-ff-accent);
+  color: var(--qz-ff-accent-text);
+}
+
+.qz-btn--ghost,
+.qz-btn--inline {
+  border-color: transparent;
+  background: transparent;
+  color: var(--qz-ff-toolbar-text);
+}
+
+.qz-btn:focus-visible,
+.qz-icon-btn:focus-visible,
+.tab-btn:focus-visible,
+.qz-field:focus-visible,
+.tool-timeline-step:focus-visible,
+.input-wrapper:focus-within {
+  outline: 2px solid var(--qz-ff-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.qz-field,
+.input-wrapper,
+#input {
+  border-radius: 4px;
+}
+
+.qz-field,
+.input-wrapper {
+  background: var(--qz-ff-toolbar-field);
+  color: var(--qz-ff-toolbar-field-text);
+  border-color: var(--qz-ff-popup-border);
+  box-shadow: none;
+}
+
+.qz-field::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: var(--qz-ff-muted);
+}
+
+.input-wrapper:focus-within {
+  border-color: var(--qz-ff-accent);
+}
+
+.send-btn {
+  background: var(--qz-ff-accent);
+  color: var(--qz-ff-accent-text);
+  border-radius: 4px;
+}
+
+.msg-assistant .msg-content,
+.msg-user .msg-content {
+  color: var(--qz-ff-toolbar-text);
+}
+
+.msg-user .msg-content {
+  border-radius: 8px;
+  background: var(--user-bubble-bg);
+  box-shadow: none;
+}
+
+.msg-tool-timeline.tool-timeline-expanded,
+.compact-node,
+.tool-timeline-summary,
+.settings-content {
+  border-radius: 4px;
+  background: var(--qz-ff-popup);
+  color: var(--qz-ff-popup-text);
+  border-color: var(--qz-ff-popup-border);
+  box-shadow: none;
+}
+
+.tool-timeline-step,
+.tool-chip,
+.tool-compact-meta span,
+.tool-slim-meta span {
+  border-radius: 4px;
+  border-color: var(--qz-ff-popup-border);
+  background: transparent;
+  box-shadow: none;
+  color: color-mix(in srgb, var(--qz-ff-popup-text) 78%, var(--qz-ff-popup));
+  font-family: system-ui, sans-serif;
+}
+
+.tool-timeline-step .mini-dot,
+.compact-node-dot,
+.tool-timeline-summary .dot {
+  box-shadow: none;
+}
+
+.tool-timeline-step.active {
+  background: color-mix(in srgb, var(--qz-ff-accent) 12%, var(--qz-ff-popup));
+  border-color: color-mix(in srgb, var(--qz-ff-accent) 45%, transparent);
+  color: var(--qz-ff-popup-text);
+  box-shadow: none;
+}
+
+.qz-scroll,
+.qz-scroll:not(.qz-scroll--native),
+.qz-scroll:not(.qz-scroll--native):is(:hover, :focus-within) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--qz-ff-toolbar-text) 35%, transparent) transparent;
 }
 `;
 }

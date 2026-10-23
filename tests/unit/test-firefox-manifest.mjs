@@ -72,6 +72,8 @@ test("the firefox manifest drops rejected permissions and keeps the shared entri
   assert.equal(source.action.default_area, undefined);
   assert.equal(firefox.update_url, undefined);
   assert.equal(firefox.permissions.includes("menus"), false);
+  assert.equal(firefox.permissions.includes("theme"), false);
+  assert.equal(firefox.theme, undefined);
   assert.deepEqual(firefox.host_permissions, source.host_permissions);
 });
 
@@ -87,6 +89,7 @@ test("firefox-only sources stay out of the chrome compilation", () => {
   assert.equal(isFirefoxOnlySource("background/firefox-boot.ts"), true);
   assert.equal(isFirefoxOnlySource("background/firefox/host.ts"), true);
   assert.equal(isFirefoxOnlySource("sidepanel/firefox/host.ts"), true);
+  assert.equal(isFirefoxOnlySource("sidepanel/firefox/theme.ts"), true);
   assert.equal(isFirefoxOnlySource("background/service-worker.ts"), false);
   assert.equal(isFirefoxOnlySource("sidepanel/sidepanel.ts"), false);
 });
@@ -107,9 +110,24 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.ok(moduleScript.indexOf('href="firefox-sidebar.css"') < moduleScript.indexOf("</head>"));
   assert.match(rewriteFirefoxSidepanelHtml('<script src="sidepanel.js" type="module"></script>'), /src="firefox-boot\.js"/);
   assert.match(rewriteFirefoxSidepanelHtml('<script src="../shared/mathjax-config.js"></script>'), /mathjax-config\.js/);
-  assert.match(firefoxSidebarCss(), /color-scheme: light dark/);
-  assert.match(firefoxSidebarCss(), /font: message-box/);
-  assert.match(firefoxSidebarCss(), /background: Canvas/);
+  const skin = firefoxSidebarCss();
+  assert.match(skin, /color-scheme: light dark/);
+  assert.match(skin, /@media \(prefers-color-scheme: light\)/);
+  assert.match(skin, /@media \(prefers-color-scheme: dark\)/);
+  assert.doesNotMatch(skin, /font:\s*message-box/);
+  assert.doesNotMatch(skin, /theme\.update/);
+  for (const token of ["Canvas", "CanvasText", "ButtonFace", "ButtonText", "Field", "FieldText", "AccentColor", "GrayText", "Highlight"]) {
+    assert.match(skin, new RegExp(token));
+  }
+  for (const property of [
+    "--qz-ff-frame", "--qz-ff-toolbar", "--qz-ff-toolbar-text", "--qz-ff-toolbar-field",
+    "--qz-ff-toolbar-field-text", "--qz-ff-popup", "--qz-ff-popup-text", "--qz-ff-popup-border",
+    "--qz-ff-accent",
+  ]) {
+    assert.match(skin, new RegExp(`${property}:`));
+  }
+  assert.match(skin, /background: var\(--qz-ff-toolbar\)/);
+  assert.match(skin, /--green: #11ae84/);
   assert.equal(
     firefoxUserText("ChromeOS uses Chrome, chrome://extensions/shortcuts, chrome://downloads, the side panel, and the Chrome Web Store."),
     "ChromeOS uses Firefox, about:addons, about:downloads, the sidebar, and the Add-ons Manager.",

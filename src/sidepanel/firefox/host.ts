@@ -1,3 +1,5 @@
+import { installFirefoxTheme, type FirefoxThemeChrome } from "./theme.js";
+
 /** Firefox sidebar recording and extension-page links. Chrome call sites stay on their APIs. */
 
 const STREAM_ID = "firefox-display";
@@ -10,9 +12,15 @@ export function installSidepanelFirefoxHost(
   chromeApi.qzFirefoxSidepanel = true;
   rewriteExtensionPages(chromeApi);
   installDisplayCapture(chromeApi, media);
+  installSidebarTheme(chromeApi);
 }
 
 installSidepanelFirefoxHost();
+
+function installSidebarTheme(chromeApi: SidepanelChrome) {
+  if (typeof document === "undefined") return;
+  installFirefoxTheme(chromeApi, document.documentElement);
+}
 
 function rewriteExtensionPages(chromeApi: SidepanelChrome) {
   const tabs = chromeApi.tabs;
@@ -99,7 +107,7 @@ interface MediaHost {
   getDisplayMedia(constraints: { video?: boolean; audio?: boolean }): Promise<MediaStream>;
   getUserMedia?(constraints?: MediaConstraints): Promise<MediaStream>;
 }
-interface SidepanelChrome {
+interface SidepanelChrome extends FirefoxThemeChrome {
   qzFirefoxSidepanel?: boolean;
   tabs?: { create(properties?: TabProperties): unknown };
   permissions?: { request(request?: PermissionRequest): Promise<boolean> };
