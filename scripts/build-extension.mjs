@@ -105,7 +105,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     const embedded = new Map();
     const embeddedDebugScripts = [];
     for (const script of EMBEDDED_SCRIPTS.filter(script => paths.includes(script.entry))) {
-      const result = await buildEmbeddedScript({ sourceDir: source, mode, ...script, profile, debugMaps });
+      const result = await buildEmbeddedScript({ sourceDir: source, mode, ...script, profile, debugMaps, browser });
       embedded.set(script.host, { [script.symbol]: JSON.stringify(result.code) });
       if (result.map) {
         // This is the exact injected fragment, not a map for its enclosing dynamic wrapper.
@@ -123,7 +123,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
       const destination = resolve(compiled, emitted);
       await mkdir(dirname(destination), { recursive: true });
       if (!path.startsWith("vendor/") && SCRIPT_EXTENSIONS.test(path)) {
-        if (CLASSIC_ENTRIES.has(emitted)) await compileScript({ source, compiled, output, path, emitted, mode, debugMaps, define: embedded.get(emitted) || {}, profile, dependencyGraph });
+        if (CLASSIC_ENTRIES.has(emitted)) await compileScript({ source, compiled, output, path, emitted, mode, debugMaps, define: embedded.get(emitted) || {}, profile, dependencyGraph, browser });
         else modules.set(emitted, path);
       } else if (profile.overrides.has(resolve(source, path))) {
         await writeFile(destination, profile.overrides.get(resolve(source, path)));
@@ -131,7 +131,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
         await copyFile(resolve(source, path), destination);
       }
     }
-    await compileModules({ source, compiled, output, modules, embedded, mode, debugMaps, profile, dependencyGraph });
+    await compileModules({ source, compiled, output, modules, embedded, mode, debugMaps, profile, dependencyGraph, browser });
     await validateRuntimeEntries(compiled);
     const { preservedInputs, runtimeInputs } = await validateModuleGraphs(compiled);
     if (mode === "production") {
@@ -172,7 +172,8 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     await writeFile(resolve(compiled, BUILD_MANIFEST), `${JSON.stringify(summary, null, 2)}\n`);
     signal?.throwIfAborted();
     await publishOutput(compiled, output, resolve(staging, "previous"), signal);
-    return { ...summary, outputDir: output };
+    // `browser` stays off the packaged manifest so a Firefox-only edit cannot move the Chrome hash.
+    return { ...summary, browser, outputDir: output };
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
@@ -187,7 +188,7 @@ export async function compileEmbeddedScript(options = {}) {
   return (await buildEmbeddedScript(options)).code;
 }
 
-async function buildEmbeddedScript({ sourceDir = resolve(ROOT, "src"), entry, mode = "development", debugMap = false, debugMaps = false, globalName, profile } = {}) {
+async function buildEmbeddedScript({ sourceDir = resolve(ROOT, "src"), entry, mode = "development", debugMap = false, debugMaps = false, globalName, profile, browser = "chrome" } = {}) {
   sourceDir = resolve(sourceDir);
   profile ??= await readProductProfile(sourceDir);
   if (!profile.plugins.some(plugin => plugin.name === "capability-catalogs")) profile.plugins.unshift(capabilityBuildProfile(sourceDir).plugin);
@@ -200,6 +201,7 @@ async function buildEmbeddedScript({ sourceDir = resolve(ROOT, "src"), entry, mo
     logLevel: "silent", tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true } },
     plugins: profile.plugins,
   });
+  if (browser === "chrome") rejectFirefoxOnlyInputs(result.metafile, sourceDir);
   if (result.warnings.length) throw new Error((await formatMessages(result.warnings, { kind: "warning", color: false })).join("\n"));
   if (Object.keys(result.metafile.inputs).some(path => !isInside(sourceDir, resolve(sourceDir, path)))
     || Object.values(result.metafile.outputs).some(output => output.imports.length)) {
@@ -211,7 +213,7 @@ async function buildEmbeddedScript({ sourceDir = resolve(ROOT, "src"), entry, mo
 }
 
 /** Multi-entry splitting preserves public module paths and lets esbuild own npm CJS/ESM interop. */
-async function compileModules({ source, compiled, output, modules, embedded, mode, debugMaps, profile, dependencyGraph }) {
+async function compileModules({ source, compiled, output, modules, embedded, mode, debugMaps, profile, dependencyGraph, browser = "chrome" }) {
   const result = await build({
     absWorkingDir: source,
     entryPoints: Object.fromEntries([...modules].map(([emitted, path]) => [emitted.replace(/\.(?:js|mjs)$/, ""), path])),
@@ -224,7 +226,9 @@ async function compileModules({ source, compiled, output, modules, embedded, mod
     logLevel: "silent", plugins: [...profile.plugins, { name: "application-module-boundaries", setup(context) {
       context.onResolve({ filter: /^\./ }, args => {
         if (!args.importer || !isInside(source, args.importer)) return null;
-        if (!isInside(source, resolve(args.resolveDir, args.path))) throw new Error(`application import escaped extension: ${args.path}`);
+        const resolved = resolve(args.resolveDir, args.path);
+        if (!isInside(source, resolved)) throw new Error(`application import escaped extension: ${args.path}`);
+        if (browser === "chrome") rejectFirefoxOnlyImport(source, resolved, args.importer);
         return { path: args.path, external: true };
       });
     } }, { name: "static-package-resources", setup(context) {
@@ -238,6 +242,7 @@ async function compileModules({ source, compiled, output, modules, embedded, mod
       });
     } }, stablePackagePaths()],
   });
+  if (browser === "chrome") rejectFirefoxOnlyInputs(result.metafile, source);
   if (result.warnings.length) throw new Error((await formatMessages(result.warnings, { kind: "warning", color: false })).join("\n"));
   for (const path of Object.keys(result.metafile.inputs)) {
     const input = originalInputPath(path, source);
@@ -255,7 +260,7 @@ async function compileModules({ source, compiled, output, modules, embedded, mod
   }
 }
 
-async function compileScript({ source, compiled, output, path, emitted, mode, debugMaps, define, profile, dependencyGraph }) {
+async function compileScript({ source, compiled, output, path, emitted, mode, debugMaps, define, profile, dependencyGraph, browser = "chrome" }) {
   const contents = profile.overrides.get(resolve(source, path)) ?? await readFile(resolve(source, path), "utf8");
   const typed = path.endsWith(".ts");
   const classic = CLASSIC_ENTRIES.has(emitted);
@@ -287,6 +292,7 @@ async function compileScript({ source, compiled, output, path, emitted, mode, de
       logLevel: "silent",
       tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true, useDefineForClassFields: true } },
     });
+    if (browser === "chrome") rejectFirefoxOnlyInputs(result.metafile, source);
     for (const input of Object.keys(result.metafile.inputs)) {
       if (!isInside(source, originalInputPath(input, source)) && !isInside(resolve(ROOT, "node_modules"), originalInputPath(input, source))) throw new Error(`entry input escaped extension and installed dependencies: ${input}`);
     }
@@ -324,6 +330,32 @@ async function compileScript({ source, compiled, output, path, emitted, mode, de
     const messages = await formatMessages(result.warnings, { kind: "warning", color: false });
     throw new Error(`esbuild warnings for ${path}:\n${messages.join("\n")}`);
   }
+}
+
+/** Chrome entries keep Firefox adapters out of the package. The Firefox build loads those files from its boot modules. */
+function rejectFirefoxOnlyImport(source, resolved, importer) {
+  const rel = firefoxOnlyRelative(source, resolved);
+  if (!rel) return;
+  const from = importer && isInside(source, importer) ? ` from ${posix(relative(source, importer))}` : "";
+  throw new Error(`Chrome package cannot import Firefox-only source ${rel}${from}. Load it from background/firefox-boot.ts or sidepanel/firefox-boot.ts, which only the Firefox package includes.`);
+}
+
+function rejectFirefoxOnlyInputs(metafile, source) {
+  for (const input of Object.keys(metafile?.inputs || {})) {
+    const path = originalInputPath(input, source);
+    if (isInside(source, path)) rejectFirefoxOnlyImport(source, path);
+  }
+}
+
+function firefoxOnlyRelative(source, file) {
+  const rel = posix(relative(source, file));
+  if (rel.startsWith("../") || isAbsolute(rel)) return "";
+  if (isFirefoxOnlySource(rel)) return rel;
+  if (rel.endsWith(".js")) {
+    const typed = `${rel.slice(0, -3)}.ts`;
+    if (isFirefoxOnlySource(typed)) return typed;
+  }
+  return "";
 }
 
 function remapSources(contents, sourceMapDirectory, outputMapDirectory) {
@@ -523,8 +555,9 @@ async function main() {
        npm run build -- [options]
 
 dev watches sources; build typechecks and creates a production bundle.
-Chrome loads the generated extension from dist/extension/.
-Firefox temporary loading uses dist/extension-firefox/.
+Chrome loads the generated extension from dist/extension/. npm run dev and npm run build do that.
+Firefox temporary loading uses dist/extension-firefox/. npm run dev:firefox and npm run build:firefox
+pass --browser firefox and leave the Chrome directory alone.
 
 Options:
   --source-dir <path>          Source directory (default: src/)
@@ -561,7 +594,7 @@ Options:
     bundle: values["no-bundle"] ? false : undefined, debugMaps: values["debug-maps"] === true,
   };
   const report = result => console.log(values.json ? JSON.stringify(result)
-    : `Built ${result.files.length} files (${result.mode}, ${result.product}) in ${result.outputDir}.${values.watch ? " Reload the extension when ready." : ""}`);
+    : `Built ${result.files.length} files (${result.mode}, ${result.product}, ${result.browser}) in ${result.outputDir}.${values.watch ? " Reload the extension when ready." : ""}`);
   const controller = new AbortController();
   const interrupt = () => controller.abort(new Error("Build interrupted"));
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];

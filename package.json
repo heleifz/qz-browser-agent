@@ -7,7 +7,9 @@
   },
   "scripts": {
     "dev": "node scripts/build-extension.mjs --watch",
+    "dev:firefox": "node scripts/build-extension.mjs --watch --browser firefox",
     "build": "node scripts/build-extension.mjs --mode production --typecheck",
+    "build:firefox": "node scripts/build-extension.mjs --mode production --typecheck --browser firefox",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --import tsx tests/run.mjs",
     "verify": "npm run typecheck && npm test -- --all --coverage",

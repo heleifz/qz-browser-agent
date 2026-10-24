@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +24,8 @@ test("build help is side-effect free, including npm's production/typecheck defau
     assert.match(result.stdout, /dist\/extension\//);
     assert.match(result.stdout, /--browser <chrome\|firefox>/);
     assert.match(result.stdout, /dist\/extension-firefox\//);
+    assert.match(result.stdout, /npm run build:firefox/);
+    assert.match(result.stdout, /npm run dev:firefox/);
     assert.equal(existsSync(fixture.output), false);
     assert.equal(existsSync(fixture.checked), false);
   }
@@ -71,9 +73,10 @@ test("build prints a concise summary and forwards production and product options
   const result = run(["--source-dir", fixture.source, "--output-dir", fixture.output,
     "--mode=production", "--product=public", "--no-bundle", "--debug-maps"]);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Built \d+ files \(production, public\) in /);
+  assert.match(result.stdout, /^Built \d+ files \(production, public, chrome\) in /);
   assert.equal(result.stdout.trim().split("\n").length, 1);
   const manifest = JSON.parse(await readFile(join(fixture.output, ".qingzhou-build.json"), "utf8"));
+  assert.equal(Object.hasOwn(manifest, "browser"), false);
   assert.equal(manifest.mode, "production");
   assert.equal(manifest.product, "public");
   assert.equal(manifest.debugMaps, true);
@@ -88,8 +91,11 @@ test("JSON build output remains parseable when the typecheck gate prints progres
   const result = run(["--source-dir", fixture.source, "--output-dir", fixture.output, "--typecheck", "--json"], { env });
   assert.equal(result.status, 0, result.stderr);
   const summary = JSON.parse(result.stdout);
+  assert.equal(summary.browser, "chrome");
   assert.equal(summary.mode, "development");
   assert.equal(summary.outputDir, fixture.output);
+  const packaged = JSON.parse(await readFile(join(fixture.output, ".qingzhou-build.json"), "utf8"));
+  assert.equal(Object.hasOwn(packaged, "browser"), false);
   assert.equal(summary.formatVersion, 1);
   assert.ok(summary.files.includes("background/service-worker.js"));
   assert.match(result.stderr, /Typecheck fixture passed/);
@@ -117,6 +123,38 @@ test("firefox packaging rewrites only the firefox output manifest", async t => {
   assert.equal(extensionOutputDirectory("chrome").endsWith(`${join("dist", "extension")}`), true);
   assert.equal(extensionOutputDirectory("firefox").endsWith(join("dist", "extension-firefox")), true);
   assert.throws(() => extensionOutputDirectory("safari"), /unknown browser: safari/);
+});
+
+test("a shared import of a Firefox-only module fails the Chrome build and passes the Firefox build", async t => {
+  const fixture = await workspace(t);
+  await extensionFixture(fixture.source);
+  const worker = join(fixture.source, "background/service-worker.js");
+  await writeFile(worker, `import "./firefox/host.js";\n${await readFile(worker, "utf8")}`);
+  await mkdir(join(fixture.source, "background/firefox"), { recursive: true });
+  await writeFile(join(fixture.source, "background/firefox/host.ts"), "export const firefoxHost = true;\n");
+  const chromeDir = join(fixture.work, "chrome-fence");
+  const firefoxDir = join(fixture.work, "firefox-fence");
+  const chrome = run(["--source-dir", fixture.source, "--output-dir", chromeDir, "--no-bundle"]);
+  assert.equal(chrome.status, 1);
+  assert.match(chrome.stderr, /Chrome package cannot import Firefox-only source background\/firefox\/host\.js from background\/service-worker\.js/);
+  assert.equal(existsSync(chromeDir), false);
+  const firefox = run(["--source-dir", fixture.source, "--output-dir", firefoxDir, "--browser", "firefox", "--no-bundle", "--json"]);
+  assert.equal(firefox.status, 0, firefox.stderr);
+  const summary = JSON.parse(firefox.stdout);
+  assert.equal(summary.browser, "firefox");
+  const packaged = JSON.parse(await readFile(join(firefoxDir, ".qingzhou-build.json"), "utf8"));
+  assert.equal(Object.hasOwn(packaged, "browser"), false);
+  assert.ok(packaged.files.includes("background/firefox/host.js"));
+});
+
+test("firefox npm scripts target the firefox package and chrome scripts stay chrome", () => {
+  const scripts = JSON.parse(readFileSync(fileURLToPath(new URL("../../package.json", import.meta.url)), "utf8")).scripts;
+  assert.equal(scripts.build, "node scripts/build-extension.mjs --mode production --typecheck");
+  assert.equal(scripts.dev, "node scripts/build-extension.mjs --watch");
+  assert.equal(scripts["build:firefox"], "node scripts/build-extension.mjs --mode production --typecheck --browser firefox");
+  assert.equal(scripts["dev:firefox"], "node scripts/build-extension.mjs --watch --browser firefox");
+  assert.equal(scripts["verify:quick"], "npm run typecheck && npm test -- --all");
+  assert.equal(scripts["verify:firefox"], "npm run typecheck && npm test -- firefox");
 });
 
 function run(args, options = {}) {
