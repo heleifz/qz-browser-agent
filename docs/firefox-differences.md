@@ -27,7 +27,7 @@ the shared suites and does not launch a browser. `npm run verify:chrome` loads t
 | Storage | Sessions, settings, and Skills use `storage.local` and the extension origin, the same repository calls as Chrome. `unlimitedStorage` stays. | The data lives in the Firefox profile for this add-on. It does not follow a Chrome profile or a Google account. |
 | Identity | `browser_specific_settings.gecko.id` is `qz-browser-agent@heleifz.github.io`. `strict_min_version` is `139.0`. The Chrome `key` is omitted. | The id is provisional. Changing it later changes stored data. The minimum version exists because `tabGroups` starts in Firefox 139. |
 | Data collection | `data_collection_permissions.required` is `websiteContent`. `optional` is `locationInfo`, `browsingActivity`, and `bookmarksInfo`. | The field is Firefox-only. `none` is not declared: page content is sent to the configured model, and location, history, and bookmarks can be sent when those features are used. |
-| Appearance | `sidepanel/firefox-sidebar.css` sets `color-scheme: light dark` and replaces the shared tokens with `--qz-ff-*` tokens built from `Canvas`, `CanvasText`, `AccentColor`, and `AccentColorText`. See [Sidebar skin](#sidebar-skin). | Built-in Light, Dark, and System themes often return no colors (`{}` or `colors: null`), so the system colors apply. The controls are still the shared widgets: Firefox does not give an extension its XUL widgets, and the sidebar title and close button are Firefox chrome outside this document. `browser_style` is not set; Firefox warns that it is deprecated. |
+| Appearance | `sidepanel/firefox-sidebar.css` sets `color-scheme: light dark` and replaces the shared tokens with `--qz-ff-*` tokens. Their base is Firefox's default sidebar: white or `#1c1b22`, `#15141a` or `#f9f9fa` text, and the violet accent `#764edd` or `#b89cff`. `sidepanel/firefox/theme.ts` recolors them from the active theme. See [Sidebar skin](#sidebar-skin). | Built-in Default, Light, Dark, and System themes return no colors (`colors: null`), so the Firefox defaults apply. On Linux the default theme draws the toolbar with GTK colors, which an extension cannot read; qz keeps the Firefox defaults there. The controls are still the shared widgets: Firefox does not give an extension its XUL widgets, and the sidebar title and close button are Firefox chrome outside this document. `browser_style` is not set; Firefox warns that it is deprecated. |
 
 ## Sidebar
 
@@ -142,8 +142,11 @@ handling still need a Mac. Load the package and read the background console:
    macOS. `opened` means macOS Firefox treats the click as input, and the hint copy can change.
 6. Open the sidebar with Cmd+Shift+K, the sidebar switcher, or the toolbar icon. The badge clears
    each time. Repeat step 3 and the hint appears again.
-7. With the macOS accent set to blue, the primary button and the send button read white on a fill
-   at least 4.5:1. With an empty composer, the send button is gray with a not-allowed cursor.
+7. With the macOS accent set to blue and the default theme, the primary button and the send button
+   stay Firefox violet, `#764edd` in light and `#b89cff` in dark, with a 4.5:1 label. With an empty
+   composer, the send button is gray with a not-allowed cursor.
+8. Switch to Spark in `about:addons` → Themes, then switch macOS between Light and Dark. The qz
+   sidebar matches the Bookmarks sidebar (Cmd+B) each time without a reload.
 
 ## Offscreen work
 
@@ -423,17 +426,17 @@ as the header, and keeps `scrollbar-gutter: stable both-edges`. The shared skin 
 
 | Token | Source | Use |
 | --- | --- | --- |
-| `--qz-ff-sidebar`, `--qz-ff-sidebar-text` | `Canvas`, `CanvasText`; theme `sidebar`, `sidebar_text` | Surface and body text |
+| `--qz-ff-sidebar`, `--qz-ff-sidebar-text` | Firefox's `#ffffff` and `#15141a` in light, `#1c1b22` and `#f9f9fa` in dark; theme surface and ink, see [Theme derivation](#theme-derivation) | Surface and body text |
 | `--qz-ff-text-deemphasized`, `--qz-ff-text-muted` | 72% and 60% of the text over the surface, raised by the palette | Inactive tabs, secondary and muted text |
 | `--qz-ff-hairline`, `--qz-ff-border` | 12% and 24% of the text color; theme `sidebar_border` | 1px dividers and field borders |
 | `--qz-ff-row-hover`, `--qz-ff-fill`, `--qz-ff-selected`, `--qz-ff-fill-hover`, `--qz-ff-fill-active` | 6%, 7%, 11%, 14%, and 21% of the text color | Row hover, neutral buttons, selected tab, hover, pressed |
 | `--qz-ff-box`, `--qz-ff-box-hover`, `--qz-ff-box-active` | 3% (5% dark), 8%, and 12% of the text over the surface | Task rows and code blocks |
-| `--qz-ff-accent`, `--qz-ff-accent-text` | `AccentColor`, `AccentColorText`; theme `sidebar_highlight`, `sidebar_highlight_text` | Palette input |
-| `--qz-ff-primary`, `-hover`, `-active`, `-text` | Palette. Fallback: Firefox's `#0061e0`, `#0250bb`, `#053e94` under `#fbfbfe` in light, and `#00ddff`, `#80ebff`, `#aaf2ff` under `#15141a` in dark | Primary and send buttons, checked switches |
-| `--qz-ff-accent-ink`, `--qz-ff-focus` | Palette; theme `focus_outline` | Links, code accent, 2px focus ring |
-| `--qz-ff-field`, `-field-text`, `-field-border` | Theme `toolbar_field`, `toolbar_field_text`, `toolbar_field_border` | Composer and inputs |
+| `--qz-ff-accent`, `--qz-ff-accent-text` | Firefox's `#764edd` under white in light, `#b89cff` under `#252428` in dark; theme `sidebar_highlight`, `sidebar_highlight_text` | Palette input |
+| `--qz-ff-primary`, `-hover`, `-active`, `-text` | Palette. Fallback: Firefox's `#764edd`, `#5939a8`, `#3e2976` under white in light, and `#b89cff`, `#d4c1ff`, `#eaddff` under `#252428` in dark | Primary and send buttons, checked switches |
+| `--qz-ff-accent-ink`, `--qz-ff-focus` | Palette; theme `focus_outline`, raised to 3:1 on the surface | Links, code accent, 2px focus ring |
+| `--qz-ff-field`, `-field-text`, `-field-border` | The surface in light, 18% black over it in dark; theme `toolbar_field`, `toolbar_field_text`, `toolbar_field_border` | Composer and inputs |
 | `--qz-ff-popup`, `-popup-text`, `-popup-border` | Theme `popup`, `popup_text`, `popup_border` | Popovers and menus |
-| `--qz-ff-success`, `-warning`, `-critical` | Fixed light and dark pairs | Status text and 12% tints |
+| `--qz-ff-success`, `-warning`, `-critical` | Light and dark pairs, raised by the palette on a theme surface | Status text and 12% tints |
 
 Radii are 4px for tabs, icon buttons, and chips, 6px for buttons and code, and 8px for rows,
 popovers, and cards. Icon buttons have no border or fill until hover. The selected tab is a pill
@@ -443,7 +446,7 @@ deemphasized text, and a `not-allowed` cursor instead of opacity.
 `sidepanel/firefox/theme.ts` resolves the accent, sidebar, popup, and field colors through a
 hidden probe element and writes these values on `:root`:
 
-- Primary. The label candidates are `AccentColorText`, white, and `#15141a`. A light label
+- Primary. The label candidates are `--qz-ff-accent-text`, white, and `#15141a`. A light label
   darkens the fill until the label reaches 4.6:1 at rest; hover and active darken 12% and 22%
   more, so they only gain contrast. A dark label lightens the fill until the label reaches 4.6:1
   on the active fill. The candidate that needs the smallest change wins. The macOS blue `#007aff`
@@ -453,18 +456,49 @@ hidden probe element and writes these values on `:root`:
   a 5% tint.
 - Text tiers. Each tier starts from the stylesheet share and rises until the text reaches 4.6:1
   on its surface and on the darkest fill it sits on.
+- Status colors. Success, warning, and critical move away from the surface until they reach
+  4.6:1 on it and on a 12% tint of themselves.
 
 The palette is recomputed on load, on `theme.onUpdated` for this window, on a
 `prefers-color-scheme` change, and when the sidebar window regains focus. When the accent cannot
 be parsed, for example a `color(display-p3 …)` value, the palette is removed and the stylesheet
 fallback applies.
 
-The primary follows the window theme's `sidebar_highlight` when a theme supplies it and
-`AccentColor` otherwise. Firefox's built-in themes return no colors to `theme.getCurrent()`, so
-on macOS the default theme yields the system accent, not a Firefox brand color; an extension
-cannot read a built-in theme's own accent. The fill can be darker than the system accent so the
-label keeps 4.5:1. A macOS accent change while the sidebar is open applies when the sidebar
-regains focus or reopens.
+The primary follows the window theme's `sidebar_highlight` when a theme supplies it and Firefox's
+violet otherwise, the accent Firefox's own sidebar uses for its focus ring and checked controls.
+The system accent (`AccentColor`) is not used. Text selection keeps the system `Highlight`, as
+the Bookmarks sidebar does.
+
+### Theme derivation
+
+`theme.getCurrent()` returns only a theme's `theme` block. Built-in themes return
+`colors: null`, so the stylesheet defaults apply and follow `prefers-color-scheme`. When the
+theme has colors, `deriveFirefoxSidebarTheme()` in `sidepanel/firefox/theme.ts` picks one of two
+variants.
+
+The sidebar document's `prefers-color-scheme` follows Firefox's toolbar. When the document is
+dark but the theme block is light, Firefox is painting the theme's `dark_theme` block, which an
+extension cannot read. `firefoxThemeIsDark()` repeats Firefox's toolbar test to detect this: an
+opaque `toolbar`, else `toolbar_text`, else an opaque `frame`, else `tab_background_text`, with
+perceived brightness at most 127 counting as dark. A theme with `properties.color_scheme` set to
+`dark` counts as dark.
+
+| Variant | Key | Source, first match wins |
+| --- | --- | --- |
+| Painted | Surface | `sidebar`; `toolbar` over `frame`; `tab_selected` over `frame`; `frame`; Firefox's default surface |
+| Painted | Text | `sidebar_text`, `toolbar_text`, `tab_text`, `bookmark_text`, `tab_background_text`, `toolbar_field_text`; else white or `#15141a`, whichever reads; raised to 4.6:1 |
+| Painted | Border, field, popup | `sidebar_border`; `toolbar_field`, `toolbar_field_text`, `toolbar_field_border`; `popup`, `popup_text`, `popup_border`. A missing key keeps the stylesheet value derived from the surface |
+| Derived dark | Surface | The light block's text, darkened to 2% luminance; else `#1c1b22` |
+| Derived dark | Text | The light block's `frame`, `sidebar`, `tab_selected`, or `toolbar_field`, lightened to 80% luminance and raised to 4.6:1; else `#fbfbfe` |
+| Derived dark | Border, field, popup | Not written, so the stylesheet derives them from the dark surface |
+| Both | Accent | `sidebar_highlight` over the surface, with `sidebar_highlight_text` or a readable label; else Firefox's violet |
+| Both | Focus ring | `focus_outline`, raised to 3:1 on the surface; else the accent ink |
+
+Firefox's own dark blocks use the same swap: under Spark, the dark sidebar `#250e0b` is the light
+block's `sidebar_text`, and the dark text `#f8f0ec` is the light block's `frame`. A theme switch
+or an appearance change repaints the sidebar without a reload. On Linux, the default theme uses
+GTK colors for the toolbar. The sidebar document cannot read them, so qz shows Firefox's default
+sidebar colors there.
 
 ## Native feel
 
@@ -479,12 +513,12 @@ call would be a non-Firefox argument, a warning, or a second menu.
 | `_execute_sidebar_action` owns the shortcut | Firefox toggles a sidebar from that reserved command. `_execute_action` would not. |
 | No custom context menu | The sidebar menu and the toolbar button are already Firefox's. A `menus` permission would add a warning and a second entry. |
 | `open_at_install: false` | Firefox would otherwise open the sidebar during install. The Chrome task does not. |
-| System colors, then the window theme | The shared theme stays in the Chrome package. The Firefox base is `color-scheme: light dark` and the system colors, which cover built-in light, dark, and system themes when `theme.getCurrent()` has no colors. A theme's `sidebar`, `toolbar_field`, `popup`, and `focus_outline` keys recolor the matching tokens, the way Firefox themes its own sidebar panels. `onUpdated` for another window is ignored. The package does not call `theme.update`, does not declare the `theme` permission, and does not ship a static `theme` key. |
+| Firefox defaults, then the window theme | The shared theme stays in the Chrome package. The Firefox base is `color-scheme: light dark` and Firefox's default sidebar colors, which cover built-in light, dark, and system themes when `theme.getCurrent()` has no colors. A theme recolors the sidebar from its sidebar keys, or from its toolbar, tab, and frame keys when it has none, the way Firefox themes its own sidebar panels. See [Theme derivation](#theme-derivation). `onUpdated` for another window is ignored. The package does not call `theme.update`, does not declare the `theme` permission, and does not ship a static `theme` key. |
 | No `resetScrollPosition` | Firefox treats it as non-standard and ignores it unless the add-on is Mozilla-signed. |
 | No `saveAsPDF` | The file picker interrupts the task and does not return PDF bytes. |
 | Catalog rewrite plus `productText` | Firefox pages say Firefox, sidebar, `about:addons`, and `about:downloads`. `chrome.debugger` in a catalog becomes `debugger`. English and Simplified Chinese receive the rewritten sentences the shared bundle would otherwise show. Chrome pages keep the Chrome sentence. The page-mode user agent stays a Chrome string so the site receives the layout the tool requested. |
 
-The sidebar title and close control are Firefox's header, outside this document. Chat, Tasks, Data, and Skills stay one row of tabs. Code stays monospace. Status colors are a fixed light pair and a fixed dark pair, so they can disagree with a custom theme. A theme's own `sidebar_text` on `sidebar` is used as painted; the derived text tiers, primary, and accent ink are raised to 4.5:1.
+The sidebar title and close control are Firefox's header, outside this document. Chat, Tasks, Data, and Skills stay one row of tabs. Code stays monospace. Status colors keep their hue, so they can disagree with a custom theme. A theme's text, text tiers, primary, accent ink, and status colors are raised to 4.5:1, and its focus ring to 3:1.
 
 ## What this check did not run
 
@@ -492,7 +526,7 @@ The sidebar title and close control are Firefox's header, outside this document.
 temporarily installs that package, opens the sidebar from the toolbar button and from the
 `_execute_sidebar_action` shortcut, and checks that the panel is Firefox's sidebar browser rather
 than a tab at `sidepanel.html`. In light and dark `prefers-color-scheme`, with a macOS accent of
-`#007aff`, and under a temporary theme add-on, it measures text at 4.5:1 and icons and focus rings
+`#007aff`, under a temporary theme add-on, and under a light-only theme in a dark sidebar, it measures text at 4.5:1 and icons and focus rings
 at 3:1 in rest, hover, active, and focus-visible states. It also checks that disabled primary and
 send buttons are neutral and show a `not-allowed` cursor, and that the sidebar has no horizontal
 overflow at 320 and 400 pixels. It covers `notifications.create` with `requireInteraction`, a
