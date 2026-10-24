@@ -221,16 +221,19 @@ export function createSessionExportFeature(options: ExportOptions = {}) {
       throw new Error(t("exportEmptySession"));
     }
 
-    const [chatHtml, skin, brandAssets, mathStylesheet] = await Promise.all([
+    const [chatHtml, skin, brandAssets] = await Promise.all([
       Promise.resolve(renderChatHtml(session, transcript)),
       loadSessionExportStylesheet(),
       loadSessionExportBrandAssets(),
-      mathExportStylesheet().catch(() => ""),
     ]);
+    // Load MathJax output rules only when the rendered chat contains a formula element.
+    const mathStylesheet = /\bclass="[^"]*\bmath-formula\b/u.test(String(chatHtml || ""))
+      ? mathExportStylesheet().catch(() => "")
+      : Promise.resolve("");
     const html = buildSessionExportHtml(session, payload, {
       chatHtml: await inlineSessionExportMath(chatHtml),
       stylesheet: skin.css,
-      mathStylesheet,
+      mathStylesheet: await mathStylesheet,
       skin,
       brandAssets,
     });
