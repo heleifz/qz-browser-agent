@@ -18,7 +18,13 @@ const copies = [
   ...[...packageAssets].filter(([source]) => !source.startsWith("#")),
   ["pdfjs-dist/legacy/build/pdf.mjs.map", "vendor/pdf.mjs.map"],
   ["pdfjs-dist/legacy/build/pdf.worker.mjs.map", "vendor/pdf.worker.mjs.map"],
-  ["mathjax/es5/tex-svg-full.js", "vendor/mathjax/tex-svg-full.js"],
+  // Component files only. ui/menu pulls Speech Rule Engine and XPath from a CDN.
+  ["mathjax/es5/startup.js", "vendor/mathjax/startup.js"],
+  ["mathjax/es5/core.js", "vendor/mathjax/core.js"],
+  ["mathjax/es5/input/tex-full.js", "vendor/mathjax/input/tex-full.js"],
+  ["mathjax/es5/output/svg.js", "vendor/mathjax/output/svg.js"],
+  ["mathjax/es5/output/svg/fonts/tex.js", "vendor/mathjax/output/svg/fonts/tex.js"],
+  ["mathjax/es5/a11y/assistive-mml.js", "vendor/mathjax/a11y/assistive-mml.js"],
   ["tabulator-tables/dist/css/tabulator.min.css", "vendor/tabulator/tabulator.min.css"],
   ["tabulator-tables/dist/css/tabulator.min.css.map", "vendor/tabulator/tabulator.min.css.map"],
 ];

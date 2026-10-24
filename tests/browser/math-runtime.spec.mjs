@@ -1,9 +1,9 @@
 import { build } from "esbuild";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { expect, test } from "./fixtures.mjs";
 import { stableCapture } from "../design-system/comparison.mjs";
 
-const vendor = "/extension/vendor/mathjax/tex-svg-full.js";
+const vendor = "/extension/vendor/mathjax/startup.js";
 let host;
 test.beforeAll(async () => {
   const result = await build({
@@ -23,7 +23,7 @@ async function openFixture(page, { eager = false } = {}) {
       <base href="/extension/sidepanel/">
       <link rel="stylesheet" href="/extension/sidepanel/sidepanel.css">
       <script src="/extension/shared/mathjax-config.js"></script>
-      ${eager ? `<script src="${vendor}"></script>` : ""}
+      ${eager ? `<script id="MathJax-script" src="${vendor}"></script>` : ""}
       <style>body{padding:20px;display:block}.sample{width:340px;padding:12px}</style>
     </head><body></body></html>`,
   }));
@@ -68,7 +68,7 @@ test("plain text and unfinished formulas do not load MathJax", async ({ page }) 
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   expect(requests).toBe(0);
-  expect(await page.locator(`script[src$="tex-svg-full.js"]`).count()).toBe(0);
+  expect(await page.locator(`script[src$="startup.js"]`).count()).toBe(0);
 });
 
 test("concurrent consumers share one load and wait for startup", async ({ page }) => {
@@ -236,6 +236,96 @@ for (const outcome of ["resolve", "reject"]) {
     expect(await page.locator("body > [aria-hidden=true]").count()).toBe(0);
   });
 }
+
+test("local components render fraction, chemistry, and bold math without remote requests", async ({ page }) => {
+  const remote = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") remote.push(request.url());
+  });
+  await openFixture(page);
+  await page.evaluate(() => window.addFormula("sample", String.raw`$\frac{1}{2}$ $\ce{H2O}$ $\bm{v}$`));
+  await expect(page.locator("#sample mjx-container svg")).toHaveCount(3);
+  await expect(page.locator("#sample mjx-merror")).toHaveCount(0);
+  const marks = await page.evaluate(() => [...document.querySelectorAll("#sample svg")].map(svg => ({
+    red: svg.innerHTML.includes('fill="red"'),
+    glyphs: [...svg.querySelectorAll("[id]")].map(node => node.id).filter(id => id.includes("TEX")),
+  })));
+  expect(marks.every(mark => mark.red === false)).toBe(true);
+  expect(marks[2].glyphs.some(id => id.endsWith("TEX-BI-1D497"))).toBe(true);
+  const contained = await page.evaluate(() => [...document.querySelectorAll("#sample svg")].every(svg => {
+    const uses = [...svg.querySelectorAll("use")];
+    return Boolean(svg.querySelector("path, use")) && uses.every(use => {
+      const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
+      return href.startsWith("#") && Boolean(svg.querySelector(`#${CSS.escape(href.slice(1))}`));
+    });
+  }));
+  expect(contained).toBe(true);
+  expect(remote).toEqual([]);
+});
+
+test("exported html embeds self-contained formulas and opens offline", async ({ page }) => {
+  const remote = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") remote.push(request.url());
+  });
+  await page.route("**/tests/math-runtime/export.html", route => route.fulfill({
+    contentType: "text/html",
+    body: `<!doctype html><html><head><base href="/extension/sidepanel/">
+      <script src="/extension/shared/mathjax-config.js"></script>
+    </head><body></body></html>`,
+  }));
+  await page.goto("/tests/math-runtime/export.html");
+  const html = await page.evaluate(async () => {
+    const css = await fetch("/extension/sidepanel/sidepanel.css").then(response => response.text());
+    const { createSessionExportFeature } = await import("/extension/sidepanel/features/export/session-export-feature.js");
+    const feature = createSessionExportFeature({
+      request: async () => ({ payload: {} }),
+      renderChatHtml: () => '<p><span class="math-formula math-inline">\\(\\frac{1}{2}\\)</span> <span class="math-formula math-inline">\\(\\ce{H2O}\\)</span> <span class="math-formula math-display">\\[\\bm{v}\\]</span></p>',
+      fetchStylesheet: async () => ({ ok: true, status: 200, text: async () => css }),
+      runtime: {
+        getURL: path => new URL(`/extension/${String(path).replace(/^\/+/, "")}`, location.origin).href,
+        getManifest: () => ({ version: "0.1.5" }),
+      },
+    });
+    const result = await feature.createDocumentFromSnapshot({
+      session: { id: "offline-math", title: "Offline formulas" },
+      transcript: [{ type: "assistant", content: "formulas" }],
+      appVersion: "0.1.5",
+      exportedAt: "2026-10-24 00:00:00",
+    });
+    return result.html;
+  });
+  expect(html).not.toMatch(/<script\s[^>]*\bsrc=/i);
+  expect(html).not.toMatch(/chrome-extension:|moz-extension:|cdn\.jsdelivr|registry\.npmmirror|unpkg\.com/i);
+  expect(html).not.toMatch(/url\(\s*['"]?(?!data:|#)[^)'"]+/i);
+  expect(html).toContain('id="qingzhou-session-exchange"');
+  expect(html).toContain('"format":"qingzhou.session"');
+  expect(html).toContain('"version":1');
+  expect(html.match(/<svg\b/gi)?.length).toBe(3);
+  expect(html).not.toMatch(/fill="red"/);
+  expect(html).toContain("TEX-BI-1D497");
+  expect(remote).toEqual([]);
+  await mkdir("/opt/cursor/artifacts", { recursive: true });
+  await writeFile("/opt/cursor/artifacts/export-offline.html", html);
+  const offline = await page.context().newPage();
+  const loads = [];
+  const errors = [];
+  offline.on("request", request => loads.push(request.url()));
+  offline.on("pageerror", error => errors.push(String(error)));
+  await offline.setContent(html, { waitUntil: "load" });
+  const boxes = await offline.locator("#messages svg").evaluateAll(nodes => nodes.map(node => {
+    const rect = node.getBoundingClientRect();
+    return { width: rect.width, height: rect.height, bytes: node.outerHTML.length };
+  }));
+  expect(errors).toEqual([]);
+  expect(loads.filter(url => /^https?:/u.test(url))).toEqual([]);
+  expect(boxes).toHaveLength(3);
+  expect(boxes.every(box => box.width > 2 && box.height > 2 && box.bytes > 80)).toBe(true);
+  await offline.screenshot({ path: "/opt/cursor/artifacts/export-offline.png", fullPage: true });
+  await offline.close();
+});
 
 for (const colorScheme of ["light", "dark"]) for (const scale of [1, 1.25]) {
   test(`real formulas match original direct rendering in ${colorScheme} mode at ${scale} scale`, async ({ page, context }, testInfo) => {

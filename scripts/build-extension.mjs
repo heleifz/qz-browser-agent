@@ -15,6 +15,7 @@ import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
 import { firefoxManifest, isFirefoxOnlySource, rewriteFirefoxLocaleFiles, rewriteFirefoxSidepanelHtml, writeFirefoxSidebarSkin } from "./firefox-manifest.mjs";
+import { assertNoRemoteCode } from "./check-no-remote-code.mjs";
 import { copyRuntimeAssets, createDependencyGraph, encodeSourceMapPath, originalInputPath, originalSourceMapPath, packageAssets, recordDependencyBuild, stablePackagePaths, writeDependencyProvenance } from "./vendor/assets.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -177,6 +178,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     };
     await writeFile(resolve(compiled, BUILD_MANIFEST), `${JSON.stringify(summary, null, 2)}\n`);
     signal?.throwIfAborted();
+    await assertNoRemoteCode([compiled]);
     await publishOutput(compiled, output, resolve(staging, "previous"), signal);
     // `browser` stays off the packaged manifest so a Firefox-only edit cannot move the Chrome hash.
     return { ...summary, browser, outputDir: output };
