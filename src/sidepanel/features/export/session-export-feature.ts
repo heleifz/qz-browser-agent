@@ -19,7 +19,7 @@ import {
   timelineGroupTools,
 } from "../../tools/tool-timeline-renderer.js";
 import { loadActiveSidepanelSkin, resolveActiveSidepanelSkin } from "../../ui/skin-runtime.js";
-import { renderMathSvg } from "../chat/math-runtime.js";
+import { mathExportStylesheet, renderMathSvg, withMathRuntime } from "../chat/math-runtime.js";
 
 interface ExportSession { id?: unknown; title?: string }
 
@@ -50,6 +50,7 @@ type SessionSnapshot = NonNullable<Parameters<typeof createSessionExchangePayloa
 interface ExportHtmlOptions {
   chatHtml?: string;
   stylesheet?: string;
+  mathStylesheet?: string;
   skin?: { name?: string; path?: string };
   brandAssets?: Partial<BrandAssets>;
 }
@@ -220,14 +221,16 @@ export function createSessionExportFeature(options: ExportOptions = {}) {
       throw new Error(t("exportEmptySession"));
     }
 
-    const [chatHtml, skin, brandAssets] = await Promise.all([
+    const [chatHtml, skin, brandAssets, mathStylesheet] = await Promise.all([
       Promise.resolve(renderChatHtml(session, transcript)),
       loadSessionExportStylesheet(),
       loadSessionExportBrandAssets(),
+      mathExportStylesheet().catch(() => ""),
     ]);
     const html = buildSessionExportHtml(session, payload, {
       chatHtml: await inlineSessionExportMath(chatHtml),
       stylesheet: skin.css,
+      mathStylesheet,
       skin,
       brandAssets,
     });
@@ -400,6 +403,7 @@ function findLastIndex<T>(items: T[], predicate: (item: T, index: number) => boo
 export function buildSessionExportHtml(session: ExportSession, exchangePayload: unknown, {
   chatHtml = "",
   stylesheet = "",
+  mathStylesheet = "",
   skin = {},
   brandAssets = {},
 }: ExportHtmlOptions = {}) {
@@ -412,6 +416,7 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
     night: nightLogo,
     favicon,
   });
+  const safeMathStylesheet = String(mathStylesheet || "").replace(/<\/style/giu, "<\\/style");
   const logoHtml = dayLogo
     ? `<div class="session-export-logo" aria-hidden="true">
         <img class="session-export-logo-day" src="${escapeHtml(dayLogo)}" alt="">
@@ -420,7 +425,7 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
     : "";
   const skinName = String(skin.name || "default");
   const skinPath = String(skin.path || "");
-  return `<!doctype html>
+  const documentHtml = `<!doctype html>
 <html lang="${getLanguage()}" dir="${getTextDirection()}" data-qingzhou-skin="${escapeHtml(skinName)}"${skinPath ? ` data-qingzhou-skin-path="${escapeHtml(skinPath)}"` : ""}>
 <head>
   <meta charset="utf-8">
@@ -537,6 +542,7 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
       .session-export-logo-day { display: none !important; }
       .session-export-logo-night { display: block !important; }
     }
+    /* qingzhou-math-styles */
   </style>
 </head>
 <body>
@@ -556,6 +562,7 @@ export function buildSessionExportHtml(session: ExportSession, exchangePayload: 
   </div>
 </body>
 </html>`;
+  return documentHtml.replace("/* qingzhou-math-styles */", safeMathStylesheet);
 }
 
 const EXPORT_EMPTY_IMAGE = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -581,8 +588,17 @@ export async function inlineSessionExportMath(chatHtml = "", render: ExportMathR
   if (!/\bclass="[^"]*\bmath-formula\b/u.test(html) || typeof document === "undefined") return html;
   const template = document.createElement("template");
   template.innerHTML = html;
-  for (const node of template.content.querySelectorAll(".math-formula")) {
-    if (!(node instanceof HTMLElement) || node.dataset.mathPending === "true") continue;
+  const formulas = collectExportMathFormulas(template.content);
+  if (render === renderMathSvg && formulas.some(node => node.dataset.mathPending !== "true")) {
+    try {
+      // tex2svgPromise keeps labels across calls. One reset per export lets \label and \ref resolve together.
+      await withMathRuntime(async runtime => { runtime.texReset?.(); });
+    } catch {
+      // MathJax is unavailable; each formula below keeps its source text.
+    }
+  }
+  for (const node of formulas) {
+    if (node.dataset.mathPending === "true") continue;
     const display = node.classList.contains("math-display");
     const tex = exportMathTex(node, display);
     if (!tex) continue;
@@ -598,6 +614,21 @@ export async function inlineSessionExportMath(chatHtml = "", render: ExportMathR
     if (svg) node.replaceChildren(svg);
   }
   return template.innerHTML;
+}
+
+/** querySelectorAll does not look inside a template's content, where later thinking and tool steps live. */
+function collectExportMathFormulas(root: ParentNode) {
+  const formulas: HTMLElement[] = [];
+  const visit = (parent: ParentNode) => {
+    for (const node of parent.querySelectorAll(".math-formula")) {
+      if (node instanceof HTMLElement) formulas.push(node);
+    }
+    for (const nested of parent.querySelectorAll("template")) {
+      if (nested instanceof HTMLTemplateElement) visit(nested.content);
+    }
+  };
+  visit(root);
+  return formulas;
 }
 
 function exportMathTex(node: HTMLElement, display: boolean) {

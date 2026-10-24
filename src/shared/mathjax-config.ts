@@ -14,8 +14,7 @@ const mathJaxConfig = {
     },
   },
   options: {
-    // The menu component loads Speech Rule Engine from a CDN. Typesetting never requests it.
-    enableMenu: false,
+    // ui/menu is not loaded: it fetches Speech Rule Engine from a CDN.
     skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
     ignoreHtmlClass: "tex2jax_ignore",
     processHtmlClass: "math-formula",

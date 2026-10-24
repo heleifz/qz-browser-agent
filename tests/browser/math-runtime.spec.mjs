@@ -327,6 +327,84 @@ test("exported html embeds self-contained formulas and opens offline", async ({ 
   await offline.close();
 });
 
+test("exported math keeps error color, table rules, labels, and template formulas", async ({ page }) => {
+  await page.route("**/tests/math-runtime/export-styles.html", route => route.fulfill({
+    contentType: "text/html",
+    body: `<!doctype html><html><head><base href="/extension/sidepanel/">
+      <script src="/extension/shared/mathjax-config.js"></script>
+    </head><body></body></html>`,
+  }));
+  await page.goto("/tests/math-runtime/export-styles.html");
+  const html = await page.evaluate(async () => {
+    const css = await fetch("/extension/sidepanel/sidepanel.css").then(response => response.text());
+    const { renderMathSvg } = await import("/extension/sidepanel/features/chat/math-runtime.js");
+    const labeled = String.raw`E=mc^2\tag{1}\label{eq:emc}`;
+    await renderMathSvg(labeled, true);
+    const chatHtml = [
+      String.raw`<span class="math-formula math-display">\[\begin{array}{cc|c}1&2&3\\4&5&6\end{array}\]</span>`,
+      String.raw`<span class="math-formula math-display">\[\begin{unknownenv}x\end{unknownenv}\]</span>`,
+      String.raw`<span class="math-formula math-display">\[E=mc^2\tag{1}\label{eq:emc}\]</span>`,
+      String.raw`<template class="static-transcript-template"><span class="math-formula math-inline">\(a+b\)</span></template>`,
+      String.raw`<span class="math-formula" data-math-pending="true">\(z\)</span>`,
+    ].join("");
+    const { createSessionExportFeature } = await import("/extension/sidepanel/features/export/session-export-feature.js");
+    const feature = createSessionExportFeature({
+      request: async () => ({ payload: {} }),
+      renderChatHtml: () => chatHtml,
+      fetchStylesheet: async () => ({ ok: true, status: 200, text: async () => css }),
+      runtime: {
+        getURL: path => new URL(`/extension/${String(path).replace(/^\/+/, "")}`, location.origin).href,
+        getManifest: () => ({ version: "0.1.5" }),
+      },
+    });
+    const result = await feature.createDocumentFromSnapshot({
+      session: { id: "offline-math-styles", title: "Exported math styles" },
+      transcript: [{ type: "assistant", content: "formulas" }],
+      appVersion: "0.1.5",
+      exportedAt: "2026-10-24 00:00:00",
+    });
+    return result.html;
+  });
+  expect(html).toMatch(/g\[data-mml-node="merror"\] > rect\[data-background\]\s*\{[^}]*fill:\s*yellow/);
+  expect(html).toMatch(/<template[^>]*static-transcript-template[\s\S]*<svg\b/);
+  expect(html).toContain('data-math-pending="true"');
+  expect(html).toMatch(/data-math-pending="true">\\\(z\\\)/);
+  expect(html).not.toMatch(/multiply defined/i);
+  const offline = await page.context().newPage();
+  try {
+    for (const scheme of ["light", "dark"]) {
+      await offline.emulateMedia({ colorScheme: scheme });
+      await offline.setContent(html, { waitUntil: "load" });
+      const styles = await offline.evaluate(() => {
+        const backgrounds = [...document.querySelectorAll('g[data-mml-node="merror"] > rect[data-background]')];
+        const lines = [...document.querySelectorAll('line[data-line]')];
+        const label = [...document.querySelectorAll("#messages .math-formula")]
+          .some(node => /multiply defined/i.test(node.textContent || ""));
+        const templateSvg = Boolean(document.querySelector("template.static-transcript-template")?.content.querySelector("svg"));
+        const pending = document.querySelector("[data-math-pending='true']")?.textContent || "";
+        return {
+          backgrounds: backgrounds.map(node => getComputedStyle(node).fill),
+          lines: lines.map(node => getComputedStyle(node).strokeWidth),
+          label,
+          templateSvg,
+          pending,
+        };
+      });
+      expect(styles.backgrounds.length, scheme).toBeGreaterThan(0);
+      expect(styles.backgrounds.every(fill => (
+        fill === "rgb(255, 255, 0)" || fill === "yellow" || fill.startsWith("color(srgb 1 1 0)")
+      )), scheme).toBe(true);
+      expect(styles.lines.length, scheme).toBeGreaterThan(0);
+      expect(styles.lines.every(width => width !== "0px"), scheme).toBe(true);
+      expect(styles.label, scheme).toBe(false);
+      expect(styles.templateSvg, scheme).toBe(true);
+      expect(styles.pending, scheme).toBe("\\(z\\)");
+    }
+  } finally {
+    await offline.close();
+  }
+});
+
 for (const colorScheme of ["light", "dark"]) for (const scale of [1, 1.25]) {
   test(`real formulas match original direct rendering in ${colorScheme} mode at ${scale} scale`, async ({ page, context }, testInfo) => {
     const eager = await context.newPage();
