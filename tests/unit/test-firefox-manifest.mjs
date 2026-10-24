@@ -123,6 +123,7 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.match(skin, /--qz-ff-accent: light-dark\(#764edd, #b89cff\);/, "the default accent is Firefox's violet");
   assert.match(skin, /--qz-ff-field: light-dark\(var\(--qz-ff-sidebar\), color-mix\(in srgb, black 18%, var\(--qz-ff-sidebar\)\)\);/);
   for (const property of FIREFOX_THEME_PROPERTIES) assert.match(skin, new RegExp(`^  ${property}:`, "m"));
+  assert.match(skin, /:where\(a:any-link\) \{\n\s*color: var\(--qz-ff-accent-ink\);/, "an unstyled link takes the theme's accent, not the browser's blue");
   assert.match(skin, /^@layer components \{$/m);
   assert.doesNotMatch(skin, /color-mix\([^;]*--qz-ff-(?:accent|primary)\b/, "the accent never tints a surface");
   for (const radius of skin.matchAll(/(?:border-radius|--radius-\w+|--control-radius|--popover-radius|--block-radius):\s*([^;]+);/g)) {

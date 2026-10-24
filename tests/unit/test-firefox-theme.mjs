@@ -430,7 +430,7 @@ test("the initial theme read paints the sidebar window", async () => {
   assert.equal(root.get("color-scheme"), "dark");
 });
 
-test("a missing theme api and a failed read leave the system-color base", async () => {
+test("a missing theme api and a failed read leave the stylesheet base", async () => {
   const root = styleRoot();
   installFirefoxTheme({}, root);
   installFirefoxTheme({ theme: { getCurrent() { return {}; } } }, root);

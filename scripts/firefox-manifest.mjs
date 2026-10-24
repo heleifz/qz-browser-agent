@@ -569,6 +569,11 @@ export function firefoxSidebarCss() {
     color: var(--qz-ff-accent-ink);
   }
 
+  /* Zero specificity: only links no other rule colors leave the browser's default blue. */
+  :where(a:any-link) {
+    color: var(--qz-ff-accent-ink);
+  }
+
   .thinking-group-summary,
   .tool-summary {
     border-color: transparent;

@@ -219,6 +219,18 @@ test("a light-only theme in a dark sidebar follows the dark block Firefox paints
     const audit = await auditSkin(firefoxSidebar);
     expect(audit.sidebar).toBe("rgb(37, 14, 11)");
     expectSkin(audit, "light-only theme dark");
+    const link = await firefoxSidebar.extension("sidebar", `
+      const doc = content.document;
+      const anchor = doc.createElement("a");
+      anchor.href = "https://example.test/";
+      anchor.textContent = "link";
+      doc.body.append(anchor);
+      const color = content.getComputedStyle(anchor).color;
+      anchor.remove();
+      return { color, ink: doc.documentElement.style.getPropertyValue("--qz-ff-accent-ink").trim() };
+    `);
+    expect(link.color, "an unstyled link takes the accent ink").toBe(link.ink);
+    expect(contrast(parseColor(link.color), [37, 14, 11])).toBeGreaterThanOrEqual(4.5);
   } finally {
     await setColorScheme(firefoxSidebar, "none");
     await uninstallTheme(firefoxSidebar, id);
