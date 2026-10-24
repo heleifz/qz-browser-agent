@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "Zielverfolgung",
   "sessions.latestMessagesShort": "Neueste Nachrichten",
   "sessions.getLocation": "Standort abrufen",
-  "sessions.locationUnavailable": "Der Standort konnte nicht ermittelt werden. Öffne die Seitenleiste und prüfe die Standorteinstellungen deines Geräts oder gib eine Stadt oder Region an."
+  "sessions.locationUnavailable": "Dein Standort konnte nicht ermittelt werden. Lass die Seitenleiste dieser Sitzung offen, erlaube die Standortabfrage von Chrome oder Firefox und schalte die Standortdienste des Systems für diesen Browser ein. Du kannst auch eine Stadt oder Region angeben."
 }

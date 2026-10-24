@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "Seguimiento de meta",
   "sessions.latestMessagesShort": "Últimos mensajes",
   "sessions.getLocation": "Obtener ubicación",
-  "sessions.locationUnavailable": "No se pudo obtener tu ubicación. Abre el panel lateral y revisa los ajustes de ubicación del dispositivo, o indica una ciudad o zona."
+  "sessions.locationUnavailable": "No se pudo obtener tu ubicación. Mantén abierto el panel lateral de esta sesión, permite el aviso de ubicación de Chrome o Firefox y activa los servicios de ubicación del sistema para ese navegador. También puedes indicar una ciudad o zona."
 }

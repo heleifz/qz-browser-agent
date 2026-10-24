@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "目標追蹤",
   "sessions.latestMessagesShort": "最新訊息",
   "sessions.getLocation": "取得位置",
-  "sessions.locationUnavailable": "無法取得位置。請開啟側邊欄並檢查裝置定位設定，或直接提供城市、區域。"
+  "sessions.locationUnavailable": "無法取得位置。請保持目前任務的側邊欄開啟，允許 Chrome 或 Firefox 的定位提示，並為這個瀏覽器開啟系統定位服務。也可以直接提供城市、區域。"
 }

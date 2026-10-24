@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "Suivi d’objectif",
   "sessions.latestMessagesShort": "Derniers messages",
   "sessions.getLocation": "Obtenir la position",
-  "sessions.locationUnavailable": "Localisation impossible. Ouvrez le panneau latéral et vérifiez les paramètres de localisation de votre appareil, ou indiquez une ville ou une zone."
+  "sessions.locationUnavailable": "Impossible d’obtenir votre position. Gardez le panneau latéral de cette session ouvert, autorisez l’invite de localisation de Chrome ou Firefox et activez les services de localisation du système pour ce navigateur. Vous pouvez aussi indiquer une ville ou une zone."
 }

@@ -15,6 +15,7 @@ import { describeAutomationSchedule, computeNextRunAt } from "../../src/shared/a
 import { qingzhouTabGroupPatch, ensureQingzhouTabGroupForWindow } from "../../src/shared/tab-groups.js";
 import { formatBeijingDateTime, parseBeijingDateTime } from "../../src/shared/time-utils.js";
 import { t as contentText } from "../../src/content/i18n.js";
+import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
 
 async function inLanguage(language, run) {
   const chrome = globalThis.chrome;
@@ -53,6 +54,82 @@ test("tool errors translate at the boundary and retain machine identity and orig
   assert.equal(english.details.originalError, input.error);
   assert.equal(input.error, "changed revision 7");
   assert.equal(await inLanguage("de-DE", () => localizeToolFailureCode("TOOL_NOT_EXECUTED")), "Tool did not run");
+});
+
+test("location failures keep stable codes and explain the sidebar, browser, and system steps", async () => {
+  const cases = [
+    ["LOCATION_RESPONSE_TIMEOUT", "locationResponseTimeout", "locationResponseTimeoutLabel", false],
+    ["LOCATION_TIMEOUT", "locationTimeout", "locationTimeoutLabel", false],
+    ["LOCATION_PERMISSION_DENIED", "locationPermissionDenied", "locationPermissionDeniedLabel", false],
+    ["LOCATION_POSITION_UNAVAILABLE", "locationPositionUnavailable", "locationPositionUnavailableLabel", false],
+    ["LOCATION_UNAVAILABLE", "locationUnavailable", "locationUnavailableLabel", false],
+    ["LOCATION_PANEL_UNAVAILABLE", "locationPanelUnavailable", "locationPanelUnavailableLabel", true],
+  ];
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({
+      innerHTML: "",
+      set textContent(value) {
+        this.innerHTML = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      },
+    }) },
+  });
+  try {
+    for (const [code, messageKey, labelKey, panelOnly] of cases) {
+      for (const language of ["en", "zh-CN"]) {
+        const payload = await inLanguage(language, () => localizeToolFailurePayload({
+          ok: false,
+          code,
+          error: "The side panel did not return a location result",
+        }));
+        const message = backendMessages.messages[messageKey][language];
+        const label = backendMessages.messages[labelKey][language];
+        assert.equal(payload.code, code);
+        assert.equal(payload.error, message);
+        assert.equal(payload.codeLabel, label);
+        assert.equal(payload.details.originalCode, code);
+        assert.equal(payload.details.originalError, "The side panel did not return a location result");
+        assert.equal(message.includes(code), false);
+        assert.equal(label.includes("_"), false);
+        if (language === "en") {
+          assert.match(message, /sidebar/i);
+          assert.match(message, /city or area/);
+          if (panelOnly) {
+            assert.match(message, /isn’t connected/);
+            assert.match(message, /this window/);
+          } else {
+            assert.match(message, /Chrome(?:,| or) Firefox/);
+            assert.match(message, /Location Services/);
+          }
+        } else {
+          assert.match(message, /侧边栏/);
+          assert.match(message, /城市、区域/);
+          if (panelOnly) {
+            assert.match(message, /没有连上/);
+            assert.match(message, /这个窗口/);
+          } else {
+            assert.match(message, /Chrome(?:、| 或 )Firefox/);
+            assert.match(message, /定位服务/);
+          }
+        }
+        const sections = [];
+        await inLanguage(language, () => {
+          appendErrorSection({ appendChild: section => sections.push(section) }, {
+            ok: false, code, error: "The side panel did not return a location result",
+          });
+        });
+        const html = sections.at(-1).innerHTML;
+        assert.match(html, /tool-error-message/);
+        assert.equal(html.includes(message), true);
+        assert.equal(html.includes(label), true);
+        assert.equal(html.includes(code), false);
+      }
+    }
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
+  }
 });
 
 test("tool failures interpolate fields without translating caller values", async () => {

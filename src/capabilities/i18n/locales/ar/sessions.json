@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "تتبّع الهدف",
   "sessions.latestMessagesShort": "أحدث الرسائل",
   "sessions.getLocation": "الحصول على الموقع",
-  "sessions.locationUnavailable": "تعذّر الحصول على موقعك. افتح اللوحة الجانبية وتحقق من إعدادات الموقع في جهازك، أو حدّد مدينة أو منطقة."
+  "sessions.locationUnavailable": "تعذّر الحصول على موقعك. أبقِ اللوحة الجانبية لهذه الجلسة مفتوحة، واسمح بمطالبة الموقع في Chrome أو Firefox، وشغّل خدمات الموقع في النظام لهذا المتصفح. يمكنك أيضًا تحديد مدينة أو منطقة."
 }

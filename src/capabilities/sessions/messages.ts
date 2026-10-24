@@ -3,7 +3,7 @@ import { defineMessages } from "#sdk/shared/i18n-definition";
 /** Package-owned interface text. Identifiers and user content remain untranslated. */
 export default defineMessages("sessions", {
   getLocation: { en: "Get location", "zh-CN": "获取位置" },
-  locationUnavailable: { en: "Open the side panel, check your device’s location settings, and try again.", "zh-CN": "请打开侧边栏，检查设备的定位设置后重试。" },
+  locationUnavailable: { en: "Couldn’t get your location. Keep this session’s sidebar open, allow the Chrome or Firefox location prompt, and turn on Location Services for that browser. You can also provide a city or area.", "zh-CN": "未能获取位置。请保持当前任务的侧边栏打开，允许 Chrome 或 Firefox 的定位提示，并为这个浏览器打开系统定位服务。也可以直接提供城市、区域。" },
   "manageTasks": { "zh-CN": "管理任务 · {action}", en: "Manage tasks · {action}" },
   "manageTasksTitle": { "zh-CN": "管理任务", en: "Manage tasks" },
   "tasks": { "zh-CN": "{count} 个任务", en: "Tasks: {count}" },
