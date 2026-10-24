@@ -112,18 +112,21 @@ test("text keeps 4.5:1, icons and focus rings 3:1, and disabled controls stand a
   expect(sidebars.size, "light and dark paint different sidebars").toBe(2);
 });
 
-test("a macOS system accent gets a darker primary fill that keeps a 4.5:1 label", async ({ firefoxSidebar }) => {
+test("the default theme keeps Firefox's own surfaces and violet accent over a macOS system accent", async ({ firefoxSidebar }) => {
   await setAccentColor(firefoxSidebar, "#007aff");
   try {
     await openFromToolbar(firefoxSidebar);
+    const defaults = {
+      light: { sidebar: "rgb(255, 255, 255)", primary: "rgb(118, 78, 221)" },
+      dark: { sidebar: "rgb(28, 27, 34)", primary: "rgb(184, 156, 255)" },
+    };
     for (const scheme of ["light", "dark"]) {
       await setColorScheme(firefoxSidebar, scheme);
       const audit = await auditSkin(firefoxSidebar);
-      expect(audit.accent).toBe("rgb(0, 122, 255)");
-      expect(contrast([255, 255, 255], [0, 122, 255]), "the raw accent is below 4.5:1").toBeLessThan(4.5);
-      expect(audit.palette["--qz-ff-primary"]).toBe("rgb(0, 112, 235)");
-      expect(audit.palette["--qz-ff-primary-text"]).toBe("rgb(255, 255, 255)");
-      expectSkin(audit, `macOS accent ${scheme}`);
+      expect(audit.accent, "the system accent is set").toBe("rgb(0, 122, 255)");
+      expect(audit.sidebar).toBe(defaults[scheme].sidebar);
+      expect(audit.palette["--qz-ff-primary"]).toBe(defaults[scheme].primary);
+      expectSkin(audit, `default ${scheme}`);
     }
   } finally {
     await setColorScheme(firefoxSidebar, "none");
@@ -153,7 +156,7 @@ test("a window theme recolors the sidebar, its popups, and the primary fill", as
     expect(root.inline["--qz-ff-sidebar"]).toBe("rgb(42, 33, 72)");
     expect(root.inline["--qz-ff-sidebar-text"]).toBe("rgb(236, 232, 255)");
     expect(root.inline["--qz-ff-accent"]).toBe("rgb(185, 165, 255)");
-    expect(root.inline["--qz-ff-focus"]).toBe("#7cf0d0");
+    expect(root.inline["--qz-ff-focus"]).toBe("rgb(124, 240, 208)");
     expect(root.inline["--qz-ff-popup"]).toBe("rgb(246, 243, 255)");
     expect(root.inline["--qz-ff-primary-text"]).toBe("rgb(21, 20, 26)");
     expect(root.colorScheme).toBe("dark");
@@ -174,6 +177,52 @@ test("a window theme recolors the sidebar, its popups, and the primary fill", as
   }
   const cleared = await readSidebarRoot(firefoxSidebar);
   expect(cleared.inline["--qz-ff-sidebar"]).toBeUndefined();
+});
+
+test("a light-only theme in a dark sidebar follows the dark block Firefox paints, live", async ({ firefoxSidebar }) => {
+  const directory = mkdtempSync(join(tmpdir(), "qz-firefox-light-theme-"));
+  writeFileSync(join(directory, "manifest.json"), JSON.stringify({
+    manifest_version: 2,
+    name: "qz light test theme",
+    version: "1.0",
+    browser_specific_settings: { gecko: { id: "qz-light-test-theme@example.test" } },
+    theme: { colors: {
+      frame: "#f8f0ec", toolbar: "rgba(255, 255, 255, 0.4)", toolbar_text: "#250e0b", tab_background_text: "#250e0b",
+      toolbar_field: "#ffffff", toolbar_field_text: "#250e0b", sidebar: "#ffffff", sidebar_text: "#250e0b", sidebar_border: "#febd99",
+    } },
+  }));
+  await openFromToolbar(firefoxSidebar);
+  const id = await installTheme(firefoxSidebar, directory);
+  const settle = async (expected) => {
+    let root = await readSidebarRoot(firefoxSidebar);
+    const started = Date.now();
+    while (root.inline["--qz-ff-sidebar"] !== expected && Date.now() - started < 4000) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      root = await readSidebarRoot(firefoxSidebar);
+    }
+    return root;
+  };
+  try {
+    await setColorScheme(firefoxSidebar, "light");
+    let root = await settle("rgb(255, 255, 255)");
+    expect(root.inline["--qz-ff-sidebar"]).toBe("rgb(255, 255, 255)");
+    expect(root.inline["--qz-ff-sidebar-text"]).toBe("rgb(37, 14, 11)");
+    expect(root.colorScheme).toBe("light");
+    expectSkin(await auditSkin(firefoxSidebar), "light-only theme light");
+
+    await setColorScheme(firefoxSidebar, "dark");
+    root = await settle("rgb(37, 14, 11)");
+    expect(root.inline["--qz-ff-sidebar"], "the dark sidebar is the theme's ink").toBe("rgb(37, 14, 11)");
+    expect(root.inline["--qz-ff-sidebar-text"], "the dark text is the theme's frame").toBe("rgb(248, 240, 236)");
+    expect(root.inline["--qz-ff-field"]).toBeUndefined();
+    expect(root.colorScheme).toBe("dark");
+    const audit = await auditSkin(firefoxSidebar);
+    expect(audit.sidebar).toBe("rgb(37, 14, 11)");
+    expectSkin(audit, "light-only theme dark");
+  } finally {
+    await setColorScheme(firefoxSidebar, "none");
+    await uninstallTheme(firefoxSidebar, id);
+  }
 });
 
 test("a scrolling chat keeps message text clear of the scrollbar at 320 and 400 pixels", async ({ firefoxSidebar }) => {
