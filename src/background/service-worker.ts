@@ -78,6 +78,7 @@ import {
   getLastTranscriptToolName,
 } from "../shared/session/session-codec.js";
 import {
+  normalizeParentSessionId,
   ROOT_SESSION_ID,
 } from "../shared/session/session-store.js";
 import { getSessionRepository, getSessions } from "./session/repository.js";
@@ -132,6 +133,7 @@ import {
   createChromeNotificationService,
   createSessionCompletionNotifier,
 } from "./services/chrome-notifications.js";
+import { createChromeStoreReviewStore } from "./services/chrome-store-review.js";
 import { createGitSkillSourceRepository } from "./skills/git-skill-source-repository.js";
 import { getAutomationRepository } from "./automation/repository.js";
 import {
@@ -420,6 +422,14 @@ sessionSupervisor = createSessionSupervisor({
   initializeAgent: sessionAgentHost.initializeAgent,
   onAgentEvent: sessionAgentHost.handleEvent,
 });
+const chromeStoreReview = createChromeStoreReviewStore({
+  storage: chrome.storage.local,
+  isRootSession: async sessionId => {
+    const session = (await getSessions())[sessionId];
+    if (!session) return false;
+    return normalizeParentSessionId(session.parentSessionId) === ROOT_SESSION_ID;
+  },
+});
 const sessionRuntimeState = createSessionRuntimeState({
   supervisor: sessionSupervisor,
   repository: sessionRepository,
@@ -428,6 +438,7 @@ const sessionRuntimeState = createSessionRuntimeState({
   normalizeSessionId,
   scheduleTabGroupSync: sessionId => sessionTabs.scheduleGroupSync(sessionId),
   onCompleted: sessionId => sessionCompletionNotifier?.notifyCompleted(sessionId),
+  onTaskCompleted: (sessionId, runtime) => chromeStoreReview.recordCompletion(sessionId, runtime),
 });
 const sessionArtifacts = createSessionArtifacts({
   sessionRepository,
