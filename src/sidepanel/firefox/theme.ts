@@ -1,36 +1,39 @@
 /**
- * Read the window theme into the sidebar the way Firefox themes its own sidebar panels:
- * the sidebar keys recolor the surface, text, border, and selection; fields and popups follow
- * their toolbar_field and popup keys. Themes without sidebar keys leave the system colors.
- * The resolved colors then yield a primary fill, accent ink, and text tiers that keep 4.5:1.
- * This module never calls theme.update.
+ * Paint the sidebar from the window theme the way Firefox paints its own sidebar panels.
+ *
+ * theme.getCurrent() returns only a static theme's `theme` block. Firefox paints its
+ * `dark_theme` block while the system is dark, and the sidebar document then matches
+ * `prefers-color-scheme: dark`, because the sidebar follows the toolbar scheme. A dark
+ * document with a light palette therefore shows a dark block this page cannot read, and the
+ * dark variant is derived from the light block instead. Missing sidebar keys are derived from
+ * the toolbar, tab, and frame keys. Every text color keeps 4.5:1 on its surface and a focus
+ * ring keeps 3:1. Without theme colors the stylesheet's Firefox defaults apply, including
+ * Firefox's own accent. The resolved colors then yield a primary fill, accent ink, and text
+ * tiers that keep 4.5:1. This module never calls theme.update.
  */
 
-/** Theme key, custom property, and whether the value is painted opaque like Firefox's sidebar. */
-export const FIREFOX_THEME_COLOR_PROPERTIES: readonly (readonly [string, string, boolean])[] = [
-  ["sidebar", "--qz-ff-sidebar", true],
-  ["sidebar_text", "--qz-ff-sidebar-text", true],
-  ["sidebar_border", "--qz-ff-sidebar-border", false],
-  ["sidebar_highlight", "--qz-ff-accent", true],
-  ["sidebar_highlight_text", "--qz-ff-accent-text", true],
-  ["focus_outline", "--qz-ff-focus", false],
-  ["toolbar_field", "--qz-ff-field", false],
-  ["toolbar_field_text", "--qz-ff-field-text", true],
-  ["toolbar_field_border", "--qz-ff-field-border", false],
-  ["popup", "--qz-ff-popup", true],
-  ["popup_text", "--qz-ff-popup-text", true],
-  ["popup_border", "--qz-ff-popup-border", false],
-];
+/** The source properties a window theme writes on the sidebar root. */
+export const FIREFOX_THEME_PROPERTIES = [
+  "--qz-ff-sidebar", "--qz-ff-sidebar-text", "--qz-ff-sidebar-border",
+  "--qz-ff-accent", "--qz-ff-accent-text", "--qz-ff-focus",
+  "--qz-ff-field", "--qz-ff-field-text", "--qz-ff-field-border",
+  "--qz-ff-popup", "--qz-ff-popup-text", "--qz-ff-popup-border",
+] as const;
 
-/** A surface key without its text key gets the more legible of Firefox's two inks. */
-const INK_PAIRS: readonly (readonly [string, string, string])[] = [
-  ["sidebar_highlight", "sidebar_highlight_text", "--qz-ff-accent-text"],
-  ["toolbar_field", "toolbar_field_text", "--qz-ff-field-text"],
-  ["popup", "popup_text", "--qz-ff-popup-text"],
-];
+export type FirefoxThemeProperty = (typeof FIREFOX_THEME_PROPERTIES)[number];
 
-const LIGHT_INK = "#fbfbfe";
-const DARK_INK = "#15141a";
+const LIGHT_INK: Rgba = [251, 251, 254, 1];
+const DARK_INK: Rgba = [21, 20, 26, 1];
+/** Firefox's default sidebar surfaces, also declared by the stylesheet. */
+const DEFAULT_SURFACE = { light: [255, 255, 255, 1] as Rgba, dark: [28, 27, 34, 1] as Rgba };
+const TEXT_TARGET = 4.6;
+const RING_TARGET = 3;
+/** A derived dark surface is at most this luminous, near Firefox's own dark theme blocks. */
+const DARK_SURFACE_LUMINANCE = 0.02;
+/** A derived light text is at least this luminous, so body text reads well above 4.5:1. */
+const LIGHT_TEXT_LUMINANCE = 0.8;
+/** Ink keys from the most specific to the least, as Firefox falls back for its sidebar. */
+const INK_KEYS = ["sidebar_text", "toolbar_text", "tab_text", "bookmark_text", "tab_background_text", "toolbar_field_text"] as const;
 
 interface ThemeStyle {
   setProperty(name: string, value: string): void;
@@ -48,7 +51,7 @@ interface AccentRoot {
 
 interface AccentView {
   getComputedStyle(element: unknown): { color: string; getPropertyValue(name: string): string };
-  matchMedia?(query: string): { addEventListener?(type: "change", listener: () => void): void } | null;
+  matchMedia?(query: string): { matches?: boolean; addEventListener?(type: "change", listener: () => void): void } | null;
   addEventListener?(type: "load" | "focus", listener: () => void, options?: { once?: boolean }): void;
 }
 
@@ -168,11 +171,8 @@ function relativeLuminance([red, green, blue]: Rgba): number {
 }
 
 /** The ink with the higher WCAG contrast on an opaque surface. */
-function legibleInk(surface: Rgba): string {
-  const luminance = relativeLuminance(surface);
-  const light = (relativeLuminance([251, 251, 254, 1]) + 0.05) / (luminance + 0.05);
-  const dark = (luminance + 0.05) / (relativeLuminance([21, 20, 26, 1]) + 0.05);
-  return light >= dark ? LIGHT_INK : DARK_INK;
+function legibleInk(surface: Rgba): Rgba {
+  return contrast(LIGHT_INK, surface) >= contrast(DARK_INK, surface) ? LIGHT_INK : DARK_INK;
 }
 
 function contrast(first: Rgba, second: Rgba): number {
@@ -221,12 +221,12 @@ function mix(top: Rgba, weight: number, bottom: Rgba): Rgba {
   return [channel(0), channel(1), channel(2), 1];
 }
 
-/** The accent moved away from the surface until it reads as text on every ground. */
-export function firefoxAccentInk(accent: Rgba, grounds: readonly Rgba[]): Rgba {
+/** The accent moved away from the surface until it reaches `target` on every ground. */
+export function firefoxAccentInk(accent: Rgba, grounds: readonly Rgba[], target = PRIMARY_TARGET): Rgba {
   const toward = relativeLuminance(grounds[0]) > 0.18 ? 1 : -1;
   for (let step = 0; step <= 100; step += 1) {
     const ink = shade(accent, (toward * step) / 100);
-    if (grounds.every(ground => contrast(ink, ground) >= PRIMARY_TARGET)) return ink;
+    if (grounds.every(ground => contrast(ink, ground) >= target)) return ink;
   }
   return toward > 0 ? [0, 0, 0, 1] : [255, 255, 255, 1];
 }
@@ -256,13 +256,17 @@ export function firefoxTextTier(text: Rgba, surface: Rgba, share: number, fillSh
   return mix(text, 1, surface);
 }
 
+/** Status inks the stylesheet fixes per scheme; the palette keeps them readable on a themed surface. */
+const STATUS_PROPERTIES = ["--qz-ff-success", "--qz-ff-warning", "--qz-ff-critical"] as const;
 const PALETTE_SOURCES = [
   "--qz-ff-accent", "--qz-ff-accent-text", "--qz-ff-sidebar", "--qz-ff-sidebar-text",
   "--qz-ff-popup", "--qz-ff-popup-text", "--qz-ff-field", "--qz-ff-field-text",
+  ...STATUS_PROPERTIES,
 ] as const;
 const PALETTE_PROPERTIES = [
   "--qz-ff-primary", "--qz-ff-primary-hover", "--qz-ff-primary-active", "--qz-ff-primary-text", "--qz-ff-accent-ink",
   ...FIREFOX_TEXT_TIERS.map(([property]) => property),
+  ...STATUS_PROPERTIES,
 ];
 
 function rgb([red, green, blue]: Rgba): string {
@@ -270,8 +274,8 @@ function rgb([red, green, blue]: Rgba): string {
 }
 
 /**
- * Resolve the accent, sidebar, popup, and field colors through the stylesheet, then write the
- * primary fill, accent ink, and text tiers that keep 4.5:1. Without a resolved accent and
+ * Resolve the accent, sidebar, popup, field, and status colors through the stylesheet, then
+ * write the primary fill, accent ink, text tiers, and status inks that keep 4.5:1. Without a resolved accent and
  * sidebar the stylesheet's fallback stays.
  */
 export function applyFirefoxPalette(root: AccentRoot): boolean {
@@ -310,23 +314,139 @@ export function applyFirefoxPalette(root: AccentRoot): boolean {
     const [text, surface] = pairs[source];
     if (text && surface) root.style.setProperty(property, rgb(firefoxTextTier(text, surface, share, fillShare)));
   }
+  for (const property of STATUS_PROPERTIES) {
+    const status = colors[property];
+    if (status) root.style.setProperty(property, rgb(firefoxAccentInk(status, [sidebar, mix(status, 0.12, sidebar)])));
+  }
   return true;
 }
 
-/** Recompute the palette when the stylesheet loads, the color scheme flips, or the window regains focus. */
-function installFirefoxPalette(root: AccentRoot): () => void {
-  const view = root.ownerDocument?.defaultView;
-  const refresh = () => { applyFirefoxPalette(root); };
-  if (!view) return refresh;
-  if (!applyFirefoxPalette(root)) view.addEventListener?.("load", refresh, { once: true });
-  view.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener?.("change", refresh);
-  view.addEventListener?.("focus", refresh);
-  return refresh;
+type ThemeColors = Readonly<Partial<Record<string, Rgba>>>;
+
+export interface FirefoxSidebarTheme {
+  scheme: "light" | "dark";
+  /** True when the colors are a dark variant derived from a light block. */
+  derived: boolean;
+  properties: Partial<Record<FirefoxThemeProperty, string>>;
 }
 
-/** Firefox's lwt-sidebar test: text at or below 110 perceived brightness is dark text on a light sidebar. */
-function isDarkText([red, green, blue]: Rgba): boolean {
-  return 0.2125 * red + 0.7154 * green + 0.0721 * blue <= 110;
+/** Firefox's _isColorDark: perceived brightness at or below 127. */
+function perceivedDark([red, green, blue]: Rgba): boolean {
+  return 0.2125 * red + 0.7154 * green + 0.0721 * blue <= 127;
+}
+
+function opaque(color: Rgba): Rgba;
+function opaque(color: Rgba | undefined): Rgba | undefined;
+function opaque(color: Rgba | undefined): Rgba | undefined {
+  return color ? [color[0], color[1], color[2], 1] : undefined;
+}
+
+function over(color: Rgba, ground: Rgba): Rgba {
+  return mix(color, color[3], ground);
+}
+
+function css([red, green, blue, alpha]: Rgba): string {
+  return alpha >= 1 ? rgb([red, green, blue, 1]) : `rgba(${red}, ${green}, ${blue}, ${Math.round(alpha * 1000) / 1000})`;
+}
+
+/** `color` composited on `ground`, moved away from it until it reaches `target`. */
+function readable(color: Rgba, ground: Rgba, target: number): Rgba {
+  return firefoxAccentInk(over(color, ground), [ground], target);
+}
+
+/** Shade toward black (`toward` 1) or white (-1) until `done` holds. */
+function shadeUntil(color: Rgba, toward: 1 | -1, done: (color: Rgba) => boolean): Rgba {
+  for (let step = 0; step <= 100; step += 1) {
+    const next = shade(color, (toward * step) / 100);
+    if (done(next)) return next;
+  }
+  return shade(color, toward);
+}
+
+function firstInk(colors: ThemeColors): Rgba | undefined {
+  for (const key of INK_KEYS) if (colors[key]) return colors[key];
+  return undefined;
+}
+
+/**
+ * Firefox's toolbar scheme for a theme block: `color_scheme` when set, then an opaque
+ * toolbar, the toolbar text, an opaque frame, and the tab text. A theme with none is light.
+ */
+export function firefoxThemeIsDark(colors: ThemeColors, colorScheme?: unknown): boolean {
+  if (colorScheme === "dark") return true;
+  if (colorScheme === "light") return false;
+  if (colors.toolbar && colors.toolbar[3] >= 1) return perceivedDark(colors.toolbar);
+  if (colors.toolbar_text) return !perceivedDark(colors.toolbar_text);
+  if (colors.frame && colors.frame[3] >= 1) return perceivedDark(colors.frame);
+  return colors.tab_background_text ? !perceivedDark(colors.tab_background_text) : false;
+}
+
+/**
+ * The sidebar colors for a theme block. A dark document with a light block means Firefox paints
+ * the theme's dark block, so the dark variant is derived; otherwise the block is painted.
+ */
+export function deriveFirefoxSidebarTheme(colors: ThemeColors, { dark = false, colorScheme }: { dark?: boolean; colorScheme?: unknown } = {}): FirefoxSidebarTheme {
+  const themeDark = firefoxThemeIsDark(colors, colorScheme);
+  return dark && !themeDark ? darkVariant(colors) : paintedVariant(colors, themeDark);
+}
+
+/**
+ * Surface: sidebar, then the toolbar and the selected tab over the frame, then the frame.
+ * Text: the most specific ink key. Fields and popups follow their own keys.
+ */
+function paintedVariant(colors: ThemeColors, themeDark: boolean): FirefoxSidebarTheme {
+  const fallback = themeDark ? DEFAULT_SURFACE.dark : DEFAULT_SURFACE.light;
+  const frame = opaque(colors.frame);
+  const ground = frame ?? fallback;
+  const layered = (color: Rgba | undefined) => (color ? over(color, ground) : undefined);
+  const surface = opaque(colors.sidebar) ?? layered(colors.toolbar) ?? layered(colors.tab_selected) ?? frame ?? fallback;
+  const properties: FirefoxSidebarTheme["properties"] = {
+    "--qz-ff-sidebar": rgb(surface),
+    "--qz-ff-sidebar-text": rgb(readable(firstInk(colors) ?? legibleInk(surface), surface, TEXT_TARGET)),
+  };
+  if (colors.sidebar_border) properties["--qz-ff-sidebar-border"] = css(colors.sidebar_border);
+  writeAccent(properties, colors, surface);
+  if (colors.toolbar_field) {
+    const field = over(colors.toolbar_field, surface);
+    properties["--qz-ff-field"] = css(colors.toolbar_field);
+    properties["--qz-ff-field-text"] = rgb(readable(colors.toolbar_field_text ?? legibleInk(field), field, TEXT_TARGET));
+  }
+  if (colors.toolbar_field_border) properties["--qz-ff-field-border"] = css(colors.toolbar_field_border);
+  if (colors.popup) {
+    const popup = opaque(colors.popup);
+    properties["--qz-ff-popup"] = rgb(popup);
+    properties["--qz-ff-popup-text"] = rgb(readable(colors.popup_text ?? legibleInk(popup), popup, TEXT_TARGET));
+  }
+  if (colors.popup_border) properties["--qz-ff-popup-border"] = css(colors.popup_border);
+  return { scheme: perceivedDark(surface) ? "dark" : "light", derived: false, properties };
+}
+
+/**
+ * Firefox's dark blocks swap the light block's ink and ground: the light text becomes the
+ * surface and the light frame becomes the text. Light fields, popups, and borders are dropped,
+ * so the stylesheet derives them from the dark surface.
+ */
+function darkVariant(colors: ThemeColors): FirefoxSidebarTheme {
+  const ink = firstInk(colors);
+  const surface = ink ? shadeUntil(opaque(ink), 1, color => relativeLuminance(color) <= DARK_SURFACE_LUMINANCE) : DEFAULT_SURFACE.dark;
+  const ground = opaque(colors.frame) ?? opaque(colors.sidebar) ?? opaque(colors.tab_selected) ?? opaque(colors.toolbar_field);
+  const text = ground ? shadeUntil(ground, -1, color => relativeLuminance(color) >= LIGHT_TEXT_LUMINANCE) : LIGHT_INK;
+  const properties: FirefoxSidebarTheme["properties"] = {
+    "--qz-ff-sidebar": rgb(surface),
+    "--qz-ff-sidebar-text": rgb(readable(text, surface, TEXT_TARGET)),
+  };
+  writeAccent(properties, colors, surface);
+  return { scheme: "dark", derived: true, properties };
+}
+
+/** Firefox's own accent stays unless the theme names a sidebar highlight or a focus outline. */
+function writeAccent(properties: FirefoxSidebarTheme["properties"], colors: ThemeColors, surface: Rgba): void {
+  if (colors.sidebar_highlight) {
+    const accent = over(colors.sidebar_highlight, surface);
+    properties["--qz-ff-accent"] = rgb(accent);
+    properties["--qz-ff-accent-text"] = rgb(colors.sidebar_highlight_text ? opaque(colors.sidebar_highlight_text) : legibleInk(accent));
+  }
+  if (colors.focus_outline) properties["--qz-ff-focus"] = rgb(readable(colors.focus_outline, surface, RING_TARGET));
 }
 
 function themeColors(theme: unknown): Record<string, unknown> | undefined {
@@ -334,54 +454,79 @@ function themeColors(theme: unknown): Record<string, unknown> | undefined {
   const record = theme as { colors?: unknown; theme?: { colors?: unknown } };
   const colors = record.colors ?? record.theme?.colors;
   if (!colors || typeof colors !== "object" || Array.isArray(colors)) return undefined;
-  if (!Object.keys(colors).length) return undefined;
   return colors as Record<string, unknown>;
 }
 
-/** Copy a theme palette onto the sidebar root. A palette without these keys removes the overrides. */
-export function applyFirefoxTheme(root: { style: ThemeStyle }, theme: unknown): boolean {
-  const colors = themeColors(theme);
-  const read = (key: string) => (colors ? firefoxThemeColor(colors[key]) : undefined);
-  let applied = false;
-  for (const [key, property, opaque] of FIREFOX_THEME_COLOR_PROPERTIES) {
-    const value = read(key);
-    if (!value) {
-      root.style.removeProperty(property);
-      continue;
-    }
-    const rgba = opaque ? parseFirefoxThemeColor(value) : undefined;
-    root.style.setProperty(property, rgba ? `rgb(${rgba[0]}, ${rgba[1]}, ${rgba[2]})` : value);
-    applied = true;
+function themeColorScheme(theme: unknown): unknown {
+  if (!theme || typeof theme !== "object") return undefined;
+  const record = theme as { properties?: { color_scheme?: unknown } | null; theme?: { properties?: { color_scheme?: unknown } | null } };
+  return (record.properties ?? record.theme?.properties)?.color_scheme;
+}
+
+export interface FirefoxThemeOptions {
+  /** Whether the sidebar document matches `prefers-color-scheme: dark`. */
+  dark?: boolean;
+  /** Parse a validated theme color. The sidebar also resolves named colors through the page. */
+  resolve?: (color: string) => Rgba | undefined;
+}
+
+/** Write a theme's sidebar colors on the root. A theme without colors removes them. */
+export function applyFirefoxTheme(root: { style: ThemeStyle }, theme: unknown, { dark = false, resolve = parseFirefoxThemeColor }: FirefoxThemeOptions = {}): boolean {
+  const colors: Record<string, Rgba> = {};
+  for (const [key, value] of Object.entries(themeColors(theme) ?? {})) {
+    const color = firefoxThemeColor(value);
+    const rgba = color ? resolve(color) : undefined;
+    if (rgba) colors[key] = rgba;
   }
-  for (const [surfaceKey, textKey, property] of INK_PAIRS) {
-    const surface = read(surfaceKey);
-    if (!surface || read(textKey)) continue;
-    const rgba = parseFirefoxThemeColor(surface);
-    if (rgba) root.style.setProperty(property, legibleInk(rgba));
+  const derived = Object.keys(colors).length ? deriveFirefoxSidebarTheme(colors, { dark, colorScheme: themeColorScheme(theme) }) : undefined;
+  for (const property of FIREFOX_THEME_PROPERTIES) {
+    const value = derived?.properties[property];
+    if (value) root.style.setProperty(property, value);
+    else root.style.removeProperty(property);
   }
-  const text = read("sidebar_text");
-  const background = read("sidebar");
-  const textRgba = text ? parseFirefoxThemeColor(text) : undefined;
-  const backgroundRgba = !text && background ? parseFirefoxThemeColor(background) : undefined;
-  const scheme = textRgba ? (isDarkText(textRgba) ? "light" : "dark")
-    : backgroundRgba ? (isDarkText(backgroundRgba) ? "dark" : "light")
-      : undefined;
-  if (scheme) root.style.setProperty("color-scheme", scheme);
+  if (derived) root.style.setProperty("color-scheme", derived.scheme);
   else root.style.removeProperty("color-scheme");
-  return applied;
+  return !!derived;
+}
+
+/** Resolve a named theme color through a probe element. */
+function resolveThemeColor(root: AccentRoot, color: string): Rgba | undefined {
+  const parsed = parseFirefoxThemeColor(color);
+  if (parsed) return parsed;
+  const document = root.ownerDocument;
+  const view = document?.defaultView;
+  if (!document || !view || typeof root.appendChild !== "function") return undefined;
+  const probe = document.createElement("span");
+  probe.style.color = color;
+  if (!probe.style.color) return undefined;
+  root.appendChild(probe);
+  const resolved = parseFirefoxThemeColor(view.getComputedStyle(probe).color);
+  probe.remove();
+  return resolved;
 }
 
 /**
- * Follow the sidebar window's theme. Built-in themes often return no colors;
- * the stylesheet's system colors stay in that case.
+ * Follow the sidebar window's theme, and repaint when the stylesheet loads, the color scheme
+ * flips, or the window regains focus. Themes without colors keep the stylesheet's defaults.
  */
 export function installFirefoxTheme(chromeApi: FirefoxThemeChrome, root: AccentRoot): void {
-  const refreshPalette = installFirefoxPalette(root);
+  const view = root.ownerDocument?.defaultView;
+  const scheme = view?.matchMedia?.("(prefers-color-scheme: dark)");
+  let current: unknown;
+  const paint = () => {
+    applyFirefoxTheme(root, current, { dark: scheme?.matches === true, resolve: color => resolveThemeColor(root, color) });
+    return applyFirefoxPalette(root);
+  };
+  if (view) {
+    if (!paint()) view.addEventListener?.("load", () => { paint(); }, { once: true });
+    scheme?.addEventListener?.("change", () => { paint(); });
+    view.addEventListener?.("focus", () => { paint(); });
+  }
   const theme = chromeApi.theme;
   if (!theme || typeof theme.getCurrent !== "function" || typeof theme.onUpdated?.addListener !== "function") return;
   const apply = (value: unknown) => {
-    applyFirefoxTheme(root, value);
-    refreshPalette();
+    current = value;
+    paint();
   };
   let windowId: number | undefined;
   let updates = 0;
@@ -399,8 +544,8 @@ export function installFirefoxTheme(chromeApi: FirefoxThemeChrome, root: AccentR
       return theme.getCurrent(windowId);
     }, () => theme.getCurrent())
     : Promise.resolve(theme.getCurrent());
-  ready.then(current => {
-    if (updates === started) apply(current);
+  ready.then(value => {
+    if (updates === started) apply(value);
   }, () => {
     if (updates === started) apply(undefined);
   });

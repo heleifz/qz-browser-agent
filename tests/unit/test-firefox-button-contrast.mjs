@@ -125,7 +125,7 @@ test("text tiers, secondary and disabled controls, and status colors keep 4.5:1 
   assert.match(skin, /--control-disabled-opacity: 1;/);
   for (const { name, sidebar, text } of SIDEBARS) {
     const on = amount => mix(text, amount, sidebar);
-    const field = luminance(sidebar) < 0.18 ? on(0.07) : sidebar;
+    const field = darkField(sidebar);
     const check = (label, ink, surface) => {
       const ratio = contrast(ink, surface);
       assert.ok(ratio >= 4.5, `${name} ${label} is ${ratio.toFixed(2)}:1`);
@@ -147,7 +147,7 @@ test("text tiers, secondary and disabled controls, and status colors keep 4.5:1 
   for (const { name, sidebar, text } of SIDEBARS.slice(0, 4)) {
     assert.ok(contrast(mix(text, mutedShare, sidebar), sidebar) >= 4.5, `${name} passes on the stylesheet share before the palette runs`);
     assert.ok(contrast(mix(text, deemphasizedShare, sidebar), mix(text, deemphasizedFill, sidebar)) >= 4.5, `${name} deemphasized stylesheet share`);
-    const field = luminance(sidebar) < 0.18 ? mix(text, 0.07, sidebar) : sidebar;
+    const field = darkField(sidebar);
     assert.ok(contrast(mix(text, fieldShare, field), mix(text, fieldFill, field)) >= 4.5, `${name} send standby stylesheet share`);
   }
   for (const status of ["success", "warning", "critical"]) {
@@ -163,6 +163,13 @@ test("text tiers, secondary and disabled controls, and status colors keep 4.5:1 
     }
   }
 });
+
+function darkField(sidebar) {
+  const skin = firefoxSidebarCss();
+  const match = /--qz-ff-field: light-dark\(var\(--qz-ff-sidebar\), color-mix\(in srgb, black (\d+)%, var\(--qz-ff-sidebar\)\)\);/.exec(skin);
+  assert.ok(match, "the dark field darkens the sidebar");
+  return luminance(sidebar) < 0.18 ? mix([0, 0, 0], Number(match[1]) / 100, sidebar) : sidebar;
+}
 
 function mix(top, alpha, bottom) {
   return [0, 1, 2].map(index => Math.round(top[index] * alpha + bottom[index] * (1 - alpha)));

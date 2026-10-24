@@ -174,11 +174,12 @@ function matchingCloseEnd(html, open) {
 /**
  * Firefox-only sidebar skin, loaded after the shared theme.
  *
- * The palette follows Firefox's platform tokens. Canvas, CanvasText, AccentColor,
- * and AccentColorText are the only sources. Neutral fills mix the text color over
- * transparent, the way Firefox mixes currentColor, so a window theme only replaces
- * the sources. theme.getCurrent() writes the sidebar, toolbar_field, and popup keys
- * over them, and an empty built-in theme leaves the system colors.
+ * The base palette is Firefox's default sidebar: its light and dark surface and text, its
+ * darker search field in dark mode, and its own violet accent rather than the system accent.
+ * Neutral fills mix the text color over transparent, the way Firefox mixes currentColor, so a
+ * window theme only replaces the sources. sidepanel/firefox/theme.ts derives those sources
+ * from the active theme, including a dark variant when Firefox paints a dark block that
+ * theme.getCurrent() does not return. A theme without colors leaves this base.
  *
  * Token overrides are unlayered and replace the shared theme layer. Component
  * rules join the shared components layer. They win ties by source order, and
@@ -188,22 +189,22 @@ function matchingCloseEnd(html, open) {
  * The accent fills only primary controls and is never mixed into a surface.
  * sidepanel/firefox/theme.ts reads the resolved accent and writes the --qz-ff-primary
  * fill, hover, active, and label, and the --qz-ff-accent-ink for rings and links,
- * each at least 4.5:1. Until it runs, or when it cannot read the accent, Firefox's
- * own primary button colors apply. Disabled primary controls drop to the neutral
- * fill with deemphasized text and a not-allowed cursor instead of fading.
+ * each at least 4.5:1. Until it runs, Firefox's own primary button colors apply.
+ * Disabled primary controls drop to the neutral fill with deemphasized text and a
+ * not-allowed cursor instead of fading.
  */
 export function firefoxSidebarCss() {
-  return `/* Firefox sidebar skin: Firefox platform tokens over system colors. */
+  return `/* Firefox sidebar skin: Firefox's default sidebar tokens, recolored by the window theme. */
 :root {
   color-scheme: light dark;
 
-  --qz-ff-sidebar: Canvas;
-  --qz-ff-sidebar-text: CanvasText;
+  --qz-ff-sidebar: light-dark(#ffffff, #1c1b22);
+  --qz-ff-sidebar-text: light-dark(#15141a, #f9f9fa);
   --qz-ff-sidebar-border: var(--qz-ff-hairline);
-  --qz-ff-accent: AccentColor;
-  --qz-ff-accent-text: AccentColorText;
+  --qz-ff-accent: light-dark(#764edd, #b89cff);
+  --qz-ff-accent-text: light-dark(#ffffff, #252428);
   --qz-ff-focus: var(--qz-ff-accent-ink);
-  --qz-ff-field: light-dark(var(--qz-ff-sidebar), color-mix(in srgb, var(--qz-ff-sidebar-text) 7%, var(--qz-ff-sidebar)));
+  --qz-ff-field: light-dark(var(--qz-ff-sidebar), color-mix(in srgb, black 18%, var(--qz-ff-sidebar)));
   --qz-ff-field-text: var(--qz-ff-sidebar-text);
   --qz-ff-field-border: var(--qz-ff-border);
   --qz-ff-popup: light-dark(var(--qz-ff-sidebar), color-mix(in srgb, var(--qz-ff-sidebar-text) 9%, var(--qz-ff-sidebar)));
@@ -228,11 +229,11 @@ export function firefoxSidebarCss() {
   --qz-ff-selected: color-mix(in srgb, var(--qz-ff-sidebar-text) 11%, transparent);
   --qz-ff-fill-hover: color-mix(in srgb, var(--qz-ff-sidebar-text) 14%, transparent);
   --qz-ff-fill-active: color-mix(in srgb, var(--qz-ff-sidebar-text) 21%, transparent);
-  --qz-ff-primary: light-dark(#0061e0, #00ddff);
-  --qz-ff-primary-hover: light-dark(#0250bb, #80ebff);
-  --qz-ff-primary-active: light-dark(#053e94, #aaf2ff);
-  --qz-ff-primary-text: light-dark(#fbfbfe, #15141a);
-  --qz-ff-accent-ink: light-dark(#0061e0, #00ddff);
+  --qz-ff-primary: light-dark(#764edd, #b89cff);
+  --qz-ff-primary-hover: light-dark(#5939a8, #d4c1ff);
+  --qz-ff-primary-active: light-dark(#3e2976, #eaddff);
+  --qz-ff-primary-text: light-dark(#ffffff, #252428);
+  --qz-ff-accent-ink: light-dark(#764edd, #b89cff);
   /* Text-safe on the sidebar and on a 12% tint of themselves in both schemes. */
   --qz-ff-success: light-dark(#00713e, #8adf8d);
   --qz-ff-warning: light-dark(#905300, #f5cc58);

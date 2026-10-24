@@ -22,7 +22,7 @@ import {
 } from "../../scripts/firefox-manifest.mjs";
 import { readTranslationVariants } from "../../scripts/capability-locales.mjs";
 import { chromeMessageId, HISTORICAL_LABELS_MESSAGE_ID } from "../../src/shared/i18n/definition.js";
-import { FIREFOX_THEME_COLOR_PROPERTIES } from "../../src/sidepanel/firefox/theme.js";
+import { FIREFOX_THEME_PROPERTIES } from "../../src/sidepanel/firefox/theme.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const source = JSON.parse(readFileSync(join(repoRoot, "src/manifest.json"), "utf8"));
@@ -115,17 +115,21 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.match(skin, /color-scheme: light dark/);
   assert.doesNotMatch(skin, /font:\s*message-box/);
   assert.doesNotMatch(skin, /theme\.update/);
-  for (const token of ["Canvas", "CanvasText", "AccentColor", "AccentColorText", "Highlight", "HighlightText"]) {
-    assert.match(skin, new RegExp(`\\b${token}\\b`));
+  for (const token of ["Canvas", "CanvasText", "AccentColor", "AccentColorText"]) {
+    assert.doesNotMatch(skin, new RegExp(`\\b${token}\\b`), `${token} is the system color, not Firefox's sidebar`);
   }
-  for (const [, property] of FIREFOX_THEME_COLOR_PROPERTIES) assert.match(skin, new RegExp(`^  ${property}:`, "m"));
+  assert.match(skin, /--qz-ff-sidebar: light-dark\(#ffffff, #1c1b22\);/);
+  assert.match(skin, /--qz-ff-sidebar-text: light-dark\(#15141a, #f9f9fa\);/);
+  assert.match(skin, /--qz-ff-accent: light-dark\(#764edd, #b89cff\);/, "the default accent is Firefox's violet");
+  assert.match(skin, /--qz-ff-field: light-dark\(var\(--qz-ff-sidebar\), color-mix\(in srgb, black 18%, var\(--qz-ff-sidebar\)\)\);/);
+  for (const property of FIREFOX_THEME_PROPERTIES) assert.match(skin, new RegExp(`^  ${property}:`, "m"));
   assert.match(skin, /^@layer components \{$/m);
   assert.doesNotMatch(skin, /color-mix\([^;]*--qz-ff-(?:accent|primary)\b/, "the accent never tints a surface");
   for (const radius of skin.matchAll(/(?:border-radius|--radius-\w+|--control-radius|--popover-radius|--block-radius):\s*([^;]+);/g)) {
     for (const value of radius[1].split(/\s+/)) assert.ok(["0", "4px", "6px", "8px"].includes(value), `radius ${radius[0]}`);
   }
   assert.match(skin, /--qz-ff-success: light-dark\(#00713e, #8adf8d\)/);
-  assert.match(skin, /--qz-ff-primary: light-dark\(#0061e0, #00ddff\)/);
+  assert.match(skin, /--qz-ff-primary: light-dark\(#764edd, #b89cff\)/);
   assert.match(skin, /--control-primary-surface: var\(--qz-ff-primary\)/);
   assert.match(skin, /\.qz-btn--primary:disabled \{\n\s*--qz-control-bg: var\(--qz-ff-fill\);\n\s*cursor: not-allowed;/);
   assert.match(skin, /--send-standby-bg: color-mix\(in srgb, var\(--qz-ff-field-text\) \d+%, transparent\)/);
