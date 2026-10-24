@@ -1,10 +1,16 @@
 # Firefox packaging
 
-Status: proposal for review at `f6446e5`. This page describes the convention to adopt. It adds no
-script, no workflow, and no package output. Chrome remains the default build. The skin and palette
-stay as they are.
+Status: adopted. Chrome remains the default build. The skin and palette are unchanged.
 
-Related pages keep their current jobs. [Commands](commands.md) lists the commands that exist today.
+`npm run build` and `npm run dev` write `dist/extension/`. `npm run build:firefox` and
+`npm run dev:firefox` write `dist/extension-firefox/`. A shared-graph change runs
+`npm run verify:quick` and `npm run verify:firefox`. A Firefox-only change finishes on
+`npm run verify:firefox`.
+
+`npm run release` writes the Chrome zip only. `release:firefox` and a CI upload of the Firefox
+package are deferred at the bottom of this page.
+
+Related pages keep their current jobs. [Commands](commands.md) lists the commands.
 [Firefox differences from Chrome](firefox-differences.md) lists behavior a person can observe.
 [Firefox capability gap](firefox-capability-gap.md) records the API survey. This page owns how the
 two packages are separated.
@@ -115,46 +121,46 @@ output. They are not committed under `src/`, so the Chrome copy step never sees 
 | `dist/extension-firefox/` | Shared sources, Firefox boot modules, rewritten manifest, generated skin, rewritten locales | `key`, `side_panel`, and the permission names Firefox rejects |
 
 The path filter decides which files are copied and which modules are esbuild entries. esbuild still
-follows imports from disk. A shared module that imports `firefox/` would pull that module into the
-Chrome bundle even though the path filter dropped it from the entry list. Closing that gap is an
-implementation step below. Today the boot files are the only extension importers, which the Firefox
-host unit test reads as source text.
+follows imports from disk. On a Chrome build, a relative import or a bundled input whose path
+matches `isFirefoxOnlySource` fails the build with
+`Chrome package cannot import Firefox-only source …`. The Firefox build allows that import. The
+boot files remain the extension importers.
 
-## Commands that exist today
-
-These commands already implement the target. New script names in the next section are proposed and
-are not in `package.json`.
+## Commands
 
 | Command | Target | Output |
 | --- | --- | --- |
 | `npm run dev` | `chrome` | Watches `dist/extension/` |
 | `npm run build` | `chrome`, production, typecheck | `dist/extension/` |
-| `npm run dev -- --browser firefox` | `firefox` | Watches `dist/extension-firefox/` |
-| `npm run build -- --browser firefox` | `firefox`, production, typecheck | `dist/extension-firefox/` |
+| `npm run dev:firefox` | `firefox` | Watches `dist/extension-firefox/` |
+| `npm run build:firefox` | `firefox`, production, typecheck | `dist/extension-firefox/` |
+| `npm run dev -- --browser firefox` | `firefox` | Same directory as `dev:firefox` |
+| `npm run build -- --browser firefox` | `firefox`, production, typecheck | Same directory as `build:firefox` |
 | `npm run verify:quick` | Chrome suites | Loads `dist/extension/`. Does not launch Firefox |
 | `npm run verify:firefox` | Firefox suite | Builds `dist/extension-firefox/` in development mode, then runs `tests/unit/test-firefox-*.mjs` and Firefox Playwright |
 | `npm test -- firefox` | Firefox suite | Same suite as `verify:firefox` without the leading typecheck |
 | `npm run release` | `chrome` | `dist/releases/<version>/qz-browser-agent-extension-<version>.zip` |
 
-`npm run verify:firefox` rebuilds the Firefox directory unless `QINGZHOU_FIREFOX_EXTENSION_DIR` is
-set. A shell that exports that variable tests the directory as it stands, including a production
-build left by `npm run build -- --browser firefox`. Leave the variable unset for the suite's own
-development build.
+`build:firefox` is the production package you load in Firefox. `verify:firefox` rebuilds a
+development package in that same directory unless `QINGZHOU_FIREFOX_EXTENSION_DIR` is set. A shell
+that exports the variable tests the directory as it stands, including a production build left by
+`build:firefox`. Leave the variable unset for the suite's own development build.
 
 Typecheck is repository-wide. `npm run build` and `npm run verify:quick` typecheck Firefox sources
 even though they emit the Chrome package. One TypeScript program covers both targets. Emit stays
 per target.
 
-## Proposed commands
+## Release archive
 
-Add these after this proposal is accepted. Each one is a name for a flag the build already has, or
-a release path that does not exist yet. `npm run build` and `npm run release` stay Chrome.
+`release:firefox` is not implemented. `scripts/publish-release.py` has no `--browser` flag and
+always compiles Chrome. `npm run release` is unchanged.
+
+Load Firefox from `dist/extension-firefox/` with **Load Temporary Add-on**. The archive below is
+the shape to add later, in a change that proves the default Chrome zip is byte-identical:
 
 | Script | Invokes | Result |
 | --- | --- | --- |
-| `build:firefox` | `node scripts/build-extension.mjs --mode production --typecheck --browser firefox` | Production package in `dist/extension-firefox/`. Leaves `dist/extension/` untouched |
-| `dev:firefox` | `node scripts/build-extension.mjs --watch --browser firefox` | Watcher for `dist/extension-firefox/` |
-| `release:firefox` | `python3 scripts/publish-release.py --browser firefox` | Local unsigned archive described below. No upload, no tag |
+| `release:firefox` | `python3 scripts/publish-release.py --browser firefox` | Local unsigned archive. No upload, no tag |
 
 `npm run build:firefox -- --no-bundle` forwards the extra build flag. `--browser` remains the
 switch that product and browser flags share, so a product build can still pass both.
@@ -167,7 +173,7 @@ flag it compiles `chrome`, writes `qz-browser-agent-extension-<version>.zip`, an
 the public `key`. The webstore zip removes `key`. That `key` fixes the unpacked Chrome id
 `ghbaodmonhcgkfeejcpffknlggbjhjgj`.
 
-The Firefox archive is a separate directory and a separate file:
+When `release:firefox` lands, the Firefox archive is a separate directory and a separate file:
 
 ```text
 dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi
@@ -200,7 +206,7 @@ created during development match the eventual listing.
 
 CI already runs the two targets as two jobs in [ci.yml](../.github/workflows/ci.yml). The portable
 job builds `dist/extension/` and runs focused Chromium contracts on Linux, macOS, and Windows. The
-`firefox-package` job runs `npm run verify:firefox` on Linux. That split matches this proposal. A
+`firefox-package` job runs `npm run verify:firefox` on Linux. That split is the CI shape. A
 matrix cell on the portable job would rebuild Chrome on each OS and still need a Linux Firefox
 install, so the Firefox gate stays its own job.
 
@@ -221,57 +227,29 @@ A change to the Chrome emit path, including a new field inside the packaged `.qi
 is a Chrome package change. Prove the default `npm run build` output against the previous Chrome
 tip when that path is edited. A Firefox-only edit leaves that output byte-identical.
 
-## Gap against `f6446e5`
+## What landed
 
-| Piece | At `f6446e5` | After acceptance |
-| --- | --- | --- |
-| Build-time target, default Chrome | `--browser`, two output directories | Keep |
-| Firefox manifest, boot, skin, and locale rewrite | `firefox-manifest.mjs` after the shared compile | Keep |
-| Chrome exclusion of Firefox paths | `isFirefoxOnlySource` on the copy and entry list | Keep, and reject a Chrome esbuild graph that still imports those paths |
-| Runtime sentence helper | `productText` / `moz-extension:` | Keep. Document it as a sentence helper, not a package switch |
-| Product axis | `--product` and `src/products/` | Keep orthogonal |
-| Boot-only imports | True in the tree. The host unit test reads the boot file text | Add a graph check so a new shared import fails the Chrome build |
-| `build:firefox`, `dev:firefox` | Absent. The flag form is the public command | Add as aliases |
-| `release:firefox` and `.xpi` | Absent. `publish-release.py` always compiles Chrome | Add `--browser firefox` with a separate output directory. Default invocation stays Chrome |
-| Build summary names the target | The log line prints mode and product. `.qingzhou-build.json` has no `browser` field | Print `browser` in the log and the stdout JSON. Leave the packaged build manifest unchanged so the Chrome directory hash stays put |
-| CI | Separate `firefox-package` job runs `verify:firefox`. Failure logs are uploaded. Success uploads no package | Keep the separate job. Uploading the built directory is optional and later. No matrix axis |
-| Release workflow | None for Firefox. Chrome zips are local via `npm run release` | Local `release:firefox` only. Signing and Add-ons Manager upload stay maintainer steps |
-| Typecheck | One program for the repo | Keep |
-| `verify:firefox` package mode | Development build, skipped when `QINGZHOU_FIREFOX_EXTENSION_DIR` is set | Keep the rebuild. State the variable in the command docs when the aliases land |
-| This convention | Behavior is spread across commands, differences, and the capability gap | This page is the owner |
+| Piece | Behavior |
+| --- | --- |
+| Build-time target, default Chrome | `--browser`, two output directories |
+| Firefox manifest, boot, skin, and locale rewrite | `firefox-manifest.mjs` after the shared compile |
+| Chrome exclusion of Firefox paths | `isFirefoxOnlySource` on the copy and entry list, plus a compile error when a Chrome graph still imports one |
+| Runtime sentence helper | `productText` / `moz-extension:`. It chooses a sentence inside the built package |
+| Product axis | `--product` and `src/products/`, orthogonal to the browser |
+| `build:firefox`, `dev:firefox` | Aliases for `--browser firefox`. `npm run build` and `npm run dev` stay Chrome |
+| Build summary | The log line and `--json` stdout include `browser`. The packaged `.qingzhou-build.json` does not |
+| Checks | Shared-graph changes run `verify:quick` and `verify:firefox`. Firefox-only changes finish on `verify:firefox` |
+| CI | The separate `firefox-package` job runs `verify:firefox`. The portable job stays an OS matrix for Chrome |
+| Typecheck | One program for the repo |
 
-## Implementation sketch
+## Deferred
 
-Land these only after the review accepts the proposal. Each step is one commit. None of them rename
-source trees.
-
-1. **Graph fence.** During the Chrome compile, fail if an esbuild input matches
-   `isFirefoxOnlySource`. Add a unit test that a fixture service worker importing
-   `background/firefox/host.ts` fails the Chrome build and passes the Firefox build. A clean tree
-   emits the same Chrome bytes.
-2. **Summary line.** Include `browser` in the human build line and the `--json` stdout object.
-   Do not add the field to the packaged `.qingzhou-build.json`.
-3. **Aliases.** Add `build:firefox` and `dev:firefox` to `package.json`. Point
-   [commands.md](commands.md) at them. `npm run build` stays the Chrome production build.
-4. **Release path.** Add `--browser firefox` to `publish-release.py`, default `chrome`. Write the
-   `.xpi`, debug zip, and `version.json` under `dist/releases/<version>/firefox/`. The default
-   command's zip path and bytes stay on the current Chrome recipe. Cover both with the release
-   tests.
-5. **Workflow text.** Update the [AGENTS.md](../AGENTS.md) finish line so a shared-graph change runs
-   `verify:firefox` as well as `verify:quick`, and a Firefox-only change finishes on
-   `verify:firefox`. Mark this page as the adopted convention.
-6. **CI artifact, optional.** On the existing `firefox-package` job, upload
-   `dist/extension-firefox/` after a green `verify:firefox`. Leave the portable job's matrix on
-   operating systems only.
-
-## Open questions
-
-1. Confirm `qz-browser-agent@heleifz.github.io` before any signed upload, or pick the permanent id
-   while every existing profile is still a temporary add-on.
-2. Confirm the `.xpi` name and the `dist/releases/<version>/firefox/` directory. A `.zip` with
-   `manifest.json` at the root is the same bytes with a different suffix.
-3. Confirm that local shared-graph work runs both `verify:quick` and `verify:firefox`, with CI
-   unchanged. `verify:firefox` is the short suite. `verify:quick` stays the long Chrome gate.
-4. Confirm that `productText` keeps its name. Renaming the helper rewrites shared modules and
-   moves the Chrome package hash. The packaging commits above leave the helper in place.
-5. Confirm the data-collection lists stay the submission lists. `none` stays undeclared.
+| Piece | Why it waits |
+| --- | --- |
+| `release:firefox` and the `.xpi` | `publish-release.py` stays Chrome-only so the default zip path cannot move. The archive layout above is the shape to implement once a change can prove the Chrome zip is byte-identical |
+| Signing and Add-ons Manager upload | Maintainer steps, after the local archive exists |
+| CI success upload of `dist/extension-firefox/` | The job already fails the build when Firefox tests fail. A success artifact is extra weight on the workflow |
+| Gecko id confirmation | `qz-browser-agent@heleifz.github.io` stays the temporary id until the first signed upload |
+| `.xpi` suffix | A root-manifest `.zip` is the same bytes. Pick the suffix with the archive work |
+| `productText` rename | A rename rewrites shared modules and moves the Chrome package hash |
+| Data-collection lists | They stay as declared. `none` stays undeclared |

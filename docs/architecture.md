@@ -6,7 +6,7 @@ bridge](../services/mcp-bridge/README.md) exposes extension operations to extern
 Firefox temporary loading is in [Commands](commands.md#load-temporarily-in-firefox). Remaining
 differences from Chrome are in [Firefox differences from Chrome](firefox-differences.md). The API
 survey is in [Firefox capability gap](firefox-capability-gap.md). How the packages are separated
-is proposed in [Firefox packaging](firefox-packaging.md). The Chrome runtime below stays the
+is in [Firefox packaging](firefox-packaging.md). The Chrome runtime below stays the
 source of the shared code.
 
 For a new tool, page, renderer, provider, or embedded Skill, start with the [capability

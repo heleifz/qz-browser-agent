@@ -4,12 +4,12 @@ The Firefox package loads the same tools as Chrome. A boot module installs Firef
 before those tools run. The Chrome package does not include that module. Its manifest and the
 Chrome sentences in shared code stay on the Chrome path. Shared copy that a person can read
 chooses a Firefox sentence only when `runtime.getURL("")` starts with `moz-extension:`. How the
-two packages are separated is proposed in [Firefox packaging](firefox-packaging.md).
+two packages are separated is in [Firefox packaging](firefox-packaging.md).
 
 This list is what a person or a tool result can still observe. Each row names the Firefox
 behavior and the limit that remains. Platform limits cite the Firefox 158.0.1 APIs that were
 inspected. Build the package with
-[`npm run build -- --browser firefox`](commands.md#load-temporarily-in-firefox). It writes
+[`npm run build:firefox`](commands.md#load-temporarily-in-firefox). It writes
 `dist/extension-firefox/`. `npm run build` still writes the Chrome package to `dist/extension/`.
 Chromium Playwright and the Chrome smoke test load the Chrome package only. `npm run verify:quick`
 does not launch Firefox. `npm run verify:firefox` builds this package and loads it in Firefox. See
@@ -106,7 +106,7 @@ for the sidebar as described in [Sidebar](#sidebar).
 Headless Linux runs the Firefox suite. Notification delivery, the macOS system accent, and focus
 handling still need a Mac. Load the package and read the background console:
 
-1. Run `npm run build -- --browser firefox`, open `about:debugging#/runtime/this-firefox`, choose
+1. Run `npm run build:firefox`, open `about:debugging#/runtime/this-firefox`, choose
    **Load Temporary Add-on**, and select `dist/extension-firefox/manifest.json`.
 2. Allow notifications for Firefox in macOS System Settings → Notifications.
 3. Choose **Inspect** next to qz. Close the sidebar, then run this in the console:

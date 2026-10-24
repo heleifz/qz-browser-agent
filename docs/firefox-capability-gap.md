@@ -10,7 +10,7 @@ The Chrome package is unchanged: `src/manifest.json`, the Chrome side panel, and
 debugger path stay as they are. Firefox-only modules are omitted from the Chrome compilation.
 
 The temporary-load package is built with
-[`npm run build -- --browser firefox`](commands.md#load-temporarily-in-firefox). It writes
+[`npm run build:firefox`](commands.md#load-temporarily-in-firefox). It writes
 `dist/extension-firefox/` from the same sources. `npm run build` still writes the Chrome package
 to `dist/extension/`.
 

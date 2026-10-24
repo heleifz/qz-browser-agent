@@ -15,7 +15,7 @@ These rules apply throughout the repository. Capability changes also follow
 | Languages and interface copy | [Localization](docs/localization.md) |
 | Tests and performance | [Tests](tests/README.md), [benchmarks](docs/benchmarks.md) |
 | Local MCP service | [MCP bridge](services/mcp-bridge/README.md) |
-| Firefox and Chrome packages | [Firefox packaging](docs/firefox-packaging.md) (proposal) |
+| Firefox and Chrome packages | [Firefox packaging](docs/firefox-packaging.md) |
 
 Use Node.js 24 LTS and locked dependencies installed with `npm ci`. Source lives in `src/`; Chrome
 loads the compiled extension from `dist/extension/`.
@@ -129,9 +129,12 @@ loads the compiled extension from `dist/extension/`.
 4. Add tests proportional to risk and type-check TypeScript. State, concurrency, persistence, and
    cross-context messages require failure and recovery coverage.
 5. Run the fast loop in [Commands and validation](#commands-and-validation). Focused checks satisfy
-   the minimum-verification table during iteration. Finish an ordinary coding task, including
+   the minimum-verification table during iteration. Finish an ordinary shared-graph change, including
    cloud-agent work, with `npm run verify:quick` and `QINGZHOU_PLAYWRIGHT_WORKERS` set to the
-   available core count. Reserve full `npm run verify` for packaging, releases, or when the user
+   available core count, and with `npm run verify:firefox`. A Firefox-only change
+   (`src/background/firefox/**`, `src/sidepanel/firefox/**`, the `firefox-boot.ts` entries,
+   `scripts/firefox-manifest.mjs`, `tests/firefox/**`, and `tests/unit/test-firefox-*.mjs`) finishes
+   on `npm run verify:firefox`. Reserve full `npm run verify` for packaging, releases, or when the user
    asks for coverage gates. Review the final status and diff.
 6. Stage, commit, and push only when the task requires it or the user requests it. Publish or change
    tags only when the user requests it. Use reversible Git operations and preserve unrelated work.
@@ -162,10 +165,11 @@ During implementation, never run full `npm run verify` on every change. Use this
 The table below is the minimum bar for the change. Focused checks from that table satisfy it during
 iteration, including the E2E, release, visual, or service rows when the change calls for them.
 
-At the end of an ordinary coding task, including cloud-agent work, run `npm run verify:quick`.
-That script is `npm run typecheck && npm test -- --all` and omits `--coverage`. Set
-`QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux) for that run and
-for any full browser run. The default worker count is `ceil(availableParallelism() / 3)`, capped
+At the end of an ordinary shared-graph change, including cloud-agent work, run `npm run verify:quick`
+and `npm run verify:firefox`. `verify:quick` is `npm run typecheck && npm test -- --all` and omits
+`--coverage`. Set `QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count (`$(nproc)` on Linux)
+for that run and for any full browser run. A Firefox-only change finishes on `npm run verify:firefox`
+alone. The default worker count is `ceil(availableParallelism() / 3)`, capped
 at 4. An explicit value is clamped to 1-16.
 
 Reserve `npm run verify` for packaging, releases, and an explicit request for coverage gates. It
@@ -186,6 +190,8 @@ suite that failed for the same failure.
 | CSS | Relevant browser/visual fixtures in both color schemes |
 | Packaging/installation | Release suite + local package/loading checks and trace assertions |
 | Documentation | Commands, local file and heading links, branch-specific behavior, and executable examples |
+| Shared graph shipped in the Chrome and Firefox packages | `verify:quick` and `verify:firefox` |
+| Firefox-only adapter, manifest rewrite, or Firefox tests | `verify:firefox` |
 
 Test observable behavior. Cover cancellation, restart, stale events, missing tabs, provider
 failures, malformed payloads, concurrent writes, deletion, and reconnection where relevant. Build

@@ -31,7 +31,8 @@ npm run verify
 | `firefox` | Firefox unit tests and Playwright in Mozilla Firefox against `dist/extension-firefox/` |
 
 `firefox` is not part of `npm test` or `--all`. `npm run verify:firefox` runs it. The other suites
-stay on Chromium and the Chrome package.
+stay on Chromium and the Chrome package. `npm run build:firefox` writes the production package in
+`dist/extension-firefox/` and does not run this suite.
 
 `npm test` selects `unit contracts services browser`; `--all` also selects E2E, release and visual.
 `verify:quick` adds type checking to `--all` and omits coverage gates. `verify` adds those gates.
