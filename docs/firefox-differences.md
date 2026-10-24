@@ -11,8 +11,9 @@ behavior and the limit that remains. Platform limits cite the Firefox 158.0.1 AP
 inspected. Build the package with
 [`npm run build:firefox`](commands.md#load-temporarily-in-firefox). It writes
 `dist/extension-firefox/`. `npm run build` still writes the Chrome package to `dist/extension/`.
-Chromium Playwright and the Chrome smoke test load the Chrome package only. `npm run verify:quick`
-does not launch Firefox. `npm run verify:firefox` builds this package and loads it in Firefox. See
+Chromium Playwright and the Chrome smoke test load the Chrome package only. `npm run verify` runs
+the shared suites and does not launch a browser. `npm run verify:chrome` loads this Chrome package.
+`npm run verify:firefox` builds the Firefox package and loads it in Firefox. See
 [Run tests](commands.md#run-tests).
 
 ## Package

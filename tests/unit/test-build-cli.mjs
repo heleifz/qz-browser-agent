@@ -153,8 +153,11 @@ test("firefox npm scripts target the firefox package and chrome scripts stay chr
   assert.equal(scripts.dev, "node scripts/build-extension.mjs --watch");
   assert.equal(scripts["build:firefox"], "node scripts/build-extension.mjs --mode production --typecheck --browser firefox");
   assert.equal(scripts["dev:firefox"], "node scripts/build-extension.mjs --watch --browser firefox");
-  assert.equal(scripts["verify:quick"], "npm run typecheck && npm test -- --all");
+  assert.equal(scripts.verify, "npm run typecheck && npm test -- unit contracts services");
+  assert.equal(scripts["verify:chrome"], "npm test -- browser e2e release visual");
   assert.equal(scripts["verify:firefox"], "npm run typecheck && npm test -- firefox");
+  assert.equal(scripts["verify:coverage"], "npm run typecheck && npm test -- --all --coverage");
+  assert.equal(scripts["verify:quick"], undefined);
 });
 
 function run(args, options = {}) {

@@ -1,8 +1,12 @@
 import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-export const DEFAULT_SUITES = ["unit", "contracts", "services", "browser"];
-export const AUTOMATED_SUITES = ["unit", "contracts", "services", "browser", "e2e", "release", "visual"];
+export const SHARED_SUITES = ["unit", "contracts", "services"];
+export const CHROME_SUITES = ["browser", "e2e", "release", "visual"];
+// npm test keeps the historical default: shared suites plus the Chromium browser suite.
+export const DEFAULT_SUITES = [...SHARED_SUITES, "browser"];
+// --all is the shared suites plus the Chrome package suites. Firefox stays outside it.
+export const AUTOMATED_SUITES = [...SHARED_SUITES, ...CHROME_SUITES];
 export const BROWSER_RESOURCE_SUITES = new Set(["browser", "e2e", "release", "visual"]);
 
 const command = (bin, ...args) => ({ bin, args });
@@ -131,7 +135,7 @@ export function createSuiteCatalog({ root: ROOT, match, unitConcurrency }) {
         "tests/release/chrome-smoke.mjs",
       ),
     ],
-    // Firefox is outside --all. verify:quick keeps the Chromium suites on dist/extension.
+    // Firefox is outside --all. The Chrome package suites load dist/extension.
     firefox: [
       commandWith(
         { id: "firefox-package", resource: "general" },

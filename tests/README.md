@@ -17,6 +17,8 @@ npm test -- unit --match session
 npm test -- browser --list
 npm test -- playwright renderer-lifecycle.spec.mjs --workers 1
 npm run verify
+npm run verify:chrome
+npm run verify:firefox
 ```
 
 | Suite | What it checks |
@@ -30,12 +32,15 @@ npm run verify
 | `visual` | Tool timelines and conversation streaming in Chromium |
 | `firefox` | Firefox unit tests and Playwright in Mozilla Firefox against `dist/extension-firefox/` |
 
-`firefox` is not part of `npm test` or `--all`. `npm run verify:firefox` runs it. The other suites
-stay on Chromium and the Chrome package. `npm run build:firefox` writes the production package in
-`dist/extension-firefox/` and does not run this suite.
+`firefox` is not part of `npm test` or `--all`. `npm run verify:firefox` runs it. `browser`, `e2e`,
+`release`, and `visual` load the Chrome package. `npm run build:firefox` writes the production package
+in `dist/extension-firefox/` and does not run this suite.
 
-`npm test` selects `unit contracts services browser`; `--all` also selects E2E, release and visual.
-`verify:quick` adds type checking to `--all` and omits coverage gates. `verify` adds those gates.
+`npm test` selects `unit contracts services browser`. `--all` selects those shared suites plus `e2e`,
+`release`, and `visual`. `npm run verify` type-checks and runs `unit`, `contracts`, and `services`.
+`npm run verify:chrome` runs the Chrome package suites. `npm run verify && npm run verify:chrome`
+type-checks and runs the shared suites plus the Chrome package suites. `npm run verify:coverage`
+type-checks and runs `--all` with coverage gates.
 `--list` prints the selected commands. `--match` filters unit filenames or suite commands; the
 `playwright` entry accepts Playwright options directly.
 

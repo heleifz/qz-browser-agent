@@ -237,9 +237,11 @@ Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, 
 Set up the [test environment](docs/commands.md#run-tests), then use:
 
 ```bash
-npm run dev       # Rebuild on source changes
-npm test          # Run the default test suites
-npm run verify    # Type-check and run all automated suites with coverage
+npm run dev            # Rebuild on source changes
+npm test               # Run the default test suites
+npm run verify         # Type-check and run the shared suites
+npm run verify:chrome  # Chrome package suites on dist/extension
+npm run verify:coverage # Shared suites, Chrome package suites, and coverage gates
 ```
 
 After a rebuild, reload the extension at `chrome://extensions` and reopen the side panel.

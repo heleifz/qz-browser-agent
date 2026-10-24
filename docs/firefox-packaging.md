@@ -4,8 +4,8 @@ Status: adopted. Chrome remains the default build. The skin and palette are unch
 
 `npm run build` and `npm run dev` write `dist/extension/`. `npm run build:firefox` and
 `npm run dev:firefox` write `dist/extension-firefox/`. A shared-graph change runs
-`npm run verify:quick` and `npm run verify:firefox`. A Firefox-only change finishes on
-`npm run verify:firefox`.
+`npm run verify` and `npm run verify:firefox`. A Chrome package suite change also runs
+`npm run verify:chrome`. A Firefox-only change finishes on `npm run verify:firefox`.
 
 `npm run release` writes the Chrome zip only. `release:firefox` and a CI upload of the Firefox
 package are deferred at the bottom of this page.
@@ -140,8 +140,10 @@ boot files remain the extension importers.
 | `npm run build:firefox` | `firefox`, production, typecheck | `dist/extension-firefox/` |
 | `npm run dev -- --browser firefox` | `firefox` | Same directory as `dev:firefox` |
 | `npm run build -- --browser firefox` | `firefox`, production, typecheck | Same directory as `build:firefox` |
-| `npm run verify:quick` | Chrome suites | Loads `dist/extension/`. Does not launch Firefox |
+| `npm run verify` | Shared suites | Typecheck, then `unit`, `contracts`, and `services`. Does not launch Firefox or Chromium Playwright |
+| `npm run verify:chrome` | Chrome package suites | `browser`, `e2e`, `release`, and `visual`. Loads `dist/extension/` |
 | `npm run verify:firefox` | Firefox suite | Builds `dist/extension-firefox/` in development mode, then runs `tests/unit/test-firefox-*.mjs` and Firefox Playwright |
+| `npm run verify:coverage` | Shared suites plus Chrome package suites | The coverage gate. Same suites as `verify` and `verify:chrome`, with `--coverage` |
 | `npm test -- firefox` | Firefox suite | Same suite as `verify:firefox` without the leading typecheck |
 | `npm run release` | `chrome` | `dist/releases/<version>/qz-browser-agent-extension-<version>.zip` |
 
@@ -150,7 +152,7 @@ development package in that same directory unless `QINGZHOU_FIREFOX_EXTENSION_DI
 that exports the variable tests the directory as it stands, including a production build left by
 `build:firefox`. Leave the variable unset for the suite's own development build.
 
-Typecheck is repository-wide. `npm run build` and `npm run verify:quick` typecheck Firefox sources
+Typecheck is repository-wide. `npm run build` and `npm run verify` typecheck Firefox sources
 even though they emit the Chrome package. One TypeScript program covers both targets. Emit stays
 per target.
 
@@ -218,7 +220,8 @@ Local checks follow the files in the change.
 
 | Change | Local check |
 | --- | --- |
-| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify:quick` with `QINGZHOU_PLAYWRIGHT_WORKERS` set, and `npm run verify:firefox`. The Firefox package compiles the shared graph |
+| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify` and `npm run verify:firefox`. The Firefox package compiles the shared graph |
+| Chrome side panel, Playwright, e2e, release, or visual behavior | `npm run verify` and `npm run verify:chrome`. Set `QINGZHOU_PLAYWRIGHT_WORKERS` for the Chrome run |
 | Firefox-only trees, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs`, Firefox docs | `npm run verify:firefox`. The Chrome package's file set does not include those sources |
 | Product facades under `src/products/` | The same shared-runtime row. Product selection is orthogonal and still ships in both packages |
 | Docs outside the Firefox set | Link and example check. No browser launch |
@@ -242,7 +245,7 @@ tip when that path is edited. A Firefox-only edit leaves that output byte-identi
 | Product axis | `--product` and `src/products/`, orthogonal to the browser |
 | `build:firefox`, `dev:firefox` | Aliases for `--browser firefox`. `npm run build` and `npm run dev` stay Chrome |
 | Build summary | The log line and `--json` stdout include `browser`. The packaged `.qingzhou-build.json` does not |
-| Checks | Shared-graph changes run `verify:quick` and `verify:firefox`. Firefox-only changes finish on `verify:firefox` |
+| Checks | Shared-graph changes run `verify` and `verify:firefox`. Chrome package suites run `verify:chrome`. Firefox-only changes finish on `verify:firefox`. Coverage is `verify:coverage` |
 | CI | The separate `firefox-package` job runs `verify:firefox`. The portable job stays an OS matrix for Chrome |
 | Typecheck | One program for the repo |
 

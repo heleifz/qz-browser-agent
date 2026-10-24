@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { AUTOMATED_SUITES, DEFAULT_SUITES, createSuiteCatalog } from "../runner/suites.mjs";
+import { AUTOMATED_SUITES, CHROME_SUITES, DEFAULT_SUITES, SHARED_SUITES, createSuiteCatalog } from "../runner/suites.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 import {
   assertChromiumChannel,
@@ -52,6 +52,10 @@ test("Chromium extension loading refuses the Firefox package", async () => {
 test("the Firefox suite is outside the Chromium verification plan", () => {
   assert.equal(AUTOMATED_SUITES.includes("firefox"), false);
   assert.equal(DEFAULT_SUITES.includes("firefox"), false);
+  assert.deepEqual(SHARED_SUITES, ["unit", "contracts", "services"]);
+  assert.deepEqual(CHROME_SUITES, ["browser", "e2e", "release", "visual"]);
+  assert.deepEqual(AUTOMATED_SUITES, [...SHARED_SUITES, ...CHROME_SUITES]);
+  assert.deepEqual(DEFAULT_SUITES, [...SHARED_SUITES, "browser"]);
   const catalog = createSuiteCatalog({ root, match: "", unitConcurrency: 1 });
   const command = catalog.filteredCommands("firefox")[0];
   assert.deepEqual(command.args, ["tests/firefox/run.mjs"]);
@@ -60,8 +64,11 @@ test("the Firefox suite is outside the Chromium verification plan", () => {
   assert.match(help, /browser=firefox package=dist\/extension-firefox/);
   assert.match(help, /do not select firefox/);
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  assert.equal(pkg.scripts["verify:quick"], "npm run typecheck && npm test -- --all");
+  assert.equal(pkg.scripts.verify, "npm run typecheck && npm test -- unit contracts services");
+  assert.equal(pkg.scripts["verify:chrome"], "npm test -- browser e2e release visual");
   assert.equal(pkg.scripts["verify:firefox"], "npm run typecheck && npm test -- firefox");
+  assert.equal(pkg.scripts["verify:coverage"], "npm run typecheck && npm test -- --all --coverage");
+  assert.equal(pkg.scripts["verify:quick"], undefined);
   const chromiumConfig = readFileSync(join(root, "tests/config/playwright.config.mjs"), "utf8");
   const firefoxConfig = readFileSync(join(root, "tests/config/playwright.firefox.config.mjs"), "utf8");
   assert.match(chromiumConfig, /assertChromiumChannel/);

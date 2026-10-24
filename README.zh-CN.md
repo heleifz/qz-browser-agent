@@ -225,9 +225,11 @@ npm run build
 完成[测试环境配置](docs/commands.md#run-tests)后，使用以下命令：
 
 ```bash
-npm run dev       # 源码变更后自动重新构建
-npm test          # 运行默认测试
-npm run verify    # 类型检查，并运行全部自动化测试与覆盖率统计
+npm run dev             # 源码变更后自动重新构建
+npm test                # 运行默认测试
+npm run verify          # 类型检查，并运行共享测试
+npm run verify:chrome   # 加载 dist/extension/ 的 Chrome 套件
+npm run verify:coverage # 共享套件、Chrome 套件，以及覆盖率门禁
 ```
 
 重新构建后，在 `chrome://extensions` 中重新加载扩展，并重新打开侧边栏。
