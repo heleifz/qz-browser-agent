@@ -167,7 +167,7 @@ export function createSidepanelChannel({
     return true;
   }
 
-  function requestLocation({ timeoutMs = 12_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
+  function requestLocation({ timeoutMs = 6_000, windowId = null, signal }: { timeoutMs?: number; windowId?: number | null; signal?: AbortSignal } = {}) {
     if (signal?.aborted) return Promise.resolve(null);
     const port = [...ports].find(port => windowId == null || portWindowIds.get(port) === windowId);
     if (!port) return Promise.reject(new ToolExecutionError("LOCATION_PANEL_UNAVAILABLE", t("locationPanelUnavailable")));
