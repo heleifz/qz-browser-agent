@@ -7,7 +7,7 @@ import { chromeMessageId, decodeChromeMessage, encodeChromeMessage, HISTORICAL_L
 import { readTranslationVariants } from "./capability-locales.mjs";
 
 export const FIREFOX_GECKO_ID = "qz-browser-agent@heleifz.github.io";
-export const FIREFOX_MIN_VERSION = "139.0";
+export const FIREFOX_MIN_VERSION = "154.0";
 export const FIREFOX_BACKGROUND_SCRIPT = "background/firefox-boot.js";
 export const FIREFOX_PANEL_SCRIPT = "sidepanel/firefox-boot.js";
 export const FIREFOX_DROPPED_PERMISSIONS = Object.freeze([
@@ -22,8 +22,8 @@ export const FIREFOX_ADDED_PERMISSIONS = Object.freeze([
   "webRequestBlocking",
 ]);
 export const FIREFOX_DATA_COLLECTION = Object.freeze({
-  required: Object.freeze(["websiteContent"]),
-  optional: Object.freeze(["locationInfo", "browsingActivity", "bookmarksInfo"]),
+  required: Object.freeze(["websiteContent", "browsingActivity"]),
+  optional: Object.freeze(["locationInfo", "bookmarksInfo"]),
 });
 export const FILE_ACCESS_MESSAGE_KEY = "backend.toolError.FILE_ACCESS_REQUIRED.message";
 export const FIREFOX_SIDEBAR_STYLESHEET = "sidepanel/firefox-sidebar.css";
@@ -75,11 +75,11 @@ export function firefoxManifest(manifest) {
     next.optional_permissions = next.optional_permissions.filter(permission => !droppedPermissions.has(permission));
     if (!next.optional_permissions.length) delete next.optional_permissions;
   }
-  // Firefox starts background.scripts and does not run background.service_worker.
+  // Firefox starts background.scripts and ignores background.service_worker.
+  // Omit the unused key so web-ext does not warn BACKGROUND_SERVICE_WORKER_IGNORED.
   // The boot module patches Firefox APIs, then loads the shared service worker.
   next.background = {
     scripts: [FIREFOX_BACKGROUND_SCRIPT],
-    service_worker: worker,
     type: "module",
   };
   if (next.action) {

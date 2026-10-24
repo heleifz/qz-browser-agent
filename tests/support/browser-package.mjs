@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const FIREFOX_INSTALL_HINT = "Install Mozilla Firefox 139 or newer with npx playwright install firefox and npx playwright install-deps firefox, or set FIREFOX_EXECUTABLE to a Mozilla Firefox binary.";
+export const FIREFOX_INSTALL_HINT = "Install Mozilla Firefox 154 or newer with npx playwright install firefox and npx playwright install-deps firefox, or set FIREFOX_EXECUTABLE to a Mozilla Firefox binary.";
 
 const FIREFOX_CHANNEL = /firefox|gecko/i;
 
@@ -61,8 +61,8 @@ export function resolveFirefoxExecutable() {
         errors.push(`${candidate}: ${version || "not Mozilla Firefox"}`);
         continue;
       }
-      if (Number(match[1]) < 139) {
-        errors.push(`${candidate}: ${version} is older than strict_min_version 139`);
+      if (Number(match[1]) < 154) {
+        errors.push(`${candidate}: ${version} is older than strict_min_version 154`);
         continue;
       }
       return { executablePath: candidate, version };

@@ -16,16 +16,16 @@ to `dist/extension/`.
 
 Firefox facts below come from Mozilla's WebExtensions documentation and `browser-compat-data`.
 Version numbers are that data's `version_added` values. `web-ext lint` on the built package
-reports no errors. It warns that `background.service_worker` is unsupported; Firefox still
+reports no errors for the Firefox rewrite that omits `background.service_worker`. Firefox
 starts the event page from `background.scripts`. This checkout was not loaded through
-`about:debugging`. Confirm that step on Firefox 139 or later.
+`about:debugging`. Confirm that step on Firefox 154 or later.
 
 ## What the Firefox package loads
 
 | Piece | Firefox package |
 | --- | --- |
 | Scripts | The Chrome module graph, plus `background/firefox-boot.js` and `sidepanel/firefox-boot.js`. Those boot modules patch Firefox APIs, then import the shared background and side panel. |
-| Background | `background.scripts` is `background/firefox-boot.js`. `background.service_worker` remains `background/service-worker.js` with `"type": "module"`. Firefox starts the event page and does not run the service worker ([bug 1573659](https://bugzilla.mozilla.org/show_bug.cgi?id=1573659)). From Firefox 121 the event page still starts when both keys are present. |
+| Background | `background.scripts` is `background/firefox-boot.js` with `"type": "module"`. The Firefox manifest omits `background.service_worker`. Firefox starts the event page and does not run a service worker entry ([bug 1573659](https://bugzilla.mozilla.org/show_bug.cgi?id=1573659)). |
 | Workspace page | `sidebar_action.default_panel` is `sidepanel/sidepanel.html`. The copy in this package loads `firefox-boot.js`. `open_at_install` is `false`, so install does not open the sidebar. |
 | Session automations | Disabled. The boot sets `qzSessionAutomationsEnabled` to false and clears `qingzhou.automation.scheduler`. The sidebar omits the automations controls. Stored records stay in `storage.local` and do not run. |
 | MCP keepalive | While the CLI connection is enabled, the event page calls `runtime.getPlatformInfo` every 10 seconds and keeps `qingzhou-mcp-bridge-reconnect` armed. Firefox stores the bridge `connectionId` so a wake pairs the same lease. The boundary is in [MCP keepalive and reconnect](firefox-differences.md#mcp-keepalive-and-reconnect). |
@@ -33,8 +33,8 @@ starts the event page from `background.scripts`. This checkout was not loaded th
 | Permissions kept | `activeTab`, `alarms`, `tabs`, `tabGroups`, `scripting`, `storage`, `downloads`, `geolocation`, `clipboardWrite`, `notifications`, `declarativeNetRequest`, `unlimitedStorage`, and optional `history`, `bookmarks`, `downloads.open`. |
 | Permissions added in this package only | `webNavigation`, `webRequest`, and `webRequestBlocking`, used by the page and network approximations. |
 | Permissions removed from this package only | `sidePanel`, `debugger`, `offscreen`, and optional `desktopCapture`. Firefox rejects these names. They remain in [`src/manifest.json`](../src/manifest.json). |
-| Data collection | `websiteContent` is required. `locationInfo`, `browsingActivity`, and `bookmarksInfo` are optional. `none` is not declared. |
-| Minimum version | `browser_specific_settings.gecko.strict_min_version` is `139.0`, because `tabGroups` starts in Firefox 139. |
+| Data collection | `websiteContent` and `browsingActivity` are required. `locationInfo` and `bookmarksInfo` are optional. `none` is not declared. |
+| Minimum version | `browser_specific_settings.gecko.strict_min_version` is `154.0`, because `sandbox` and `content_security_policy.sandbox` require Firefox 154 (`data_collection_permissions` needs 140). |
 | Add-on id | Provisional `qz-browser-agent@heleifz.github.io`. Confirm it before any signed build. Changing it later changes stored data and the AMO identity. |
 | Chrome `key` | Omitted from the Firefox manifest. The Chrome extension id stays `ghbaodmonhcgkfeejcpffknlggbjhjgj`. |
 | Sandbox declaration | `sandbox.pages` and `content_security_policy.sandbox` are copied through. Firefox documents `content_security_policy.sandbox` from version 154. The runner page is created from the hidden offscreen frame. |
