@@ -389,4 +389,7 @@ export default defineMessages("core", {
   firstColumns: { "zh-CN": "显示前 {count} 列", en: "Showing the first {count} columns" },
   imageTotal: { "zh-CN": "{count} 张", en: "Images: {count}" },
   moreImages: { "zh-CN": "另 {count} 张", en: "{count} more images" },
+  storeReviewPrompt: { "zh-CN": "如果轻舟对你有帮助，欢迎在 Chrome 应用商店留个评价。", en: "If qz has been useful, a Chrome Web Store review helps." },
+  storeReviewAction: { "zh-CN": "去评价", en: "Leave a review" },
+  storeReviewDismiss: { "zh-CN": "不再显示", en: "Dismiss" },
 });
