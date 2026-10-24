@@ -1,5 +1,6 @@
 import { installFirefoxDebugger } from "./debugger-host.js";
 import { installInitiatorRewrite } from "./dnr-initiator.js";
+import { installFirefoxMcpWake } from "./mcp-wake.js";
 import { installNotificationRenewal } from "./notifications.js";
 import { installOffscreenHost } from "./offscreen-host.js";
 import { disableFirefoxSessionAutomations } from "./session-automations.js";
@@ -11,6 +12,7 @@ export function installFirefoxHost(chromeApi: unknown = globalThis.chrome): void
   if (!browser || browser.qzFirefoxHost) return;
   browser.qzFirefoxHost = true;
   disableFirefoxSessionAutomations(browser);
+  installFirefoxMcpWake(browser as Parameters<typeof installFirefoxMcpWake>[0]);
   installFirefoxDebugger(browser as Parameters<typeof installFirefoxDebugger>[0]);
   installWorkspacePanel(browser as Parameters<typeof installWorkspacePanel>[0]);
   installOffscreenHost(browser as Parameters<typeof installOffscreenHost>[0]);

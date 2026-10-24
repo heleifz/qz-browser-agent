@@ -71,6 +71,7 @@ test("the firefox boot does not arm session automations and chrome still does", 
   };
   installFirefoxHost(browser);
   assert.equal(browser.qzSessionAutomationsEnabled, false);
+  assert.equal(browser.qzFirefoxMcpWake, true);
   assert.deepEqual(cleared, [AUTOMATION_SCHEDULER_ALARM]);
   await browser.alarms.create(AUTOMATION_SCHEDULER_ALARM, { periodInMinutes: 1 });
   await browser.alarms.create(RECONNECT_ALARM, { periodInMinutes: 0.5 });

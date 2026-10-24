@@ -20,7 +20,7 @@ the shared suites and does not launch a browser. `npm run verify:chrome` loads t
 
 | Feature | Firefox behavior | Known limitation |
 | --- | --- | --- |
-| Background | `background.scripts` is `background/firefox-boot.js`. That module patches Firefox APIs, then imports `background/service-worker.js`. `background.service_worker` stays in the manifest so the shared validators still see the Chrome entry. Firefox starts the event page and does not run the service worker. | The event page can still be discarded. The hidden offscreen frame is what keeps the keepalive running. |
+| Background | `background.scripts` is `background/firefox-boot.js`. That module patches Firefox APIs, then imports `background/service-worker.js`. `background.service_worker` stays in the manifest so the shared validators still see the Chrome entry. Firefox starts the event page and does not run the service worker. | The event page can still be discarded. While the CLI connection is enabled, a 10-second parent-API ping keeps it loaded across the default 30-second idle timeout, and the reconnect alarm loads it again after a discard. See [MCP keepalive and reconnect](#mcp-keepalive-and-reconnect). |
 | Workspace page | `sidebar_action` is the panel. `default_panel` is `sidepanel/sidepanel.html`. `default_title` and `default_icon` match the toolbar button. `open_at_install` is `false`. The HTML loads `sidepanel/firefox-boot.js` and `sidepanel/firefox-sidebar.css` after the shared skin. | Install does not open the sidebar. Firefox's schema default for `open_at_install` is true. This package keeps false so first install matches the Chrome task flow. |
 | Toolbar and shortcut | `action.default_area` is `navbar`, which is Firefox's toolbar. The suggested key that Chrome puts on `_execute_action` moves to the reserved command `_execute_sidebar_action`. Its description is the extension name. The model-preset command stays. The toolbar click calls `sidebarAction.toggle()` during the user gesture. | Firefox rejects two commands with the same suggested key, so `_execute_action` is not also declared. The extension does not add a `menus` item: the sidebar menu already lists a `sidebar_action`, and an extra `menus` permission would be a second entry point. |
 | Permissions | `sidePanel`, `debugger`, `offscreen`, and optional `desktopCapture` are omitted. `webNavigation`, `webRequest`, and `webRequestBlocking` are added. There is no `update_url`. | A store review can still reject `webRequestBlocking`. If that permission is removed, response bodies are unavailable. Add-ons Manager owns updates for a signed package. A temporary add-on does not update itself. |
@@ -155,7 +155,7 @@ run. The same `offscreen.js` keepalive, SVG conversion, and sandbox iframe run i
 | Feature | Firefox behavior | Known limitation |
 | --- | --- | --- |
 | Hidden frame | `hasDocument` stays false until the iframe loads `offscreen.html`. An `about:blank` load does not count. Overlapping `createDocument` calls share that load. A load error removes the frame, so the next `ensure()` can try again. A document that is still loading waits for `DOMContentLoaded` before the frame is created. | The minimized popup is used only when the event page has no document. That window can flash. The log line is `[轻舟] firefox offscreen uses a minimized window`. |
-| Lifetime | The iframe's 10-second ping is the same message the Chrome offscreen document sends. | The ping keeps the event page alive only while the iframe stays loaded. Discarding the event page drops the frame until the next `ensure()`. |
+| Lifetime | The iframe's 10-second ping is the same message the Chrome offscreen document sends. Firefox does not treat that message as a background parent-API call, so it does not reset the event-page idle timer. | Discarding the event page drops the frame until the next `ensure()`. The CLI keepalive is the separate parent-API ping in [MCP keepalive and reconnect](#mcp-keepalive-and-reconnect). |
 | Sandbox runner | The manifest still declares `runner-sandbox.html` and the sandbox CSP. | Firefox documents those sandbox keys from version 154. This approximation was not executed against a live page in the temporary-load check. |
 
 ## Page input
@@ -345,7 +345,51 @@ actions. A call that still names one returns `AUTOMATION_DISABLED`. The model pr
 package says scheduled tasks are unavailable.
 
 The MCP reconnect alarm `qingzhou-mcp-bridge-reconnect` is separate. Its `periodInMinutes: 0.5`
-behavior is in [Platform limits](#platform-limits).
+behavior and the keepalive boundary are in [MCP keepalive and reconnect](#mcp-keepalive-and-reconnect).
+
+## MCP keepalive and reconnect
+
+Firefox's event page unloads after `extensions.background.idle.timeout` with no parent-process API
+call from the background. The default is 30 seconds, with a floor of 0.1 seconds and a ceiling of
+5 minutes. Closing the sidebar removes the visible extension view, so the idle timer is the
+lifetime that remains.
+
+While the CLI connection is enabled and the bridge is not paused, the event page calls
+`runtime.getPlatformInfo` every 10 seconds. That call is the keepalive. The log line is
+`[轻舟] firefox mcp keepalive armed`. Disconnect, or a paused permanent failure, clears the
+timer. The log line is `[轻舟] firefox mcp keepalive stopped`.
+
+`storage.local` holds the bridge record `_qingzhou_mcp_bridge` and the client id
+`_qingzhou_mcp_bridge_client_id`. On Firefox the record also stores `connectionId`. A wake reads
+that id, the pairing token, and the service instance id, then pairs with the same connection id.
+The daemon accepts the new poll for this profile's existing lease. The add-on does not need a
+reload. `runtime.onSuspend` writes the connection id again if a discard starts before the latest
+state write.
+
+The alarm `qingzhou-mcp-bridge-reconnect` uses `periodInMinutes: 0.5`. The boot script registers
+its listener while the event page is still starting. A transport failure keeps that alarm armed
+and restores the retry budget. `BRIDGE_CLIENT_IN_USE` still pauses after its one lease wait. An
+incompatible bridge, a rejected pairing token, a name conflict, or missing data consent still
+pauses until the user connects again.
+
+| Guarantee | What remains |
+| --- | --- |
+| With the sidebar closed, an enabled CLI connection stays loaded across the default 30-second idle timeout. | An idle timeout below 10 seconds can still discard the page between pings. The alarm is the recovery, about 30 seconds after the last schedule. |
+| After a discard, the alarm loads the event page and the stored lease pairs again. | A crash can drop tool calls and run state that had not been written. The alarm restores the CLI connection on the next fire. |
+| Session automations stay disabled. `qzSessionAutomationsEnabled` stays false and `qingzhou.automation.scheduler` stays cleared. | This keepalive is not a scheduler. An unattended multi-step page task still has no sidebar gesture and no automation alarm. |
+
+Probe it on a temporary load:
+
+1. Run `npm run build:firefox` and load `dist/extension-firefox/manifest.json` from
+   `about:debugging#/runtime/this-firefox`. A root-manifest zip of that directory loads the same
+   package.
+2. Pair with `npm run qz -- connect`, or open the pairing URL the command prints.
+3. Run `npm run qz -- browsers --json` and confirm this browser is online.
+4. Close the sidebar. Leave Firefox open for at least a minute.
+5. Run `npm run qz -- browsers --json` again. The same browser is online. The background console
+   shows `[轻舟] firefox mcp keepalive armed` while the connection stays enabled.
+6. In `about:debugging`, terminate the background script. Within about a minute the browser is
+   online again. Reloading the add-on is not required.
 
 ## Platform limits
 
@@ -365,7 +409,7 @@ available API opens a dialog or a privileged path this package does not use.
 | MCP settings sender | `assertMcpSettingsSender` accepts `chrome-extension://<extension id>/` and a `moz-extension://<host>/` page. Firefox's host is an internal UUID, and `sender.id` must still be this extension. A web page URL is still rejected. |
 | MCP bridge origin | The daemon allows `chrome-extension://` plus 32 characters from `a` to `p`, and `moz-extension://` plus a lowercase UUID. That UUID is the profile-local host in `extensions.webextensions.uuids` for gecko id `qz-browser-agent@heleifz.github.io`. `runtime.id` remains the gecko id. The first pair from an allowed origin issues or checks the pairing token. Later poll and result calls require it. A web origin receives `403`. `/mcp` rejects every Origin. The process still listens on loopback. Steps are in [Load qz in Firefox](cli.md#load-qz-in-firefox). |
 | Session automations | Disabled. The boot does not arm `qingzhou.automation.scheduler`, and stored definitions do not start. The sidebar has no create, edit, or run control. See [Session automations](#session-automations). |
-| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox 158.0.1 does not clamp that value: the shipped alarm implementation stores it and schedules `periodInMinutes * 60` seconds. A temporary add-on that created `{ periodInMinutes: 0.5 }` read back `periodInMinutes` `0.5` and a first fire 30047 ms later. That alarm is the MCP reconnect alarm, not a session automation. |
+| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox 158.0.1 does not clamp that value: the shipped alarm implementation stores it and schedules `periodInMinutes * 60` seconds. A temporary add-on that created `{ periodInMinutes: 0.5 }` read back `periodInMinutes` `0.5` and a first fire 30047 ms later. That alarm loads a discarded event page and resumes the stored CLI lease. It is not a session automation. |
 | Geolocation prompt | The in-app consent card is unchanged. Whether Firefox also shows its own location prompt was not checked. |
 | Tab groups | The same `tabGroups` calls run. The group chrome is Firefox's. `TabGroup.shared` is unsupported and unused. |
 | Chrome debugger infobar | `debugger.attach` does not show a debugging banner. Firefox has no `debugger` permission in this package. |

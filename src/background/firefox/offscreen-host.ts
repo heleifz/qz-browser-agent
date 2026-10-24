@@ -1,4 +1,4 @@
-/** Host run_script, SVG raster, and the keepalive in a hidden frame of the event page. */
+/** Host run_script and SVG raster in a hidden frame of the event page. */
 
 export function installOffscreenHost(chromeApi: OffscreenChrome, doc: HostDocument | undefined = hostDocument()): void {
   if (typeof chromeApi.offscreen?.createDocument === "function") return;

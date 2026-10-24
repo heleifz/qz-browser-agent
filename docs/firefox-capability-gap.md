@@ -28,6 +28,7 @@ starts the event page from `background.scripts`. This checkout was not loaded th
 | Background | `background.scripts` is `background/firefox-boot.js`. `background.service_worker` remains `background/service-worker.js` with `"type": "module"`. Firefox starts the event page and does not run the service worker ([bug 1573659](https://bugzilla.mozilla.org/show_bug.cgi?id=1573659)). From Firefox 121 the event page still starts when both keys are present. |
 | Workspace page | `sidebar_action.default_panel` is `sidepanel/sidepanel.html`. The copy in this package loads `firefox-boot.js`. `open_at_install` is `false`, so install does not open the sidebar. |
 | Session automations | Disabled. The boot sets `qzSessionAutomationsEnabled` to false and clears `qingzhou.automation.scheduler`. The sidebar omits the automations controls. Stored records stay in `storage.local` and do not run. |
+| MCP keepalive | While the CLI connection is enabled, the event page calls `runtime.getPlatformInfo` every 10 seconds and keeps `qingzhou-mcp-bridge-reconnect` armed. Firefox stores the bridge `connectionId` so a wake pairs the same lease. The boundary is in [MCP keepalive and reconnect](firefox-differences.md#mcp-keepalive-and-reconnect). |
 | Content scripts | The same three registrations: MCP connect on loopback, session export at `document_start`, and the page tools at `document_idle`. |
 | Permissions kept | `activeTab`, `alarms`, `tabs`, `tabGroups`, `scripting`, `storage`, `downloads`, `geolocation`, `clipboardWrite`, `notifications`, `declarativeNetRequest`, `unlimitedStorage`, and optional `history`, `bookmarks`, `downloads.open`. |
 | Permissions added in this package only | `webNavigation`, `webRequest`, and `webRequestBlocking`, used by the page and network approximations. |
@@ -132,7 +133,11 @@ above records, and this package does not arm `qingzhou.automation.scheduler`. An
 be discarded, and the sidebar opens only from a user gesture, so an unattended session cannot
 finish reliably. Definitions already stored for the add-on stay in `storage.local` and do not
 start. The sidebar has no control that creates, edits, or runs one. `manage_sessions` automation
-actions return `AUTOMATION_DISABLED`. The MCP reconnect alarm keeps its half-minute period.
+actions return `AUTOMATION_DISABLED`. The MCP reconnect alarm keeps its half-minute period. While
+the CLI connection is enabled, a 10-second parent-API ping holds the event page across the
+default idle timeout, and a discard resumes the stored connection id. That path does not start
+stored automations. The guarantee is in
+[MCP keepalive and reconnect](firefox-differences.md#mcp-keepalive-and-reconnect).
 
 Chrome's manifest, permissions, side panel opener, and debugger implementation are unchanged.
 The Firefox package is a second build output.

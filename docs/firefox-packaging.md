@@ -76,8 +76,11 @@ Firefox API stand-ins install from the boot modules, which run before the shared
 
 `installFirefoxHost` patches `sidebarAction`, notifications, offscreen, debugger, and network
 hooks on the `chrome` object, then the shared service worker reads that object. It also sets
-`qzSessionAutomationsEnabled` to false and clears `qingzhou.automation.scheduler` before that
-service worker starts. The side panel host does the same for display capture, extension-page
+`qzSessionAutomationsEnabled` to false, clears `qingzhou.automation.scheduler`, and arms the
+Firefox MCP wake (`qzFirefoxMcpWake`) before that service worker starts. The wake pings a parent
+API while the CLI connection is enabled and registers `qingzhou-mcp-bridge-reconnect` during
+event-page startup. Session automations stay disabled. The boundary is in
+[MCP keepalive and reconnect](firefox-differences.md#mcp-keepalive-and-reconnect). The side panel host does the same for display capture, extension-page
 URLs, and the sidebar palette, and sets the same automations flag.
 `rewriteFirefoxSidepanelHtml` removes the automations tab, the new-automation button, and the
 editor from the Firefox sidebar document. The
