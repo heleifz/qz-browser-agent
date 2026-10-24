@@ -23,6 +23,18 @@
   color: var(--text-secondary);
 }
 
+.store-review-store {
+  white-space: nowrap;
+}
+
+.store-review-chrome {
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 0.22em 0 0;
+  vertical-align: -0.16em;
+}
+
 .store-review-actions {
   display: flex;
   flex-wrap: wrap;
