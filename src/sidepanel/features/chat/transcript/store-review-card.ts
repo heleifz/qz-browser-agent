@@ -32,7 +32,7 @@ export interface StoreReviewCardOptions {
   document?: Document;
 }
 
-/** Quiet transcript card. It stays on the conversation that finished the second task until the user dismisses it or opens the review page. */
+/** Quiet transcript card. It stays on the conversation that finished the fifth completed root session until the user dismisses it or opens the review page. */
 export function createStoreReviewTranscriptCard(options: StoreReviewCardOptions) {
   const storage = options.storage === undefined ? extensionStorage() : options.storage;
   const doc = options.document ?? (typeof document === "undefined" ? null : document);

@@ -127,10 +127,10 @@ function assertStoreMark(messages, mention, prompt) {
 function visibleRecord(sessionId = "chat") {
   return {
     version: 1,
-    completedRunIds: ["run-1", "run-2"],
+    completedRunIds: ["run-1", "run-2", "run-3", "run-4", "run-5"],
     status: "visible",
     sessionId,
-    runId: "run-2",
+    runId: "run-5",
     resolution: "",
   };
 }
@@ -176,8 +176,8 @@ async function mountCard({
   };
 }
 
-test("the second successful finish is the first time the prompt becomes visible", () => {
-  assert.equal(CHROME_STORE_REVIEW_TASK_THRESHOLD, 2);
+test("the fifth successful root-session finish is the first time the prompt becomes visible", () => {
+  assert.equal(CHROME_STORE_REVIEW_TASK_THRESHOLD, 5);
   assert.equal(CHROME_WEB_STORE_REVIEWS_URL, "https://chromewebstore.google.com/detail/qz/dknbdgkgoinlgjpfebapkklbmjjgdblm/reviews");
   let state = emptyChromeStoreReviewRecord();
   state = recordCompletedTask(state, { sessionId: "chat", runId: "run-1", endedAt: "t1" }).record;
@@ -189,17 +189,37 @@ test("the second successful finish is the first time the prompt becomes visible"
   assert.equal(duplicate.changed, false);
   assert.equal(duplicate.record.status, "hidden");
 
-  state = recordCompletedTask(state, { sessionId: "chat", runId: "run-2", endedAt: "t2" }).record;
+  for (let index = 2; index <= 4; index += 1) {
+    state = recordCompletedTask(state, { sessionId: "chat", runId: `run-${index}`, endedAt: `t${index}` }).record;
+    assert.equal(state.status, "hidden");
+    assert.equal(shouldShowChromeStoreReview({ record: state, sessionId: "chat", hasTranscript: true, install: STORE_INSTALL }), false);
+  }
+  assert.deepEqual(state.completedRunIds, ["run-1", "run-2", "run-3", "run-4"]);
+
+  state = recordCompletedTask(state, { sessionId: "chat", runId: "run-5", endedAt: "t5" }).record;
   assert.equal(state.status, "visible");
   assert.equal(state.sessionId, "chat");
-  assert.equal(state.runId, "run-2");
+  assert.equal(state.runId, "run-5");
+  assert.deepEqual(state.completedRunIds, ["run-1", "run-2", "run-3", "run-4", "run-5"]);
   assert.equal(shouldShowChromeStoreReview({ record: state, sessionId: "chat", hasTranscript: true, install: STORE_INSTALL }), true);
   assert.equal(shouldShowChromeStoreReview({ record: state, sessionId: "other", hasTranscript: true, install: STORE_INSTALL }), false);
   assert.equal(shouldShowChromeStoreReview({ record: state, sessionId: "chat", hasTranscript: false, install: STORE_INSTALL }), false);
 
-  const later = recordCompletedTask(state, { sessionId: "later", runId: "run-3", endedAt: "t3" });
+  const later = recordCompletedTask(state, { sessionId: "later", runId: "run-6", endedAt: "t6" });
   assert.equal(later.changed, false);
   assert.equal(later.record.sessionId, "chat");
+  assert.equal(later.record.runId, "run-5");
+
+  const earlyVisible = normalizeChromeStoreReviewRecord({
+    version: 1,
+    completedRunIds: ["run-1", "run-2"],
+    status: "visible",
+    sessionId: "chat",
+    runId: "run-2",
+    resolution: "",
+  });
+  assert.equal(earlyVisible.status, "hidden");
+  assert.deepEqual(earlyVisible.completedRunIds, ["run-1", "run-2"]);
 });
 
 test("a finish without a run id keeps the session and end time, and an empty finish does not count", () => {
@@ -350,10 +370,26 @@ test("root-session completion counts once, and aborts, errors, child sessions, a
     pendingSteeringMessages: [],
   });
   await review.idle();
+  const counted = await review.read();
+  assert.equal(counted.status, "hidden");
+  assert.equal(counted.completedRunIds.length, 2);
+
+  for (const runId of ["run-3", "run-4"]) {
+    runtime.recordEvent("root", { type: "agent_start", runId });
+    runtime.recordEvent("root", { type: "agent_end", runId });
+  }
+  await review.idle();
+  const fourth = await review.read();
+  assert.equal(fourth.status, "hidden");
+  assert.equal(fourth.completedRunIds.length, 4);
+
+  runtime.recordEvent("root", { type: "agent_start", runId: "run-5" });
+  runtime.recordEvent("root", { type: "agent_end", runId: "run-5" });
+  await review.idle();
   const visible = await review.read();
   assert.equal(visible.status, "visible");
   assert.equal(visible.sessionId, "root");
-  assert.equal(visible.completedRunIds.length, 2);
+  assert.equal(visible.completedRunIds.length, CHROME_STORE_REVIEW_TASK_THRESHOLD);
 
   await review.finish("dismissed");
   const reopened = createChromeStoreReviewStore({
@@ -375,11 +411,18 @@ test("concurrent finishes serialize and a failed write can be retried", async ()
     review.recordCompletion("chat", { runId: "run-a", endedAt: "1" }),
     review.recordCompletion("chat", { runId: "run-a", endedAt: "1" }),
     review.recordCompletion("chat", { runId: "run-b", endedAt: "2" }),
+    review.recordCompletion("chat", { runId: "run-c", endedAt: "3" }),
+    review.recordCompletion("chat", { runId: "run-d", endedAt: "4" }),
   ]);
+  const early = await review.read();
+  assert.deepEqual(early.completedRunIds, ["run-a", "run-b", "run-c", "run-d"]);
+  assert.equal(early.status, "hidden");
+  await review.recordCompletion("chat", { runId: "run-e", endedAt: "5" });
   const saved = await review.read();
-  assert.deepEqual(saved.completedRunIds, ["run-a", "run-b"]);
+  assert.deepEqual(saved.completedRunIds, ["run-a", "run-b", "run-c", "run-d", "run-e"]);
   assert.equal(saved.status, "visible");
   assert.equal(saved.sessionId, "chat");
+  assert.equal(saved.runId, "run-e");
 
   let rejectWrites = true;
   const flaky = memoryStorage();
@@ -399,7 +442,7 @@ test("concurrent finishes serialize and a failed write can be retried", async ()
   assert.deepEqual((await retry.read()).completedRunIds, ["run-1"]);
 });
 
-test("the transcript card appears after the second task, then dismiss or review removes it for good", async () => {
+test("the transcript card appears after the fifth completed root session, then dismiss or review removes it for good", async () => {
   assert.equal(coreMessages.messages.storeReviewAction.en, "Leave a review");
   assert.equal(coreMessages.messages.storeReviewDismiss.en, "Dismiss");
   assert.equal(coreMessages.messages.storeReviewDismiss["zh-CN"], "不再显示");
@@ -408,7 +451,7 @@ test("the transcript card appears after the second task, then dismiss or review 
   assert.match(coreMessages.messages.storeReviewPrompt["zh-CN"], /Chrome 应用商店/);
 
   const hidden = await mountCard({
-    record: { ...emptyChromeStoreReviewRecord(), completedRunIds: ["run-1"] },
+    record: { ...emptyChromeStoreReviewRecord(), completedRunIds: ["run-1", "run-2", "run-3", "run-4"] },
   });
   assert.equal(hidden.messages.querySelector("[data-store-review-card]"), null);
 
