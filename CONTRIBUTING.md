@@ -27,11 +27,11 @@ npm test -- unit --match session
 npm test -- playwright renderer-lifecycle.spec.mjs --workers 1
 ```
 
-Choose tests for your change using the [test guide](tests/README.md). Before submitting a shared
-change, run `npm run verify`. When the change is loaded from the Chrome package, also run
-`npm run verify:chrome`. A Firefox-only change finishes with `npm run verify:firefox`. Packaging
-and releases run `npm run verify:coverage`. For documentation, check commands, file links, heading
-links, and executable examples. Live-provider tests require an explicit invocation and can incur
+Choose tests for your change using the [test guide](tests/README.md) and the tiers in
+[commands](docs/commands.md). Small changes such as copy, thresholds, and documentation run no test
+suites. Ordinary changes run typecheck plus the focused checks. Run `npm run verify` for broad
+shared-contract changes, and `npm run verify:chrome` or `npm run verify:firefox` only for risky
+changes specific to that package. Packaging and releases run `npm run verify:coverage`. Live-provider tests require an explicit invocation and can incur
 charges; see [live-test setup](tests/README.md#real-model-tests).
 
 ## Extension contracts

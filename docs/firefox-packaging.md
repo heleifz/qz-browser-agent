@@ -3,9 +3,8 @@
 Status: adopted. Chrome remains the default build. The skin and palette are unchanged.
 
 `npm run build` and `npm run dev` write `dist/extension/`. `npm run build:firefox` and
-`npm run dev:firefox` write `dist/extension-firefox/`. A shared-graph change runs
-`npm run verify` and `npm run verify:firefox`. A Chrome package suite change also runs
-`npm run verify:chrome`. A Firefox-only change finishes on `npm run verify:firefox`.
+`npm run dev:firefox` write `dist/extension-firefox/`. Checks follow the tiers in
+[Commands](commands.md): `npm run verify:firefox` runs when a change puts the Firefox package at risk.
 
 `npm run release` writes the Chrome zip only. `release:firefox` and a CI upload of the Firefox
 package are deferred at the bottom of this page.
@@ -240,19 +239,19 @@ job builds `dist/extension/` and runs focused Chromium contracts on Linux, macOS
 matrix cell on the portable job would rebuild Chrome on each OS and still need a Linux Firefox
 install, so the Firefox gate stays its own job.
 
-Local checks follow the files in the change.
+Local checks follow the tiers in [Commands](commands.md). Small changes and docs run no suites;
+ordinary changes run typecheck plus focused tests. When a change carries broad or browser-specific
+risk, this table shows which suite covers it.
 
-| Change | Local check |
+| Change at risk | Suite |
 | --- | --- |
-| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify` and `npm run verify:firefox`. The Firefox package compiles the shared graph |
-| Chrome side panel, Playwright, e2e, release, or visual behavior | `npm run verify` and `npm run verify:chrome`. Set `QINGZHOU_PLAYWRIGHT_WORKERS` for the Chrome run |
-| Firefox-only trees, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs`, Firefox docs | `npm run verify:firefox`. The Chrome package's file set does not include those sources |
+| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify`; add `npm run verify:firefox` when Firefox behavior is at risk. The Firefox package compiles the shared graph |
+| Chrome side panel, Playwright, e2e, release, or visual behavior | `npm run verify:chrome`. Set `QINGZHOU_PLAYWRIGHT_WORKERS` for the Chrome run |
+| Firefox-only trees, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs` | `npm run verify:firefox` when the Firefox package is at risk. The Chrome package's file set does not include those sources |
 | Product facades under `src/products/` | The same shared-runtime row. Product selection is orthogonal and still ships in both packages |
-| Docs outside the Firefox set | Link and example check. No browser launch |
 
 `npm test -- unit --match firefox` is the inner loop for adapter work. `npm test -- firefox` runs
-the Firefox suite without a fresh typecheck. The finish line for a Firefox-only change is
-`npm run verify:firefox`.
+the Firefox suite without a fresh typecheck.
 
 A change to the Chrome emit path, including a new field inside the packaged `.qingzhou-build.json`,
 is a Chrome package change. Prove the default `npm run build` output against the previous Chrome
@@ -269,7 +268,7 @@ tip when that path is edited. A Firefox-only edit leaves that output byte-identi
 | Product axis | `--product` and `src/products/`, orthogonal to the browser |
 | `build:firefox`, `dev:firefox` | Aliases for `--browser firefox`. `npm run build` and `npm run dev` stay Chrome |
 | Build summary | The log line and `--json` stdout include `browser`. The packaged `.qingzhou-build.json` does not |
-| Checks | Shared-graph changes run `verify` and `verify:firefox`. Chrome package suites run `verify:chrome`. Firefox-only changes finish on `verify:firefox`. Coverage is `verify:coverage` |
+| Checks | Tiered by change size. Broad shared-graph changes run `verify`; `verify:chrome` and `verify:firefox` cover browser-specific risk. Coverage is `verify:coverage` |
 | CI | The separate `firefox-package` job runs `verify:firefox`. The portable job stays an OS matrix for Chrome |
 | Typecheck | One program for the repo |
 

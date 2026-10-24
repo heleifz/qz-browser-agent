@@ -120,11 +120,14 @@ Playwright against that directory in Mozilla Firefox. `npm run build:firefox` wr
 package and does not run the suite. The Firefox tests run from `npm run verify:firefox` or
 `npm test -- firefox`. `npm run verify` and `npm run verify:chrome` do not launch Firefox.
 
-| Change | Finish with |
+Ordinary changes finish on typecheck plus focused tests. When a change carries broad or
+browser-specific risk, this table shows which suite covers it:
+
+| Change at risk | Suite |
 | --- | --- |
-| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify` and `npm run verify:firefox` |
-| Chrome side panel, Playwright, e2e, release, or visual behavior loaded from `dist/extension/` | `npm run verify` and `npm run verify:chrome` |
-| `src/background/firefox/**`, `src/sidepanel/firefox/**`, `firefox-boot.ts`, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs` | `npm run verify:firefox` |
+| Shared runtime, manifest, locales, content scripts, or `scripts/build-extension.mjs` | `npm run verify`; add `npm run verify:firefox` when Firefox behavior is at risk |
+| Chrome side panel, Playwright, e2e, release, or visual behavior loaded from `dist/extension/` | `npm run verify:chrome` |
+| `src/background/firefox/**`, `src/sidepanel/firefox/**`, `firefox-boot.ts`, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs` | `npm test -- unit --match firefox`; `npm run verify:firefox` when the Firefox package is at risk |
 
 Install Mozilla Firefox 139 or newer, including its system libraries:
 
@@ -162,12 +165,23 @@ record names `browser=firefox` and `package=dist/extension-firefox`. The Chromiu
 stays in `tests/results/playwright-report/`. A log line at the start of each suite names the browser
 and package. `QINGZHOU_PLAYWRIGHT_CHANNEL` cannot point the Chromium suites at Firefox.
 
-Before submitting a shared change, run `npm run verify`. When the change is exercised by the Chrome
-package suites, also run `npm run verify:chrome` and set `QINGZHOU_PLAYWRIGHT_WORKERS` to the
-available core count (`$(nproc)` on Linux). Together those two commands type-check and run the
-shared suites plus the Chrome package suites. Run `npm run verify:coverage` for packaging, releases,
-and coverage gates. For documentation changes, check commands, links, and examples. For narrower
-coverage checks, use `npm test -- unit --coverage`. On a busy machine,
+Choose checks by the size of the change:
+
+- Small changes (copy and i18n text, timeouts, thresholds, gates, small fixes, documentation) run
+  no test suites. Run `npm run typecheck` when TypeScript changed and it is cheap.
+- Ordinary feature and bug work runs `npm run typecheck` plus focused tests for the touched area,
+  such as `npm test -- unit --match <area>` or `npm test -- playwright <spec files>`. It does not
+  finish with a full suite run.
+- Broad changes to shared contracts, or a task that asks for it, run `npm run verify`. Add
+  `npm run verify:chrome` or `npm run verify:firefox` only for risky changes specific to that
+  package. For a Chrome run, set `QINGZHOU_PLAYWRIGHT_WORKERS` to the available core count
+  (`$(nproc)` on Linux).
+- `npm run verify:coverage` runs for releases or an explicit request for coverage gates. For
+  narrower coverage checks, use `npm test -- unit --coverage`.
+
+Capture a long run's output and exit code on the first run, for example
+`npm run verify:chrome > /tmp/verify-chrome.log 2>&1; echo EXIT:$?`, and cite that log instead of
+rerunning. On a busy machine,
 `npm test -- --all --jobs 1` runs the shared and Chrome suites sequentially.
 
 Reports go to `tests/results/`. Use `npm test -- report` to open the Playwright report, or `npm test
@@ -180,8 +194,8 @@ index](../tests/BEHAVIOR_INDEX.md). See [tests/README.md](../tests/README.md) fo
 type-checks, builds the Chrome package, and runs the focused Tool and Renderer contracts in
 Chromium on Linux, macOS, and Windows. The Firefox job installs Firefox with `npx playwright install firefox` and
 `npx playwright install-deps firefox`, builds `dist/extension-firefox/`, and runs
-`npm run verify:firefox` on Linux. Run `npm run verify:coverage` locally for the shared suites, the
-Chrome package suites, and coverage gates. Run `npm run verify:firefox` for the Firefox package.
+`npm run verify:firefox` on Linux. `npm run verify:coverage` runs the shared suites, the Chrome
+package suites, and coverage gates locally; `npm run verify:firefox` runs the Firefox package suite.
 
 ## Run against a real model
 

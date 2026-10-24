@@ -429,7 +429,7 @@ paths. See [package commands](../docs/commands.md#package-a-version) for source 
 
 ## Coverage
 
-`verify` collects Node V8 and Playwright coverage during the same full test run, then checks module
+`verify:coverage` collects Node V8 and Playwright coverage during the same full test run, then checks module
 thresholds. `--coverage` requires unfiltered `unit` or `--all`:
 
 ```bash
