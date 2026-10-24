@@ -220,5 +220,5 @@
   "sessions.goalTrackingShort": "लक्ष्य ट्रैक करें",
   "sessions.latestMessagesShort": "नए संदेश",
   "sessions.getLocation": "स्थान प्राप्त करें",
-  "sessions.locationUnavailable": "आपका स्थान प्राप्त नहीं हो सका। साइड पैनल खोलें और डिवाइस की स्थान सेटिंग जाँचें, या शहर या क्षेत्र बताएं।"
+  "sessions.locationUnavailable": "आपका स्थान नहीं मिल सका। इस सत्र का साइड पैनल खुला रखें, Chrome या Firefox का स्थान संकेत अनुमति दें, और उस ब्राउज़र के लिए सिस्टम की स्थान सेवाएँ चालू करें। आप शहर या क्षेत्र भी बता सकते हैं।"
 }
