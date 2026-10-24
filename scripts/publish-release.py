@@ -103,6 +103,7 @@ def main() -> int:
             raise SystemExit(f"no extension files found under {extension_dir}")
         file_count = len(files)
         uncompressed_size = sum(path.stat().st_size for path in files)
+        assert_no_remote_code(extension_dir)
 
         make_package_zip(
             extension_dir,
@@ -585,6 +586,24 @@ def iter_extension_files(extension_dir: Path) -> Iterable[Path]:
         if path.name in SKIP_FILENAMES or path.suffix == ".pyc":
             continue
         yield path
+
+
+def assert_no_remote_code(extension_dir: Path) -> None:
+    script = REPO_DIR / "scripts" / "check-no-remote-code.mjs"
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("remote-code check requires Node.js")
+    result = subprocess.run(
+        [node, str(script), str(extension_dir)],
+        cwd=REPO_DIR,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise SystemExit(detail or "extension contains remotely hosted code")
 
 
 def make_package_zip(

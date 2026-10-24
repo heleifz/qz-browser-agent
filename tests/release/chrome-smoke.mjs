@@ -81,7 +81,7 @@ try {
     tabulator: typeof globalThis.Tabulator === "function",
   }));
   assert.deepEqual(globals, { marked: false, mathjax: true, tabulator: false });
-  assert.equal(scripts.some(url => /tex-svg-full|chunk-data-grid-vendor-|chunk-xlsx/u.test(url)), false,
+  assert.equal(scripts.some(url => /\/vendor\/mathjax\/|chunk-data-grid-vendor-|chunk-xlsx/u.test(url)), false,
     "the minified panel must not load heavy features during ordinary navigation");
   // SheetJS mini also publishes a compatibility global; the application must use its module import.
   await page.evaluate(() => { delete globalThis.XLSX; });
