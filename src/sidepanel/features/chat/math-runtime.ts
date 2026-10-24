@@ -3,6 +3,8 @@ interface MathJaxRuntime {
   typesetPromise?(targets: Element[]): Promise<unknown>;
   typesetClear?(targets: Element[]): void;
   tex2svgPromise?(tex: string, options?: { display?: boolean }): Promise<Element>;
+  texReset?(): void;
+  svgStylesheet?(): HTMLStyleElement;
 }
 
 declare global { interface Window { MathJax?: MathJaxRuntime } }
@@ -27,6 +29,19 @@ export function renderMathSvg(tex: string, display: boolean): Promise<string> {
     if (!svg) throw new Error("MathJax did not return an SVG");
     return svg.outerHTML;
   });
+}
+
+/** Rules for error boxes, table lines, and glyph strokes. Exported SVGs are not inside mjx-container. */
+export function mathExportStylesheet(): Promise<string> {
+  return withMathRuntime(async runtime => adaptMathSvgStylesheet(runtime.svgStylesheet?.().textContent || ""));
+}
+
+/** Point MathJax's container rules at the formula element that wraps an exported SVG. */
+export function adaptMathSvgStylesheet(css: string): string {
+  return String(css || "")
+    .replaceAll('mjx-container[jax="SVG"]', ".math-formula")
+    .replaceAll("mjx-container[jax='SVG']", ".math-formula")
+    .replace(/<\/style/giu, "<\\/style");
 }
 
 /** One local runtime per panel; a failed load must not poison later formula requests. */
