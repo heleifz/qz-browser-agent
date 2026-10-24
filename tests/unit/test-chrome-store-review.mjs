@@ -98,7 +98,30 @@ function createDocument() {
       get lastElementChild() { return this.children.at(-1) || null; },
     };
   }
-  return { createElement };
+  return {
+    createElement,
+    createElementNS(_namespace, tag) { return createElement(tag); },
+  };
+}
+
+function joinedCopy(copy) {
+  return copy.querySelector("[data-store-review-before]").textContent
+    + copy.querySelector("[data-store-review-mention]").textContent
+    + copy.querySelector("[data-store-review-after]").textContent;
+}
+
+function assertStoreMark(messages, mention, prompt) {
+  const copy = messages.querySelector("[data-store-review-copy]");
+  const store = copy.querySelector("[data-store-review-store]");
+  const mark = store.querySelector("[data-store-review-chrome]");
+  assert.equal(joinedCopy(copy), prompt);
+  assert.equal(store.children[0], mark);
+  assert.equal(store.children[1].getAttribute("data-store-review-mention"), "");
+  assert.equal(store.children[1].textContent, mention);
+  assert.equal(mark.getAttribute("aria-hidden"), "true");
+  assert.equal(mark.children.some(node => node.getAttribute("fill") === "#EA4335"), true);
+  assert.equal(mark.children.some(node => node.getAttribute("fill") === "#1A73E8"), true);
+  assert.equal(copy.querySelector("[data-store-review-action]"), null);
 }
 
 function visibleRecord(sessionId = "chat") {
@@ -394,7 +417,15 @@ test("the transcript card appears after the second task, then dismiss or review 
   assert.ok(card);
   assert.equal(card.getAttribute("data-chat-lane"), "summary");
   assert.equal(card.getAttribute("role"), "note");
-  assert.equal(view.messages.querySelector("[data-store-review-copy]").textContent, coreMessages.messages.storeReviewPrompt.en);
+  assertStoreMark(view.messages, "Chrome Web Store", coreMessages.messages.storeReviewPrompt.en);
+  const previousLanguage = globalThis.chrome.i18n.getUILanguage;
+  globalThis.chrome.i18n.getUILanguage = () => "zh-CN";
+  try {
+    const chinese = await mountCard();
+    assertStoreMark(chinese.messages, "Chrome 应用商店", coreMessages.messages.storeReviewPrompt["zh-CN"]);
+  } finally {
+    globalThis.chrome.i18n.getUILanguage = previousLanguage;
+  }
   const review = view.messages.querySelector("[data-store-review-action='review']");
   const dismiss = view.messages.querySelector("[data-store-review-action='dismiss']");
   assert.equal(review.textContent, "Leave a review");

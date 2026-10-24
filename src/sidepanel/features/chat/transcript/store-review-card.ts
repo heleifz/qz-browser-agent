@@ -129,6 +129,17 @@ export function createStoreReviewTranscriptCard(options: StoreReviewCardOptions)
     const copy = reviewDocument.createElement("p");
     copy.className = "store-review-copy";
     copy.setAttribute("data-store-review-copy", "");
+    const before = reviewDocument.createElement("span");
+    before.setAttribute("data-store-review-before", "");
+    const storeName = reviewDocument.createElement("span");
+    storeName.className = "store-review-store";
+    storeName.setAttribute("data-store-review-store", "");
+    const mention = reviewDocument.createElement("span");
+    mention.setAttribute("data-store-review-mention", "");
+    storeName.append(chromeMark(reviewDocument), mention);
+    const after = reviewDocument.createElement("span");
+    after.setAttribute("data-store-review-after", "");
+    copy.append(before, storeName, after);
     const actionsRow = reviewDocument.createElement("div");
     actionsRow.className = "store-review-actions";
     const review = reviewDocument.createElement("button");
@@ -149,13 +160,17 @@ export function createStoreReviewTranscriptCard(options: StoreReviewCardOptions)
   }
 
   function refreshCopy(root: HTMLElement) {
-    const copy = root.querySelector<HTMLElement>("[data-store-review-copy]");
+    const parts = splitStoreMention(t("storeReviewPrompt"));
+    const before = root.querySelector<HTMLElement>("[data-store-review-before]");
+    const mention = root.querySelector<HTMLElement>("[data-store-review-mention]");
+    const after = root.querySelector<HTMLElement>("[data-store-review-after]");
     const review = root.querySelector<HTMLButtonElement>("[data-store-review-action='review']");
     const dismiss = root.querySelector<HTMLButtonElement>("[data-store-review-action='dismiss']");
-    const prompt = t("storeReviewPrompt");
     const reviewLabel = t("storeReviewAction");
     const dismissLabel = t("storeReviewDismiss");
-    if (copy && copy.textContent !== prompt) copy.textContent = prompt;
+    if (before && before.textContent !== parts.before) before.textContent = parts.before;
+    if (mention && mention.textContent !== parts.mention) mention.textContent = parts.mention;
+    if (after && after.textContent !== parts.after) after.textContent = parts.after;
     if (review && review.textContent !== reviewLabel) review.textContent = reviewLabel;
     if (dismiss && dismiss.textContent !== dismissLabel) dismiss.textContent = dismissLabel;
   }
@@ -228,6 +243,50 @@ function extensionInstallEnvironment(): BrowserInstallEnvironment {
     hasGetBrowserInfo: typeof browser?.runtime?.getBrowserInfo === "function",
     getSelf: typeof getSelf === "function" ? () => getSelf() : undefined,
   };
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const STORE_MENTIONS = ["Chrome 应用商店", "Chrome Web Store"];
+
+/** Keep the icon with the store name. A prompt without that phrase gets a leading mark instead. */
+function splitStoreMention(prompt: string): { before: string; mention: string; after: string } {
+  for (const mention of STORE_MENTIONS) {
+    const index = prompt.indexOf(mention);
+    if (index < 0) continue;
+    return { before: prompt.slice(0, index), mention, after: prompt.slice(index + mention.length) };
+  }
+  return { before: "", mention: "", after: prompt };
+}
+
+function chromeMark(doc: Document): SVGSVGElement {
+  const svg = doc.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "store-review-chrome");
+  svg.setAttribute("data-store-review-chrome", "");
+  svg.setAttribute("viewBox", "-10 -10 276 276");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  appendCircle(doc, svg, "64", "#fff");
+  appendPath(doc, svg, "M96 183.4A63.7 63.7 0 0 1 72.6 160L17.2 64A128 128 0 0 0 128 256l55.4-96A64 64 0 0 1 96 183.4Z", "#34A853");
+  appendPath(doc, svg, "M192 128a63.7 63.7 0 0 1-8.6 32L128 256A128 128 0 0 0 238.9 64h-111a64 64 0 0 1 64 64Z", "#FBBC04");
+  appendCircle(doc, svg, "52", "#1A73E8");
+  appendPath(doc, svg, "M96 72.6a63.7 63.7 0 0 1 32-8.6h110.8a128 128 0 0 0-221.7 0l55.5 96A64 64 0 0 1 96 72.6Z", "#EA4335");
+  return svg;
+}
+
+function appendPath(doc: Document, svg: SVGSVGElement, d: string, fill: string) {
+  const path = doc.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d);
+  path.setAttribute("fill", fill);
+  svg.appendChild(path);
+}
+
+function appendCircle(doc: Document, svg: SVGSVGElement, radius: string, fill: string) {
+  const circle = doc.createElementNS(SVG_NS, "circle");
+  circle.setAttribute("cx", "128");
+  circle.setAttribute("cy", "128");
+  circle.setAttribute("r", radius);
+  circle.setAttribute("fill", fill);
+  svg.appendChild(circle);
 }
 
 async function defaultOpenReviews(url: string) {
