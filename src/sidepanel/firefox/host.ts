@@ -1,3 +1,4 @@
+import { disableSessionAutomations, SESSION_AUTOMATION_CONTROL_SELECTORS } from "../../shared/session-automations.js";
 import { installFirefoxTheme, type FirefoxThemeChrome } from "./theme.js";
 
 /** Firefox sidebar recording and extension-page links. Chrome call sites stay on their APIs. */
@@ -7,15 +8,22 @@ const STREAM_ID = "firefox-display";
 export function installSidepanelFirefoxHost(
   chromeApi: SidepanelChrome = globalThis.chrome as unknown as SidepanelChrome,
   media: MediaHost | undefined = globalThis.navigator?.mediaDevices as MediaHost | undefined,
+  root: ParentNode | null | undefined = typeof document === "undefined" ? null : document,
 ): void {
   if (!chromeApi || chromeApi.qzFirefoxSidepanel) return;
   chromeApi.qzFirefoxSidepanel = true;
+  disableSessionAutomations(chromeApi);
+  if (root) removeSessionAutomationControls(root);
   rewriteExtensionPages(chromeApi);
   installDisplayCapture(chromeApi, media);
   installSidebarTheme(chromeApi);
 }
 
 installSidepanelFirefoxHost();
+
+function removeSessionAutomationControls(root: ParentNode): void {
+  for (const selector of SESSION_AUTOMATION_CONTROL_SELECTORS) root.querySelector(selector)?.remove();
+}
 
 function installSidebarTheme(chromeApi: SidepanelChrome) {
   if (typeof document === "undefined") return;
@@ -109,6 +117,7 @@ interface MediaHost {
 }
 interface SidepanelChrome extends FirefoxThemeChrome {
   qzFirefoxSidepanel?: boolean;
+  qzSessionAutomationsEnabled?: boolean;
   tabs?: { create(properties?: TabProperties): unknown };
   permissions?: { request(request?: PermissionRequest): Promise<boolean> };
   desktopCapture?: { chooseDesktopMedia?(sources: string[], callback: (streamId: string, options?: { canRequestAudioTrack?: boolean }) => void): number };

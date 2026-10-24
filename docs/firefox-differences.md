@@ -327,6 +327,26 @@ treat `notifications.onClicked` as user input, so that open is refused. If the s
 the click leaves badge `!` and the toolbar tooltip. It does not create `qz-open-sidebar`, so one
 click never produces a second notification. See [Sidebar](#sidebar).
 
+## Session automations
+
+The Firefox package does not run session automations. The event page can be discarded, and
+`sidebarAction.open()` runs only during a user gesture, so an unattended task cannot rely on
+the sidebar or a long-lived background. On Firefox, qz is a chat and CLI assistant.
+
+`background/firefox-boot.js` installs the host before `background/service-worker.js`. The host
+sets `chrome.qzSessionAutomationsEnabled` to false, clears the alarm
+`qingzhou.automation.scheduler`, and ignores a later `alarms.create` for that name. The shared
+runtime sees the flag and does not schedule, tick, or start a stored automation. Records already
+in `storage.local` stay there.
+
+The Firefox sidebar document omits the automations tab, the New automation button, and the
+editor. A restored task view stays on ordinary tasks. `manage_sessions` omits the automation
+actions. A call that still names one returns `AUTOMATION_DISABLED`. The model prompt for this
+package says scheduled tasks are unavailable.
+
+The MCP reconnect alarm `qingzhou-mcp-bridge-reconnect` is separate. Its `periodInMinutes: 0.5`
+behavior is in [Platform limits](#platform-limits).
+
 ## Platform limits
 
 These calls stay short of Chrome because Firefox 158.0.1 does not expose the API, or because the
@@ -344,7 +364,8 @@ available API opens a dialog or a privileged path this package does not use.
 | `Runtime.terminateExecution` | Returns `{}` and does not stop script. |
 | MCP settings sender | `assertMcpSettingsSender` accepts `chrome-extension://<extension id>/` and a `moz-extension://<host>/` page. Firefox's host is an internal UUID, and `sender.id` must still be this extension. A web page URL is still rejected. |
 | MCP bridge origin | The daemon allows `chrome-extension://` plus 32 characters from `a` to `p`, and `moz-extension://` plus a lowercase UUID. That UUID is the profile-local host in `extensions.webextensions.uuids` for gecko id `qz-browser-agent@heleifz.github.io`. `runtime.id` remains the gecko id. The first pair from an allowed origin issues or checks the pairing token. Later poll and result calls require it. A web origin receives `403`. `/mcp` rejects every Origin. The process still listens on loopback. Steps are in [Load qz in Firefox](cli.md#load-qz-in-firefox). |
-| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox 158.0.1 does not clamp that value: the shipped alarm implementation stores it and schedules `periodInMinutes * 60` seconds. A temporary add-on that created `{ periodInMinutes: 0.5 }` read back `periodInMinutes` `0.5` and a first fire 30047 ms later. The one-minute automation alarm is unchanged. |
+| Session automations | Disabled. The boot does not arm `qingzhou.automation.scheduler`, and stored definitions do not start. The sidebar has no create, edit, or run control. See [Session automations](#session-automations). |
+| Half-minute alarm | The MCP reconnect alarm stays `periodInMinutes: 0.5`. Firefox 158.0.1 does not clamp that value: the shipped alarm implementation stores it and schedules `periodInMinutes * 60` seconds. A temporary add-on that created `{ periodInMinutes: 0.5 }` read back `periodInMinutes` `0.5` and a first fire 30047 ms later. That alarm is the MCP reconnect alarm, not a session automation. |
 | Geolocation prompt | The in-app consent card is unchanged. Whether Firefox also shows its own location prompt was not checked. |
 | Tab groups | The same `tabGroups` calls run. The group chrome is Firefox's. `TabGroup.shared` is unsupported and unused. |
 | Chrome debugger infobar | `debugger.attach` does not show a debugging banner. Firefox has no `debugger` permission in this package. |

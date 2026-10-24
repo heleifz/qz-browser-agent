@@ -75,10 +75,15 @@ Firefox API stand-ins install from the boot modules, which run before the shared
 - [sidepanel/firefox-boot.ts](../src/sidepanel/firefox-boot.ts) imports `sidepanel/firefox/host.ts`, then `sidepanel/sidepanel.ts`.
 
 `installFirefoxHost` patches `sidebarAction`, notifications, offscreen, debugger, and network
-hooks on the `chrome` object, then the shared service worker reads that object. The side panel
-host does the same for display capture, extension-page URLs, and the sidebar palette. The
+hooks on the `chrome` object, then the shared service worker reads that object. It also sets
+`qzSessionAutomationsEnabled` to false and clears `qingzhou.automation.scheduler` before that
+service worker starts. The side panel host does the same for display capture, extension-page
+URLs, and the sidebar palette, and sets the same automations flag.
+`rewriteFirefoxSidepanelHtml` removes the automations tab, the new-automation button, and the
+editor from the Firefox sidebar document. The
 `qzFirefoxHost` and `qzFirefoxSidepanel` flags make that install run once. They are not a second
-browser switch.
+browser switch. Behavior a person can observe is in
+[Session automations](firefox-differences.md#session-automations).
 
 A runtime flag cannot be the package boundary. Firefox rejects unknown permission names at install,
 and the entry script is fixed by the manifest. One manifest cannot be the Chrome package and the

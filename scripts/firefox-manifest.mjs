@@ -115,12 +115,60 @@ export function firefoxManifest(manifest) {
 
 /** Point the sidebar document at the Firefox boot module and the sidebar skin. The Chrome file is unchanged. */
 export function rewriteFirefoxSidepanelHtml(html) {
-  let next = String(html).replace(/(<script\b[^>]*\bsrc=["'])sidepanel\.js(["'])/i, `$1${FIREFOX_PANEL_SCRIPT.split("/").pop()}$2`);
+  let next = stripFirefoxSessionAutomationMarkup(html);
+  next = next.replace(/(<script\b[^>]*\bsrc=["'])sidepanel\.js(["'])/i, `$1${FIREFOX_PANEL_SCRIPT.split("/").pop()}$2`);
   if (!next.includes("firefox-sidebar.css")) {
     const link = `  <link rel="stylesheet" href="firefox-sidebar.css">\n`;
     next = next.includes("</head>") ? next.replace("</head>", `${link}</head>`) : `${next}\n${link}`;
   }
   return next;
+}
+
+/** Remove the automations tab, the new-automation button, and the editor from the Firefox sidebar. */
+export function stripFirefoxSessionAutomationMarkup(html) {
+  return [
+    tag => /\bdata-sessions-mode=(["'])automation\1/.test(tag),
+    tag => /\bid=(["'])btn-new-automation\1/.test(tag),
+    tag => /\bid=(["'])automations-panel\1/.test(tag),
+  ].reduce((current, matches) => removeBalancedElements(current, matches), String(html));
+}
+
+function removeBalancedElements(html, matchesOpenTag) {
+  let source = html;
+  for (;;) {
+    const open = findOpeningTag(source, matchesOpenTag);
+    if (!open) return source;
+    const end = matchingCloseEnd(source, open);
+    if (end < 0) return source;
+    source = `${source.slice(0, open.index)}${source.slice(end)}`;
+  }
+}
+
+function findOpeningTag(html, matchesOpenTag) {
+  const re = /<([A-Za-z][\w:-]*)\b[^>]*>/g;
+  let match;
+  while ((match = re.exec(html))) {
+    if (match[0].endsWith("/>")) continue;
+    if (matchesOpenTag(match[0])) return { index: match.index, name: match[1] };
+  }
+  return null;
+}
+
+function matchingCloseEnd(html, open) {
+  const name = open.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`<(/?)${name}\\b[^>]*>`, "gi");
+  re.lastIndex = open.index;
+  let depth = 0;
+  let match;
+  while ((match = re.exec(html))) {
+    if (match[0].endsWith("/>")) continue;
+    if (match[1] !== "/") depth += 1;
+    else {
+      depth -= 1;
+      if (depth === 0) return re.lastIndex;
+    }
+  }
+  return -1;
 }
 
 /**

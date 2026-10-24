@@ -1,4 +1,6 @@
+import { createDisabledAutomationRuntime } from "./disabled-runtime.js";
 import { promptT } from "./prompt-messages.js";
+import { sessionAutomationsEnabled } from "../../shared/session-automations.js";
 import { t } from "../../shared/i18n/backend.js";
 import type { Automation, AutomationRun } from "../../shared/automation-store.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
@@ -58,6 +60,8 @@ export function createAutomationRuntime({
   clock = () => Date.now(),
   logger = console,
 }: AutomationRuntimeOptions) {
+  // Firefox boot sets the flag before this module runs. `never` keeps the Chrome return type.
+  if (!sessionAutomationsEnabled()) return createDisabledAutomationRuntime() as never;
   if (!repository || !sessions) throw new TypeError("automation repository and session commands are required");
   const operations = createSerialQueue();
   const notificationSessions = new Map<string, string>();
