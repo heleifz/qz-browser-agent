@@ -51,8 +51,7 @@ use that wrapper. For automation, pin a compatible release version verified with
 ## Load qz in Firefox
 
 One daemon serves both packages. Build the Firefox package and load it for this session.
-Pairing uses the same **Connect CLI** action and pairing URL as a Chrome profile. The daemon
-currently refuses the Firefox request; that limit is at the end of this section.
+Pairing uses **Connect CLI** or a pairing URL.
 
 ```bash
 npm run build:firefox
@@ -75,11 +74,29 @@ Open the sidebar from the toolbar button, then pair:
 The settings sender accepts a `moz-extension://<host>/` page when `sender.id` is this add-on.
 A web page URL is rejected.
 
-Extension routes on the daemon allow `Origin: chrome-extension://` plus 32 characters
-([`services/mcp-bridge/src/server.mjs`](../services/mcp-bridge/src/server.mjs)). A Firefox
-background `fetch` sends `Origin: moz-extension://<uuid>`, using Firefox's internal host for
-the add-on. The daemon answers `403` with `invalid bridge origin`. **Connect CLI** and the
-pairing page stop at that response.
+The daemon allows two Origin shapes on extension routes
+([`services/mcp-bridge/src/server.mjs`](../services/mcp-bridge/src/server.mjs)). A Chrome origin
+remains `chrome-extension://` plus 32 characters from `a` to `p`. A Firefox origin is
+`moz-extension://` plus a lowercase UUID. Firefox stores that UUID for gecko id
+`qz-browser-agent@heleifz.github.io` in the profile pref `extensions.webextensions.uuids`.
+`runtime.id` stays the gecko id. The bridge cannot derive the UUID from the gecko id, so the
+origin check accepts the UUID shape and then the pairing token authenticates the profile.
+The first `/v1/qingzhou/pair` from an allowed origin issues or checks that token. Later poll
+and result calls require it. A web origin is rejected with `403` and `invalid bridge origin`.
+A request to `/mcp` that carries any Origin is rejected. The daemon still binds to loopback.
+
+### Check Connect CLI on a local Firefox
+
+Use `npm run qz` from this checkout. An older daemon keeps its previous origin rule until
+`npm run qz -- stop`.
+
+1. Run `npm run build:firefox`. In Firefox 139 or later, open
+   `about:debugging#/runtime/this-firefox` and load `dist/extension-firefox/manifest.json`.
+2. Open the sidebar and accept the data notice.
+3. Run `npm run qz -- connect --no-open --json` and open `result.url` in that Firefox window.
+4. The page reports the profile connected. `npm run qz -- browsers` lists it online.
+
+**Settings → Advanced → CLI → Connect CLI** is the same check. Use the address `qz status` prints.
 
 ## Connect and stop
 
@@ -170,8 +187,9 @@ firefox --profile "$QZ_FIREFOX_PROFILE" "$QZ_PAIRING_URL"
 ```
 
 Use the installed Firefox executable when `firefox` is not on `PATH`. A new profile needs the
-temporary add-on and first-use setup again. The origin limit in that section applies after the
-page opens.
+temporary add-on and first-use setup again. After the page opens, the sidebar background pairs
+with the daemon. `qz browsers` lists that profile when the pair succeeds. See
+[Check Connect CLI on a local Firefox](#check-connect-cli-on-a-local-firefox).
 
 `--name work` adds `?name=work` to the URL. The profile opening it receives that identifier,
 including when it already has a connection. Without `--name`, a registered profile keeps its name;

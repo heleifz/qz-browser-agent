@@ -75,8 +75,8 @@ open the sidebar. Firefox chooses the side and shows one sidebar. Remaining diff
 Reload the temporary add-on after a rebuild. Temporary add-ons are removed when Firefox exits.
 
 The CLI is one daemon for both packages. It lives in `services/mcp-bridge` and is omitted from
-`dist/extension/` and `dist/extension-firefox/`. Pairing steps, and the current limit on a
-`moz-extension:` origin, are in [Load qz in Firefox](cli.md#load-qz-in-firefox).
+`dist/extension/` and `dist/extension-firefox/`. Pairing steps are in
+[Load qz in Firefox](cli.md#load-qz-in-firefox).
 
 ## Run tests
 
