@@ -698,6 +698,14 @@ export function firefoxSidebarCss() {
   .settings-body {
     scrollbar-color: var(--qz-scrollbar-thumb) transparent;
   }
+
+  /* The shared stream inset is 10px. Firefox's scrollbar sits in that inset and
+     crowds the text. 14px matches the header and the landing stream. The gutter
+     stays on both edges so the scrollbar does not cover the extra inset. */
+  #messages:not([data-chat-state="landing"]) {
+    padding-inline: 14px;
+    scrollbar-gutter: stable both-edges;
+  }
 }
 `;
 }

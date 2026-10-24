@@ -418,7 +418,8 @@ available API opens a dialog or a privileged path this package does not use.
 
 `sidepanel/firefox-sidebar.css` loads after the shared skin and follows Firefox's own sidebar
 panels. Only the Firefox package contains it. The accent fills primary controls only and is
-never mixed into a surface.
+never mixed into a surface. The conversation stream uses 14px of inline padding, the same inset
+as the header, and keeps `scrollbar-gutter: stable both-edges`. The shared skin stays at 10px.
 
 | Token | Source | Use |
 | --- | --- | --- |

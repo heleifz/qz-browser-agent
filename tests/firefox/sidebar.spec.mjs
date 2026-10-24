@@ -176,6 +176,68 @@ test("a window theme recolors the sidebar, its popups, and the primary fill", as
   expect(cleared.inline["--qz-ff-sidebar"]).toBeUndefined();
 });
 
+test("a scrolling chat keeps message text clear of the scrollbar at 320 and 400 pixels", async ({ firefoxSidebar }) => {
+  await openFromToolbar(firefoxSidebar);
+  for (const width of [320, 400]) {
+    const panel = await setSidebarWidth(firefoxSidebar, width);
+    expect(Math.abs(panel - width), `sidebar is ${panel}px`).toBeLessThanOrEqual(4);
+    const metrics = await firefoxSidebar.extension("sidebar", `
+      const doc = content.document;
+      const messages = doc.querySelector("#messages");
+      const previous = { state: messages.dataset.chatState || "", html: messages.innerHTML, titleHidden: doc.querySelector("#session-title-bar")?.classList.contains("hidden") };
+      messages.dataset.chatState = "conversation";
+      const title = doc.querySelector("#session-title-bar");
+      title?.classList.remove("hidden");
+      messages.replaceChildren();
+      for (let index = 0; index < 12; index += 1) {
+        const tool = doc.createElement("div");
+        tool.className = "msg msg-tool";
+        const summary = doc.createElement("div");
+        summary.className = "tool-summary";
+        summary.textContent = "Tool row " + index + " stays clear of the scrollbar";
+        tool.append(summary);
+        const note = doc.createElement("div");
+        note.className = "msg msg-assistant";
+        const content = doc.createElement("div");
+        content.className = "msg-content";
+        content.textContent = "Message " + index + " wraps along the stream inset and must not meet the scrollbar.";
+        note.append(content);
+        messages.append(tool, note);
+      }
+      const style = content.getComputedStyle(messages);
+      const box = messages.getBoundingClientRect();
+      const rows = [...messages.querySelectorAll(".tool-summary, .msg-assistant .msg-content")];
+      const gaps = rows.map(node => {
+        const rect = node.getBoundingClientRect();
+        return {
+          left: rect.left - (box.left + messages.clientLeft),
+          right: box.left + messages.clientLeft + messages.clientWidth - rect.right,
+        };
+      });
+      const result = {
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        gutter: style.scrollbarGutter,
+        scrolling: messages.scrollHeight > messages.clientHeight + 1,
+        minLeft: Math.min(...gaps.map(gap => gap.left)),
+        minRight: Math.min(...gaps.map(gap => gap.right)),
+      };
+      messages.innerHTML = previous.html;
+      if (previous.state) messages.dataset.chatState = previous.state;
+      else delete messages.dataset.chatState;
+      if (previous.titleHidden) title?.classList.add("hidden");
+      return result;
+    `);
+    const label = `${width}px ${JSON.stringify(metrics)}`;
+    expect(metrics.scrolling, label).toBe(true);
+    expect(metrics.paddingLeft, label).toBe("14px");
+    expect(metrics.paddingRight, label).toBe("14px");
+    expect(metrics.gutter, label).toBe("stable both-edges");
+    expect(metrics.minLeft, label).toBeGreaterThanOrEqual(13);
+    expect(metrics.minRight, label).toBeGreaterThanOrEqual(13);
+  }
+});
+
 test("the sidebar has no horizontal overflow at 320 and 400 pixels", async ({ firefoxSidebar }) => {
   await openFromToolbar(firefoxSidebar);
   for (const width of [320, 400]) {

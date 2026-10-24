@@ -129,6 +129,10 @@ test("firefox copy and the sidebar boot stay out of the chrome files", () => {
   assert.match(skin, /--control-primary-surface: var\(--qz-ff-primary\)/);
   assert.match(skin, /\.qz-btn--primary:disabled \{\n\s*--qz-control-bg: var\(--qz-ff-fill\);\n\s*cursor: not-allowed;/);
   assert.match(skin, /--send-standby-bg: color-mix\(in srgb, var\(--qz-ff-field-text\) \d+%, transparent\)/);
+  assert.match(skin, /#messages:not\(\[data-chat-state="landing"\]\) \{\n    padding-inline: 14px;\n    scrollbar-gutter: stable both-edges;\n  \}/);
+  const sharedStream = readFileSync(join(repoRoot, "src/sidepanel/features/chat/transcript/viewport.css"), "utf8");
+  assert.match(sharedStream, /padding:\s*0 10px var\(--chat-tail-safe-bottom\)/);
+  assert.match(sharedStream, /scrollbar-gutter:\s*stable both-edges/);
   assert.equal(
     firefoxUserText("ChromeOS uses Chrome, chrome://extensions/shortcuts, chrome://downloads, the side panel, and the Chrome Web Store."),
     "ChromeOS uses Firefox, about:addons, about:downloads, the sidebar, and the Add-ons Manager.",
