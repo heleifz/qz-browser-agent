@@ -1,4 +1,5 @@
 import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
+import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 import {
   BRIDGE_STORAGE_KEY, RETRY_LIMIT, LEASE_WAIT_LIMIT, RETRY_DELAY_MS, connectionEndpoint, connectionName, connectionStatus,
   getConnectionConfig, updateConnectionConfig,
@@ -13,7 +14,7 @@ interface BridgeDependencies {
   trace?: (message: string) => void;
   fetch?: typeof fetch;
 }
-export const RECONNECT_ALARM = "qingzhou-mcp-bridge-reconnect";
+export { RECONNECT_ALARM };
 const record = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const failure = (code: string, message: string) => Object.assign(new Error(message), { code });
 const cancelled = () => failure("MCP_CONNECTION_CANCELLED", "The connection was cancelled.");

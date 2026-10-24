@@ -14,8 +14,8 @@ import { installSidepanelFirefoxHost } from "../../src/sidepanel/firefox/host.ts
 import { rewriteFirefoxSidepanelHtml } from "../../scripts/firefox-manifest.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
-const RECONNECT_ALARM = readFileSync(join(repoRoot, "src/background/mcp/mcp-bridge.ts"), "utf8")
-  .match(/const RECONNECT_ALARM = "([^"]+)"/)[1];
+const RECONNECT_ALARM = readFileSync(join(repoRoot, "src/shared/reconnect-alarm.ts"), "utf8")
+  .match(/export const RECONNECT_ALARM = "([^"]+)"/)[1];
 
 test("the firefox boot does not arm session automations and chrome still does", async () => {
   assert.notEqual(RECONNECT_ALARM, AUTOMATION_SCHEDULER_ALARM);

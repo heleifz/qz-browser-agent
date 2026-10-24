@@ -146,6 +146,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
       }
     }
     const bundling = bundle ? await bundleExtension({ extensionDir: compiled, preservedInputs, debugMaps }) : { enabled: false };
+    if (browser === "firefox") await assertFirefoxBootImports(compiled);
     await writeDependencyProvenance(compiled, dependencyGraph, bundling);
     if (browser === "firefox") {
       const manifestPath = resolve(compiled, "manifest.json");
@@ -426,17 +427,93 @@ async function validateRuntimeEntries(root) {
   }
 }
 
+const BUNDLED_RUNTIME_ENTRIES = new Set(["background/service-worker.js", "sidepanel/sidepanel.js"]);
+const FIREFOX_BOOT_ENTRIES = ["background/firefox-boot.js", "sidepanel/firefox-boot.js"];
+
 async function validateModuleGraphs(root) {
   const preservedInputs = new Set();
   const runtimeInputs = new Set();
   for (const entry of EXTENSION_ENTRIES.filter(entry => entry.format === "esm")) {
     const inputs = await readRuntimeModuleGraph(root, entry.path);
     for (const input of inputs) runtimeInputs.add(input);
-    if (entry.path !== "background/service-worker.js" && entry.path !== "sidepanel/sidepanel.js") {
+    if (!BUNDLED_RUNTIME_ENTRIES.has(entry.path)) {
       for (const path of inputs) preservedInputs.add(path);
     }
   }
+  // Firefox boot files stay outside the service-worker and sidepanel bundles. Their static
+  // imports must remain on disk or the event page fails before the host installs.
+  for (const path of await firefoxBootPreservedInputs(root)) preservedInputs.add(path);
   return { preservedInputs: [...preservedInputs], runtimeInputs };
+}
+
+/** Modules the Firefox boot graph loads beside the bundled service worker and side panel. */
+export async function firefoxBootPreservedInputs(root) {
+  const preserved = new Set();
+  const seen = new Set();
+  for (const boot of FIREFOX_BOOT_ENTRIES) {
+    if (await isPackageFile(root, boot)) await walkFirefoxBoot(root, boot, seen, preserved);
+  }
+  return [...preserved];
+}
+
+/** Fail the Firefox package when a boot import was bundled away or never emitted. */
+export async function assertFirefoxBootImports(root) {
+  const missing = [];
+  const seen = new Set();
+  for (const boot of FIREFOX_BOOT_ENTRIES) {
+    if (!(await isPackageFile(root, boot))) continue;
+    await visitFirefoxBoot(root, boot, seen, missing);
+  }
+  if (missing.length) throw new Error(`Firefox boot graph is missing a module:\n${missing.join("\n")}`);
+}
+
+async function walkFirefoxBoot(root, path, seen, preserved) {
+  if (seen.has(path) || BUNDLED_RUNTIME_ENTRIES.has(path)) return;
+  seen.add(path);
+  preserved.add(path);
+  for (const specifier of staticRelativeImports(await readFile(resolve(root, path), "utf8"))) {
+    const target = packageRelative(root, path, specifier);
+    if (target && await isPackageFile(root, target)) await walkFirefoxBoot(root, target, seen, preserved);
+  }
+}
+
+async function visitFirefoxBoot(root, path, seen, missing) {
+  if (seen.has(path)) return;
+  seen.add(path);
+  if (BUNDLED_RUNTIME_ENTRIES.has(path)) {
+    if (!(await isPackageFile(root, path))) missing.push(path);
+    return;
+  }
+  if (!(await isPackageFile(root, path))) {
+    missing.push(path);
+    return;
+  }
+  for (const specifier of staticRelativeImports(await readFile(resolve(root, path), "utf8"))) {
+    const target = packageRelative(root, path, specifier);
+    if (!target) missing.push(`${path} imports ${specifier} outside the package`);
+    else await visitFirefoxBoot(root, target, seen, missing);
+  }
+}
+
+function staticRelativeImports(source) {
+  const specs = [];
+  const pattern = /(?:^|[;\n])[ \t]*(?:import|export)(?=\s)([\s\S]*?)\sfrom\s*["'](\.[^"']+)["']|(?:^|[;\n])[ \t]*import\s*["'](\.[^"']+)["']/g;
+  for (const match of source.matchAll(pattern)) specs.push(match[2] || match[3]);
+  return specs;
+}
+
+function packageRelative(root, from, specifier) {
+  const target = posix(relative(root, resolve(root, dirname(from), specifier)));
+  if (!target || target.startsWith("../") || isAbsolute(target)) return "";
+  return target;
+}
+
+async function isPackageFile(root, path) {
+  try { return (await lstat(resolve(root, path))).isFile(); }
+  catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function assertOwnedOutput(output) {

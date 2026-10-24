@@ -1,4 +1,4 @@
-import { RECONNECT_ALARM } from "../mcp/mcp-bridge.js";
+import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 
 /** Parent-API ping interval. Firefox's default event-page idle timeout is 30 seconds. */
 export const FIREFOX_MCP_KEEPALIVE_MS = 10_000;

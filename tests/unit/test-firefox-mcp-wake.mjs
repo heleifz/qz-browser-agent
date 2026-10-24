@@ -118,6 +118,11 @@ test("chrome service worker does not import the firefox mcp wake", () => {
   assert.equal(wake.includes(AUTOMATION_SCHEDULER_ALARM), false);
   assert.equal(wake.includes("Runtime.disable"), false);
   assert.match(wake, /getPlatformInfo/);
-  assert.match(wake, /import \{ RECONNECT_ALARM \} from "\.\.\/mcp\/mcp-bridge\.js"/);
+  assert.equal(wake.includes("mcp-bridge"), false);
+  assert.match(wake, /import \{ RECONNECT_ALARM \} from "\.\.\/\.\.\/shared\/reconnect-alarm\.js"/);
   assert.match(wake, /alarm\?\.name !== RECONNECT_ALARM/);
+  const automations = readFileSync(join(repoRoot, "src/background/firefox/session-automations.ts"), "utf8");
+  assert.equal(automations.includes("automation/runtime"), false);
+  assert.match(automations, /import \{ AUTOMATION_SCHEDULER_ALARM \} from "\.\.\/\.\.\/shared\/automation-scheduler-alarm\.js"/);
+  assert.match(automations, /from "\.\.\/\.\.\/shared\/session-automations\.js"/);
 });

@@ -1,4 +1,4 @@
-import { AUTOMATION_SCHEDULER_ALARM } from "../automation/runtime.js";
+import { AUTOMATION_SCHEDULER_ALARM } from "../../shared/automation-scheduler-alarm.js";
 import { disableSessionAutomations, type SessionAutomationHost } from "../../shared/session-automations.js";
 
 interface FirefoxAlarmHost extends SessionAutomationHost {

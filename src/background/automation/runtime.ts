@@ -1,5 +1,6 @@
 import { createDisabledAutomationRuntime } from "./disabled-runtime.js";
 import { promptT } from "./prompt-messages.js";
+import { AUTOMATION_SCHEDULER_ALARM } from "../../shared/automation-scheduler-alarm.js";
 import { sessionAutomationsEnabled } from "../../shared/session-automations.js";
 import { t } from "../../shared/i18n/backend.js";
 import type { Automation, AutomationRun } from "../../shared/automation-store.js";
@@ -45,7 +46,7 @@ import {
 import { nowBeijingDateTime, parseBeijingDateTime } from "../../shared/time-utils.js";
 import { createSerialQueue } from "../internal/serial-queue.js";
 
-export const AUTOMATION_SCHEDULER_ALARM = "qingzhou.automation.scheduler";
+export { AUTOMATION_SCHEDULER_ALARM };
 const AUTOMATION_SCHEDULER_PERIOD_MINUTES = 1;
 const AUTOMATION_SCHEDULER_GRACE_MS = AUTOMATION_SCHEDULER_PERIOD_MINUTES * 60_000;
 const AUTOMATION_NOTIFICATION_PREFIX = "qz_auto";

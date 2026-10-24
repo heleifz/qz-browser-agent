@@ -118,6 +118,14 @@ the adapters wrap `chrome.*`, and the service worker and side panel stay the cal
 Chrome-only source tree. A file with no Firefox caller would need a matching exclusion predicate
 on the Firefox compile. No such file exists in this tree, so the predicate is not added here.
 
+Production bundling inlines the service worker and the side panel, then deletes modules that only
+those bundles imported. `background/firefox-boot.js` and `sidepanel/firefox-boot.js` stay outside
+those bundles. Every static import they reach, except the two bundled entries, remains a file in
+`dist/extension-firefox/`. The build fails if one is missing. The boot path reads alarm names from
+`shared/reconnect-alarm.ts` and `shared/automation-scheduler-alarm.ts`. It does not import
+`background/mcp/mcp-bridge.ts` or `background/automation/runtime.ts`, so those modules are not
+loaded a second time beside the service worker.
+
 Generated files that differ by target are written by the Firefox build step into the Firefox
 output. They are not committed under `src/`, so the Chrome copy step never sees them.
 
