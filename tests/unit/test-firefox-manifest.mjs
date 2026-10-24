@@ -11,6 +11,7 @@ import {
   FIREFOX_DROPPED_PERMISSIONS,
   FIREFOX_GECKO_ID,
   FIREFOX_MIN_VERSION,
+  FIREFOX_TOOLBAR_ICON,
   firefoxFallbackSupplements,
   firefoxFileAccessMessageId,
   firefoxManifest,
@@ -40,7 +41,9 @@ test("the firefox manifest drops rejected permissions and keeps the shared entri
   assert.equal(firefox.sidebar_action.default_panel, source.side_panel.default_path);
   assert.equal(firefox.sidebar_action.default_title, source.action.default_title);
   assert.equal(firefox.sidebar_action.open_at_install, false);
-  assert.deepEqual(firefox.sidebar_action.default_icon, source.action.default_icon);
+  assert.equal(firefox.sidebar_action.default_icon, FIREFOX_TOOLBAR_ICON);
+  assert.equal(firefox.action.default_icon, FIREFOX_TOOLBAR_ICON);
+  assert.deepEqual(firefox.icons, source.icons, "about:addons keeps the brand icons");
   assert.equal(firefox.browser_specific_settings.gecko.id, FIREFOX_GECKO_ID);
   assert.equal(firefox.browser_specific_settings.gecko.strict_min_version, FIREFOX_MIN_VERSION);
   assert.deepEqual(firefox.browser_specific_settings.gecko.data_collection_permissions.required, [...FIREFOX_DATA_COLLECTION.required]);
@@ -91,8 +94,20 @@ test("firefox-only sources stay out of the chrome compilation", () => {
   assert.equal(isFirefoxOnlySource("background/firefox/host.ts"), true);
   assert.equal(isFirefoxOnlySource("sidepanel/firefox/host.ts"), true);
   assert.equal(isFirefoxOnlySource("sidepanel/firefox/theme.ts"), true);
+  assert.equal(isFirefoxOnlySource(FIREFOX_TOOLBAR_ICON), true);
   assert.equal(isFirefoxOnlySource("background/service-worker.ts"), false);
   assert.equal(isFirefoxOnlySource("sidepanel/sidepanel.ts"), false);
+  assert.equal(isFirefoxOnlySource("icons/icon16.png"), false);
+});
+
+test("the firefox toolbar glyph is a 16px outline that follows the light or dark theme", () => {
+  const svg = readFileSync(join(repoRoot, "src", FIREFOX_TOOLBAR_ICON), "utf8");
+  assert.match(svg, /viewBox="0 0 16 16"/);
+  assert.match(svg, /stroke-width: 1\.5;/);
+  assert.match(svg, /stroke: context-fill #15141a;/);
+  assert.match(svg, /stroke-opacity: context-fill-opacity;/);
+  assert.match(svg, /@media \(prefers-color-scheme: dark\) \{\s*path \{ stroke: context-fill #fbfbfe; \}/);
+  assert.doesNotMatch(svg, /<(?:image|linearGradient|radialGradient|rect)\b|href=/, "no raster, gradient, or background tile");
 });
 
 test("firefox copy and the sidebar boot stay out of the chrome files", () => {

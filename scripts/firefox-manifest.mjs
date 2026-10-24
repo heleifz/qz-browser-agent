@@ -27,6 +27,7 @@ export const FIREFOX_DATA_COLLECTION = Object.freeze({
 });
 export const FILE_ACCESS_MESSAGE_KEY = "backend.toolError.FILE_ACCESS_REQUIRED.message";
 export const FIREFOX_SIDEBAR_STYLESHEET = "sidepanel/firefox-sidebar.css";
+export const FIREFOX_TOOLBAR_ICON = "icons/firefox/qz-glyph.svg";
 
 const droppedPermissions = new Set(FIREFOX_DROPPED_PERMISSIONS);
 const FILE_ACCESS_TEXT = Object.freeze({
@@ -46,7 +47,7 @@ const FILE_ACCESS_TEXT = Object.freeze({
 
 /** True for sources that exist only in the Firefox package. */
 export function isFirefoxOnlySource(path) {
-  return /^(?:background|sidepanel)\/firefox(?:-boot\.ts|\/)/.test(String(path || "").replaceAll("\\", "/"));
+  return /^(?:(?:background|sidepanel)\/firefox(?:-boot\.ts|\/)|icons\/firefox\/)/.test(String(path || "").replaceAll("\\", "/"));
 }
 
 /** Return a Manifest V3 document Firefox can load as a temporary add-on. */
@@ -81,7 +82,11 @@ export function firefoxManifest(manifest) {
     service_worker: worker,
     type: "module",
   };
-  if (next.action) next.action.default_area = "navbar";
+  if (next.action) {
+    next.action.default_area = "navbar";
+    // The toolbar and sidebar switcher draw a theme-colored glyph; about:addons keeps the brand `icons`.
+    if (next.action.default_icon) next.action.default_icon = FIREFOX_TOOLBAR_ICON;
+  }
   if (next.commands?._execute_action) {
     const suggested = next.commands._execute_action.suggested_key;
     delete next.commands._execute_action;

@@ -51,7 +51,7 @@ and rewrites only that output:
 
 | Rewrite | Result in `dist/extension-firefox/` |
 | --- | --- |
-| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webNavigation`, `webRequest`, and `webRequestBlocking`. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` while keeping `service_worker` for the shared validators. Sets `browser_specific_settings.gecko`. |
+| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webNavigation`, `webRequest`, and `webRequestBlocking`. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` while keeping `service_worker` for the shared validators. Points `action.default_icon` and `sidebar_action.default_icon` at `icons/firefox/qz-glyph.svg` and keeps the brand `icons` for about:addons. Sets `browser_specific_settings.gecko`. |
 | `rewriteFirefoxSidepanelHtml` | The sidebar document loads `firefox-boot.js` and `firefox-sidebar.css`. |
 | `writeFirefoxSidebarSkin` | Writes `sidepanel/firefox-sidebar.css`. That file has no twin under `src/`. |
 | `rewriteFirefoxLocaleFiles` | Rewrites catalog sentences in the Firefox copy. `src/` locale sources stay on the Chrome wording. |
@@ -96,17 +96,24 @@ and it cannot keep Firefox boot code out of the Chrome zip.
 
 ## Source layout
 
-Host adapters live in these trees:
+Host adapters and Firefox-only assets live in these trees:
 
 ```text
 src/background/firefox-boot.ts
 src/background/firefox/**
 src/sidepanel/firefox-boot.ts
 src/sidepanel/firefox/**
+src/icons/firefox/**
 ```
 
 `isFirefoxOnlySource` is that set. The Chrome compile drops those paths. The Firefox compile emits
-them plus the shared graph.
+them plus the shared graph. The Firefox build fails when a manifest toolbar or sidebar icon is
+missing from the package.
+
+`icons/firefox/qz-glyph.svg` is the toolbar and sidebar glyph. Firefox grants SVG context paint
+only to Mozilla extensions, so `context-fill` alone draws nothing for qz. The glyph names a
+fallback stroke for each color scheme: `#15141a` for light and `#fbfbfe` for dark. Firefox loads
+the image with the color scheme of the toolbar or sidebar that shows it.
 
 Shared extension modules leave those paths alone. The boot files are the extension importers.
 Tests may import the adapters directly. A new Firefox-only module is imported from
@@ -138,7 +145,7 @@ output. They are not committed under `src/`, so the Chrome copy step never sees 
 | Package | What it contains | What stays out |
 | --- | --- | --- |
 | `dist/extension/` | Shared sources, Chrome manifest, Chrome locales | Paths matched by `isFirefoxOnlySource`. The generated sidebar skin. Rewritten Firefox locales |
-| `dist/extension-firefox/` | Shared sources, Firefox boot modules, rewritten manifest, generated skin, rewritten locales | `key`, `side_panel`, and the permission names Firefox rejects |
+| `dist/extension-firefox/` | Shared sources, Firefox boot modules, toolbar glyph, rewritten manifest, generated skin, rewritten locales | `key`, `side_panel`, and the permission names Firefox rejects |
 
 The path filter decides which files are copied and which modules are esbuild entries. esbuild still
 follows imports from disk. On a Chrome build, a relative import or a bundled input whose path

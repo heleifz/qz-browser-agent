@@ -150,8 +150,13 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     await writeDependencyProvenance(compiled, dependencyGraph, bundling);
     if (browser === "firefox") {
       const manifestPath = resolve(compiled, "manifest.json");
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-      await writeFile(manifestPath, `${JSON.stringify(firefoxManifest(manifest), null, 2)}\n`);
+      const manifest = firefoxManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      const icons = [manifest.action?.default_icon, manifest.sidebar_action.default_icon]
+        .flatMap(icon => typeof icon === "string" ? [icon] : Object.values(icon || {}));
+      for (const icon of new Set(icons)) {
+        if (!(await isPackageFile(compiled, icon))) throw new Error(`Firefox manifest icon is not in the package: ${icon}`);
+      }
       const panelPath = resolve(compiled, "sidepanel/sidepanel.html");
       await writeFile(panelPath, rewriteFirefoxSidepanelHtml(await readFile(panelPath, "utf8")));
       await writeFirefoxSidebarSkin(compiled);
