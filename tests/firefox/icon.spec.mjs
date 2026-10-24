@@ -15,10 +15,17 @@ test("the toolbar button and sidebar switcher draw the glyph in the light or dar
     for (const theme of THEMES) {
       const drawn = await firefoxSidebar.chrome(`
         const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+        // Firefox 151 keeps the launcher strip off until revamp is set, then hides it until a panel is shown.
+        if (!Services.prefs.getBoolPref("sidebar.revamp")) Services.prefs.setBoolPref("sidebar.revamp", true);
+        const revampReady = Date.now();
+        while (Date.now() - revampReady < 2000 && Services.prefs.getStringPref("sidebar.visibility", "") !== "hide-sidebar") {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
         await (await AddonManager.getAddonByID(${JSON.stringify(theme.id)})).enable();
         const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
         win.SidebarController.show("viewCustomizeSidebar");
         const find = (root, selector) => {
+          if (!root) return null;
           for (const el of root.querySelectorAll("*")) {
             if (el.matches(selector)) return el;
             const inner = el.shadowRoot && find(el.shadowRoot, selector);
@@ -42,7 +49,7 @@ test("the toolbar button and sidebar switcher draw the glyph in the light or dar
         const started = Date.now();
         let launcher = null;
         while (Date.now() - started < 5000) {
-          launcher = find(win.document.querySelector("sidebar-main").shadowRoot, ${JSON.stringify(`moz-button[view="${commandId}"]`)});
+          launcher = find(win.document.querySelector("sidebar-main")?.shadowRoot, ${JSON.stringify(`moz-button[view="${commandId}"]`)});
           if (launcher?.getBoundingClientRect().width) break;
           await new Promise(resolve => setTimeout(resolve, 100));
         }
@@ -70,6 +77,8 @@ test("the toolbar button and sidebar switcher draw the glyph in the light or dar
     await firefoxSidebar.chrome(`
       const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
       await (await AddonManager.getAddonByID("default-theme@mozilla.org")).enable();
+      Services.prefs.clearUserPref("sidebar.revamp");
+      Services.prefs.clearUserPref("sidebar.visibility");
       return true;
     `);
     await hideSidebars(firefoxSidebar);

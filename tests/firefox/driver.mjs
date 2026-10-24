@@ -225,11 +225,15 @@ export async function setSidebarWidth(session, width) {
   `);
 }
 
-/** Override the system accent the way macOS reports it; null restores the platform color. */
+/**
+ * Override the system accent the way macOS reports it; null restores the platform color.
+ * Content pages stand in for native colors until that pref is off, and the override is read
+ * on the look-and-feel notification.
+ */
 export function setAccentColor(session, accent, text = "#ffffff") {
   return session.chrome(accent
-    ? `Services.prefs.setStringPref("ui.accentcolor", ${JSON.stringify(accent)}); Services.prefs.setStringPref("ui.accentcolortext", ${JSON.stringify(text)}); return true;`
-    : `Services.prefs.clearUserPref("ui.accentcolor"); Services.prefs.clearUserPref("ui.accentcolortext"); return true;`);
+    ? `Services.prefs.setBoolPref("ui.use_standins_for_native_colors", false); Services.prefs.setStringPref("ui.accentcolor", ${JSON.stringify(accent)}); Services.prefs.setStringPref("ui.accentcolortext", ${JSON.stringify(text)}); Services.obs.notifyObservers(null, "look-and-feel-changed"); return true;`
+    : `Services.prefs.clearUserPref("ui.accentcolor"); Services.prefs.clearUserPref("ui.accentcolortext"); Services.prefs.setBoolPref("ui.use_standins_for_native_colors", true); Services.obs.notifyObservers(null, "look-and-feel-changed"); return true;`);
 }
 
 /** Install a static theme from `directory` as a temporary add-on and return its id. */
