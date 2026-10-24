@@ -15,6 +15,10 @@ Related pages keep their current jobs. [Commands](commands.md) lists the command
 [Firefox capability gap](firefox-capability-gap.md) records the API survey. This page owns how the
 two packages are separated.
 
+The CLI daemon is outside both packages. `npm run qz` and the published `qz` command run
+[`services/mcp-bridge`](../services/mcp-bridge/README.md). Load and pair steps are in
+[Load qz in Firefox](cli.md#load-qz-in-firefox).
+
 ## Decision
 
 The browser is a build-time package target. `chrome` is the default. `firefox` is the other target.

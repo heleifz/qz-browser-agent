@@ -74,6 +74,10 @@ open the sidebar. Firefox chooses the side and shows one sidebar. Remaining diff
 
 Reload the temporary add-on after a rebuild. Temporary add-ons are removed when Firefox exits.
 
+The CLI is one daemon for both packages. It lives in `services/mcp-bridge` and is omitted from
+`dist/extension/` and `dist/extension-firefox/`. Pairing steps, and the current limit on a
+`moz-extension:` origin, are in [Load qz in Firefox](cli.md#load-qz-in-firefox).
+
 ## Run tests
 
 Tests need Python 3.11+, uv, and the Chromium version installed by Playwright:
@@ -314,6 +318,10 @@ npm run qz -- automations
 npm run qz -- stop
 ```
 
+`npm run qz` starts the same daemon as the published `qz` command. Firefox load steps are
+[above](#load-temporarily-in-firefox). Pairing detail is in
+[Load qz in Firefox](cli.md#load-qz-in-firefox).
+
 `connect` starts the local service and opens its connection page for first pairing. The first
 browser is named `default`; repeating the command reuses an online connection. `status` shows the
 actual service address and `mcp` prints its MCP URL. The default port is 18765, with a free-port
@@ -353,8 +361,8 @@ Pending output includes the full request, field IDs, option values, and a submis
 read the request again, answer fields with `submit`, continue a confirmation with
 `approve`, or decline it with `reject`. Responses bind to the current wait; `--wait-id ID` selects a
 specific request. `submit`, `approve`, and `reject` also accept `--wait` and `--stream`. Review the displayed
-application consent notice before approving. Native Chrome permissions require a click in the
-side panel; the CLI preserves the wait and tells you where to confirm. Respond in the side panel or
+application consent notice before approving. A permission dialog the browser itself shows needs a click in the
+side panel or sidebar; the CLI preserves the wait and tells you where to confirm. Respond in the side panel, the sidebar, or
 another terminal while the original command keeps watching. `watch` follows an existing task with
 the same completion condition. Task failure or stopping ends observation.
 Task observation has no default time limit. Add `--timeout SECONDS` to set a total deadline,

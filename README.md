@@ -207,6 +207,8 @@ Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Codin
 
 qz releases run in Chrome and Edge. A Firefox release is not published. Temporary loading for
 development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
+The CLI is the same daemon for both packages. Pairing is in
+[Load qz in Firefox](docs/cli.md#load-qz-in-firefox).
 The packaging convention is in [Firefox packaging](docs/firefox-packaging.md).
 `npm run build:firefox` writes the temporary package. `npm run release` writes the Chrome zip only.
 Remaining differences from Chrome are in
