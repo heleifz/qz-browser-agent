@@ -100,13 +100,14 @@ test("firefox-only sources stay out of the chrome compilation", () => {
   assert.equal(isFirefoxOnlySource("icons/icon16.png"), false);
 });
 
-test("the firefox toolbar glyph is a 16px outline that follows the light or dark theme", () => {
+test("the firefox toolbar glyph is the 16px send mark that follows the light or dark theme", () => {
   const svg = readFileSync(join(repoRoot, "src", FIREFOX_TOOLBAR_ICON), "utf8");
+  const sendMark = readFileSync(join(repoRoot, "src", "sidepanel", "sidepanel.html"), "utf8").match(/class="send-mark"[\s\S]*?<path d="([^"]+)"/)[1];
   assert.match(svg, /viewBox="0 0 16 16"/);
-  assert.match(svg, /stroke-width: 1\.5;/);
-  assert.match(svg, /stroke: context-fill #15141a;/);
-  assert.match(svg, /stroke-opacity: context-fill-opacity;/);
-  assert.match(svg, /@media \(prefers-color-scheme: dark\) \{\s*path \{ stroke: context-fill #fbfbfe; \}/);
+  assert.equal(svg.match(/<path [^>]*d="([^"]+)"/)[1], sendMark);
+  assert.match(svg, /fill: context-fill #15141a;/);
+  assert.match(svg, /fill-opacity: context-fill-opacity;/);
+  assert.match(svg, /@media \(prefers-color-scheme: dark\) \{\s*path \{ fill: context-fill #fbfbfe; \}/);
   assert.doesNotMatch(svg, /<(?:image|linearGradient|radialGradient|rect)\b|href=/, "no raster, gradient, or background tile");
 });
 

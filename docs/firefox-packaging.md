@@ -110,10 +110,11 @@ src/icons/firefox/**
 them plus the shared graph. The Firefox build fails when a manifest toolbar or sidebar icon is
 missing from the package.
 
-`icons/firefox/qz-glyph.svg` is the toolbar and sidebar glyph. Firefox grants SVG context paint
-only to Mozilla extensions, so `context-fill` alone draws nothing for qz. The glyph names a
-fallback stroke for each color scheme: `#15141a` for light and `#fbfbfe` for dark. Firefox loads
-the image with the color scheme of the toolbar or sidebar that shows it.
+`icons/firefox/qz-glyph.svg` is the toolbar and sidebar glyph: the Side Panel send-button mark
+from `sidepanel.html`, scaled into a 16px box. Keep its path equal to the send mark. Firefox grants
+SVG context paint only to Mozilla extensions, so `context-fill` alone draws nothing for qz. The
+glyph names a fallback fill for each color scheme: `#15141a` for light and `#fbfbfe` for dark.
+Firefox loads the image with the color scheme of the toolbar or sidebar that shows it.
 
 Shared extension modules leave those paths alone. The boot files are the extension importers.
 Tests may import the adapters directly. A new Firefox-only module is imported from

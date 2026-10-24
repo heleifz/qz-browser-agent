@@ -62,8 +62,8 @@ test("the toolbar button and sidebar switcher draw the glyph in the light or dar
       for (const surface of [drawn.toolbar, drawn.launcher]) {
         if (theme.name === "light") expect(surface.min, `${theme.name} ink`).toBeLessThan(60);
         else expect(surface.max, `${theme.name} ink`).toBeGreaterThan(220);
-        expect(surface.coverage, `${theme.name} outline, not a filled tile`).toBeGreaterThan(0.1);
-        expect(surface.coverage, `${theme.name} outline, not a filled tile`).toBeLessThan(0.7);
+        expect(surface.coverage, `${theme.name} glyph, not a filled tile`).toBeGreaterThan(0.1);
+        expect(surface.coverage, `${theme.name} glyph, not a filled tile`).toBeLessThan(0.7);
       }
     }
   } finally {
