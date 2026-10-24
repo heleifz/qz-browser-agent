@@ -90,7 +90,7 @@ A request to `/mcp` that carries any Origin is rejected. The daemon still binds 
 Use `npm run qz` from this checkout. An older daemon keeps its previous origin rule until
 `npm run qz -- stop`.
 
-1. Run `npm run build:firefox`. In Firefox 139 or later, open
+1. Run `npm run build:firefox`. In Firefox 154 or later, open
    `about:debugging#/runtime/this-firefox` and load `dist/extension-firefox/manifest.json`.
 2. Open the sidebar and accept the data notice.
 3. Run `npm run qz -- connect --no-open --json` and open `result.url` in that Firefox window.

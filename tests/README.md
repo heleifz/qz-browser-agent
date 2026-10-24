@@ -9,7 +9,7 @@ runner options.
 Install the locked browser binaries with `npx playwright install chromium`. Playwright and extension
 tests use Chromium; standalone page fixtures also use Chromium Headless Shell. Python browser tests
 use `tests/python/uv.lock` through uv. Missing dependencies fail the run. The Firefox suite needs
-Mozilla Firefox 139 or newer: `npx playwright install firefox` and `npx playwright install-deps firefox`.
+Mozilla Firefox 154 or newer: `npx playwright install firefox` and `npx playwright install-deps firefox`.
 
 ```bash
 npm test -- unit contracts

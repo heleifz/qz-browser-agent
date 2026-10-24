@@ -34,7 +34,7 @@ test("the firefox manifest drops rejected permissions and keeps the shared entri
   assert.equal(firefox.manifest_version, 3);
   assert.equal(firefox.key, undefined);
   assert.equal(firefox.side_panel, undefined);
-  assert.equal(firefox.background.service_worker, source.background.service_worker);
+  assert.equal(firefox.background.service_worker, undefined);
   assert.deepEqual(firefox.background.scripts, [FIREFOX_BACKGROUND_SCRIPT]);
   assert.equal(firefox.background.type, "module");
   assert.equal(firefox.sidebar_action.default_panel, source.side_panel.default_path);

@@ -51,7 +51,7 @@ and rewrites only that output:
 
 | Rewrite | Result in `dist/extension-firefox/` |
 | --- | --- |
-| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webNavigation`, `webRequest`, and `webRequestBlocking`. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` while keeping `service_worker` for the shared validators. Sets `browser_specific_settings.gecko`. |
+| `firefoxManifest` | Drops `key` and `side_panel`. Drops `debugger`, `desktopCapture`, `offscreen`, and `sidePanel`. Adds `webNavigation`, `webRequest`, and `webRequestBlocking`. Sets `sidebar_action`, moves the suggested key to `_execute_sidebar_action`, and sets `background.scripts` to `background/firefox-boot.js` without `service_worker` (Firefox ignores that key). Sets `browser_specific_settings.gecko`. |
 | `rewriteFirefoxSidepanelHtml` | The sidebar document loads `firefox-boot.js` and `firefox-sidebar.css`. |
 | `writeFirefoxSidebarSkin` | Writes `sidepanel/firefox-sidebar.css`. That file has no twin under `src/`. |
 | `rewriteFirefoxLocaleFiles` | Rewrites catalog sentences in the Firefox copy. `src/` locale sources stay on the Chrome wording. |
@@ -215,8 +215,8 @@ commit. The stores do not share an update channel.
 | --- | --- | --- |
 | Id | `ghbaodmonhcgkfeejcpffknlggbjhjgj`, from `key` | `qz-browser-agent@heleifz.github.io`, from `browser_specific_settings.gecko.id` |
 | Where it is set | `src/manifest.json` | `FIREFOX_GECKO_ID` in `firefox-manifest.mjs`, applied only to the Firefox output |
-| Minimum browser | Chrome's own | `strict_min_version` `139.0` |
-| Data collection | Chrome Web Store form | `websiteContent` required; `locationInfo`, `browsingActivity`, `bookmarksInfo` optional. `none` is not declared |
+| Minimum browser | Chrome's own | `strict_min_version` `154.0` |
+| Data collection | Chrome Web Store form | `websiteContent` and `browsingActivity` required; `locationInfo` and `bookmarksInfo` optional. `none` is not declared |
 
 The ids are independent. `runtime.id`, `storage.local`, and update URLs belong to the browser that
 loaded the package. The Firefox build deletes `key` so the Chrome id mechanism is absent from the

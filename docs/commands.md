@@ -61,7 +61,7 @@ share storage or an update channel. `npm run release` writes the Chrome zip only
 `.xpi` is not produced; load `dist/extension-firefox/manifest.json` until that archive exists.
 The split is described in [Firefox packaging](firefox-packaging.md).
 
-Firefox 139 or later is required. The package reuses the Chrome module graph and rewrites the
+Firefox 154 or later is required. The package reuses the Chrome module graph and rewrites the
 manifest: the background starts from `background/firefox-boot.js`, the side panel page is a
 sidebar, and permission names Firefox rejects are omitted. The toolbar button and `Ctrl+Shift+K`
 open the sidebar. Firefox chooses the side and shows one sidebar. Remaining differences are in
@@ -126,7 +126,7 @@ package and does not run the suite. The Firefox tests run from `npm run verify:f
 | Chrome side panel, Playwright, e2e, release, or visual behavior loaded from `dist/extension/` | `npm run verify` and `npm run verify:chrome` |
 | `src/background/firefox/**`, `src/sidepanel/firefox/**`, `firefox-boot.ts`, `scripts/firefox-manifest.mjs`, `tests/firefox/**`, `tests/unit/test-firefox-*.mjs` | `npm run verify:firefox` |
 
-Install Mozilla Firefox 139 or newer, including its system libraries:
+Install Mozilla Firefox 154 or newer, including its system libraries:
 
 ```bash
 npx playwright install firefox
