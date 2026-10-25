@@ -3,11 +3,12 @@
 Status: adopted. Chrome remains the default build. The skin and palette are unchanged.
 
 `npm run build` and `npm run dev` write `dist/extension/`. `npm run build:firefox` and
-`npm run dev:firefox` write `dist/extension-firefox/`. Checks follow the tiers in
+`npm run dev:firefox` write `dist/extension-firefox/`. Day-to-day commands are paired:
+`dev` with `dev:firefox`, and `build` with `build:firefox`. Checks follow the tiers in
 [Commands](commands.md): `npm run verify:firefox` runs when a change puts the Firefox package at risk.
 
-`npm run release` writes the Chrome zip only. `release:firefox` and a CI upload of the Firefox
-package are deferred at the bottom of this page.
+`npm run release` writes the Chrome zip. `npm run release:firefox` writes the unsigned Firefox
+archive. A CI upload of that archive stays deferred at the bottom of this page.
 
 Related pages keep their current jobs. [Commands](commands.md) lists the commands.
 [Firefox differences from Chrome](firefox-differences.md) lists behavior a person can observe.
@@ -169,6 +170,7 @@ boot files remain the extension importers.
 | `npm run verify:coverage` | Shared suites plus Chrome package suites | The coverage gate. Same suites as `verify` and `verify:chrome`, with `--coverage` |
 | `npm test -- firefox` | Firefox suite | Same suite as `verify:firefox` without the leading typecheck |
 | `npm run release` | `chrome` | `dist/releases/<version>/qz-browser-agent-extension-<version>.zip` |
+| `npm run release:firefox` | `firefox` | `dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi` |
 
 `build:firefox` is the production package you load in Firefox. `verify:firefox` rebuilds a
 development package in that same directory unless `QINGZHOU_FIREFOX_EXTENSION_DIR` is set. A shell
@@ -181,28 +183,32 @@ per target.
 
 ## Release archive
 
-`release:firefox` is not implemented. `scripts/publish-release.py` has no `--browser` flag and
-always compiles Chrome. `npm run release` is unchanged.
+`npm run release:firefox` runs `python3 scripts/publish-release.py --target firefox`. It compiles
+with `build-extension.mjs --browser firefox`, the production path `npm run build:firefox` uses,
+then zips those files with `manifest.json` at the archive root. The archive stays on disk.
+Uploading and tagging remain separate maintainer steps. `npm run release` with no `--target`
+still writes the Chrome manual zip.
 
-Load Firefox from `dist/extension-firefox/` with **Load Temporary Add-on**. The archive below is
-the shape to add later, in a change that proves the default Chrome zip is byte-identical:
+```bash
+npm run release:firefox -- --version 0.0.0.1
+npm run release -- --version 0.0.0.1 --target firefox
+```
 
-| Script | Invokes | Result |
-| --- | --- | --- |
-| `release:firefox` | `python3 scripts/publish-release.py --browser firefox` | Local unsigned archive. No upload, no tag |
-
-`npm run build:firefox -- --no-bundle` forwards the extra build flag. `--browser` remains the
-switch that product and browser flags share, so a product build can still pass both.
+`--version` is required, as it is for `npm run release`. Load a temporary add-on from
+`dist/extension-firefox/` with **Load Temporary Add-on**. `npm run build:firefox -- --no-bundle`
+forwards the extra build flag. `--browser` remains the switch that product and browser flags share
+on the build command, so a product build can still pass both.
 
 ## Release artifacts
 
-Chrome packaging stays on [publish-release.py](../scripts/publish-release.py). With no browser
-flag it compiles `chrome`, writes `qz-browser-agent-extension-<version>.zip`, and uses
-`--target webstore` for `qz-browser-agent-extension-<version>.webstore.zip`. The manual zip keeps
-the public `key`. The webstore zip removes `key`. That `key` fixes the unpacked Chrome id
-`ghbaodmonhcgkfeejcpffknlggbjhjgj`.
+[publish-release.py](../scripts/publish-release.py) writes one archive per `--target`. With no
+`--target` it compiles Chrome and writes `qz-browser-agent-extension-<version>.zip`.
+`--target webstore` writes `qz-browser-agent-extension-<version>.webstore.zip`. The manual zip keeps
+the public `key`. The webstore zip removes `key` and places `manifest.json` at the ZIP root. That
+`key` fixes the unpacked Chrome id `ghbaodmonhcgkfeejcpffknlggbjhjgj`. `--target firefox` compiles
+with `--browser firefox` and writes the unsigned `.xpi` below.
 
-When `release:firefox` lands, the Firefox archive is a separate directory and a separate file:
+The Firefox archive is a separate directory and a separate file:
 
 ```text
 dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi
@@ -210,11 +216,17 @@ dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.debug.zip
 dist/releases/<version>/firefox/version.json
 ```
 
-The `.xpi` is a zip with `manifest.json` at the archive root, which is the layout Add-ons Manager
-and a temporary file install both accept. It has no folder wrapper and no `key`. Its
-`version.json` records `browser: "firefox"` and `geckoId`. The debug zip stays local, as the Chrome
-debug zip does. The version number is the same `manifest.version` as the Chrome archive of that
-commit. The stores do not share an update channel.
+The `.xpi` is a zip of the extension files, which is the layout
+[Package your extension](https://extensionworkshop.com/documentation/publish/package-your-extension/)
+requires: `manifest.json` is a direct child of the archive, and the parent directory is omitted.
+The bytes are a zip stored with an `.xpi` name. The archive contains the runtime files from the
+Firefox production build, including the license notices the Chrome release packages. It omits
+`.git`, source files, and `META-INF`. Add-ons Manager adds the signature on upload. The manifest
+keeps `browser_specific_settings.gecko`, including id `qz-browser-agent@heleifz.github.io`, and the
+Firefox permissions from `firefox-manifest.mjs`. There is no `key`. `version.json` records
+`browser: "firefox"` and `geckoId`. The debug zip stays local, as the Chrome debug zip does. The
+version number is the same `manifest.version` as the Chrome archive of that commit. The stores do
+not share an update channel.
 
 ### Identifiers
 
@@ -267,6 +279,7 @@ tip when that path is edited. A Firefox-only edit leaves that output byte-identi
 | Runtime sentence helper | `productText` / `moz-extension:`. It chooses a sentence inside the built package |
 | Product axis | `--product` and `src/products/`, orthogonal to the browser |
 | `build:firefox`, `dev:firefox` | Aliases for `--browser firefox`. `npm run build` and `npm run dev` stay Chrome |
+| `release:firefox` | Unsigned `.xpi` at `dist/releases/<version>/firefox/`, with `manifest.json` at the archive root |
 | Build summary | The log line and `--json` stdout include `browser`. The packaged `.qingzhou-build.json` does not |
 | Checks | Tiered by change size. Broad shared-graph changes run `verify`; `verify:chrome` and `verify:firefox` cover browser-specific risk. Coverage is `verify:coverage` |
 | CI | The separate `firefox-package` job runs `verify:firefox`. The portable job stays an OS matrix for Chrome |
@@ -276,10 +289,8 @@ tip when that path is edited. A Firefox-only edit leaves that output byte-identi
 
 | Piece | Why it waits |
 | --- | --- |
-| `release:firefox` and the `.xpi` | `publish-release.py` stays Chrome-only so the default zip path cannot move. The archive layout above is the shape to implement once a change can prove the Chrome zip is byte-identical |
-| Signing and Add-ons Manager upload | Maintainer steps, after the local archive exists |
+| Signing and Add-ons Manager upload | Maintainer steps. The local `.xpi` is the unsigned file AMO signs |
 | CI success upload of `dist/extension-firefox/` | The job already fails the build when Firefox tests fail. A success artifact is extra weight on the workflow |
-| Gecko id confirmation | `qz-browser-agent@heleifz.github.io` stays the temporary id until the first signed upload |
-| `.xpi` suffix | A root-manifest `.zip` is the same bytes. Pick the suffix with the archive work |
+| Gecko id confirmation | `qz-browser-agent@heleifz.github.io` stays the id until the first signed upload |
 | `productText` rename | A rename rewrites shared modules and moves the Chrome package hash |
 | Data-collection lists | They stay as declared. `none` stays undeclared |

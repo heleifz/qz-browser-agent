@@ -205,12 +205,14 @@ Presets include **OpenAI Codex**, **OpenRouter**, **DeepSeek**, **Kimi For Codin
 
 ### Does qz support Edge or Firefox?
 
-qz releases run in Chrome and Edge. A Firefox release is not published. Temporary loading for
-development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
+qz releases run in Chrome and Edge. A signed Firefox listing is not published yet. Temporary loading
+for development is in [Load temporarily in Firefox](docs/commands.md#load-temporarily-in-firefox).
 The CLI is the same daemon for both packages. Pairing is in
 [Load qz in Firefox](docs/cli.md#load-qz-in-firefox).
 The packaging convention is in [Firefox packaging](docs/firefox-packaging.md).
-`npm run build:firefox` writes the temporary package. `npm run release` writes the Chrome zip only.
+`npm run dev` and `npm run build` write the Chrome package. `npm run dev:firefox` and
+`npm run build:firefox` write the Firefox package. `npm run release` writes the Chrome zip.
+`npm run release:firefox` writes an unsigned `.xpi` for a local check or an AMO upload.
 Remaining differences from Chrome are in
 [Firefox differences from Chrome](docs/firefox-differences.md). The API survey is in
 [Firefox capability gap](docs/firefox-capability-gap.md).
@@ -237,7 +239,8 @@ Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, 
 Set up the [test environment](docs/commands.md#run-tests), then use:
 
 ```bash
-npm run dev            # Rebuild on source changes
+npm run dev            # Rebuild the Chrome package on source changes
+npm run dev:firefox    # Rebuild the Firefox package on source changes
 npm test               # Run the default test suites
 npm run verify         # Type-check and run the shared suites
 npm run verify:chrome  # Chrome package suites on dist/extension

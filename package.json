@@ -20,7 +20,8 @@
     "docs": "node scripts/docs-api.mjs",
     "doctor": "node --import tsx tests/doctor.mjs",
     "qz": "node services/mcp-bridge/src/bin.mjs",
-    "release": "python3 scripts/publish-release.py"
+    "release": "python3 scripts/publish-release.py",
+    "release:firefox": "python3 scripts/publish-release.py --target firefox"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

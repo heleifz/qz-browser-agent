@@ -18,7 +18,8 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
-| `npm run release` | Build a versioned Chrome ZIP locally. This command does not write a Firefox archive |
+| `npm run release` | Build a versioned Chrome ZIP locally. The default target is `manual` |
+| `npm run release:firefox` | Build a versioned unsigned Firefox `.xpi` locally. Same as `npm run release -- --target firefox` |
 | `npm run qz -- --help` | Show the local CLI commands for tasks, resources, and MCP |
 
 For npm installation and installed CLI usage, see the
@@ -34,10 +35,12 @@ npm run build
 Load `dist/extension/` from Chrome's **Load unpacked** button. For development, run `npm run dev`
 and reload the extension after each rebuild. Stop the watcher before running `build`; both use the
 same output directory. If you need them at the same time, use `--output-dir` to choose another
-directory. `npm run build -- --help` lists build options; `--json` emits metadata for scripts. On
-failure, the last successful output stays available. A watcher owns its output until it exits; stale
-locks are recovered only after confirming the owner is gone. Restart `dev` after changing build
-scripts.
+directory. Firefox day-to-day uses the paired commands `npm run dev:firefox` and
+`npm run build:firefox`. They write `dist/extension-firefox/` and can run while the Chrome watcher
+is using `dist/extension/`. `npm run build -- --help` lists build options; `--json` emits metadata
+for scripts. On failure, the last successful output stays available. A watcher owns its output
+until it exits; stale locks are recovered only after confirming the owner is gone. Restart `dev`
+after changing build scripts.
 
 The public `key` in [`src/manifest.json`](../src/manifest.json) fixes the unpacked extension ID to
 `ghbaodmonhcgkfeejcpffknlggbjhjgj` across checkout and installation paths. Preserve this key across
@@ -49,17 +52,20 @@ builds and releases. See Chrome's [manifest key reference](https://developer.chr
 npm run build:firefox
 ```
 
-The command writes `dist/extension-firefox/` and leaves `dist/extension/` for Chrome.
-`npm run dev:firefox` watches the Firefox directory. `npm run build -- --browser firefox` is the
-same production build. Pass `--output-dir` when that directory must stay separate from another
-watcher.
+`npm run dev:firefox` watches `dist/extension-firefox/` and rebuilds while you work, the same role
+`npm run dev` has for Chrome. `npm run build:firefox` type-checks and writes the production package
+in that directory. `npm run dev -- --browser firefox` and `npm run build -- --browser firefox` are
+the same commands.
+Pass `--output-dir` when that directory must stay separate from another watcher. `dist/extension/`
+stays the Chrome package from `npm run dev` and `npm run build`.
 
 The Firefox add-on id is `qz-browser-agent@heleifz.github.io`. The Chrome `key` is omitted from
 this package. The unpacked Chrome id `ghbaodmonhcgkfeejcpffknlggbjhjgj` comes from the `key` in
 [`src/manifest.json`](../src/manifest.json) and stays on `dist/extension/`. The two ids do not
-share storage or an update channel. `npm run release` writes the Chrome zip only. A Firefox
-`.xpi` is not produced; load `dist/extension-firefox/manifest.json` until that archive exists.
-The split is described in [Firefox packaging](firefox-packaging.md).
+share storage or an update channel. `npm run release:firefox` writes
+`dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi`. Load
+`dist/extension-firefox/manifest.json` for a temporary add-on. The archive layout is in
+[Firefox packaging](firefox-packaging.md).
 
 Firefox 154 or later is required. The package reuses the Chrome module graph and rewrites the
 manifest: the background starts from `background/firefox-boot.js`, the side panel page is a
@@ -246,8 +252,8 @@ preserves the source manifest and writes the ZIP, README, and metadata to
 `dist/releases/<version>/`. The install archive is `qz-browser-agent-extension-<version>.zip`,
 with the extension under `qz-browser-agent-extension/`. The debug archive is
 `qz-browser-agent-extension-<version>.debug.zip`. Distribution and Git tags are separate maintainer steps.
-This command packages Chrome. It does not write a Firefox `.xpi`. Temporary Firefox loading uses
-`dist/extension-firefox/` from `npm run build:firefox`. The deferred archive is described in
+Temporary Firefox loading uses `dist/extension-firefox/` from `npm run dev:firefox` and
+`npm run build:firefox`. The Firefox archive is below. The split is described in
 [Firefox packaging](firefox-packaging.md).
 
 For a Chrome Web Store upload, select the `webstore` target:
@@ -260,15 +266,35 @@ This writes `dist/releases/<version>/webstore/qz-browser-agent-extension-<versio
 with `manifest.json` at the ZIP root. Upload this ZIP in the Chrome Developer Dashboard.
 The Web Store target removes `key` from the packaged manifest. Source and manual packages retain
 their public key to keep a stable extension ID during local development.
-Both targets use the same runtime files. The default `manual` target keeps the installation folder;
+The manual and webstore archives use the same runtime files. The default `manual` target keeps the installation folder;
 each target has its own metadata and debug archive. The Web Store ZIP contains runtime files and
 licenses; its release metadata and source maps stay alongside it. Packaging checks the single root manifest,
 its referenced resources, ZIP integrity, upload size, and separation of development files.
 
+For an unsigned Firefox archive:
+
+```bash
+npm run release:firefox -- --version 0.0.0.1
+```
+
+`npm run release -- --version 0.0.0.1 --target firefox` is the same command. It compiles with
+`build-extension.mjs --browser firefox`, the production path `npm run build:firefox` uses, and writes:
+
+```text
+dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.xpi
+dist/releases/<version>/firefox/qz-browser-agent-firefox-<version>.debug.zip
+dist/releases/<version>/firefox/version.json
+```
+
+The `.xpi` is a zip of the Firefox extension files. `manifest.json` is at the archive root, which
+is the layout Add-ons Manager requires. `version.json` records `browser: "firefox"` and `geckoId`.
+The package is unsigned; Add-ons Manager signs it on upload. The debug zip stays local. Chrome
+`manual` and `webstore` paths are unchanged.
+
 JavaScript uses standard Terser minification, including variable shortening. `--no-minify` disables
 the final Terser pass for diagnostics. Build-time script compilation retains its production settings.
-Store review also covers runtime behavior, permissions, and data disclosures; this target validates
-the upload package.
+Store review also covers runtime behavior, permissions, and data disclosures; the webstore target
+validates the upload package.
 
 Use `--source worktree` to preview local edits, or `--git-ref` for another commit containing the
 packaging toolchain. Scripts and dependencies come from the selected source.
