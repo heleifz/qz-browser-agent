@@ -124,7 +124,7 @@ export function extensionManifest(session) {
       commands: Object.keys(manifest.commands || {}),
       sidebar: manifest.sidebar_action && manifest.sidebar_action.default_panel,
       scripts: manifest.background && manifest.background.scripts || [],
-      serviceWorker: manifest.background && manifest.background.service_worker || "",
+      serviceWorker: manifest.background && "service_worker" in manifest.background ? manifest.background.service_worker : null,
       gecko: manifest.browser_specific_settings && manifest.browser_specific_settings.gecko && manifest.browser_specific_settings.gecko.id || "",
       themeKey: manifest.theme || null,
       permissions: manifest.permissions || [],

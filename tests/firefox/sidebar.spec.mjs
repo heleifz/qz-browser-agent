@@ -57,7 +57,7 @@ test("a temporary add-on opens the sidebar from the toolbar, not a tab", async (
   expect(identity.commands).not.toContain("_execute_action");
   expect(identity.sidebar).toBe(firefoxManifestPath("sidepanel/sidepanel.html"));
   expect(identity.scripts).toEqual([firefoxManifestPath("background/firefox-boot.js")]);
-  expect(identity.serviceWorker).toBe(firefoxManifestPath("background/service-worker.js"));
+  expect(identity.serviceWorker).toBeNull();
   expect(identity.gecko).toBe(firefoxSidebar.geckoId);
   expect(identity.themeKey).toBeNull();
   expect(identity.permissions).not.toContain("theme");
