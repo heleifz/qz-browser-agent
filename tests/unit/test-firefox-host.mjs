@@ -11,7 +11,7 @@ import { createNetworkWatch } from "../../src/background/firefox/network-watch.j
 import { installNotificationRenewal } from "../../src/background/firefox/notifications.js";
 import { installOffscreenHost } from "../../src/background/firefox/offscreen-host.js";
 import { jpegsToPdf, jpegSize } from "../../src/background/firefox/pdf-raster.js";
-import { stitchTiles } from "../../src/background/firefox/screenshot-image.js";
+import { cropDataUrl, stackTiles, stitchTiles } from "../../src/background/firefox/screenshot-image.js";
 import { installWorkspacePanel } from "../../src/background/firefox/workspace-panel.js";
 import { createChromeNotificationService, createSessionCompletionNotifier } from "../../src/background/services/chrome-notifications.js";
 import { createSessionExchangeBridge } from "../../src/background/services/session-exchange-bridge.js";
@@ -987,6 +987,67 @@ test("network listeners fall back when Firefox rejects extraInfoSpec", async () 
 test("a screenshot grid without a canvas returns the first tile", async () => {
   assert.equal(await stitchTiles([["aaa", "bbb"], ["ccc"]], 1, "png"), "aaa");
   assert.equal(await stitchTiles([["only"]], 1, "png"), "only");
+});
+
+test("stitchTiles keeps at most one decoded tile in memory", async () => {
+  let open = 0;
+  let peak = 0;
+  const originalCanvas = globalThis.OffscreenCanvas;
+  const originalBitmap = globalThis.createImageBitmap;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+    }
+    getContext() {
+      return { drawImage() {} };
+    }
+    async convertToBlob() { return new Blob(["ok"]); }
+  };
+  globalThis.createImageBitmap = async () => {
+    open += 1;
+    peak = Math.max(peak, open);
+    return {
+      width: 12,
+      height: 8,
+      close() { open -= 1; },
+    };
+  };
+  try {
+    await stitchTiles([["aaaa", "bbbb"], ["cccc"]], 1, "png");
+    assert.equal(peak, 1);
+    assert.equal(open, 0);
+  } finally {
+    if (originalCanvas === undefined) delete globalThis.OffscreenCanvas;
+    else globalThis.OffscreenCanvas = originalCanvas;
+    if (originalBitmap === undefined) delete globalThis.createImageBitmap;
+    else globalThis.createImageBitmap = originalBitmap;
+  }
+});
+
+test("firefox screenshot helpers close bitmaps when canvas context is unavailable", async () => {
+  let open = 0;
+  const originalCanvas = globalThis.OffscreenCanvas;
+  const originalBitmap = globalThis.createImageBitmap;
+  globalThis.OffscreenCanvas = class {
+    constructor() {}
+    getContext() { return null; }
+  };
+  globalThis.createImageBitmap = async () => {
+    open += 1;
+    return { width: 10, height: 10, close() { open -= 1; } };
+  };
+  try {
+    assert.equal(await stackTiles(["aaaa", "bbbb"], 1, "png"), "aaaa");
+    assert.equal(open, 0);
+    assert.equal(await cropDataUrl("data:image/png;base64,aaaa", { x: 0, y: 0, width: 4, height: 4, scale: 1 }, 8, 8, "png"), "aaaa");
+    assert.equal(open, 0);
+  } finally {
+    if (originalCanvas === undefined) delete globalThis.OffscreenCanvas;
+    else globalThis.OffscreenCanvas = originalCanvas;
+    if (originalBitmap === undefined) delete globalThis.createImageBitmap;
+    else globalThis.createImageBitmap = originalBitmap;
+  }
 });
 
 test("click, press, and paste failures name the missing target", async () => {
