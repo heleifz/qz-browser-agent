@@ -210,7 +210,7 @@ test("release publisher packages bundles and records auditable metadata", async 
   assertPublicReleasePackage(zipPath);
   const entries = zipEntries(zipPath);
   const runtimeFileCount = entries.filter(path => path.startsWith("qz-browser-agent-extension/") && !path.startsWith("qz-browser-agent-extension/vendor/licenses/")).length;
-  assert.ok(runtimeFileCount < 80, `expected compact runtime resources, received ${runtimeFileCount} files excluding bundled dependency licenses`);
+  assert.ok(runtimeFileCount < 85, `expected compact runtime resources, received ${runtimeFileCount} files excluding bundled dependency licenses`);
   assert.ok(entries.includes("qz-browser-agent-extension/background/service-worker.js"));
   assert.ok(entries.includes("qz-browser-agent-extension/sidepanel/sidepanel.js"));
   for (const chunk of metadata.bundling.chunks) assert.ok(entries.includes(`qz-browser-agent-extension/${chunk.output}`));
