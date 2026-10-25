@@ -2,9 +2,10 @@
  * One function injected by scripting.executeScript. Nested helpers stay inside so the
  * page receives them; this module must not call anything defined outside the function.
  */
-export async function firefoxPageCommand(request: PageCommand): Promise<unknown> {
+export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "ISOLATED" = "ISOLATED"): Promise<unknown> {
   const page = globalThis as unknown as PageScope;
   const command = request || { op: "document" };
+  const isolated = world !== "MAIN";
   const doc = page.document;
   if (!doc) throw new Error("Firefox page command has no document");
 
@@ -50,12 +51,35 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     return { exceptionDetails: { text, exception: { type: "object", subtype: "error", description: text } } };
   };
   const invoke = async (declaration: string, target: unknown, args: unknown[], awaitPromise: boolean) => {
+    // Firefox MV3 content-script CSP blocks Function() in the isolated world.
+    if (isolated) throw new Error("Firefox isolated world cannot compile this function");
     const factory = page.Function;
     if (typeof factory !== "function") throw new Error("Firefox page command cannot compile a function");
     const fn = factory(`"use strict"; return (${declaration});`)() as (...values: unknown[]) => unknown;
     let value = fn.apply(target, args);
     if (awaitPromise && value && typeof (value as Promise<unknown>).then === "function") value = await value;
     return value;
+  };
+  const noted = (event: unknown) => {
+    if (!event || typeof event !== "object") return;
+    const Marked = page.WeakSet;
+    if (typeof Marked !== "function") return;
+    const set = page.__qzExtensionInputEvents || (page.__qzExtensionInputEvents = new Marked());
+    try { set.add(event); } catch { /* A stand-in event may not be a WeakSet key. */ }
+  };
+  const checkable = (node: DomNode | null | undefined): "checkbox" | "radio" | "" => {
+    if (!node || String(node.nodeName || "").toUpperCase() !== "INPUT" || node.disabled === true) return "";
+    const type = String(node.getAttribute?.("type") || "").toLowerCase();
+    return type === "checkbox" || type === "radio" ? type : "";
+  };
+  const applyCheck = (node: DomNode, type: "checkbox" | "radio") => {
+    const next = type === "radio" ? true : node.checked !== true;
+    if (node.checked === next) return;
+    node.checked = next;
+    const Change = page.Event;
+    const event = typeof Change === "function" ? new Change("change", { bubbles: true }) : { type: "change", bubbles: true };
+    noted(event);
+    try { node.dispatchEvent?.(event); } catch { /* The checked state is already updated. */ }
   };
   const described = (node: DomNode | null) => {
     if (!node) return { node: { nodeId: 0, backendNodeId: 0, nodeName: "", nodeType: 0 } };
@@ -92,7 +116,9 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     if (!target || typeof target.dispatchEvent !== "function") {
       throw new Error(`Firefox could not dispatch ${type}: the page has no element at (${x}, ${y}).`);
     }
-    try { target.dispatchEvent(makeEvent(type, init)); }
+    const event = makeEvent(type, init);
+    noted(event);
+    try { target.dispatchEvent(event); }
     catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       throw new Error(`Firefox could not dispatch ${type} at (${x}, ${y}): ${text}`);
@@ -102,7 +128,9 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
   const pointer = (target: DomNode | null | undefined, type: string, init: Record<string, unknown>) => {
     const Ctor = page.PointerEvent;
     if (!target || typeof target.dispatchEvent !== "function" || typeof Ctor !== "function") return;
-    try { target.dispatchEvent(new Ctor(type, { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true })); }
+    const event = new Ctor(type, { ...init, pointerId: 1, pointerType: "mouse", isPrimary: true });
+    noted(event);
+    try { target.dispatchEvent(event); }
     catch { /* The page has no pointer events. Mouse events still fire. */ }
   };
   const activate = (target: DomNode | null | undefined) => {
@@ -150,16 +178,23 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
       if (state.mouseTarget === target) {
         const name = Number(input.clickCount) > 1 ? "dblclick" : "click";
         const event = makeEvent(name, init);
+        noted(event);
         let allowed = true;
         if (!target || typeof target.dispatchEvent !== "function") {
           throw new Error(`Firefox could not dispatch ${name}: the page has no element at (${x}, ${y}).`);
         }
+        const kind = checkable(target);
+        const before = kind ? target.checked === true : null;
         try { allowed = target.dispatchEvent(event) !== false; }
         catch (error) {
           const text = error instanceof Error ? error.message : String(error);
           throw new Error(`Firefox could not dispatch ${name} at (${x}, ${y}): ${text}`);
         }
-        if (allowed && name === "click") activate(target);
+        if (allowed && name === "click") {
+          activate(target);
+          // An untrusted click does not run the checkbox activation behavior.
+          if (kind && target.checked === before) applyCheck(target, kind);
+        }
       }
       state.mouseTarget = null;
     } else if (type === "mouseMoved") {
@@ -193,7 +228,9 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
       target.selectionEnd = caret;
       const InputEvent = page.InputEvent;
       if (typeof InputEvent === "function") {
-        try { target.dispatchEvent?.(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" })); }
+        const event = new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" });
+        noted(event);
+        try { target.dispatchEvent?.(event); }
         catch { /* The value is updated even when the page refuses the input event. */ }
       }
       return;
@@ -237,6 +274,7 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
     };
     const ctor = page.KeyboardEvent;
     const event = typeof ctor === "function" ? new ctor(releasing ? "keyup" : "keydown", init) : { type: releasing ? "keyup" : "keydown", ...init };
+    noted(event);
     try { target.dispatchEvent(event); }
     catch (error) {
       const text = error instanceof Error ? error.message : String(error);
@@ -261,12 +299,14 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
         const point = new page.Touch({ identifier: 0, target, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, force: 1, rotationAngle: 0 });
         const name = type === "touchStart" ? "touchstart" : type === "touchMove" ? "touchmove" : type === "touchEnd" ? "touchend" : "touchcancel";
         const empty = type === "touchEnd" || type === "touchCancel";
-        target.dispatchEvent?.(new page.TouchEvent(name, {
+        const event = new page.TouchEvent(name, {
           bubbles: true, cancelable: true,
           touches: empty ? [] : [point],
           targetTouches: empty ? [] : [point],
           changedTouches: [point],
-        }));
+        });
+        noted(event);
+        target.dispatchEvent?.(event);
         state.touchTarget = empty ? null : target || null;
         return {};
       }
@@ -482,6 +522,20 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
         state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
         return { object: { type: "object", subtype: "node", objectId, description: String(node.nodeName || "") } };
       }
+      case "probe": {
+        let extensionId = "";
+        try { extensionId = String(page.chrome?.runtime?.id || ""); } catch { extensionId = ""; }
+        return { result: remote({ extensionId, bridge: typeof page.__qzInvoke === "function" }) };
+      }
+      case "invoke": {
+        const bound = state.objects.get(String(command.objectId || ""));
+        if (!bound) return failed(new Error("Cannot find object"));
+        const fn = page.__qzInvoke;
+        if (typeof fn !== "function") throw new Error("Content script bridge is missing");
+        let value: unknown = fn.call(bound.node, bound.node, command.payload);
+        if (command.awaitPromise !== false && value && typeof (value as Promise<unknown>).then === "function") value = await value;
+        return { result: remote(value) };
+      }
       case "call": {
         const bound = state.objects.get(String(command.objectId || ""));
         if (!bound) return failed(new Error("Cannot find object"));
@@ -547,7 +601,7 @@ export async function firefoxPageCommand(request: PageCommand): Promise<unknown>
       }
     }
   } catch (error) {
-    if (command.op === "evaluate" || command.op === "call") return failed(error);
+    if (command.op === "evaluate" || command.op === "call" || command.op === "probe" || command.op === "invoke") return failed(error);
     throw error;
   }
 }
@@ -631,6 +685,8 @@ export type PageCommand =
   | { op: "box"; backendNodeId: number }
   | { op: "resolve"; backendNodeId: number; objectGroup?: string }
   | { op: "call"; objectId: string; functionDeclaration: string; arguments?: { value?: unknown }[]; awaitPromise?: boolean }
+  | { op: "probe" }
+  | { op: "invoke"; objectId: string; payload?: unknown; awaitPromise?: boolean }
   | { op: "evaluate"; expression: string; awaitPromise?: boolean }
   | { op: "release"; objectGroup?: string }
   | { op: "ax"; depth?: number }
@@ -675,6 +731,8 @@ interface PageScope {
     querySelectorAll?(selector: string): ArrayLike<DomNode>;
   };
   Function?: (source: string) => () => (...args: unknown[]) => unknown;
+  WeakSet?: new () => { add(value: object): void };
+  Event?: new (type: string, init?: unknown) => unknown;
   MouseEvent?: new (type: string, init?: unknown) => unknown;
   WheelEvent?: new (type: string, init?: unknown) => unknown;
   KeyboardEvent?: new (type: string, init?: unknown) => unknown;
@@ -691,7 +749,9 @@ interface PageScope {
   console?: Record<string, (...args: unknown[]) => unknown>;
   addEventListener?(type: string, listener: (event: unknown) => void): void;
   MutationObserver?: new (callback: () => void) => { observe(target: DomNode, options: { attributes: boolean; attributeFilter: string[] }): void };
-  chrome?: { runtime?: { sendMessage?(message: unknown): void } };
+  chrome?: { runtime?: { id?: string; sendMessage?(message: unknown): void } };
+  __qzInvoke?: (this: unknown, node: DomNode, payload: unknown) => unknown;
+  __qzExtensionInputEvents?: { add(value: object): void };
   __qzFirefoxPage?: {
     next: number; nodes: Map<number, DomNode>; objects: Map<string, { node: DomNode; group: string }>;
     mouseTarget: DomNode | null; touchTarget: DomNode | null;

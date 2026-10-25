@@ -1,3 +1,4 @@
+import { isIsolatedContentInvoke, isIsolatedContentProbe } from "../tools/isolated-page-calls.js";
 import { createNetworkWatch } from "./network-watch.js";
 import type { NetworkChrome } from "./network-watch.js";
 import {
@@ -95,10 +96,18 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "Runtime.enable") return enableRuntime(tabId);
     if (method === "Runtime.evaluate") return evaluate(tabId, frameId, params);
     if (method === "Runtime.callFunctionOn") {
+      const declaration = String(params.functionDeclaration || "");
+      const callArgs = Array.isArray(params.arguments) ? params.arguments as { value?: unknown }[] : [];
+      if (isIsolatedContentInvoke(declaration)) {
+        const first = callArgs[0];
+        const payload = first && typeof first === "object" && "value" in first ? first.value : undefined;
+        return run(tabId, frameId, {
+          op: "invoke", objectId: String(params.objectId || ""), payload, awaitPromise: params.awaitPromise !== false,
+        });
+      }
       return run(tabId, frameId, {
-        op: "call", objectId: String(params.objectId || ""), functionDeclaration: String(params.functionDeclaration || ""),
-        arguments: Array.isArray(params.arguments) ? params.arguments as { value?: unknown }[] : [],
-        awaitPromise: params.awaitPromise !== false,
+        op: "call", objectId: String(params.objectId || ""), functionDeclaration: declaration,
+        arguments: callArgs, awaitPromise: params.awaitPromise !== false,
       });
     }
     if (method === "Runtime.releaseObjectGroup") return run(tabId, frameId, { op: "release", objectGroup: String(params.objectGroup || "") });
@@ -259,9 +268,11 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     }
     const selected = (contexts.get(tabId) || []).find(context => context.id === numberValue(params.contextId) || (params.uniqueContextId && context.uniqueId === params.uniqueContextId));
     if ((params.contextId || params.uniqueContextId) && !selected) throw new Error("Cannot find context");
-    return run(tabId, selected?.frameId ?? frameId, {
-      op: "evaluate", expression: String(params.expression || ""), awaitPromise: params.awaitPromise === true,
-    }, selected?.world || "MAIN");
+    const world = selected?.world || "MAIN";
+    const expression = String(params.expression || "");
+    const targetFrame = selected?.frameId ?? frameId;
+    if (isIsolatedContentProbe(expression)) return run(tabId, targetFrame, { op: "probe" }, world);
+    return run(tabId, targetFrame, { op: "evaluate", expression, awaitPromise: params.awaitPromise === true }, world);
   }
 
   async function setUserAgent(tabId: number, userAgent: string) {
@@ -483,7 +494,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   }
 
   async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED") {
-    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command]);
+    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command, world]);
     return result;
   }
 

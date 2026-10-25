@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installFirefoxDebugger } from "../../src/background/firefox/debugger-host.js";
+import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "../../src/background/tools/isolated-page-calls.js";
 import { installInitiatorRewrite } from "../../src/background/firefox/dnr-initiator.js";
 import { installFirefoxHost } from "../../src/background/firefox/host.js";
 import { createNetworkWatch } from "../../src/background/firefox/network-watch.js";
@@ -1301,6 +1302,133 @@ test("product text stays on the Chrome sentence outside a Firefox extension page
   }
 });
 
+test("isolated content calls run without compiling a function", async () => {
+  const nativeFunction = globalThis.Function;
+  let compiled = 0;
+  const document = {
+    nodeType: 9, nodeName: "#document", title: "Probe",
+    documentElement: { nodeType: 1, nodeName: "HTML" },
+    defaultView: {},
+  };
+  const previousChrome = globalThis.chrome;
+  globalThis.Function = function (...args) {
+    compiled += 1;
+    return nativeFunction(...args);
+  };
+  globalThis.chrome = { runtime: { id: "qz-browser-agent@heleifz.github.io" } };
+  globalThis.__qzInvoke = (node, payload) => ({
+    ok: true,
+    action: payload && payload.action,
+    nodeName: node && node.nodeName,
+  });
+  try {
+    await withPage(document, async () => {
+      const browser = debuggerBrowser();
+      installFirefoxDebugger(browser);
+      let isolatedId = 0;
+      browser.debugger.onEvent.addListener((_source, method, params) => {
+        if (method === "Runtime.executionContextCreated" && params?.context?.auxData?.type === "isolated") {
+          isolatedId = params.context.id;
+        }
+      });
+      await browser.debugger.attach({ tabId: 8 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.enable");
+      assert.ok(isolatedId > 0);
+      const probe = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+        expression: ISOLATED_CONTENT_PROBE,
+        contextId: isolatedId,
+        returnByValue: true,
+      });
+      assert.equal(probe.result.value.extensionId, "qz-browser-agent@heleifz.github.io");
+      assert.equal(probe.result.value.bridge, true);
+      assert.equal(compiled, 0, "the isolated probe does not compile a function");
+      const blocked = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+        expression: "1+1",
+        contextId: isolatedId,
+        returnByValue: true,
+      });
+      assert.match(blocked.exceptionDetails.text, /cannot compile/);
+      assert.equal(compiled, 0);
+      const root = await browser.debugger.sendCommand({ tabId: 8 }, "DOM.getDocument");
+      const resolved = await browser.debugger.sendCommand({ tabId: 8 }, "DOM.resolveNode", {
+        backendNodeId: root.root.backendNodeId,
+      });
+      const invoked = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.callFunctionOn", {
+        objectId: resolved.object.objectId,
+        functionDeclaration: ISOLATED_CONTENT_INVOKE,
+        arguments: [{ value: { action: "ping" } }],
+        awaitPromise: true,
+      });
+      assert.equal(invoked.result.value.action, "ping");
+      assert.equal(invoked.result.value.nodeName, "#document");
+      assert.equal(compiled, 0);
+      const unknown = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.callFunctionOn", {
+        objectId: resolved.object.objectId,
+        functionDeclaration: "function(){ return 1 }",
+      });
+      assert.match(unknown.exceptionDetails.text, /cannot compile/);
+      assert.equal(compiled, 0);
+      const main = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+        expression: "1+2",
+        returnByValue: true,
+      });
+      assert.equal(main.result.value, 3);
+      assert.equal(compiled, 1, "a main-world expression still compiles");
+    });
+  } finally {
+    globalThis.Function = nativeFunction;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    delete globalThis.__qzInvoke;
+  }
+});
+
+test("firefox clicks mark extension events and toggle a checkbox the page left unchanged", async () => {
+  const events = [];
+  const box = {
+    nodeType: 1,
+    nodeName: "INPUT",
+    disabled: false,
+    checked: false,
+    getAttribute(name) { return name === "type" ? "checkbox" : null; },
+    focus() {},
+    dispatchEvent(event) {
+      events.push(event);
+      return true;
+    },
+  };
+  const document = {
+    nodeType: 9, title: "Check", documentElement: box, body: box, activeElement: box,
+    elementFromPoint() { return box; },
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  await withPage(document, async () => {
+    const browser = debuggerBrowser();
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 9 }, "1.3");
+    const click = async () => {
+      await browser.debugger.sendCommand({ tabId: 9 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 4, y: 4, button: "left", clickCount: 1 });
+      await browser.debugger.sendCommand({ tabId: 9 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 4, y: 4, button: "left", clickCount: 1 });
+    };
+    await click();
+    assert.equal(box.checked, true);
+    const clickEvent = events.find(event => event.type === "click");
+    assert.ok(clickEvent);
+    assert.equal(globalThis.__qzExtensionInputEvents.has(clickEvent), true);
+    assert.ok(events.some(event => event.type === "change"));
+    const before = events.length;
+    box.checked = false;
+    box.dispatchEvent = event => {
+      events.push(event);
+      if (event.type === "click") box.checked = !box.checked;
+      return true;
+    };
+    await click();
+    assert.equal(box.checked, true);
+    assert.equal(events.slice(before).filter(event => event.type === "change").length, 0);
+  });
+});
+
 function debuggerBrowser(capture) {
   return {
     runtime: { id: "qz-browser-agent@heleifz.github.io", onMessage: { addListener() {} } },
@@ -1331,6 +1459,8 @@ async function withPage(document, fn) {
     if (previous === undefined) delete globalThis.document;
     else globalThis.document = previous;
     delete globalThis.__qzFirefoxPage;
+    delete globalThis.__qzInvoke;
+    delete globalThis.__qzExtensionInputEvents;
     release();
   }
 }
