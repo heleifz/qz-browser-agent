@@ -67,13 +67,17 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
   return {
     page, browser, baseline,
     definition: () => withLanguage('en', () => ({ name: definition.name, description: definition.description, parameters: definition.parameters })),
-    async goto(url) {
+    async goto(url, { waitUntil = 'load', timeout = 60000, settleMs = 0 } = {}) {
       refs.clear();
-      await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+      const response = await page.goto(url, { waitUntil, timeout });
+      // Public sites may replace the document during startup. Bind Content only after that settles.
+      if (settleMs) await page.waitForTimeout(settleMs);
       const { frameTree } = await send('Page.getFrameTree');
       world = (await send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'qz-ax-test' })).executionContextId;
       await evaluate(`globalThis.chrome = { runtime: { onMessage: { addListener() {}, removeListener() {} } } }; ${content}`);
+      return { status: response?.status(), url: page.url() };
     },
+    reference: target => refs.get(String(target).replace(/^uid:/, '')),
     snapshot: args => definition.execute({ tabId: 1, ...args }, undefined, { sessionId: 'isolated-ax-measurement', runId: 'measure' }),
     async action({ target, action, value }) {
       const ref = refs.get(String(target).replace(/^uid:/, ''));
