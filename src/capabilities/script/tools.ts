@@ -15,7 +15,7 @@ const record = (value: unknown): Fields => value && typeof value === "object" &&
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
 import { scriptTimeout } from "#sdk/background/tools";
-import { ensureOffscreenDocument } from "#sdk/background/browser";
+import { ensureOffscreenDocument, registerFlowExecution, waitForFlow } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import {
@@ -342,6 +342,29 @@ registerTool({
 });
 
 registerTool({
+  name: "run_flow",
+  requires: { tools: ["run_script", "get_ax_tree"] },
+  get description() { return toolT("runFlowDescription"); },
+  get parameters() { return {
+    type: "object",
+    properties: {
+      timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
+      args: { type: "object", description: toolT("runScriptArgs") },
+      code: { type: "string", description: toolT("runScriptCode") },
+    },
+    required: ["timeout", "code"],
+  } as const; },
+  timeout: scriptTimeout,
+  validateArgs: args => { scriptTimeout(args, "run_flow"); },
+  execute: async ({ code, args = {} }, signal, context = {}) => {
+    if (Number(context.runScriptToolDepth) > 0) throw new ToolExecutionError("FLOW_TOOL_UNSUPPORTED", "Call run_flow as a top-level tool.");
+    if (!code.trim()) throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT", "run_flow requires inline code.");
+    const guardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
+    return runScriptWithOffscreenInnerRunner(code, context, "flow", args, guardrails, signal);
+  },
+});
+
+registerTool({
   name: "run_script",
   workingTab: args => args.mutatesPage === true ? "claim" : "update",
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
@@ -393,7 +416,7 @@ registerTool({
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ code, skill, script, context });
 
     const run = async () => {
-      if (scriptUsesToolApi(code) || scriptUsesInputArgs(code) || Object.keys(scriptArgs).length > 0) {
+      if (!context.flowPageRead && (scriptUsesToolApi(code) || scriptUsesInputArgs(code) || Object.keys(scriptArgs).length > 0)) {
         return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api", scriptArgs, securityGuardrails, signal);
       }
 
@@ -406,7 +429,7 @@ registerTool({
           userGesture: true,
         }, signal, context);
         const formatted = formatCdpScriptResult(evalResult, "cdp");
-        if (!formatted.ok && isToolApiReferenceError(formatted.error)) {
+        if (!context.flowPageRead && !formatted.ok && isToolApiReferenceError(formatted.error)) {
           return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api_reference", scriptArgs, securityGuardrails, signal);
         }
         if (formatted.ok || !isExplicitReturnError(formatted.error)) return formatted;
@@ -531,8 +554,10 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
   const depth = Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0));
   const source = wrapRunScriptSource(String(code || ""));
   let unregisterNetworkExecution: (() => void) | null = null;
+  const flow = reason === "flow" ? registerFlowExecution(requestId, context, signal) : null;
   try {
-    await ensureRunScriptOffscreenDocument();
+    const ready = ensureRunScriptOffscreenDocument();
+    await (flow ? waitForFlow(ready, flow.execution.signal) : ready);
     const skillExecution = context?.skillExecution;
     const skillNetwork = getToolRuntimeDependencies(context)?.skillNetwork;
     const fetchBridge = Boolean(skillExecution?.plugin);
@@ -549,7 +574,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
         signal,
       });
     }
-    const response = await sendRunScriptInnerMessage({
+    let response = await sendRunScriptInnerMessage({
       type: "run_script_inner_execute",
       requestId,
       source,
@@ -561,6 +586,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       securityGuardrails,
       fetchBridge,
     }, signal);
+    if (flow) response = { ...record(response), execution_world: "flow", finalObservation: await flow.execution.finish() };
     const envelope = record(response);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
@@ -596,6 +622,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       },
     });
   } finally {
+    flow?.dispose();
     unregisterNetworkExecution?.();
   }
 }
@@ -643,15 +670,15 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) 
     signal.addEventListener("abort", abortHandler, { once: true });
   }
   try {
-    const ack = record(await chrome.runtime.sendMessage<Fields, unknown>(message));
-    if (!ack?.ok) {
-      const pending = runScriptInnerPendingByRequestId.get(requestId);
-      pending?.reject(new ToolExecutionError(String(ack.code || "INNER_RUNNER_SEND_FAILED"), String(ack.error || "run_script inner request was not accepted."), {
-        engine: "offscreen_inner",
-        requestId,
-      }));
-    }
-    return await resultPromise;
+    const accepted = chrome.runtime.sendMessage<Fields, unknown>(message).then(value => {
+      const ack = record(value);
+      if (!ack.ok) throw new ToolExecutionError(String(ack.code || "INNER_RUNNER_SEND_FAILED"), String(ack.error || "run_script inner request was not accepted."), {
+        engine: "offscreen_inner", requestId,
+      });
+      return resultPromise;
+    });
+    // Stop must not wait for an offscreen acknowledgement, including a stuck host.
+    return await Promise.race([accepted, resultPromise]);
   } finally {
     if (abortHandler && signal) signal.removeEventListener("abort", abortHandler);
     runScriptInnerPendingByRequestId.delete(requestId);

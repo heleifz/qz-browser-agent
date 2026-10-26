@@ -471,14 +471,15 @@ assert.match(
 );
 assert.match(
   runScriptDefinition.description,
-  /视觉序列先由主 Agent 单步观察[\s\S]*效果符合预期、后续坐标可预测且 viewportChange 表明浏览器视口稳定[\s\S]*串行 await tools\.act_on_screen[\s\S]*检查 coordinateBasisReady[\s\S]*按执行顺序返回最后一张此类图片/,
-  "run_script should teach one evidence-based visual macro principle",
+  /视觉动作依赖有效的截图坐标和稳定的浏览器视口[\s\S]*串行 await tools\.act_on_screen[\s\S]*coordinateBasisReady[\s\S]*按执行顺序返回最后一张此类图片/,
+  "run_script should describe coordinate limits and observation behavior",
 );
 assert.match(
   runScriptDefinition.description,
   /调用 run_script 时设 mutatesPage:true/,
   "visual macros should declare their page mutation ownership",
 );
+assert.doesNotMatch(runScriptDefinition.description, /先由主 Agent 单步观察|must first observe/, "script descriptions must leave methodology to the model");
 assert.doesNotMatch(toolsSource, /会滚动、缩放、改尺寸.*逐步执行/, "run_script guidance should not overfit policy to action names");
 assert.match(
   runScriptDefinition.description,

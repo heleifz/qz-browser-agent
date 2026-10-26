@@ -67,6 +67,7 @@ async function runInnerScript(payload: WorkerExecute) {
   const input = payload.scriptArgs && typeof payload.scriptArgs === "object" ? payload.scriptArgs : {};
   const args = input;
   const tabId = null;
+  let lastObservation: ScriptEnvelope["__lastObservation"];
   let seq = 0;
   pushTrace("inner.start", [{ sourceLength: source.length }]);
 
@@ -120,6 +121,7 @@ async function runInnerScript(payload: WorkerExecute) {
         resolve(response) {
           pushTrace("tool.end", [toolName, response.result]);
           addToolArtifacts(response.artifacts || response.artifact);
+          if (response.observation) lastObservation = response.observation;
           resolve(response.result);
         },
         reject(error) {
@@ -151,7 +153,7 @@ async function runInnerScript(payload: WorkerExecute) {
     const result = await fn(input, args, input.$plugin || {}, tools, tool, trace, log, tabId);
     send({
       type: "result",
-      result: makeEnvelope(true, result, null, traceRows, artifacts, startedAt),
+      result: { ...makeEnvelope(true, result, null, traceRows, artifacts, startedAt), __lastObservation: lastObservation },
     });
   } catch (error) {
     decorateSyntaxError(error, source);
@@ -163,7 +165,7 @@ async function runInnerScript(payload: WorkerExecute) {
     pushTrace("error", [error]);
     send({
       type: "result",
-      result: makeEnvelope(false, null, error, traceRows, artifacts, startedAt),
+      result: { ...makeEnvelope(false, null, error, traceRows, artifacts, startedAt), __lastObservation: lastObservation },
     });
   } finally {
     restoreSecurity();

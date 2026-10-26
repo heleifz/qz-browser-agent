@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { resolveFlowExecution } from "./flow-execution.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
@@ -83,13 +84,20 @@ export function createRunScriptBridge({
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
 
+    let flow: ReturnType<typeof resolveFlowExecution> | undefined;
+    try {
+      if (message.flowRequestId) flow = resolveFlowExecution(String(message.flowRequestId), sessionId, runId);
+    } catch (error) {
+      return respondFailure({ code: plainObject(error).code, error: String(error) }, { toolName });
+    }
+
     if (toolName === "__list_tools__") {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
       return {
         ok: true,
         result: {
-          tools: toolRuntime.getSchemas(toolContext).map(schema => ({
+          tools: toolRuntime.getSchemas(toolContext).filter(schema => !flow || flow.allows(schema.function?.name || "")).map(schema => ({
             name: schema.function?.name || "",
             description: schema.function?.description || "",
             parameters: schema.function?.parameters || {},
@@ -111,19 +119,26 @@ export function createRunScriptBridge({
     try {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
-      const signal = supervisor.getAbortSignal(sessionId, runId) || undefined;
+      const runSignal = supervisor.getAbortSignal(sessionId, runId) || undefined;
+      const signal = flow ? (runSignal ? AbortSignal.any([runSignal, flow.signal]) : flow.signal) : runSignal;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
       const toolArgs = plainObject(message.args);
       const definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: toolContext.skillToolRegistrySnapshot, toolRegistrySnapshot: toolContext.toolRegistrySnapshot, language: toolContext.language });
-      const result = await toolRuntime.execute(toolName, toolArgs, signal, {
+      const context = {
         ...toolContext,
         sessionId,
         runId,
         runScriptToolDepth: depth,
         source: "run_script",
         senderTabId: sender?.tab?.id || null,
+        ...(flow ? { flowPageRead: true, toolCallId: flow.context.toolCallId, spanId: flow.context.spanId } : {}),
+      };
+      if (flow) flow.observe = async tabId => toolRuntime.execute("get_ax_tree", { tabId, limit: 40, depth: 8 }, signal, {
+        ...context, ...await resolveToolContext(sessionId, runId),
       });
+      const execute = () => toolRuntime.execute(toolName, toolArgs, signal, context);
+      const result = await (flow ? flow.call(toolName, toolArgs, execute) : execute());
       // A host or zero-timeout handler may complete after its run was revoked.
       const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (executionStopped) return respondFailure(executionStopped, { toolName });

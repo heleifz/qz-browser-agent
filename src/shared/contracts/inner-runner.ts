@@ -1,6 +1,6 @@
 /** Internal offscreen/sandbox/Worker wire protocol; task ownership stays in Background. */
 export interface BridgeFailure { ok: false; error?: string; code?: string; details?: unknown; diagnostic?: unknown }
-export type ToolBridgeResponse = BridgeFailure | { ok: true; result?: unknown; artifacts?: unknown; artifact?: unknown };
+export type ToolBridgeResponse = BridgeFailure | { ok: true; result?: unknown; artifacts?: unknown; artifact?: unknown; observation?: { _image: string; _imageDetail?: string } };
 export interface FetchResult { status: number; statusText?: string; headers?: [string, string][]; bodyBase64?: string; url?: string; redirected?: boolean }
 export type FetchBridgeResponse = BridgeFailure | { ok: true; result: FetchResult };
 export interface FetchRequest { url: string; method: string; headers: [string, string][]; bodyBase64: string }
@@ -11,6 +11,7 @@ export interface ScriptEnvelope {
   __runScriptEnvelope: true; ok: boolean; hasResult: boolean; result: MessageValue; resultType: string;
   engine: 'offscreen_inner'; execution_world: 'inner'; reason?: 'inner'; trace: MessageValue; elapsedMs: number;
   error?: string; code?: string; details?: MessageValue; diagnostic?: MessageValue; message?: string; artifacts?: MessageValue;
+  __lastObservation?: { _image: string; _imageDetail?: string };
 }
 export interface WorkerExecute { type: 'execute'; requestId?: string; source?: string; scriptArgs?: Record<string, unknown>; securityGuardrails?: unknown; fetchBridge?: boolean }
 export type InnerWorkerInput = WorkerExecute

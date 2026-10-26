@@ -53,5 +53,6 @@ export { beginPageNavigationObservation } from "../../background/tools/page-navi
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
 export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";
+export { registerFlowExecution, waitForFlow } from "../../background/tools/flow-execution.js";
 export { isRunScriptInnerTargetArgs, resolveRunScriptTargetTabId } from "../../background/tools/script-policy.js";
 export { directChildFrames, openChildFrame, frameContentOrigin } from "../../background/tools/child-frames.js";

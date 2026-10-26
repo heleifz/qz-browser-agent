@@ -305,6 +305,26 @@ surface. Preparation failure ends the operation before input is sent.
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
 Worker calls tools and fetch through the host; its runtime contains only Worker APIs.
 
+`run_flow` is a top-level cross-page controller using that same Worker host. It calls a bounded
+set of browser tools, page waits, `data_store`, and leaf page-mode `run_script` reads. It requires
+explicit tab IDs even for UID actions. The [flow execution scope](../src/background/tools/flow-execution.ts)
+binds bridge calls to the enclosing script's Session, run, tool-call identity and cancellation
+signal. Calls on each tab queue in Background; different tabs and new-tab creation can proceed
+concurrently. Every call still enters the common tool runtime. Leaf page scripts receive input
+arguments but no tool bridge, preventing recursive orchestration and queue deadlocks.
+
+After pending calls settle, the controller returns a fresh, bounded AX snapshot of the last-used
+remaining tab as `finalObservation`. A failed script also gets this observation; stop or timeout
+revokes the scope instead of delaying cancellation for a snapshot. Closed/unavailable tabs have an
+explicit unavailable result. Nested screenshots retain their separate last-completed image, which
+may precede the final snapshot. Stop terminates the Worker and cancels nested/queued tools; it does
+not undo completed browser actions. A controller is not durable across an extension restart.
+
+Chrome uses the native offscreen document. Firefox's existing offscreen adapter hosts the same
+sandbox in a hidden event-page frame, with a minimized-window fallback when no host document is
+available. Script startup feature-detects `offscreen.createDocument` and requires the sandbox-ready
+handshake. No flow-specific browser implementation or new browser permission is needed.
+
 ## Images and screenshots
 
 The shared [image policy](../src/shared/images/policy.ts) and

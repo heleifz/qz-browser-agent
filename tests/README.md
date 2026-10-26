@@ -279,6 +279,22 @@ npm test -- live cli-mcp --duration-seconds 1800
 npm test -- live multi-browser
 ```
 
+For the cross-page script UX comparison, build each revision into its own output directory and run:
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-baseline" npm test -- live flow-script --label baseline --repetitions 2
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-prototype" npm test -- live flow-script --label prototype --repetitions 2
+```
+
+This explicit live target requires `DEEPSEEK_API_KEY` in the environment. It uses `deepseek-flash`,
+a 1,000,000-token context and vision enabled, with an isolated profile/service per invocation.
+`--cases A,B,C,D` selects PyPI releases, Kyoto infobox images, three catalogue pages and a short
+single-page read. Prompts do not mention the new mode. `--cases smoke,stop --repetitions 1` instead
+runs explicit controller and cancellation probes; keep those out of UX comparisons. `--output`
+selects the evidence directory (default `tests/results/flow-script`). Reports include wall time,
+actual provider request counts, provider-reported tokens, tool choice and full snapshots. Review
+business acceptance from the snapshots; a completed Agent status alone is not a pass.
+
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
 `cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses
