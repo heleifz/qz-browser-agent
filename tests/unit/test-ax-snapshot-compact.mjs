@@ -488,4 +488,19 @@ assert.match(viewportFull.snapshot, /"Below"/);
 assert.match(line(viewportFull.snapshot, "Off-band ancestor"), /target=/);
 assert.deepEqual(scenario.fetchParams, { depth: 16 });
 
+const rectOnly = await run({
+  scope: "viewport",
+  overview: { title: "Rect-only actions", url: currentUrl, viewport: { height: 600 }, actions: [
+    { selector: "#inside", role: "button", text: "Rect inside", rect: { x: 9000, y: -5, w: 20, h: 10 } },
+    { selector: "#below", role: "button", text: "Rect below", rect: { x: 0, y: 600, w: 20, h: 10 } },
+    { selector: "#unknown", role: "button", text: "Unknown action" },
+  ] },
+  bound: { loaderId: "loader", ids: [0, 0, 999] },
+  nodes: [ax({ id: "root", backend: 1, role: "RootWebArea" })],
+  geometry: { documents: [{ nodes: { backendNodeId: [1] }, layout: { nodeIndex: [0], bounds: [[0, 0, 800, 600]] } }] },
+});
+assert.match(line(rectOnly.snapshot, "Rect inside"), /target=/);
+assert.doesNotMatch(rectOnly.snapshot, /Rect below|Unknown action|↑|↓/);
+assert.equal(registeredRefs.length, 2, "only the root and measured in-band synthetic action get targets");
+assert.deepEqual(rectOnly.viewportOmitted, { above: 0, below: 0, unmeasured: 0 });
 console.log("ax snapshot compact tests passed");

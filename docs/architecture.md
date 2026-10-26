@@ -313,10 +313,11 @@ explicit `uid:`/`css:` roots default to full subtree scope. Both retain depth an
 
 The [accessibility capability](../src/capabilities/accessibility/tools.ts) filters raw AX nodes
 by positive Y overlap before semantic pruning, depth limits, redundant-text removal and BFS.
-Horizontal overflow stays eligible. Off-band ancestors of eligible nodes stay structural without
-targets. Guaranteed actions are filtered too, so they cannot reintroduce omitted off-screen nodes.
+Horizontal overflow stays eligible. Zero-height boxes are in-band when their Y coordinate is within
+`[0, viewportHeight)`. Off-band ancestors stay structural without targets. Guaranteed actions are
+filtered too; unmatched actions need an in-band rectangle before they can receive a target.
 
-The `↑`/`↓` markers and `viewportOmitted.above/below` count actual raw AX nodes dropped, including
+The `↑`/`↓` markers (only when nonzero) and `viewportOmitted.above/below` count actual raw AX nodes dropped, including
 text fragments that semantic formatting may later merge or remove. Retained ancestors are excluded.
 These counts are independent of BFS leftovers and cover only the browser's existing AX/DOM set;
 unloaded lazy/virtual items and browser-adapter collection caps are outside that set. The default

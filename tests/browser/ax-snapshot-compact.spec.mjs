@@ -152,6 +152,7 @@ test.describe("compact accessibility snapshot", () => {
     const top = await h.call("get_ax_tree", {});
     expect(top.scope).toBe("viewport");
     expect(top.viewportOmitted.above).toBe(0);
+    expect(top.snapshot).not.toContain("↑");
     expect(top.viewportOmitted.below).toBeGreaterThan(0);
     expect(top.snapshot).not.toContain('"Save"');
     expect(top.snapshot).toContain("↓");
@@ -171,14 +172,28 @@ test.describe("compact accessibility snapshot", () => {
   test("keeps partial intersections and horizontal overflow with structural ancestors", async () => {
     await h.call("open_tab", { url: `${h.baseURL}/band` });
     const result = await h.call("get_ax_tree", {});
-    for (const name of ["Top intersection", "Bottom intersection", "Horizontal overflow", "Visible descendant"]) {
+    for (const name of ["Top intersection", "Bottom intersection", "Horizontal overflow", "Visible descendant", "Frame visible"]) {
       expect(target(result.snapshot, name), result.snapshot).toMatch(/^uid:/);
     }
     expect(result.snapshot).not.toContain("Above band");
     expect(result.snapshot).not.toContain("Below band");
+    expect(result.snapshot).not.toContain("Frame below");
     expect(line(result.snapshot, "Off-band ancestor")).not.toContain("target=");
     expect(result.viewportOmitted.above).toBeGreaterThan(0);
     expect(result.viewportOmitted.below).toBeGreaterThan(0);
+  });
+
+  test("keeps fixed and sticky controls after scrolling", async () => {
+    await h.call("open_tab", { url: `${h.baseURL}/band` });
+    const top = await h.call("get_ax_tree", {});
+    const full = await h.call("get_ax_tree", { scope: "full" });
+    await h.call("act_on_element", { target: target(full.snapshot, "Below band"), action: "scroll" });
+    const bottom = await h.call("get_ax_tree", {});
+    expect(bottom.viewportOmitted.above).toBeGreaterThan(0);
+    for (const name of ["Fixed header", "Fixed footer", "Sticky header"]) {
+      expect(target(top.snapshot, name), top.snapshot).toMatch(/^uid:/);
+      expect(target(bottom.snapshot, name), bottom.snapshot).toMatch(/^uid:/);
+    }
   });
 
   test("keeps same-named sibling StaticText for repeated values", async () => {

@@ -6,6 +6,10 @@ assert.equal(verticalBand(599, 900, 600), "inside");
 assert.equal(verticalBand(-20, 900, 600), "inside");
 assert.equal(verticalBand(-20, 0, 600), "above");
 assert.equal(verticalBand(600, 900, 600), "below");
+assert.equal(verticalBand(0, 0, 600), "inside", "zero-height nodes at the top are not above the viewport");
+assert.equal(verticalBand(599, 599, 600), "inside");
+assert.equal(verticalBand(-1, -1, 600), "above");
+assert.equal(verticalBand(600, 600, 600), "below");
 const nodes = [
   { nodeId: "root", backendDOMNodeId: 1, childIds: ["text", "unknown"] },
   { nodeId: "text", parentId: "root", backendDOMNodeId: 2, childIds: ["inline"] },

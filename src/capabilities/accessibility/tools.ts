@@ -98,8 +98,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
       if (node) return viewportFilter.kept.has(node.nodeId) && !viewportFilter.structural.has(node.nodeId);
       const rect = record(anchor.action.rect);
       const top = Number(rect.y), height = Number(rect.h);
-      return !Number.isFinite(top) || !Number.isFinite(height) || !(viewportHeight > 0)
-        || verticalBand(top, top + height, viewportHeight) === "inside";
+      return Number.isFinite(top) && Number.isFinite(height) && viewportHeight > 0
+        && verticalBand(top, top + height, viewportHeight) === "inside";
     });
   }
   const actionBackendIds = new Set(actions.map(anchor => Number(anchor.backendNodeId || 0)).filter(id => id > 0));
@@ -201,8 +201,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
 
   const lines = displayNodes.map(node => formatSnapshotLine(node));
   if (viewportFilter) {
-    lines.unshift(toolT("aboveViewport", { count: viewportFilter.above }));
-    lines.push(toolT("belowViewport", { count: viewportFilter.below }));
+    if (viewportFilter.above) lines.unshift(toolT("aboveViewport", { count: viewportFilter.above }));
+    if (viewportFilter.below) lines.push(toolT("belowViewport", { count: viewportFilter.below }));
     if (viewportFilter.unmeasured) lines.push(toolT("unmeasuredViewport", { count: viewportFilter.unmeasured }));
   }
   const truncatedNodeCount = Math.max(0, semanticNodes.length - displayNodes.length);

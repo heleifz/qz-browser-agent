@@ -18,6 +18,7 @@ export interface ViewportFilter {
 
 /** Positive Y overlap only: X, containment and occlusion are deliberately irrelevant. */
 export function verticalBand(top: number, bottom: number, height: number): Band {
+  if (top === bottom) return top < 0 ? "above" : top >= height ? "below" : "inside";
   return bottom <= 0 ? "above" : top >= height ? "below" : "inside";
 }
 
