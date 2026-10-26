@@ -60,7 +60,7 @@ export function filterViewportNodes(nodes: ViewportNode[], bands: Map<string, Ba
   return { kept, structural, above, below, unmeasured };
 }
 
-/** Batch layout reads on Chromium; feature-detected box-model fallback on Firefox. */
+/** Chromium layout snapshot; Firefox batch rects; box models for remaining Chromium gaps. */
 export async function readViewportBands(send: CdpCommand, nodes: ViewportNode[], fallbackHeight = 0): Promise<Map<string, Band>> {
   // Match Content's innerHeight band, including pages with horizontal scrollbars.
   let height = fallbackHeight;
@@ -104,12 +104,27 @@ export async function readViewportBands(send: CdpCommand, nodes: ViewportNode[],
             });
           }
         }
-      } catch { /* Firefox has DOM.getBoxModel, but no DOMSnapshot domain. */ }
+      } catch { /* Firefox uses the internal batch rect command below. */ }
       {
         // Also resolve boxes omitted by DOMSnapshot (notably input UA-shadow internals).
         // Bound concurrency and deduplicate backend ids. Missing/detached boxes stay unknown.
         const ids = [...new Set(group.map(node => node.backendDOMNodeId).filter((id): id is number => !!id && !boxes.has(id)))];
-        let next = 0;
+        // Same-target geometry is already root-relative; child sessions need the iframe origin.
+        const offset = frame?.sessionId ? origin.y : 0;
+        let batched = false;
+        if (ids.length) try {
+          const result = record(await command("DOM.getNodeRects", { backendNodeIds: ids }));
+          if (Array.isArray(result.rects)) {
+            batched = true;
+            for (const value of result.rects) {
+              const rect = record(value);
+              if (![rect.backendNodeId, rect.y, rect.height].every(value => typeof value === "number" && Number.isFinite(value))) continue;
+              const top = Number(rect.y) + offset;
+              boxes.set(Number(rect.backendNodeId), [top, top + Number(rect.height)]);
+            }
+          }
+        } catch { /* Chromium has no internal batch command. */ }
+        let next = batched ? ids.length : 0;
         await Promise.all(Array.from({ length: Math.min(8, ids.length) }, async () => {
           while (next < ids.length) {
             const id = ids[next++]!;
@@ -118,8 +133,6 @@ export async function readViewportBands(send: CdpCommand, nodes: ViewportNode[],
               const quad = model.border;
               if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite)) continue;
               const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
-              // Same-target box models already use root viewport coordinates.
-              const offset = frame?.sessionId ? origin.y : 0;
               boxes.set(id, [Math.min(...ys) + offset, Math.max(...ys) + offset]);
             } catch { /* No layout box. */ }
           }

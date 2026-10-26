@@ -323,8 +323,9 @@ unloaded lazy/virtual items and browser-adapter collection caps are outside that
 BFS budget remains 120 optional nodes (maximum 300), plus guaranteed actions and their ancestors.
 
 [Geometry collection](../src/capabilities/accessibility/viewport.ts) uses Chromium's batched
-`DOMSnapshot.captureSnapshot`, then box-model reads for missing boxes. Firefox uses its existing
-`DOM.getBoxModel` adapter because it lacks DOMSnapshot. Inline fragments without DOM ids inherit
+`DOMSnapshot.captureSnapshot`, then box-model reads for missing boxes. Firefox uses the internal
+`DOM.getNodeRects` adapter to read all requested rectangles in one isolated-world page injection,
+because it lacks DOMSnapshot. Inline fragments without DOM ids inherit
 the parent box classification. Unmeasurable nodes remain eligible and are reported separately;
 geometry failures do not silently discard content. Direct child frame boxes are translated into
 the root viewport. This is a vertical band filter, not an occlusion or nested-scroll clipping test.
