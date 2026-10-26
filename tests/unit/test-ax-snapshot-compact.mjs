@@ -23,14 +23,23 @@ const element = createElementRuntime({
 
 let scenario = {};
 let definition;
+const generatedUids = [];
+const registeredRefs = [];
 registerAccessibilityTools({
   registerTool: value => { definition = value; },
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value)))),
   makeSnapshotId: element.makeSnapshotId,
-  makeElementUid: element.makeElementUid,
+  makeElementUid: (...args) => {
+    const uid = element.makeElementUid(...args);
+    generatedUids.push(uid);
+    return uid;
+  },
   elementTargetForUid: element.elementTargetForUid,
-  registerElementRef: element.registerElementRef,
+  registerElementRef: ref => {
+    registeredRefs.push(ref);
+    element.registerElementRef(ref);
+  },
   resolveElementReference: element.resolveElementReference,
   backendNodeIdForSelector: async () => 0,
   bindBackendNodes: async () => scenario.bound,
@@ -67,6 +76,8 @@ function line(snapshot, part) {
 }
 
 async function run(next) {
+  generatedUids.length = 0;
+  registeredRefs.length = 0;
   scenario = {
     describe: () => ({ node: {} }),
     bound: { loaderId: "loader", ids: [] },
@@ -76,6 +87,51 @@ async function run(next) {
   currentUrl = scenario.overview.url;
   return definition.execute({ tabId: 8, limit: scenario.limit, actionsLimit: 40 }, null, context);
 }
+
+const displayText = [
+  { role: "StaticText", name: "汇水面积…" },
+  { role: "LabelText", name: "Area label" },
+  { role: "statictext", name: "Lowercase text" },
+  { role: "LineBreak", name: "Break" },
+  // A value keeps InlineTextBox visible through the existing redundant-text pruning.
+  { role: "InlineTextBox", name: "Inline value", value: "100" },
+];
+const targetRoles = [
+  "link", "button", "textbox", "checkbox", "radio", "combobox", "tab", "menuitem", "option", "searchbox",
+  "heading", "paragraph", "listitem",
+];
+const displayOnly = await run({
+  overview: { title: "Display text", url: "https://example.com/forms/post", actions: [] },
+  nodes: [
+    ax({ id: "root", children: [...displayText.map((_text, index) => `text${index}`), ...targetRoles], backend: 1, role: "RootWebArea", name: "Page" }),
+    ...displayText.map((text, index) => ax({ id: `text${index}`, parent: "root", backend: 10 + index, ...text })),
+    ...targetRoles.map((role, index) => ax({ id: role, parent: "root", backend: 100 + index, role, name: `${role} target` })),
+  ],
+});
+for (const text of displayText) {
+  assert.equal(line(displayOnly.snapshot, `"${text.name}"`),
+    ` ${text.role} "${text.name}"${text.value ? ` value="${text.value}"` : ""}`,
+    "display text keeps its role and name without a target");
+}
+assert.equal(displayOnly.returnedNodeCount, 1 + displayText.length + targetRoles.length);
+assert.deepEqual(registeredRefs.map(ref => ref.role), ["RootWebArea", ...targetRoles], "display text must not register element references");
+assert.deepEqual(generatedUids, registeredRefs.map((_ref, index) => `${displayOnly.snapshotId}.${index}`), "display text must not allocate UIDs");
+const roleTargets = targetRoles.map(role => line(displayOnly.snapshot, `"${role} target"`).match(/target=(uid:\S+)/)?.[1]);
+assert.equal(new Set(roleTargets).size, targetRoles.length, "controls and structural nodes keep unique targets");
+for (const [index, target] of roleTargets.entries()) {
+  assert.match(target, /^uid:t8\.[0-9a-z]{6}\.\d+$/);
+  const resolved = await element.resolveElementReference(8, { target }, context);
+  assert.equal(resolved.ref.backendNodeId, 100 + index);
+  assert.equal(resolved.ref.sessionId, context.sessionId);
+  assert.equal(resolved.ref.tabId, 8);
+  assert.equal(resolved.ref.pageUrl, currentUrl);
+}
+const controlTarget = roleTargets[1];
+await assert.rejects(element.resolveElementReference(8, { target: controlTarget }, { sessionId: "other" }), { code: "ELEMENT_UID_SESSION_MISMATCH" });
+await assert.rejects(element.resolveElementReference(9, { target: controlTarget }, context), { code: "ELEMENT_UID_TAB_MISMATCH" });
+currentUrl = "https://example.com/next";
+await assert.rejects(element.resolveElementReference(8, { target: controlTarget }, context), { code: "STALE_ELEMENT_UID_PAGE_CHANGED" });
+currentUrl = scenario.overview.url;
 
 const headingIds = Array.from({ length: 30 }, (_value, index) => `h${index + 1}`);
 const budget = await run({
@@ -170,8 +226,7 @@ const names = await run({
 assert.match(line(names.snapshot, "button"), /"Save"/);
 const noteLines = names.snapshot.split("\n").filter(item => item.includes("StaticText"));
 assert.equal(noteLines.length, 2, "same-named sibling StaticText stays");
-assert.match(noteLines[0], /"Note"/);
-assert.match(noteLines[1], /"Note"/);
+assert.deepEqual(noteLines, [' StaticText "Note"', ' StaticText "Note"']);
 assert.equal(names.snapshot.includes("InlineTextBox"), false);
 assert.equal(names.returnedNodeCount, 3);
 

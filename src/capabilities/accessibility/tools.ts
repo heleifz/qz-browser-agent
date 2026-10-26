@@ -125,6 +125,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   const emitDisplayNode = (semanticNode: SemanticNode, parentUid: string | null): void => {
     if (!includedNodes.has(semanticNode)) return;
     const compact = semanticNode.compact;
+    // Text roles are display-only unless the page overview identified an explicit action.
+    if (!semanticNode.actionNode && PURE_TEXT_ROLES.has(String(compact.role || "").toLowerCase())) semanticNode.unavailable = true;
     const uid = semanticNode.unavailable ? "" : makeElementUid(snapshotId, counter++);
     const item: DisplayNode = {
       uid,
@@ -316,7 +318,7 @@ function actionLocator(action: Action): ActionLocator | null {
   return { selector, index: Number.isInteger(index) && index >= 0 ? index : 0 };
 }
 
-const PURE_TEXT_ROLES = new Set(["statictext", "inlinetextbox", "linebreak"]);
+const PURE_TEXT_ROLES = new Set(["statictext", "labeltext", "inlinetextbox", "linebreak"]);
 
 function hasOwnValueOrFlags(node: SemanticNode) {
   return !!(node.compact.value || node.compact.flags?.length);
