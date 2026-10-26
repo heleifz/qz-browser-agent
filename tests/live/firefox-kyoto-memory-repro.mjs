@@ -122,20 +122,26 @@ let sidebarUrl = "";
 async function dumpAboutMemory(tag) {
   const path = join(workDir, `about-memory-${tag}.txt`);
   try {
-    const page = session.page;
-    const current = page.url();
-    await page.goto("about:memory", { timeout: 60_000, waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1500);
-    const text = await page.evaluate(() => document.body?.innerText || "");
+    const text = await session.chrome(`
+      const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
+      const tab = win.gBrowser.addTrustedTab("about:memory");
+      const browser = tab.linkedBrowser;
+      const body = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("about:memory load timed out")), 90_000);
+        const finish = () => {
+          clearTimeout(timer);
+          resolve(browser.contentDocument?.documentElement?.innerText || browser.contentDocument?.body?.innerText || "");
+        };
+        if (browser.contentDocument?.readyState === "complete") finish();
+        else tab.addEventListener("load", finish, true);
+      });
+      win.gBrowser.removeTab(tab);
+      return body;
+    `);
     await writeFile(path, String(text || "").slice(0, 8_000_000));
     const parsed = parseAboutMemoryMetrics(text);
     report.aboutMemory[tag] = parsed;
     report.snapshots.push({ kind: "about:memory", tag, path, metrics: parsed.metrics });
-    if (sidebarUrl && current !== "about:memory") {
-      await page.goto(sidebarUrl, { timeout: 60_000, waitUntil: "domcontentloaded" }).catch(() => undefined);
-    } else if (sidebarUrl) {
-      await page.goto(sidebarUrl, { timeout: 60_000, waitUntil: "domcontentloaded" }).catch(() => undefined);
-    }
     return path;
   } catch (error) {
     report.errors.push({ phase: `about:memory:${tag}`, message: redact(error.message) });
@@ -170,7 +176,6 @@ function taskLooksComplete(evidence, reportState) {
 }
 
 const deadline = Date.now() + maxMinutes * 60_000;
-let lastPeakDump = 0;
 let peakTotalRss = 0;
 let taskCompleteAt = 0;
 let postTaskDeadline = 0;
@@ -182,13 +187,9 @@ try {
   await captureBackgroundErrors(session);
   await installDeepseekRequestCounter(session);
 
-  startMemoryMonitor(async snap => {
+  startMemoryMonitor(snap => {
     if (snap.totalRssKiB > peakTotalRss) {
       peakTotalRss = snap.totalRssKiB;
-      if (peakTotalRss - lastPeakDump > 256 * 1024) {
-        lastPeakDump = peakTotalRss;
-        await dumpAboutMemory(`peak-${Math.round(peakTotalRss / 1024)}MiB`);
-      }
     }
   });
 

@@ -85,6 +85,33 @@ export function serializeConversation(messages: unknown): Conversation {
   };
 }
 
+const PERSISTED_INLINE_IMAGE_STUB = "[qz-inline-image-omitted]";
+
+/** Drop data-URL image parts from persisted conversation snapshots (live agent memory keeps them). */
+export function stripPersistedConversationImages(conversation: Conversation | null | undefined) {
+  if (!conversation || conversation.type !== "conversation" || !Array.isArray(conversation.entries)) {
+    return conversation;
+  }
+  return {
+    ...conversation,
+    entries: conversation.entries.map((entry) => {
+      if (entry?.type !== "message" || !entry.message) return entry;
+      const msg = entry.message;
+      if (msg.role !== "user" || !Array.isArray(msg.content)) return entry;
+      let stripped = false;
+      const content = msg.content.map((part) => {
+        if (part?.type !== "image_url") return part;
+        const url = part.image_url?.url;
+        if (typeof url !== "string" || !url.startsWith("data:image/")) return part;
+        stripped = true;
+        return { type: "text", text: PERSISTED_INLINE_IMAGE_STUB };
+      });
+      if (!stripped) return entry;
+      return { ...entry, message: { ...msg, content } };
+    }),
+  };
+}
+
 export function deserializeConversation(saved: unknown, systemPrompt: string) {
   return deserializeConversationWithRepair(saved, systemPrompt).messages;
 }

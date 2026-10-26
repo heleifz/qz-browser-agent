@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSessionRecord, readSessionRecord, serializeConversation, deserializeConversationWithRepair, transcriptFromConversation } from '../../src/shared/session/session-codec.js';
+import {
+  createSessionRecord,
+  readSessionRecord,
+  serializeConversation,
+  deserializeConversationWithRepair,
+  stripPersistedConversationImages,
+  transcriptFromConversation,
+} from '../../src/shared/session/session-codec.js';
 import { normalizeSessionExchangePayload, SESSION_EXCHANGE_FORMAT } from '../../src/shared/session/session-exchange.js';
 import { createSessionRepository } from '../../src/background/session/repository.js';
 import { createMemoryStorage } from '../support/memory-storage.mjs';
@@ -204,3 +211,21 @@ function navigationFixture(storage) {
   });
   return fixture;
 }
+
+test('persisted conversation snapshots omit inline tool image data URLs', () => {
+  const dataUrl = 'data:image/png;base64,abcd';
+  const conversation = serializeConversation([
+    {
+      role: 'user',
+      _origin: 'tool_image',
+      content: [
+        { type: 'text', text: 'screenshot' },
+        { type: 'image_url', image_url: { url: dataUrl, detail: 'low' } },
+      ],
+    },
+  ]);
+  const stripped = stripPersistedConversationImages(conversation);
+  const stored = stripped.entries[0].message.content;
+  assert.ok(!JSON.stringify(stored).includes(dataUrl));
+  assert.equal(stored.filter(part => part.type === 'image_url').length, 0);
+});

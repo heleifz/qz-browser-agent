@@ -34,7 +34,11 @@ import {
   ROOT_CONTEXT_BOUNDARY_ID,
   serializeMessagesForCompaction,
 } from "./compaction.js";
-import { deserializeConversationWithRepair, serializeConversation } from "../../shared/session/session-codec.js";
+import {
+  deserializeConversationWithRepair,
+  serializeConversation,
+  stripPersistedConversationImages,
+} from "../../shared/session/session-codec.js";
 import { repairToolMessageSequence } from "../../shared/tools/tool-message-protocol.js";
 import {
   extractUserMessageImages,
@@ -1708,7 +1712,7 @@ export class Agent {
         attempt: `${attempt}/${attempts}`,
       });
       try {
-        conversation ||= serializeConversation(this.messages);
+        conversation ||= stripPersistedConversationImages(serializeConversation(this.messages));
         await this._conversationStore.writeActiveConversation(
           this.sessionId,
           conversation,
