@@ -40,6 +40,10 @@ registerAccessibilityTools({
   readMainDocumentId: element.readMainDocumentId,
   withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
     if (method === "Accessibility.getFullAXTree") return { nodes: scenario.nodes };
+    if (method === "DOM.getDocument") {
+      if (scenario.documentThrows) throw new Error("dom unavailable");
+      return scenario.document || {};
+    }
     if (method === "DOM.describeNode") return scenario.describe(params);
     return {};
   }),
@@ -379,6 +383,113 @@ const stampedTarget = line(stamped.snapshot, "Save").match(/target=(uid:\S+)/)?.
 const resolvedStamped = await element.resolveElementReference(8, { target: stampedTarget }, context);
 assert.equal(resolvedStamped.ref.documentId, "doc-live");
 delete chrome.scripting;
+
+const clearedByAction = await run({
+  overview: {
+    title: "Clear disabled", url: "https://example.com/forms/post",
+    actions: [{ selector: "#go", role: "button", text: "Go", disabled: false }],
+  },
+  bound: { loaderId: "loader", ids: [4] },
+  nodes: [
+    ax({ id: "root", children: ["go"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "go", parent: "root", backend: 4, role: "button", name: "Go", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assert.doesNotMatch(line(clearedByAction.snapshot, '"Go"'), /\bdisabled\b/, clearedByAction.snapshot);
+
+const domDown = await run({
+  documentThrows: true,
+  overview: { title: "DOM down", url: "https://example.com/forms/post" },
+  nodes: [
+    ax({ id: "root", backend: 1, role: "button", name: "Stay", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assert.match(line(domDown.snapshot, '"Stay"'), /\bdisabled\b/);
+
+function domElement(nodeName, backend, attributes = [], children = [], extra = {}) {
+  return { nodeType: 1, nodeName, backendNodeId: backend, attributes, children, ...extra };
+}
+const corrected = await run({
+  overview: { title: "DOM disabled", url: "https://example.com/forms/post" },
+  document: {
+    root: {
+      nodeType: 9,
+      nodeName: "#document",
+      children: [
+        domElement("BODY", 3, [], [
+          domElement("SELECT", 10, ["id", "city"], [
+            domElement("OPTION", 11, [], []),
+            domElement("OPTION", 12, [], []),
+          ]),
+          domElement("SELECT", 20, ["id", "locked", "disabled", ""], [
+            domElement("OPTION", 21, [], []),
+            domElement("OPTION", 22, ["disabled", ""], []),
+          ]),
+          domElement("SELECT", 30, ["id", "grouped"], [
+            domElement("OPTGROUP", 31, ["disabled", ""], [
+              domElement("OPTION", 32, [], []),
+            ]),
+            domElement("OPTION", 33, [], []),
+          ]),
+          domElement("FIELDSET", 40, ["disabled", ""], [
+            domElement("LEGEND", 41, [], [
+              domElement("BUTTON", 42, [], []),
+              domElement("BUTTON", 49, ["disabled", ""], []),
+            ]),
+            domElement("DIV", 52, [], [
+              domElement("BUTTON", 44, [], []),
+              domElement("INPUT", 45, [], []),
+            ]),
+            domElement("LEGEND", 46, [], [
+              domElement("BUTTON", 51, [], []),
+            ]),
+            domElement("SELECT", 70, [], [
+              domElement("OPTION", 71, [], []),
+            ]),
+            domElement("SPAN", 47, [], [], {
+              shadowRoots: [{ nodeType: 11, children: [domElement("BUTTON", 48, [], [])] }],
+            }),
+          ]),
+          domElement("BUTTON", 50, ["aria-disabled", "true"], []),
+          domElement("SELECT", 60, [], [
+            domElement("OPTION", 61, [], []),
+            domElement("OPTION", 62, ["disabled", ""], []),
+          ]),
+        ]),
+      ],
+    },
+  },
+  nodes: [
+    ax({ id: "root", children: ["city", "hz", "nb", "locked", "bing", "ding", "grouped", "jia", "yi", "shuoming", "legendDisabled", "submit", "note", "extra", "innerSelect", "wu", "shadow", "aria", "mixed", "ren", "ji", "custom"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "city", parent: "root", backend: 10, role: "combobox", name: "城市" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "selected", value: { value: true } }, { name: "disabled", value: { value: true } }] }),
+    ax({ id: "nb", parent: "root", backend: 12, role: "option", name: "宁波", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "locked", parent: "root", backend: 20, role: "combobox", name: "锁定", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "bing", parent: "root", backend: 21, role: "option", name: "丙" }),
+    ax({ id: "ding", parent: "root", backend: 22, role: "option", name: "丁", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "grouped", parent: "root", backend: 30, role: "combobox", name: "分组" }),
+    ax({ id: "jia", parent: "root", backend: 32, role: "option", name: "甲" }),
+    ax({ id: "yi", parent: "root", backend: 33, role: "option", name: "乙", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "shuoming", parent: "root", backend: 42, role: "button", name: "说明", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "legendDisabled", parent: "root", backend: 49, role: "button", name: "图例禁用" }),
+    ax({ id: "submit", parent: "root", backend: 44, role: "button", name: "提交" }),
+    ax({ id: "note", parent: "root", backend: 45, role: "textbox", name: "备注" }),
+    ax({ id: "extra", parent: "root", backend: 51, role: "button", name: "补充" }),
+    ax({ id: "innerSelect", parent: "root", backend: 70, role: "combobox", name: "内选" }),
+    ax({ id: "wu", parent: "root", backend: 71, role: "option", name: "戊" }),
+    ax({ id: "shadow", parent: "root", backend: 48, role: "button", name: "Shadow", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "aria", parent: "root", backend: 50, role: "button", name: "ARIA", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "mixed", parent: "root", backend: 60, role: "combobox", name: "混合" }),
+    ax({ id: "ren", parent: "root", backend: 61, role: "option", name: "壬", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "ji", parent: "root", backend: 62, role: "option", name: "己" }),
+    ax({ id: "custom", parent: "root", backend: 99, role: "button", name: "自定义", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+const disabledNames = ["锁定", "丙", "丁", "甲", "图例禁用", "提交", "备注", "补充", "内选", "戊", "ARIA", "己", "自定义"];
+const enabledNames = ["城市", "杭州", "宁波", "分组", "乙", "说明", "Shadow", "混合", "壬"];
+for (const name of disabledNames) assert.match(line(corrected.snapshot, `"${name}"`), /\bdisabled\b/, corrected.snapshot);
+for (const name of enabledNames) assert.doesNotMatch(line(corrected.snapshot, `"${name}"`), /\bdisabled\b/, corrected.snapshot);
+assert.match(line(corrected.snapshot, '"杭州"'), /\bselected\b/);
 
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);

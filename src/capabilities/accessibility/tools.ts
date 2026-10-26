@@ -293,6 +293,12 @@ function mergeAction(node: SemanticNode, action: Action) {
   if (placeholder) node.placeholder = placeholder;
   const flags = [...(compact.flags || [])];
   if (action?.disabled && !hasFlag(flags, "disabled")) flags.push("disabled");
+  if (action?.disabled === false) {
+    for (let index = flags.length - 1; index >= 0; index -= 1) {
+      const flag = flags[index] || "";
+      if (flag === "disabled" || flag.startsWith("disabled=")) flags.splice(index, 1);
+    }
+  }
   if (typeof action?.checked === "boolean" && !hasFlag(flags, "checked")) flags.push(action.checked ? "checked" : "unchecked");
   if (action?.editable && !hasFlag(flags, "editable")) flags.push("editable");
   compact.flags = flags;
@@ -606,6 +612,149 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+// Chrome keeps disabled on options after they stop inheriting it from a select
+// or optgroup. Correct form controls from the DOM state :disabled matches.
+const NATIVE_FORM_TAGS = new Set(["BUTTON", "FIELDSET", "INPUT", "OPTGROUP", "OPTION", "SELECT", "TEXTAREA"]);
+const DISABLED_CONTROL_ROLES = new Set([
+  "button", "checkbox", "combobox", "listbox", "option", "radio",
+  "searchbox", "slider", "spinbutton", "switch", "textbox",
+]);
+const domDisabledCache = new WeakMap<CdpCommand, Promise<Map<number, boolean>>>();
+
+interface DomTreeNode {
+  nodeType?: number;
+  nodeName?: string;
+  backendNodeId?: number;
+  attributes?: unknown;
+  children?: unknown;
+  shadowRoots?: unknown;
+  contentDocument?: unknown;
+}
+
+function isDomTreeNode(value: unknown): value is DomTreeNode {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function domNodes(value: unknown): DomTreeNode[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isDomTreeNode);
+}
+
+function attributePresent(node: DomTreeNode, name: string): boolean {
+  const attributes = node.attributes;
+  if (!Array.isArray(attributes)) return false;
+  for (let index = 0; index < attributes.length; index += 2) {
+    if (attributes[index] === name) return true;
+  }
+  return false;
+}
+
+function attributeIs(node: DomTreeNode, name: string, expected: string): boolean {
+  const attributes = node.attributes;
+  if (!Array.isArray(attributes)) return false;
+  for (let index = 0; index < attributes.length; index += 2) {
+    if (attributes[index] === name) return String(attributes[index + 1] ?? "") === expected;
+  }
+  return false;
+}
+
+function axRole(node: AxNode): string {
+  return String(node?.role?.value || "").toLowerCase();
+}
+
+function nativeFormDisabled(tag: string, ownDisabled: boolean, fieldsetDisabled: boolean, selectDisabled: boolean, optgroupDisabled: boolean): boolean {
+  if (tag === "OPTION") return ownDisabled || optgroupDisabled || selectDisabled;
+  if (tag === "OPTGROUP") return ownDisabled || selectDisabled;
+  if (tag === "FIELDSET") return ownDisabled || fieldsetDisabled;
+  return ownDisabled || fieldsetDisabled;
+}
+
+function effectiveDisabledByBackend(root: DomTreeNode): Map<number, boolean> {
+  const states = new Map<number, boolean>();
+  function visitUnrelated(node: DomTreeNode) {
+    for (const shadow of domNodes(node.shadowRoots)) visit(shadow, false, false, false);
+    if (isDomTreeNode(node.contentDocument)) visit(node.contentDocument, false, false, false);
+  }
+  function visit(node: DomTreeNode | undefined, fieldsetDisabled: boolean, selectDisabled: boolean, optgroupDisabled: boolean) {
+    if (!node) return;
+    if (Number(node.nodeType || 0) !== 1) {
+      for (const child of domNodes(node.children)) visit(child, fieldsetDisabled, selectDisabled, optgroupDisabled);
+      return;
+    }
+    const tag = String(node.nodeName || "").toUpperCase();
+    const ownDisabled = attributePresent(node, "disabled");
+    const ariaDisabled = attributeIs(node, "aria-disabled", "true");
+    if (NATIVE_FORM_TAGS.has(tag)) {
+      const backend = Number(node.backendNodeId || 0);
+      if (backend > 0) states.set(backend, ariaDisabled || nativeFormDisabled(tag, ownDisabled, fieldsetDisabled, selectDisabled, optgroupDisabled));
+    }
+    if (tag === "FIELDSET") {
+      const legend = domNodes(node.children).find(child => Number(child.nodeType) === 1 && String(child.nodeName || "").toUpperCase() === "LEGEND");
+      const descendantDisabled = fieldsetDisabled || ownDisabled;
+      for (const child of domNodes(node.children)) {
+        visit(child, child === legend ? fieldsetDisabled : descendantDisabled, selectDisabled, optgroupDisabled);
+      }
+      visitUnrelated(node);
+      return;
+    }
+    const nextSelect = tag === "SELECT" ? ownDisabled || fieldsetDisabled : selectDisabled;
+    const nextOptgroup = tag === "OPTGROUP" ? ownDisabled : tag === "SELECT" ? false : optgroupDisabled;
+    for (const child of domNodes(node.children)) visit(child, fieldsetDisabled, nextSelect, nextOptgroup);
+    visitUnrelated(node);
+  }
+  visit(root, false, false, false);
+  return states;
+}
+
+async function loadDomDisabledStates(send: CdpCommand): Promise<Map<number, boolean>> {
+  try {
+    const described = record(await send("DOM.getDocument", { depth: -1, pierce: true }));
+    if (!isDomTreeNode(described.root)) return new Map();
+    return effectiveDisabledByBackend(described.root);
+  } catch {
+    return new Map();
+  }
+}
+
+function domDisabledStates(send: CdpCommand): Promise<Map<number, boolean>> {
+  const cached = domDisabledCache.get(send);
+  if (cached) return cached;
+  const pending = loadDomDisabledStates(send);
+  domDisabledCache.set(send, pending);
+  return pending;
+}
+
+function ensureDisabledProperty(node: AxNode) {
+  const properties = node.properties || [];
+  const existing = properties.find(property => property?.name === "disabled");
+  if (!existing) {
+    node.properties = [...properties, { name: "disabled", value: { value: true } }];
+    return;
+  }
+  if (existing.value?.value === true) return;
+  existing.value = { value: true };
+}
+
+function clearDisabledProperty(node: AxNode) {
+  if (!node.properties?.some(property => property?.name === "disabled")) return;
+  node.properties = node.properties.filter(property => property?.name !== "disabled");
+}
+
+function applyDomDisabled(nodes: AxNode[], states: Map<number, boolean>) {
+  if (!states.size) return;
+  for (const node of nodes) {
+    const backend = Number(node?.backendDOMNodeId || 0);
+    if (!states.has(backend) || !DISABLED_CONTROL_ROLES.has(axRole(node))) continue;
+    if (states.get(backend)) ensureDisabledProperty(node);
+    else clearDisabledProperty(node);
+  }
+}
+
+async function correctDisabledFromDom(send: CdpCommand, nodes: AxNode[]) {
+  if (!nodes.some(node => DISABLED_CONTROL_ROLES.has(axRole(node)))) return;
+  applyDomDisabled(nodes, await domDisabledStates(send));
+}
+
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
 async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: number): Promise<AxNode[]> {
   try {
@@ -622,6 +771,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: nu
         // Child sessions number their own node ids, so those ids are not an echo of the page tree.
         const echoed = !frame.sessionId && fetched.some(node => node?.nodeId && mainIds.has(node.nodeId));
         if (!fetched.length || echoed) continue;
+        await correctDisabledFromDom(frame.send, fetched);
         const owner = record(await send("DOM.getFrameOwner", { frameId: frame.id }));
         const backendNodeId = Number(owner.backendNodeId || 0);
         if (!backendNodeId) continue;
@@ -737,6 +887,7 @@ registerTool({
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
+      await correctDisabledFromDom(send, nodes);
       const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
       return buildAccessibilitySnapshot(withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
