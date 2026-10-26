@@ -112,6 +112,7 @@ async function evaluateChrome(session, expression) {
 let frameSerial = 0;
 
 async function evaluateExtension(session, target, expression) {
+  const extensionTimeoutMs = Number(process.env.QINGZHOU_FIREFOX_EXTENSION_TIMEOUT_MS || 20_000);
   const message = `qz-firefox-test-${++frameSerial}`;
   const frameSource = `(async () => {
     try {
@@ -150,7 +151,7 @@ async function evaluateExtension(session, target, expression) {
       mm.addMessageListener(messageName, listener);
       try { mm.loadFrameScript(dataUrl, false); }
       catch (error) { finish({ ok: false, error: String(error) }); return; }
-      timer = setTimeout(() => finish({ ok: false, error: "extension script timed out" }), 20000);
+      timer = setTimeout(() => finish({ ok: false, error: "extension script timed out" }), ${extensionTimeoutMs});
     });
     return message;
   `);
