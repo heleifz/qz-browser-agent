@@ -64,7 +64,9 @@ failures so later sites still produce evidence; exit zero means the matrix compl
 tasks passed. `--concurrency` defaults to 2 and supports 1–3; `--repeat-all` runs three paired trials
 for every selected task. Existing result directories are rejected to preserve earlier attempts.
 Read tasks also capture a final DOM oracle to distinguish source changes from wrong answers;
-the initial-oracle score is retained even when the page changes.
+the initial-oracle score is retained even when the page changes. The harness uses one document
+handle for unique-selector binding and supports selector-only UIDs for subtree reads and actions,
+matching the production element runtime's fallback route.
 
 The matrix also measures six scope/BFS combinations per reachable site and compares fixed/sticky
 control names in full versus viewport high-budget snapshots after each prototype task. These audit

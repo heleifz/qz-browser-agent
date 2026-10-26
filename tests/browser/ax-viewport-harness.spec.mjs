@@ -6,7 +6,7 @@ import { preparePublicTask, readPublicOracle } from '../live/ax-viewport-public-
 test('public AX measurement binds Content after a startup document replacement', async () => {
   const server = createServer((request, response) => response.writeHead(200, { 'content-type': 'text/html' }).end(
     request.url === '/ready'
-      ? '<title>Ready document</title><body style="height:2000px"><h1>Ready document</h1><button>Ready action</button>'
+      ? '<title>Ready document</title><body style="height:2000px"><h1>Ready document</h1><button id="ready" onclick="this.dataset.clicked=\'yes\'">Ready action</button>'
       : '<title>Starting</title><script>setTimeout(() => location.replace("/ready"), 50)</script>',
   ));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -19,6 +19,14 @@ test('public AX measurement binds Content after a startup document replacement',
     expect(snapshot.pageOverviewError).toBeUndefined();
     expect(snapshot.title).toBe('Ready document');
     expect(snapshot.snapshot).toContain('Ready action');
+    const target = snapshot.snapshot.match(/target=(uid:\S+) button "Ready action"/)?.[1];
+    const ref = h.reference(target);
+    expect(ref.backendNodeId).toBeGreaterThan(0);
+    expect(ref.selector).toBeTruthy();
+    delete ref.backendNodeId; // Exercise the production selector-only uid route.
+    expect((await h.snapshot({ root: target })).snapshot).toContain('Ready action');
+    await h.action({ target, action: 'click' });
+    await expect(h.page.locator('#ready')).toHaveAttribute('data-clicked', 'yes');
     const task = { group: 'in-view', probe: { css: 'h1' }, fromProbe: true };
     expect((await preparePublicTask(h.page, task)).expected).toEqual(['Ready document']);
     await expect(preparePublicTask(h.page, { ...task, group: 'off-screen' })).rejects.toThrow('not initially off-screen');

@@ -27,7 +27,11 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
   }
   async function invoke(action, args = {}, ref) {
     const payload = { ...args, action };
-    if (!ref) return evaluate(`new Promise(resolve => globalThis.__QZ_CONTENT_MESSAGE_LISTENER(${JSON.stringify(payload)}, {}, resolve))`);
+    if (!ref?.backendNodeId) {
+      if (ref && !ref.selector) throw new Error('STALE_ELEMENT_UID');
+      if (ref) Object.assign(payload, { selector: ref.selector, index: ref.index || 0 });
+      return evaluate(`new Promise(resolve => globalThis.__QZ_CONTENT_MESSAGE_LISTENER(${JSON.stringify(payload)}, {}, resolve))`);
+    }
     const { object } = await send('DOM.resolveNode', { backendNodeId: ref.backendNodeId, executionContextId: world, objectGroup: 'ax-test' });
     try {
       const result = await send('Runtime.callFunctionOn', { objectId: object.objectId,
@@ -36,10 +40,17 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
       return result.result.value;
     } finally { await send('Runtime.releaseObjectGroup', { objectGroup: 'ax-test' }); }
   }
-  async function backend(selector) {
-    const { root } = await send('DOM.getDocument');
-    const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector });
-    return nodeId ? (await send('DOM.describeNode', { nodeId })).node.backendNodeId : 0;
+  async function bind(selectors) {
+    // Match the production binder: one document handle, unique selectors, sequential reads.
+    const { root } = await send('DOM.getDocument', { depth: 0, pierce: true });
+    const ids = [];
+    for (const selector of selectors) {
+      try {
+        const { nodeIds } = selector ? await send('DOM.querySelectorAll', { nodeId: root.nodeId, selector }) : { nodeIds: [] };
+        ids.push(nodeIds.length === 1 ? (await send('DOM.describeNode', { nodeId: nodeIds[0] })).node.backendNodeId : 0);
+      } catch { ids.push(0); }
+    }
+    return { loaderId: 'fixture', ids };
   }
   const host = {
     registerTool: value => { definition = value; },
@@ -51,14 +62,14 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
     registerElementRef: ref => refs.set(ref.uid, ref),
     resolveElementReference: async (_tab, { target }) => {
       const ref = refs.get(target.replace(/^uid:/, ''));
-      const selector = target.startsWith('css:') ? target.slice(4) : '';
-      return { tabId: 1, target, uid: ref?.uid, selector, ref };
+      const selector = target.startsWith('css:') ? target.slice(4) : !ref?.backendNodeId ? ref?.selector || '' : '';
+      return { tabId: 1, target, uid: ref?.uid, selector, index: ref?.index || 0, ref };
     },
-    backendNodeIdForSelector: (_tab, selector) => backend(selector),
-    bindBackendNodes: async (_tab, selectors) => ({ loaderId: 'fixture', ids: await Promise.all(selectors.map(selector => selector ? backend(selector).catch(() => 0) : 0)) }),
+    backendNodeIdForSelector: async (_tab, selector) => (await bind([selector])).ids[0],
+    bindBackendNodes: (_tab, selectors) => bind(selectors),
     makeSessionTabTargetError: code => new Error(code),
     sendToContent: (_tab, action, args) => invoke(action, args),
-    callElement: (_tab, resolved, action, args) => invoke(action, args, resolved.ref),
+    callElement: (_tab, resolved, action, args) => invoke(action, { selector: resolved.selector, index: resolved.index, ...args }, resolved.ref),
     readMainDocumentId: async () => 'fixture-document',
     withDebugger: (_tab, callback) => callback({}, send),
     elementTargetGrammar: 'Use the exact uid: target from the snapshot.',
