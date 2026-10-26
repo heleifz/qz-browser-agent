@@ -46,10 +46,10 @@ export function diffAboutMemoryMetrics(before, after) {
   return delta;
 }
 
-export function classifyFirefoxProcess(args = "") {
-  const text = String(args);
+export function classifyFirefoxProcess(args = "", comm = "") {
+  const text = `${String(comm)} ${String(args)}`;
+  if (/WebExtensions/i.test(text)) return "webextensions";
   if (text.includes("-isForBrowser")) return "content";
-  if (text.includes("WebExtensions")) return "webextensions";
   if (text.includes("-contentproc") && text.includes("parentBuildID")) {
     if (text.includes("Socket")) return "socket";
     if (text.includes("RDD")) return "rdd";
