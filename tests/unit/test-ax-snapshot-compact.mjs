@@ -48,7 +48,9 @@ registerAccessibilityTools({
   callElement: async () => scenario.overview,
   readMainDocumentId: element.readMainDocumentId,
   withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
-    if (method === "Accessibility.getFullAXTree") return { nodes: scenario.nodes };
+    if (method === "Accessibility.getFullAXTree") { scenario.fetchParams = params; return { nodes: scenario.nodes }; }
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientHeight: 600 } };
+    if (method === "DOMSnapshot.captureSnapshot") return scenario.geometry || {};
     if (method === "DOM.describeNode") return scenario.describe(params);
     return {};
   }),
@@ -82,10 +84,11 @@ async function run(next) {
     describe: () => ({ node: {} }),
     bound: { loaderId: "loader", ids: [] },
     limit: 120,
+    scope: "full",
     ...next,
   };
   currentUrl = scenario.overview.url;
-  return definition.execute({ tabId: 8, limit: scenario.limit, actionsLimit: 40 }, null, context);
+  return definition.execute({ tabId: 8, scope: scenario.scope, depth: scenario.depth, limit: scenario.limit, actionsLimit: 40 }, null, context);
 }
 
 const displayText = [
@@ -439,5 +442,50 @@ const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);
 assert.equal(resolvedTree.uid, treeTarget.slice(4));
 assert.match(resolvedTree.uid, /^t8\.[0-9a-z]{6}\.\d+$/);
+
+const viewportNodes = [
+  ax({ id: "root", backend: 1, role: "RootWebArea", children: ["above", "ancestor", "below", ...headingIds] }),
+  ax({ id: "above", parent: "root", backend: 2, role: "button", name: "Above" }),
+  ax({ id: "ancestor", parent: "root", backend: 3, role: "group", name: "Off-band ancestor", children: ["partial", "side"] }),
+  ax({ id: "partial", parent: "ancestor", backend: 4, role: "button", name: "Partly visible" }),
+  ax({ id: "side", parent: "ancestor", backend: 5, role: "button", name: "Horizontal overflow" }),
+  ax({ id: "below", parent: "root", backend: 6, role: "button", name: "Below" }),
+  ...headingIds.map((id, index) => ax({ id, parent: "root", backend: 100 + index, role: "heading", name: id })),
+];
+const viewportScenario = {
+  scope: undefined, limit: 20,
+  overview: { title: "Viewport", url: currentUrl, viewport: { height: 600 }, actions: [{ selector: "#below", role: "button", name: "Below" }] },
+  bound: { loaderId: "loader", ids: [6] },
+  nodes: viewportNodes,
+  geometry: { documents: [{ scrollOffsetY: 100, nodes: { backendNodeId: viewportNodes.map(n => n.backendDOMNodeId) }, layout: {
+    nodeIndex: viewportNodes.map((_n, i) => i),
+    // Document coordinates: the band is [100, 700]. Partial overlaps at both ends survive, regardless of X.
+    bounds: [[0, 100, 800, 600], [0, 60, 20, 40], [0, 20, 20, 40], [0, 90, 20, 30], [9000, 690, 20, 40], [0, 700, 20, 40], ...headingIds.map(() => [0, 200, 20, 20])],
+  } }] },
+};
+const viewport = await run(viewportScenario);
+assert.equal(viewport.scope, "viewport");
+assert.deepEqual(scenario.fetchParams, {}, "fetch all raw nodes before viewport and depth filtering");
+assert.deepEqual(viewport.viewportOmitted, { above: 1, below: 1, unmeasured: 0 });
+assert.match(viewport.snapshot, /↑.*1/);
+assert.match(viewport.snapshot, /↓.*1/);
+assert.doesNotMatch(viewport.snapshot, /"Above"|"Below"/);
+assert.doesNotMatch(line(viewport.snapshot, "Off-band ancestor"), /target=/);
+assert.equal(registeredRefs.some(ref => ref.backendNodeId === 3 || ref.backendNodeId === 6), false);
+assert.equal(viewport.returnedNodeCount, 20);
+assert.equal(viewport.outlineTruncated, true, "BFS still applies after viewport filtering");
+const viewportLarge = await run({ ...viewportScenario, limit: 300 });
+assert.deepEqual(viewportLarge.viewportOmitted, viewport.viewportOmitted, "outside counts are independent of BFS leftovers");
+assert.equal(viewportLarge.outlineTruncated, false);
+assert.match(viewportLarge.snapshot, /Partly visible/);
+assert.match(viewportLarge.snapshot, /Horizontal overflow/);
+const viewportShallow = await run({ ...viewportScenario, depth: 1 });
+assert.deepEqual(viewportShallow.viewportOmitted, viewport.viewportOmitted, "outside counts precede depth truncation too");
+const viewportFull = await run({ ...viewportScenario, scope: "full", limit: 300 });
+assert.equal(viewportFull.viewportOmitted, undefined);
+assert.match(viewportFull.snapshot, /"Above"/);
+assert.match(viewportFull.snapshot, /"Below"/);
+assert.match(line(viewportFull.snapshot, "Off-band ancestor"), /target=/);
+assert.deepEqual(scenario.fetchParams, { depth: 16 });
 
 console.log("ax snapshot compact tests passed");

@@ -305,6 +305,30 @@ surface. Preparation failure ends the operation before input is sent.
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
 Worker calls tools and fetch through the host; its runtime contains only Worker APIs.
 
+## Accessibility snapshots
+
+Use `get_ax_tree({scope:"viewport"})` for the current vertical viewport band, or
+`get_ax_tree({scope:"full"})` for the document range. The page root defaults to viewport;
+explicit `uid:`/`css:` roots default to full subtree scope. Both retain depth and BFS limits.
+
+The [accessibility capability](../src/capabilities/accessibility/tools.ts) filters raw AX nodes
+by positive Y overlap before semantic pruning, depth limits, redundant-text removal and BFS.
+Horizontal overflow stays eligible. Off-band ancestors of eligible nodes stay structural without
+targets. Guaranteed actions are filtered too, so they cannot reintroduce omitted off-screen nodes.
+
+The `↑`/`↓` markers and `viewportOmitted.above/below` count actual raw AX nodes dropped, including
+text fragments that semantic formatting may later merge or remove. Retained ancestors are excluded.
+These counts are independent of BFS leftovers and cover only the browser's existing AX/DOM set;
+unloaded lazy/virtual items and browser-adapter collection caps are outside that set. The default
+BFS budget remains 120 optional nodes (maximum 300), plus guaranteed actions and their ancestors.
+
+[Geometry collection](../src/capabilities/accessibility/viewport.ts) uses Chromium's batched
+`DOMSnapshot.captureSnapshot`, then box-model reads for missing boxes. Firefox uses its existing
+`DOM.getBoxModel` adapter because it lacks DOMSnapshot. Inline fragments without DOM ids inherit
+the parent box classification. Unmeasurable nodes remain eligible and are reported separately;
+geometry failures do not silently discard content. Direct child frame boxes are translated into
+the root viewport. This is a vertical band filter, not an occlusion or nested-scroll clipping test.
+
 ## Images and screenshots
 
 The shared [image policy](../src/shared/images/policy.ts) and

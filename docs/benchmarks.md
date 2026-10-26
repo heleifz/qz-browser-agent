@@ -16,6 +16,34 @@ benchmark -- <target> --help` prints the common options. For specialized article
 the linked argument parser before invoking them. Keep generated evidence under ignored
 `tests/results/` or outside the checkout.
 
+## AX viewport and BFS budgets
+
+Measure snapshot sizes on four synthetic pages and the public Wikipedia River article:
+
+```bash
+node tests/benchmarks/ax-viewport.mjs
+```
+
+The isolated Chromium harness runs the production AX tool and Content handlers at 1280×720.
+It compares full/viewport scope with BFS budgets 120, 300 and a measurement-only high limit.
+Depth 16 and normal text pruning remain enabled. The public tool still caps `limit` at 300.
+`tests/results/viewport-ax/sizes.json` records node counts, snapshot characters, characters/4
+estimates, raw omission counts, truncation and elapsed time; adjacent text files preserve snapshots.
+Live-page errors are recorded without discarding fixture results.
+
+For an explicitly authorized real-provider comparison, export `DEEPSEEK_API_KEY` securely and run:
+
+```bash
+npm test -- live ax-viewport
+```
+
+This runs six short tasks per variant with `deepseek-flash`, a 1M context budget and image support.
+The baseline compiles the AX tool/messages from Git commit `cbac588`; the prototype uses the current
+worktree. It uses a minimal tool loop, not the full extension Agent lifecycle or CLI/MCP. Production
+Content handlers execute actions and scrolling; DOM state checks answers and side effects.
+`tests/results/viewport-ax/live/` contains transcripts, provider usage and pass/fail results.
+`QZ_AX_OUTPUT` selects another evidence directory. No user profile or stored settings are changed.
+
 ## Replay a conversation
 
 The runner measures compiled Side Panel rendering with simulated Chrome APIs and recorded data.

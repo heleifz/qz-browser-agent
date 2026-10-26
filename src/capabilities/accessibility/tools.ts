@@ -1,5 +1,6 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
+import { filterViewportNodes, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { directChildFrames, openChildFrame, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
@@ -63,7 +64,7 @@ type DisplayNode = {
   omitted?: number; suppressName?: boolean; unavailable?: boolean; placeholder?: string; inputType?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
 } & Partial<CompactNode>;
-function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, rootFrameId = "", maxDepth = Infinity, loaderId = "", actions = [] }: SnapshotContext & { limit: number; rootBackendNodeId?: number; rootFrameId?: string; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[] }) {
+function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, rootFrameId = "", maxDepth = Infinity, loaderId = "", actions = [], viewportBands, viewportHeight = 0 }: SnapshotContext & { limit: number; rootBackendNodeId?: number; rootFrameId?: string; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[]; viewportBands?: Awaited<ReturnType<typeof readViewportBands>>; viewportHeight?: number }) {
   const nodeMap = new Map<string, AxNode>();
   for (const node of rawNodes || []) {
     if (node?.nodeId) nodeMap.set(node.nodeId, node);
@@ -79,12 +80,34 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     roots = requestedRoot ? [requestedRoot] : [];
     rootFound = !!requestedRoot;
   }
+  const scopedNodes: AxNode[] = [];
+  const collect = (node: AxNode) => {
+    scopedNodes.push(node);
+    for (const id of node.childIds || []) {
+      const child = nodeMap.get(id);
+      if (child) collect(child);
+    }
+  };
+  if (viewportBands) for (const root of roots) collect(root);
+  const viewportFilter = viewportBands ? filterViewportNodes(scopedNodes, viewportBands) : undefined;
+  if (viewportFilter) {
+    const byBackend = new Map(scopedNodes.filter(node => (node.documentFrameId || "") === rootFrameId)
+      .map(node => [node.backendDOMNodeId, node]));
+    actions = actions.filter(anchor => {
+      const node = anchor.backendNodeId ? byBackend.get(anchor.backendNodeId) : undefined;
+      if (node) return viewportFilter.kept.has(node.nodeId) && !viewportFilter.structural.has(node.nodeId);
+      const rect = record(anchor.action.rect);
+      const top = Number(rect.y), height = Number(rect.h);
+      return !Number.isFinite(top) || !Number.isFinite(height) || !(viewportHeight > 0)
+        || verticalBand(top, top + height, viewportHeight) === "inside";
+    });
+  }
   const actionBackendIds = new Set(actions.map(anchor => Number(anchor.backendNodeId || 0)).filter(id => id > 0));
   const semanticRoots: SemanticNode[] = [];
   const semanticNodes: SemanticNode[] = [];
 
   const buildSemanticTree = (rawNode: AxNode | undefined, depth: number, parentNode: SemanticNode | null): void => {
-    if (!rawNode) return;
+    if (!rawNode || (viewportFilter && !viewportFilter.kept.has(rawNode.nodeId))) return;
     const compact = compactAxNode(rawNode);
     const backendNodeId = Number(compact.backendNodeId || 0);
     const keep = shouldKeepAxNode(compact, depth)
@@ -98,6 +121,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
         depth,
         parent: parentNode,
         children: [],
+        unavailable: viewportFilter?.structural.has(rawNode.nodeId) || undefined,
       };
       semanticNodes.push(semanticNode);
       if (parentNode) {
@@ -176,6 +200,11 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
   for (const root of semanticRoots) emitDisplayNode(root, null);
 
   const lines = displayNodes.map(node => formatSnapshotLine(node));
+  if (viewportFilter) {
+    lines.unshift(toolT("aboveViewport", { count: viewportFilter.above }));
+    lines.push(toolT("belowViewport", { count: viewportFilter.below }));
+    if (viewportFilter.unmeasured) lines.push(toolT("unmeasuredViewport", { count: viewportFilter.unmeasured }));
+  }
   const truncatedNodeCount = Math.max(0, semanticNodes.length - displayNodes.length);
   return {
     snapshot: lines.join("\n"),
@@ -186,6 +215,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     truncatedNodeCount,
     outlineTruncated: truncatedNodeCount > 0,
     rootFound,
+    viewportOmitted: viewportFilter ? { above: viewportFilter.above, below: viewportFilter.below, unmeasured: viewportFilter.unmeasured } : undefined,
   };
 }
 
@@ -609,7 +639,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
-async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: number): Promise<AxNode[]> {
+async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: number): Promise<AxNode[]> {
   try {
     const frames = await directChildFrames(send);
     if (!frames.length) return nodes;
@@ -617,7 +647,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: nu
     const mainIds = new Set(combined.map(node => node.nodeId).filter(Boolean));
     for (const frame of frames) {
       try {
-        const params = frame.sessionId ? { depth } : { frameId: frame.id, depth };
+        const params = { ...(!frame.sessionId ? { frameId: frame.id } : {}), ...(depth == null ? {} : { depth }) };
         const result = await frame.send("Accessibility.getFullAXTree", params);
         const fetched = result && typeof result === "object" && "nodes" in result && Array.isArray((result as { nodes?: unknown }).nodes)
           ? (result as { nodes: AxNode[] }).nodes : [];
@@ -663,6 +693,7 @@ registerTool({
     properties: {
       tabId: { type: "number", description: toolT("getAxTreeTabId") },
       root: { type: "string", description: toolT("getAxTreeRoot") },
+      scope: { type: "string", enum: ["viewport", "full"], description: toolT("getAxTreeScope") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
@@ -670,13 +701,14 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(root || "root").trim() || "root";
+    const snapshotScope = scope || (requestedRoot === "root" ? "viewport" : "full");
     let targetTabId = tabId;
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
@@ -736,13 +768,18 @@ registerTool({
         throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { root: requestedRoot });
       }
       const anchors = await actionAnchors(frame?.send || send, actionList, bound.ids);
-      const fetchDepth = rootBackendNodeId ? 40 : axDepth;
-      const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
+      // Viewport omission counts must not depend on the later depth/BFS budgets.
+      const fetchDepth = snapshotScope === "viewport" ? undefined : rootBackendNodeId ? 40 : axDepth;
+      const result = await send("Accessibility.getFullAXTree", fetchDepth == null ? {} : { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
       const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
+      const viewportHeight = rootFrameId ? 0 : Number(record(overview?.viewport).height);
+      const viewportBands = snapshotScope === "viewport"
+        ? await readViewportBands(send, withFrames, viewportHeight) : undefined;
       return buildAccessibilitySnapshot(withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
         rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+        viewportBands, viewportHeight,
       });
     }, context);
     return {
@@ -752,6 +789,8 @@ registerTool({
       viewport: overview?.viewport,
       snapshotId,
       root: resolvedRoot,
+      scope: snapshotScope,
+      viewportOmitted: ax.viewportOmitted,
       rootFound: ax.rootFound,
       depth: axDepth,
       nodeCount: ax.nodeCount,

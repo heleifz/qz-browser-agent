@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Vertical viewport band</title>
+<style>
+  body { margin: 0; min-height: 200vh }
+  button, [role=group] { position: absolute; height: 20px }
+  #above { top: -40px }
+  #top-overlap { top: -5px; left: 200px }
+  #bottom-overlap { top: calc(100vh - 5px) }
+  #below { top: 100vh }
+  #side { top: 100px; left: 2400px }
+  [role=group] { top: -100px; left: 400px }
+  #child { top: 110px }
+</style>
+<button id="above">Above band</button>
+<button id="top-overlap">Top intersection</button>
+<button id="bottom-overlap">Bottom intersection</button>
+<button id="below">Below band</button>
+<button id="side">Horizontal overflow</button>
+<div role="group" aria-label="Off-band ancestor"><button id="child">Visible descendant</button></div>
