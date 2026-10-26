@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 
 let currentUrl = "https://example.com/forms/post";
+const debuggerListeners = [];
 globalThis.chrome = {
   runtime: { id: "extension-id" },
   tabs: { async get(tabId) { return { id: tabId, url: currentUrl }; } },
-  debugger: { onEvent: { addListener() {} }, onDetach: { addListener() {} } },
+  debugger: {
+    onEvent: { addListener(listener) { debuggerListeners.push(listener); } },
+    onDetach: { addListener() {} },
+  },
 };
 
 const { createElementRuntime } = await import("../../src/background/tools/element-runtime.js");
@@ -23,6 +27,64 @@ const element = createElementRuntime({
 
 let scenario = {};
 let definition;
+let cdpCalls = [];
+let remoteObjects = new Map();
+function createSend(sessionId) {
+  const send = async (method, params = {}) => {
+    cdpCalls.push({ sessionId, method, params });
+    if (method === "Accessibility.getFullAXTree") {
+      if (sessionId || params.frameId) return { nodes: scenario.frameNodes || [] };
+      return { nodes: scenario.nodes };
+    }
+    if (method === "DOM.describeNode") return scenario.describe ? scenario.describe(params) : { node: {} };
+    if (method === "Page.getFrameTree") {
+      if (sessionId) return scenario.childFrameTree || { frameTree: { frame: { id: "child-frame", loaderId: "child-loader" } } };
+      return scenario.frameTree || {};
+    }
+    if (method === "Target.setAutoAttach") {
+      scenario.onAutoAttach?.();
+      return {};
+    }
+    if (method === "DOM.getFrameOwner") return { backendNodeId: scenario.ownerBackend || 0 };
+    if (method === "DOM.getDocument") {
+      if (scenario.documentThrows) throw new Error(scenario.documentError || "DOM.getDocument wasn't found");
+      return { root: { nodeId: sessionId ? scenario.childDocumentNodeId || 2 : scenario.documentNodeId || 1, nodeName: "#document" } };
+    }
+    if (method === "DOM.pushNodesByBackendIdsToFrontend") {
+      if (scenario.pushThrows) throw new Error("push failed");
+      const table = sessionId ? scenario.childNodeIds || {} : scenario.nodeIds || {};
+      return { nodeIds: (params.backendNodeIds || []).map(id => Object.hasOwn(table, id) ? table[id] : 0) };
+    }
+    if (method === "DOM.querySelectorAll") {
+      if (scenario.queryThrows) throw new Error("query failed");
+      const table = sessionId ? scenario.childDisabledNodeIds : scenario.disabledNodeIds;
+      return { nodeIds: table || [] };
+    }
+    if (method === "DOM.resolveNode") {
+      if (scenario.resolveThrows) throw new Error("resolve failed");
+      const objectId = `obj-${remoteObjects.size + 1}`;
+      remoteObjects.set(objectId, { sessionId, nodeId: params.nodeId });
+      return { object: { objectId } };
+    }
+    if (method === "Runtime.callFunctionOn") {
+      if (scenario.callThrows) throw new Error("call failed");
+      const saved = remoteObjects.get(params.objectId) || {};
+      const table = saved.sessionId ? scenario.childAria : scenario.aria;
+      const value = table && Object.hasOwn(table, saved.nodeId) ? table[saved.nodeId] : false;
+      if (value === "exception") return { exceptionDetails: { text: "failed" }, result: { value: false } };
+      return { result: { value } };
+    }
+    if (method === "Runtime.releaseObjectGroup") {
+      if (scenario.releaseThrows) throw new Error("release failed");
+      return {};
+    }
+    return {};
+  };
+  send.tabId = 8;
+  send.connectionId = 1;
+  send.inSession = childSessionId => createSend(String(childSessionId || ""));
+  return send;
+}
 registerAccessibilityTools({
   registerTool: value => { definition = value; },
   ToolExecutionError,
@@ -38,15 +100,7 @@ registerAccessibilityTools({
   sendToContent: async () => scenario.overview,
   callElement: async () => scenario.overview,
   readMainDocumentId: element.readMainDocumentId,
-  withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
-    if (method === "Accessibility.getFullAXTree") return { nodes: scenario.nodes };
-    if (method === "DOM.getDocument") {
-      if (scenario.documentThrows) throw new Error("dom unavailable");
-      return scenario.document || {};
-    }
-    if (method === "DOM.describeNode") return scenario.describe(params);
-    return {};
-  }),
+  withDebugger: async (_id, fn) => fn({ tabId: 8 }, createSend("")),
   elementTargetGrammar: "target grammar",
 });
 
@@ -70,7 +124,20 @@ function line(snapshot, part) {
   return String(snapshot || "").split("\n").find(item => item.includes(part)) || "";
 }
 
+function calls(method, sessionId = undefined) {
+  return cdpCalls.filter(call => call.method === method && (sessionId === undefined || call.sessionId === sessionId));
+}
+
+function assertDisabled(snapshot, name, disabled) {
+  const text = line(snapshot, `"${name}"`);
+  assert.notEqual(text, "", snapshot);
+  if (disabled) assert.match(text, /\bdisabled\b/, text);
+  else assert.doesNotMatch(text, /\bdisabled\b/, text);
+}
+
 async function run(next) {
+  cdpCalls = [];
+  remoteObjects = new Map();
   scenario = {
     describe: () => ({ node: {} }),
     bound: { loaderId: "loader", ids: [] },
@@ -395,7 +462,7 @@ const clearedByAction = await run({
     ax({ id: "go", parent: "root", backend: 4, role: "button", name: "Go", properties: [{ name: "disabled", value: { value: true } }] }),
   ],
 });
-assert.doesNotMatch(line(clearedByAction.snapshot, '"Go"'), /\bdisabled\b/, clearedByAction.snapshot);
+assert.match(line(clearedByAction.snapshot, '"Go"'), /\bdisabled\b/, "an action does not remove the AX disabled flag");
 
 const domDown = await run({
   documentThrows: true,
@@ -406,90 +473,210 @@ const domDown = await run({
 });
 assert.match(line(domDown.snapshot, '"Stay"'), /\bdisabled\b/);
 
-function domElement(nodeName, backend, attributes = [], children = [], extra = {}) {
-  return { nodeType: 1, nodeName, backendNodeId: backend, attributes, children, ...extra };
-}
-const corrected = await run({
-  overview: { title: "DOM disabled", url: "https://example.com/forms/post" },
-  document: {
-    root: {
-      nodeType: 9,
-      nodeName: "#document",
-      children: [
-        domElement("BODY", 3, [], [
-          domElement("SELECT", 10, ["id", "city"], [
-            domElement("OPTION", 11, [], []),
-            domElement("OPTION", 12, [], []),
-          ]),
-          domElement("SELECT", 20, ["id", "locked", "disabled", ""], [
-            domElement("OPTION", 21, [], []),
-            domElement("OPTION", 22, ["disabled", ""], []),
-          ]),
-          domElement("SELECT", 30, ["id", "grouped"], [
-            domElement("OPTGROUP", 31, ["disabled", ""], [
-              domElement("OPTION", 32, [], []),
-            ]),
-            domElement("OPTION", 33, [], []),
-          ]),
-          domElement("FIELDSET", 40, ["disabled", ""], [
-            domElement("LEGEND", 41, [], [
-              domElement("BUTTON", 42, [], []),
-              domElement("BUTTON", 49, ["disabled", ""], []),
-            ]),
-            domElement("DIV", 52, [], [
-              domElement("BUTTON", 44, [], []),
-              domElement("INPUT", 45, [], []),
-            ]),
-            domElement("LEGEND", 46, [], [
-              domElement("BUTTON", 51, [], []),
-            ]),
-            domElement("SELECT", 70, [], [
-              domElement("OPTION", 71, [], []),
-            ]),
-            domElement("SPAN", 47, [], [], {
-              shadowRoots: [{ nodeType: 11, children: [domElement("BUTTON", 48, [], [])] }],
-            }),
-          ]),
-          domElement("BUTTON", 50, ["aria-disabled", "true"], []),
-          domElement("SELECT", 60, [], [
-            domElement("OPTION", 61, [], []),
-            domElement("OPTION", 62, ["disabled", ""], []),
-          ]),
-        ]),
-      ],
-    },
-  },
+const quiet = await run({
+  overview: { title: "Quiet", url: "https://example.com/forms/post" },
   nodes: [
-    ax({ id: "root", children: ["city", "hz", "nb", "locked", "bing", "ding", "grouped", "jia", "yi", "shuoming", "legendDisabled", "submit", "note", "extra", "innerSelect", "wu", "shadow", "aria", "mixed", "ren", "ji", "custom"], backend: 1, role: "RootWebArea", name: "Page" }),
-    ax({ id: "city", parent: "root", backend: 10, role: "combobox", name: "城市" }),
-    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "selected", value: { value: true } }, { name: "disabled", value: { value: true } }] }),
-    ax({ id: "nb", parent: "root", backend: 12, role: "option", name: "宁波", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "locked", parent: "root", backend: 20, role: "combobox", name: "锁定", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "bing", parent: "root", backend: 21, role: "option", name: "丙" }),
-    ax({ id: "ding", parent: "root", backend: 22, role: "option", name: "丁", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "grouped", parent: "root", backend: 30, role: "combobox", name: "分组" }),
-    ax({ id: "jia", parent: "root", backend: 32, role: "option", name: "甲" }),
-    ax({ id: "yi", parent: "root", backend: 33, role: "option", name: "乙", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "shuoming", parent: "root", backend: 42, role: "button", name: "说明", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "legendDisabled", parent: "root", backend: 49, role: "button", name: "图例禁用" }),
-    ax({ id: "submit", parent: "root", backend: 44, role: "button", name: "提交" }),
-    ax({ id: "note", parent: "root", backend: 45, role: "textbox", name: "备注" }),
-    ax({ id: "extra", parent: "root", backend: 51, role: "button", name: "补充" }),
-    ax({ id: "innerSelect", parent: "root", backend: 70, role: "combobox", name: "内选" }),
-    ax({ id: "wu", parent: "root", backend: 71, role: "option", name: "戊" }),
-    ax({ id: "shadow", parent: "root", backend: 48, role: "button", name: "Shadow", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "aria", parent: "root", backend: 50, role: "button", name: "ARIA", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "mixed", parent: "root", backend: 60, role: "combobox", name: "混合" }),
-    ax({ id: "ren", parent: "root", backend: 61, role: "option", name: "壬", properties: [{ name: "disabled", value: { value: true } }] }),
-    ax({ id: "ji", parent: "root", backend: 62, role: "option", name: "己" }),
-    ax({ id: "custom", parent: "root", backend: 99, role: "button", name: "自定义", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "root", children: ["go", "box", "check", "open", "group"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "go", parent: "root", backend: 4, role: "button", name: "停用", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "box", parent: "root", backend: 5, role: "textbox", name: "停用文本", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "check", parent: "root", backend: 6, role: "checkbox", name: "停用勾选", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "open", parent: "root", backend: 7, role: "option", name: "乙" }),
+    ax({ id: "group", parent: "root", backend: 8, role: "group", name: "组", properties: [{ name: "disabled", value: { value: true } }] }),
   ],
 });
-const disabledNames = ["锁定", "丙", "丁", "甲", "图例禁用", "提交", "备注", "补充", "内选", "戊", "ARIA", "己", "自定义"];
-const enabledNames = ["城市", "杭州", "宁波", "分组", "乙", "说明", "Shadow", "混合", "壬"];
-for (const name of disabledNames) assert.match(line(corrected.snapshot, `"${name}"`), /\bdisabled\b/, corrected.snapshot);
-for (const name of enabledNames) assert.doesNotMatch(line(corrected.snapshot, `"${name}"`), /\bdisabled\b/, corrected.snapshot);
-assert.match(line(corrected.snapshot, '"杭州"'), /\bselected\b/);
+assert.equal(calls("DOM.getDocument").length, 0);
+assert.equal(calls("DOM.pushNodesByBackendIdsToFrontend").length, 0);
+assert.equal(calls("DOM.querySelectorAll").length, 0);
+assert.equal(calls("DOM.resolveNode").length, 0);
+assert.equal(calls("Runtime.callFunctionOn").length, 0);
+for (const name of ["停用", "停用文本", "停用勾选", "组"]) assertDisabled(quiet.snapshot, name, true);
+assertDisabled(quiet.snapshot, "乙", false);
+
+const probed = await run({
+  overview: {
+    title: "Probe", url: "https://example.com/forms/post",
+    actions: [{ selector: "#go", role: "button", text: "Go", disabled: false }],
+  },
+  bound: { loaderId: "loader", ids: [4] },
+  nodeIds: { 11: 31, 12: 32, 13: 33, 14: 0, 15: 35, 16: 36 },
+  disabledNodeIds: [32],
+  aria: { 31: false, 33: true, 35: "false", 36: "exception" },
+  nodes: [
+    ax({ id: "root", children: ["go", "hz", "ding", "group", "open", "missing", "text", "bad", "city"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "go", parent: "root", backend: 4, role: "button", name: "Go", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "selected", value: { value: true } }, { name: "disabled", value: { value: true } }] }),
+    ax({ id: "ding", parent: "root", backend: 12, role: "option", name: "丁", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "group", parent: "root", backend: 13, role: "optgroup", name: "组", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "open", parent: "root", backend: 8, role: "option", name: "乙" }),
+    ax({ id: "missing", parent: "root", backend: 14, role: "option", name: "影项", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "text", parent: "root", backend: 15, role: "option", name: "子", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "bad", parent: "root", role: "option", name: "无节点", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "city", parent: "root", backend: 20, role: "combobox", name: "锁定", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+const probeBackends = calls("DOM.pushNodesByBackendIdsToFrontend")[0].params.backendNodeIds;
+assert.deepEqual(probeBackends, [11, 12, 13, 14, 15]);
+assert.deepEqual(calls("DOM.getDocument")[0].params, { depth: 0 });
+assert.equal(calls("DOM.querySelectorAll")[0].params.selector, ":disabled, select:disabled option, select:disabled optgroup, optgroup:disabled option");
+assert.equal(calls("DOM.querySelectorAll")[0].params.nodeId, 1);
+const describedAt = cdpCalls.findIndex(call => call.method === "DOM.describeNode");
+const documentAt = cdpCalls.findIndex(call => call.method === "DOM.getDocument");
+assert.ok(describedAt >= 0 && describedAt < documentAt, "disabled correction stays after action anchors");
+const resolvedIds = calls("DOM.resolveNode").map(call => call.params.nodeId);
+assert.deepEqual(resolvedIds, [31, 33, 35]);
+assert.equal(calls("Runtime.callFunctionOn")[0].params.returnByValue, true);
+assert.match(calls("Runtime.callFunctionOn")[0].params.functionDeclaration, /aria-disabled/);
+assert.match(calls("Runtime.callFunctionOn")[0].params.functionDeclaration, /assignedSlot/);
+assert.match(calls("Runtime.callFunctionOn")[0].params.functionDeclaration, /getRootNode/);
+assert.equal(calls("Runtime.releaseObjectGroup").length, 1);
+assert.equal(calls("Runtime.disable").length + calls("Accessibility.disable").length + calls("Accessibility.enable").length, 0);
+assertDisabled(probed.snapshot, "杭州", false);
+assert.match(line(probed.snapshot, '"杭州"'), /\bselected\b/);
+assertDisabled(probed.snapshot, "丁", true);
+assertDisabled(probed.snapshot, "组", true);
+assertDisabled(probed.snapshot, "乙", false);
+assertDisabled(probed.snapshot, "影项", true);
+assertDisabled(probed.snapshot, "子", true);
+assertDisabled(probed.snapshot, "无节点", true);
+assertDisabled(probed.snapshot, "Go", true);
+assertDisabled(probed.snapshot, "锁定", true);
+
+const atomic = await run({
+  overview: { title: "Atomic", url: "https://example.com/forms/post" },
+  callThrows: true,
+  nodeIds: { 11: 31, 12: 32 },
+  disabledNodeIds: [],
+  nodes: [
+    ax({ id: "root", children: ["hz", "nb"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "nb", parent: "root", backend: 12, role: "option", name: "宁波", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assertDisabled(atomic.snapshot, "杭州", true);
+assertDisabled(atomic.snapshot, "宁波", true);
+assert.equal(calls("Runtime.releaseObjectGroup").length, 1);
+
+const ancestorFailed = await run({
+  overview: { title: "Ancestor failed", url: "https://example.com/forms/post" },
+  nodeIds: { 11: 31, 12: 32 },
+  disabledNodeIds: [],
+  aria: { 31: false, 32: "exception" },
+  nodes: [
+    ax({ id: "root", children: ["hz", "nb"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "nb", parent: "root", backend: 12, role: "option", name: "宁波", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assertDisabled(ancestorFailed.snapshot, "杭州", true);
+assertDisabled(ancestorFailed.snapshot, "宁波", true);
+
+const unavailable = await run({
+  overview: { title: "Unavailable", url: "https://example.com/forms/post" },
+  documentThrows: true,
+  documentError: "'DOM.getDocument' wasn't found",
+  nodes: [
+    ax({ id: "root", children: ["hz"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assert.equal(unavailable.code, undefined);
+assertDisabled(unavailable.snapshot, "杭州", true);
+assert.equal(calls("DOM.pushNodesByBackendIdsToFrontend").length, 0);
+
+const queryFailed = await run({
+  overview: { title: "Query failed", url: "https://example.com/forms/post" },
+  queryThrows: true,
+  nodeIds: { 11: 31 },
+  nodes: [
+    ax({ id: "root", children: ["hz"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assertDisabled(queryFailed.snapshot, "杭州", true);
+
+const released = await run({
+  overview: { title: "Release", url: "https://example.com/forms/post" },
+  releaseThrows: true,
+  nodeIds: { 11: 31 },
+  disabledNodeIds: [],
+  aria: { 31: false },
+  nodes: [
+    ax({ id: "root", children: ["hz"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "hz", parent: "root", backend: 11, role: "option", name: "杭州", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assertDisabled(released.snapshot, "杭州", false);
+assert.equal(calls("Runtime.releaseObjectGroup").length, 1);
+
+const remote = await run({
+  overview: { title: "Remote frame", url: "https://example.com/forms/post" },
+  frameTree: { frameTree: { frame: { id: "main", loaderId: "main-loader" } } },
+  onAutoAttach() {
+    for (const listener of debuggerListeners) {
+      listener({ tabId: 8 }, "Target.attachedToTarget", {
+        sessionId: "child-1",
+        targetInfo: { type: "iframe", targetId: "target-child", parentFrameId: "main" },
+      });
+    }
+  },
+  ownerBackend: 7,
+  nodeIds: { 11: 31 },
+  childNodeIds: { 11: 41, 12: 42 },
+  disabledNodeIds: [],
+  childDisabledNodeIds: [41],
+  aria: { 31: false },
+  childAria: { 42: false },
+  nodes: [
+    ax({ id: "root", children: ["frame", "mainOpt"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "frame", parent: "root", backend: 7, role: "Iframe", name: "Child" }),
+    ax({ id: "mainOpt", parent: "root", backend: 11, role: "option", name: "主选项", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+  frameNodes: [
+    ax({ id: "croot", children: ["kept", "stale"], backend: 1, role: "RootWebArea", name: "Child" }),
+    ax({ id: "kept", parent: "croot", backend: 11, role: "option", name: "子选项", properties: [{ name: "disabled", value: { value: true } }] }),
+    ax({ id: "stale", parent: "croot", backend: 12, role: "option", name: "孙选项", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+try {
+  assert.deepEqual(calls("DOM.getDocument", "").map(call => call.params), [{ depth: 0 }]);
+  assert.deepEqual(calls("DOM.getDocument", "child-1").map(call => call.params), [{ depth: 0 }]);
+  assert.deepEqual(calls("DOM.querySelectorAll", "").map(call => call.params.nodeId), [1]);
+  assert.deepEqual(calls("DOM.querySelectorAll", "child-1").map(call => call.params.nodeId), [2]);
+  assert.deepEqual(calls("DOM.resolveNode").map(call => call.sessionId).sort(), ["", "child-1"]);
+  assertDisabled(remote.snapshot, "主选项", false);
+  assertDisabled(remote.snapshot, "子选项", true);
+  assertDisabled(remote.snapshot, "孙选项", false);
+} finally {
+  for (const listener of debuggerListeners) {
+    listener({ tabId: 8 }, "Target.detachedFromTarget", { sessionId: "child-1" });
+  }
+}
+
+const localFrame = await run({
+  overview: { title: "Local frame", url: "https://example.com/forms/post" },
+  frameTree: { frameTree: { frame: { id: "main", loaderId: "main-loader" }, childFrames: [{ frame: { id: "local-child", loaderId: "local-loader" } }] } },
+  ownerBackend: 9,
+  describe(params) {
+    if (params.backendNodeId === 9) return { node: { nodeName: "IFRAME", backendNodeId: 9, contentDocument: { nodeId: 50, nodeName: "#document" } } };
+    return { node: {} };
+  },
+  nodeIds: { 15: 21 },
+  disabledNodeIds: [],
+  aria: { 21: false },
+  nodes: [
+    ax({ id: "root", children: ["frame", "go"], backend: 1, role: "RootWebArea", name: "Page" }),
+    ax({ id: "frame", parent: "root", backend: 9, role: "Iframe", name: "Local" }),
+    ax({ id: "go", parent: "root", backend: 4, role: "button", name: "停用", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+  frameNodes: [
+    ax({ id: "froot", children: ["opt"], backend: 2, role: "RootWebArea", name: "Frame" }),
+    ax({ id: "opt", parent: "froot", backend: 15, role: "option", name: "帧选项", properties: [{ name: "disabled", value: { value: true } }] }),
+  ],
+});
+assert.deepEqual(calls("DOM.querySelectorAll").map(call => call.params.nodeId), [50]);
+assert.deepEqual(calls("DOM.pushNodesByBackendIdsToFrontend")[0].params.backendNodeIds, [15]);
+assertDisabled(localFrame.snapshot, "帧选项", false);
+assertDisabled(localFrame.snapshot, "停用", true);
 
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);

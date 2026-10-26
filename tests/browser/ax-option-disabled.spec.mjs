@@ -144,6 +144,7 @@ test.describe("accessibility option disabled state", () => {
     expectDisabled(before.snapshot, "option", "己", true);
     expectDisabled(before.snapshot, "combobox", "锁定", true);
     expectDisabled(before.snapshot, "combobox", "分组", false);
+    expectAriaDisabledKept(before.snapshot);
     expectDisabled(before.snapshot, "button", "说明", false);
     expectDisabled(before.snapshot, "button", "提交", true);
     expectDisabled(before.snapshot, "button", "补充", true);
@@ -156,28 +157,25 @@ test.describe("accessibility option disabled state", () => {
     await expect.poll(async () => {
       const current = await h.state();
       return [
-        current.city.matches,
+        current.city.disabled,
         current.cityOptions.map(option => option.text).join(","),
-        current.province.matches,
-        current.route.matches,
-        current.routeOptions.every(option => option.matches),
+        current.province.disabled,
+        current.route.disabled,
       ].join("|");
-    }).toBe("false|杭州,宁波,温州|false|true|true");
+    }).toBe("false|杭州,宁波,温州|false|true");
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     const after = await h.call("get_ax_tree", { limit: 300 });
     expect(after.code, after.snapshot || JSON.stringify(after)).toBeUndefined();
     expect(after.snapshot, after.snapshot).not.toContain("请选择");
     // Replaced options are new elements. The province options are the same
-    // elements Chrome's AX cache leaves disabled, and the route options are the
-    // ones it leaves enabled after the select becomes disabled.
+    // elements Chrome's AX cache leaves disabled. Route options may stay
+    // unmarked; this check does not add a disabled flag Chrome omitted.
     expectDisabled(after.snapshot, "option", "杭州", false);
     expectDisabled(after.snapshot, "option", "宁波", false);
     expectDisabled(after.snapshot, "option", "温州", false);
     expectDisabled(after.snapshot, "option", "浙江", false);
     expectDisabled(after.snapshot, "option", "江苏", false);
-    expectDisabled(after.snapshot, "option", "庚", true);
-    expectDisabled(after.snapshot, "option", "辛", true);
     expectDisabled(after.snapshot, "combobox", "城市", false);
     expectDisabled(after.snapshot, "combobox", "省份", false);
     expectDisabled(after.snapshot, "combobox", "航线", true);
@@ -192,5 +190,26 @@ test.describe("accessibility option disabled state", () => {
     expectDisabled(after.snapshot, "button", "提交", true);
     expectDisabled(after.snapshot, "button", "补充", true);
     expectDisabled(after.snapshot, "textbox", "备注", true);
+    expectAriaDisabledKept(after.snapshot);
+  });
+
+  test("keeps disabled inside an aria-disabled container", async () => {
+    const snapshot = await h.call("get_ax_tree", { limit: 300 });
+    expect(snapshot.code, snapshot.snapshot || JSON.stringify(snapshot)).toBeUndefined();
+    expectAriaDisabledKept(snapshot.snapshot);
   });
 });
+
+function expectAriaDisabledKept(snapshot) {
+  expectDisabled(snapshot, "button", "停用", true);
+  expectDisabled(snapshot, "textbox", "停用文本", true);
+  expectDisabled(snapshot, "checkbox", "停用勾选", true);
+  expectDisabled(snapshot, "combobox", "停用列表", true);
+  expectDisabled(snapshot, "option", "子", true);
+  expectDisabled(snapshot, "button", "影钮", true);
+  expectDisabled(snapshot, "textbox", "影文", true);
+  expectDisabled(snapshot, "checkbox", "影选", true);
+  expectDisabled(snapshot, "option", "影项", true);
+  expectDisabled(snapshot, "combobox", "插槽列表", true);
+  expectDisabled(snapshot, "option", "寅", true);
+}

@@ -293,12 +293,6 @@ function mergeAction(node: SemanticNode, action: Action) {
   if (placeholder) node.placeholder = placeholder;
   const flags = [...(compact.flags || [])];
   if (action?.disabled && !hasFlag(flags, "disabled")) flags.push("disabled");
-  if (action?.disabled === false) {
-    for (let index = flags.length - 1; index >= 0; index -= 1) {
-      const flag = flags[index] || "";
-      if (flag === "disabled" || flag.startsWith("disabled=")) flags.splice(index, 1);
-    }
-  }
   if (typeof action?.checked === "boolean" && !hasFlag(flags, "checked")) flags.push(action.checked ? "checked" : "unchecked");
   if (action?.editable && !hasFlag(flags, "editable")) flags.push("editable");
   compact.flags = flags;
@@ -612,127 +606,37 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-// Chrome keeps disabled on options after they stop inheriting it from a select
-// or optgroup. Correct form controls from the DOM state :disabled matches.
-const NATIVE_FORM_TAGS = new Set(["BUTTON", "FIELDSET", "INPUT", "OPTGROUP", "OPTION", "SELECT", "TEXTAREA"]);
-const DISABLED_CONTROL_ROLES = new Set([
-  "button", "checkbox", "combobox", "listbox", "option", "radio",
-  "searchbox", "slider", "spinbutton", "switch", "textbox",
-]);
-const domDisabledCache = new WeakMap<CdpCommand, Promise<Map<number, boolean>>>();
-
-interface DomTreeNode {
-  nodeType?: number;
-  nodeName?: string;
-  backendNodeId?: number;
-  attributes?: unknown;
-  children?: unknown;
-  shadowRoots?: unknown;
-  contentDocument?: unknown;
-}
-
-function isDomTreeNode(value: unknown): value is DomTreeNode {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function domNodes(value: unknown): DomTreeNode[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isDomTreeNode);
-}
-
-function attributePresent(node: DomTreeNode, name: string): boolean {
-  const attributes = node.attributes;
-  if (!Array.isArray(attributes)) return false;
-  for (let index = 0; index < attributes.length; index += 2) {
-    if (attributes[index] === name) return true;
+// Chrome keeps disabled on an option after its select or optgroup stops disabling it.
+// Ask the document which of those nodes match :disabled, and drop only a stale flag.
+// An option's own :disabled does not follow a disabled select on every Chromium, so the
+// selector also names that ancestor. aria-disabled is not :disabled and crosses shadow roots.
+const DISABLED_OPTION_SELECTOR = ":disabled, select:disabled option, select:disabled optgroup, optgroup:disabled option";
+const ANCESTOR_KEEPS_DISABLED = `function(){
+  let node = this;
+  for (let hop = 0; node && hop < 32; hop += 1) {
+    if (node.nodeType === 1) {
+      if (node.getAttribute("aria-disabled") === "true") return true;
+      const tag = String(node.localName || "");
+      if ((node === this || tag === "select" || tag === "optgroup") && typeof node.matches === "function" && node.matches(":disabled")) return true;
+    }
+    if (node.assignedSlot) { node = node.assignedSlot; continue; }
+    if (node.parentElement) { node = node.parentElement; continue; }
+    const root = node.getRootNode ? node.getRootNode() : null;
+    if (root && root.host && root !== node) { node = root.host; continue; }
+    break;
   }
   return false;
-}
+}`;
 
-function attributeIs(node: DomTreeNode, name: string, expected: string): boolean {
-  const attributes = node.attributes;
-  if (!Array.isArray(attributes)) return false;
-  for (let index = 0; index < attributes.length; index += 2) {
-    if (attributes[index] === name) return String(attributes[index + 1] ?? "") === expected;
-  }
-  return false;
-}
-
-function axRole(node: AxNode): string {
-  return String(node?.role?.value || "").toLowerCase();
-}
-
-function nativeFormDisabled(tag: string, ownDisabled: boolean, fieldsetDisabled: boolean, selectDisabled: boolean, optgroupDisabled: boolean): boolean {
-  if (tag === "OPTION") return ownDisabled || optgroupDisabled || selectDisabled;
-  if (tag === "OPTGROUP") return ownDisabled || selectDisabled;
-  if (tag === "FIELDSET") return ownDisabled || fieldsetDisabled;
-  return ownDisabled || fieldsetDisabled;
-}
-
-function effectiveDisabledByBackend(root: DomTreeNode): Map<number, boolean> {
-  const states = new Map<number, boolean>();
-  function visitUnrelated(node: DomTreeNode) {
-    for (const shadow of domNodes(node.shadowRoots)) visit(shadow, false, false, false);
-    if (isDomTreeNode(node.contentDocument)) visit(node.contentDocument, false, false, false);
-  }
-  function visit(node: DomTreeNode | undefined, fieldsetDisabled: boolean, selectDisabled: boolean, optgroupDisabled: boolean) {
-    if (!node) return;
-    if (Number(node.nodeType || 0) !== 1) {
-      for (const child of domNodes(node.children)) visit(child, fieldsetDisabled, selectDisabled, optgroupDisabled);
-      return;
-    }
-    const tag = String(node.nodeName || "").toUpperCase();
-    const ownDisabled = attributePresent(node, "disabled");
-    const ariaDisabled = attributeIs(node, "aria-disabled", "true");
-    if (NATIVE_FORM_TAGS.has(tag)) {
-      const backend = Number(node.backendNodeId || 0);
-      if (backend > 0) states.set(backend, ariaDisabled || nativeFormDisabled(tag, ownDisabled, fieldsetDisabled, selectDisabled, optgroupDisabled));
-    }
-    if (tag === "FIELDSET") {
-      const legend = domNodes(node.children).find(child => Number(child.nodeType) === 1 && String(child.nodeName || "").toUpperCase() === "LEGEND");
-      const descendantDisabled = fieldsetDisabled || ownDisabled;
-      for (const child of domNodes(node.children)) {
-        visit(child, child === legend ? fieldsetDisabled : descendantDisabled, selectDisabled, optgroupDisabled);
-      }
-      visitUnrelated(node);
-      return;
-    }
-    const nextSelect = tag === "SELECT" ? ownDisabled || fieldsetDisabled : selectDisabled;
-    const nextOptgroup = tag === "OPTGROUP" ? ownDisabled : tag === "SELECT" ? false : optgroupDisabled;
-    for (const child of domNodes(node.children)) visit(child, fieldsetDisabled, nextSelect, nextOptgroup);
-    visitUnrelated(node);
-  }
-  visit(root, false, false, false);
-  return states;
-}
-
-async function loadDomDisabledStates(send: CdpCommand): Promise<Map<number, boolean>> {
-  try {
-    const described = record(await send("DOM.getDocument", { depth: -1, pierce: true }));
-    if (!isDomTreeNode(described.root)) return new Map();
-    return effectiveDisabledByBackend(described.root);
-  } catch {
-    return new Map();
-  }
-}
-
-function domDisabledStates(send: CdpCommand): Promise<Map<number, boolean>> {
-  const cached = domDisabledCache.get(send);
-  if (cached) return cached;
-  const pending = loadDomDisabledStates(send);
-  domDisabledCache.set(send, pending);
-  return pending;
-}
-
-function ensureDisabledProperty(node: AxNode) {
-  const properties = node.properties || [];
-  const existing = properties.find(property => property?.name === "disabled");
-  if (!existing) {
-    node.properties = [...properties, { name: "disabled", value: { value: true } }];
-    return;
-  }
-  if (existing.value?.value === true) return;
-  existing.value = { value: true };
+function isDisabledOptionCandidate(node: AxNode): boolean {
+  const role = String(node?.role?.value || "").toLowerCase();
+  if (role !== "option" && role !== "optgroup") return false;
+  if (Number(node?.backendDOMNodeId || 0) <= 0) return false;
+  return (node.properties || []).some(property => {
+    if (property?.name !== "disabled") return false;
+    const value = property.value?.value;
+    return value != null && value !== false;
+  });
 }
 
 function clearDisabledProperty(node: AxNode) {
@@ -740,19 +644,67 @@ function clearDisabledProperty(node: AxNode) {
   node.properties = node.properties.filter(property => property?.name !== "disabled");
 }
 
-function applyDomDisabled(nodes: AxNode[], states: Map<number, boolean>) {
-  if (!states.size) return;
-  for (const node of nodes) {
-    const backend = Number(node?.backendDOMNodeId || 0);
-    if (!states.has(backend) || !DISABLED_CONTROL_ROLES.has(axRole(node))) continue;
-    if (states.get(backend)) ensureDisabledProperty(node);
-    else clearDisabledProperty(node);
-  }
+function numberIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map(item => Number(item) || 0);
 }
 
-async function correctDisabledFromDom(send: CdpCommand, nodes: AxNode[]) {
-  if (!nodes.some(node => DISABLED_CONTROL_ROLES.has(axRole(node)))) return;
-  applyDomDisabled(nodes, await domDisabledStates(send));
+async function documentNodeId(send: CdpCommand, frameId: string): Promise<number> {
+  const described = record(await send("DOM.getDocument", { depth: 0 }));
+  const rootId = Number(record(described.root).nodeId || 0);
+  if (!frameId) return rootId;
+  if (!rootId) return 0;
+  const owner = record(await send("DOM.getFrameOwner", { frameId }));
+  const backendNodeId = Number(owner.backendNodeId || 0);
+  if (!backendNodeId) return 0;
+  const iframe = record(record(await send("DOM.describeNode", { backendNodeId })).node);
+  return Number(record(iframe.contentDocument).nodeId || 0);
+}
+
+async function clearStaleOptionDisabled(send: CdpCommand, nodes: AxNode[], frameId = "") {
+  const candidates = nodes.filter(isDisabledOptionCandidate);
+  if (!candidates.length) return;
+  const backendIds = candidates.map(node => Number(node.backendDOMNodeId || 0));
+  const objectGroup = `qz-ax-disabled-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let releaseObjects = false;
+  try {
+    const rootId = await documentNodeId(send, frameId);
+    if (!rootId) return;
+    const pushed = record(await send("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: backendIds }));
+    const nodeIds = numberIds(pushed.nodeIds);
+    if (!nodeIds || nodeIds.length !== backendIds.length) return;
+    const matched = record(await send("DOM.querySelectorAll", { nodeId: rootId, selector: DISABLED_OPTION_SELECTOR }));
+    const disabledList = numberIds(matched.nodeIds);
+    if (!disabledList) return;
+    const disabledIds = new Set(disabledList);
+    const clearing: AxNode[] = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      const nodeId = nodeIds[index] || 0;
+      const candidate = candidates[index];
+      if (!candidate || !nodeId || disabledIds.has(nodeId)) continue;
+      const resolved = record(await send("DOM.resolveNode", { nodeId, objectGroup }));
+      const objectId = String(record(resolved.object).objectId || "");
+      if (!objectId) continue;
+      releaseObjects = true;
+      const evaluated = record(await send("Runtime.callFunctionOn", {
+        objectId,
+        objectGroup,
+        returnByValue: true,
+        functionDeclaration: ANCESTOR_KEEPS_DISABLED,
+      }));
+      const details = record(evaluated.exceptionDetails);
+      if (details.text || details.exception) throw new Error("ancestor disabled check failed");
+      if (record(evaluated.result).value !== false) continue;
+      clearing.push(candidate);
+    }
+    for (const node of clearing) clearDisabledProperty(node);
+  } catch {
+    // A missing DOM method, or any failed step, leaves the AX flags in place.
+  } finally {
+    if (!releaseObjects) return;
+    try { await send("Runtime.releaseObjectGroup", { objectGroup }); }
+    catch { /* The host may not support release, or the objects are already gone. */ }
+  }
 }
 
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
@@ -771,7 +723,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth: nu
         // Child sessions number their own node ids, so those ids are not an echo of the page tree.
         const echoed = !frame.sessionId && fetched.some(node => node?.nodeId && mainIds.has(node.nodeId));
         if (!fetched.length || echoed) continue;
-        await correctDisabledFromDom(frame.send, fetched);
+        await clearStaleOptionDisabled(frame.send, fetched, frame.sessionId ? "" : frame.id);
         const owner = record(await send("DOM.getFrameOwner", { frameId: frame.id }));
         const backendNodeId = Number(owner.backendNodeId || 0);
         if (!backendNodeId) continue;
@@ -887,7 +839,8 @@ registerTool({
       const fetchDepth = rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      await correctDisabledFromDom(send, nodes);
+      // getDocument invalidates DOM node ids, so this stays after actionAnchors.
+      await clearStaleOptionDisabled(send, nodes);
       const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
       return buildAccessibilitySnapshot(withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,

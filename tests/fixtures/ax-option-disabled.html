@@ -37,7 +37,27 @@
   <input id="note" aria-label="备注">
   <legend><button id="extra" type="button">补充</button></legend>
 </fieldset>
+<div id="aria-box" aria-disabled="true">
+  <button id="aria-button" type="button">停用</button>
+  <input id="aria-text" aria-label="停用文本">
+  <input id="aria-check" type="checkbox" aria-label="停用勾选">
+  <select id="aria-select" aria-label="停用列表">
+    <option value="z">子</option>
+  </select>
+</div>
+<div id="shadow-host" aria-disabled="true"></div>
+<div id="slot-host"></div>
 <script>
+  const shadowHost = document.querySelector("#shadow-host");
+  const shadowRoot = shadowHost.attachShadow({ mode: "open" });
+  shadowRoot.innerHTML = '<div><button id="shadow-button" type="button">影钮</button><input id="shadow-text" aria-label="影文"><input id="shadow-check" type="checkbox" aria-label="影选"><select id="shadow-select"><option>影项</option></select></div>';
+  const slotHost = document.querySelector("#slot-host");
+  slotHost.attachShadow({ mode: "open" }).innerHTML = '<div aria-disabled="true"><slot></slot></div>';
+  const slotted = document.createElement("select");
+  slotted.id = "slotted";
+  slotted.setAttribute("aria-label", "插槽列表");
+  slotted.innerHTML = "<option>寅</option>";
+  slotHost.append(slotted);
   document.querySelector("#load").addEventListener("click", () => {
     window.setTimeout(() => {
       const city = document.querySelector("#city");
