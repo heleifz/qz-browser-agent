@@ -40,7 +40,7 @@ export function openImageGallery(items: unknown[] = [], startIndex = 0, options:
   closeImageLightbox();
   closeImageGallery();
 
-  const state: GalleryState = { urls: createImageAssetUrls(), revision: 0 };
+  const state: GalleryState = { urls: createImageAssetUrls({ thumbnail: false }), revision: 0 };
   const controller = new AbortController();
   let index = clampGalleryIndex(startIndex, rows.length);
   const overlay = document.createElement("div");

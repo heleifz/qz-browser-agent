@@ -158,7 +158,10 @@ export async function pollKyotoAgentEvidence(session) {
     const tabs = await view.chrome.tabs.query({});
     const wikipediaTabs = tabs.filter(tab => String(tab.url || "").includes("wikipedia.org"));
     const anyRunning = sessionRows.some(row => row.listStatus === "running");
+    let storageJsonBytes = 0;
+    try { storageJsonBytes = JSON.stringify(all).length; } catch (_err) { storageJsonBytes = 0; }
     return {
+      storageJsonBytes,
       deepseekRequests,
       sessionCount: sessionIds.length,
       rootSessionId,

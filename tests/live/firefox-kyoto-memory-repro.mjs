@@ -1,10 +1,9 @@
 /**
- * Live Firefox Kyoto memory repro: smoke setup, strict smoke gate, RSS sampling.
+ * Live Firefox Kyoto memory repro: smoke setup, RSS sampling, attribution.
  */
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile, appendFile } from "node:fs/promises";
+import { cp, mkdir, writeFile, appendFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { readTestApiKey } from "../support/local-credentials.mjs";
 import { openFirefoxSidebar } from "../firefox/launch.mjs";
 import { openFromToolbar, captureBackgroundErrors } from "../firefox/driver.mjs";
@@ -19,12 +18,20 @@ import {
   evaluateKyotoSmokeGate,
   mergeMaxToolCounts,
 } from "./firefox-kyoto-evidence.mjs";
+import {
+  bucketRssSample,
+  diffAboutMemoryMetrics,
+  parseAboutMemoryMetrics,
+  rssSlopeKiBPerMin,
+} from "./firefox-memory-about.mjs";
 
 const label = String(process.env.QINGZHOU_LIVE_LABEL || "run").trim();
 const artifactRoot = resolve(process.env.QINGZHOU_ARTIFACT_DIR || `/opt/cursor/artifacts/firefox-kyoto-${label}`);
+const workDir = resolve(process.env.QINGZHOU_LIVE_WORK_DIR || `/tmp/qz-kyoto-${label}`);
 const maxMinutes = Number(process.env.QINGZHOU_LIVE_MAX_MINUTES || 15);
 const rssCapRatio = Number(process.env.QINGZHOU_LIVE_RSS_CAP_RATIO || 0.7);
 const pollMs = Number(process.env.QINGZHOU_LIVE_POLL_MS || 5000);
+const postTaskIdleMinutes = Number(process.env.QINGZHOU_LIVE_POST_TASK_IDLE_MIN || 2);
 
 const apiKey = String(process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_TOKEN || "").trim()
   || readTestApiKey("deepseek", { required: false });
@@ -44,15 +51,20 @@ const report = {
   extensionDir,
   model,
   prompt: KYOTO_PROMPT,
+  workDir,
+  artifactRoot,
   startedAt: new Date().toISOString(),
   memorySamples: [],
   peakByPid: {},
   agentTimeline: [],
+  aboutMemory: {},
+  attribution: {},
   snapshots: [],
   maxToolCounts: {},
   maxChildSessions: 0,
   maxWikipediaTabs: 0,
   maxDeepseekRequests: 0,
+  maxStorageJsonBytes: 0,
   smokeGate: { passed: false, passedAt: "", reasons: [] },
   galleryWithImages: false,
   galleryArtifacts: [],
@@ -75,9 +87,11 @@ function sampleFirefoxRss() {
       if (!match) return null;
       return { pid: Number(match[1]), rssKiB: Number(match[2]), comm: match[3], args: match[4].slice(0, 200) };
     }).filter(Boolean);
-    return { at: new Date().toISOString(), rows, totalRssKiB: rows.reduce((sum, row) => sum + row.rssKiB, 0) };
+    const sample = { at: new Date().toISOString(), rows, totalRssKiB: rows.reduce((sum, row) => sum + row.rssKiB, 0) };
+    sample.buckets = bucketRssSample(sample);
+    return sample;
   } catch (error) {
-    return { at: new Date().toISOString(), error: redact(error.message), rows: [], totalRssKiB: 0 };
+    return { at: new Date().toISOString(), error: redact(error.message), rows: [], totalRssKiB: 0, buckets: {} };
   }
 }
 
@@ -96,31 +110,32 @@ try {
 } catch { /* ignore */ }
 const rssCapKiB = totalRamKiB > 0 ? Math.floor(totalRamKiB * rssCapRatio) : 0;
 
-await mkdir(artifactRoot, { recursive: true });
-const memoryLog = join(artifactRoot, "memory-rss.log");
+await mkdir(workDir, { recursive: true });
+await mkdir(artifactRoot, { recursive: true }).catch(() => undefined);
+const memoryLog = join(workDir, "memory-rss.log");
 
 /** @type {Awaited<ReturnType<typeof openFirefoxSidebar>> | undefined} */
 let session;
 let monitorTimer;
+let sidebarUrl = "";
 
 async function dumpAboutMemory(tag) {
+  const path = join(workDir, `about-memory-${tag}.txt`);
   try {
-    const snapshot = await session.chrome(`
-      const win = Services.wm.getMostRecentWindow("navigator:browser") || window;
-      const tab = win.gBrowser.addTrustedTab("about:memory");
-      const browser = tab.linkedBrowser;
-      const text = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("about:memory load timed out")), 45000);
-        const finish = () => { clearTimeout(timer); resolve(browser.contentDocument?.body?.innerText || ""); };
-        if (browser.contentDocument?.readyState === "complete") finish();
-        else tab.addEventListener("load", finish, true);
-      });
-      win.gBrowser.removeTab(tab);
-      return text;
-    `);
-    const path = join(artifactRoot, `about-memory-${tag}.txt`);
-    await writeFile(path, String(snapshot || "").slice(0, 8_000_000));
-    report.snapshots.push({ kind: "about:memory", tag, path });
+    const page = session.page;
+    const current = page.url();
+    await page.goto("about:memory", { timeout: 60_000, waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(1500);
+    const text = await page.evaluate(() => document.body?.innerText || "");
+    await writeFile(path, String(text || "").slice(0, 8_000_000));
+    const parsed = parseAboutMemoryMetrics(text);
+    report.aboutMemory[tag] = parsed;
+    report.snapshots.push({ kind: "about:memory", tag, path, metrics: parsed.metrics });
+    if (sidebarUrl && current !== "about:memory") {
+      await page.goto(sidebarUrl, { timeout: 60_000, waitUntil: "domcontentloaded" }).catch(() => undefined);
+    } else if (sidebarUrl) {
+      await page.goto(sidebarUrl, { timeout: 60_000, waitUntil: "domcontentloaded" }).catch(() => undefined);
+    }
     return path;
   } catch (error) {
     report.errors.push({ phase: `about:memory:${tag}`, message: redact(error.message) });
@@ -133,7 +148,11 @@ function startMemoryMonitor(onSample) {
     const snap = sampleFirefoxRss();
     report.memorySamples.push(snap);
     recordPeakByPid(snap, report.peakByPid);
-    await appendFile(memoryLog, `${JSON.stringify(snap)}\n`);
+    try {
+      await appendFile(memoryLog, `${JSON.stringify(snap)}\n`);
+    } catch (error) {
+      report.errors.push({ phase: "memory-log", message: redact(error.message) });
+    }
     if (typeof onSample === "function") onSample(snap);
     if (rssCapKiB > 0 && snap.totalRssKiB >= rssCapKiB && !report.stoppedReason) {
       report.stoppedReason = `rss_cap:${snap.totalRssKiB}KiB>=${rssCapKiB}KiB`;
@@ -143,9 +162,18 @@ function startMemoryMonitor(onSample) {
   void tick();
 }
 
+function taskLooksComplete(evidence, reportState) {
+  if (evidence?.anyRunning) return false;
+  if (reportState.finalAssistantAnswer?.length > 200) return true;
+  const tools = reportState.maxToolCounts || {};
+  return (tools.read_image || 0) >= 3 || (tools.collect_images || 0) >= 1;
+}
+
 const deadline = Date.now() + maxMinutes * 60_000;
 let lastPeakDump = 0;
 let peakTotalRss = 0;
+let taskCompleteAt = 0;
+let postTaskDeadline = 0;
 
 try {
   process.env.QINGZHOU_FIREFOX_EXTENSION_DIR = extensionDir;
@@ -165,6 +193,7 @@ try {
   });
 
   await openFromToolbar(session);
+  sidebarUrl = session.page.url();
   await configureDeepseekLlm(session, { apiKey, model });
   await waitFirefoxSidebarReady(session);
   await acceptDataConsent(session);
@@ -173,7 +202,6 @@ try {
   const sent = await sendComposerPrompt(session, KYOTO_PROMPT);
   report.promptSend = sent;
 
-  let smokeGatePassedAt = 0;
   let lastEvidence = null;
 
   while (Date.now() < deadline && !report.stoppedReason) {
@@ -189,6 +217,7 @@ try {
     report.maxChildSessions = Math.max(report.maxChildSessions, lastEvidence.childSessionCount || 0);
     report.maxWikipediaTabs = Math.max(report.maxWikipediaTabs, lastEvidence.wikipediaTabCount || 0);
     report.maxDeepseekRequests = Math.max(report.maxDeepseekRequests, lastEvidence.deepseekRequests || 0);
+    report.maxStorageJsonBytes = Math.max(report.maxStorageJsonBytes, lastEvidence.storageJsonBytes || 0);
     if (lastEvidence.galleryWithImages) report.galleryWithImages = true;
     if ((lastEvidence.galleryArtifacts || []).length) report.galleryArtifacts = lastEvidence.galleryArtifacts;
     if (lastEvidence.finalAssistantAnswer) report.finalAssistantAnswer = lastEvidence.finalAssistantAnswer;
@@ -209,6 +238,8 @@ try {
       childSessionCount: lastEvidence.childSessionCount,
       wikipediaTabCount: lastEvidence.wikipediaTabCount,
       anyRunning: lastEvidence.anyRunning,
+      storageJsonBytes: lastEvidence.storageJsonBytes,
+      buckets: report.memorySamples.at(-1)?.buckets,
       toolCounts: lastEvidence.toolCounts,
       smokeGatePassed: gate.passed,
     });
@@ -216,16 +247,25 @@ try {
     if (gate.passed && !report.smokeGate.passed) {
       report.smokeGate.passed = true;
       report.smokeGate.passedAt = new Date().toISOString();
-      smokeGatePassedAt = Date.now();
       await dumpAboutMemory("smoke-gate");
     }
     report.smokeGate.reasons = gate.reasons;
 
+    if (taskLooksComplete(lastEvidence, report)) {
+      if (!taskCompleteAt) {
+        taskCompleteAt = Date.now();
+        postTaskDeadline = taskCompleteAt + postTaskIdleMinutes * 60_000;
+        await dumpAboutMemory("task-complete");
+      }
+      if (Date.now() >= postTaskDeadline) {
+        report.stoppedReason = "task_complete_post_idle";
+        break;
+      }
+    }
+
     if (report.smokeGate.passed && !lastEvidence.anyRunning) {
-      const rootIdle = (lastEvidence.sessions || []).find(
-        row => row.id === report.rootSessionId,
-      )?.listStatus !== "running";
-      if (rootIdle) {
+      const rootRow = (lastEvidence.sessions || []).find(row => row.id === report.rootSessionId);
+      if (rootRow && rootRow.listStatus !== "running") {
         report.stoppedReason = "root_finished_idle";
         break;
       }
@@ -248,7 +288,7 @@ try {
   report.validRun = finalGate.passed && !report.errors.some(e => e.phase === "run");
 
   await dumpAboutMemory("end");
-  await writeFile(join(artifactRoot, "sidebar.png"), await session.page.screenshot({ fullPage: true }));
+  await writeFile(join(workDir, "sidebar.png"), await session.page.screenshot({ fullPage: true }));
 } catch (error) {
   report.errors.push({ phase: "run", message: redact(error.stack || error.message) });
   report.stoppedReason = report.stoppedReason || "error";
@@ -260,7 +300,36 @@ try {
   report.peakRssMiB = Math.round((report.peakRssKiB / 1024) * 10) / 10;
   report.memTotalGiB = totalRamKiB > 0 ? Math.round((totalRamKiB / 1024 / 1024) * 100) / 100 : 0;
   report.rssCapKiB = rssCapKiB;
-  await writeFile(join(artifactRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+
+  const bucketKeys = ["parent", "webextensions", "content", "utility", "other"];
+  report.attribution.rssSlopeKiBPerMin = {};
+  for (const key of bucketKeys) {
+    report.attribution.rssSlopeKiBPerMin[key] = rssSlopeKiBPerMin(report.memorySamples, key);
+  }
+  report.attribution.aboutMemoryDeltaStartToEnd = diffAboutMemoryMetrics(
+    { metrics: report.aboutMemory.start?.metrics },
+    { metrics: report.aboutMemory.end?.metrics },
+  );
+  const peakTag = Object.keys(report.aboutMemory).find(tag => tag.startsWith("peak-"));
+  if (peakTag) {
+    report.attribution.aboutMemoryDeltaStartToPeak = diffAboutMemoryMetrics(
+      { metrics: report.aboutMemory.start?.metrics },
+      { metrics: report.aboutMemory[peakTag]?.metrics },
+    );
+    report.attribution.peakAboutMemoryTag = peakTag;
+  }
+  report.attribution.peakByPidTop = Object.entries(report.peakByPid)
+    .sort((a, b) => b[1].rssKiB - a[1].rssKiB)
+    .slice(0, 8)
+    .map(([pid, row]) => ({ pid: Number(pid), rssMiB: Math.round(row.rssKiB / 1024), comm: row.comm, args: row.args }));
+
+  await writeFile(join(workDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  try {
+    await cp(workDir, artifactRoot, { recursive: true, force: true });
+  } catch (error) {
+    report.errors.push({ phase: "artifact-copy", message: redact(error.message) });
+    await writeFile(join(artifactRoot, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  }
   await session?.close().catch(() => undefined);
 }
 
@@ -273,12 +342,16 @@ const summary = {
   maxDeepseekRequests: report.maxDeepseekRequests,
   maxChildSessions: report.maxChildSessions,
   maxWikipediaTabs: report.maxWikipediaTabs,
+  maxStorageJsonBytes: report.maxStorageJsonBytes,
   maxToolCounts: report.maxToolCounts,
   galleryWithImages: report.galleryWithImages,
+  attribution: report.attribution,
   finalAssistantAnswer: report.finalAssistantAnswer.slice(0, 500),
   errors: report.errors.map(item => item.message),
   artifactRoot,
+  workDir,
 };
 
 console.log(JSON.stringify(summary, null, 2));
-process.exit(report.validRun && report.errors.length === 0 ? 0 : 1);
+const attributionRun = process.env.QINGZHOU_LIVE_ATTRIBUTION === "1";
+process.exit((report.validRun || attributionRun) && report.errors.length === 0 ? 0 : 1);

@@ -3,12 +3,15 @@ import { getImageAssetObjectUrl } from "../../shared/asset-store.js";
 export interface ImageAssetUrlOptions {
   loadAsset?(id: string): Promise<{ objectUrl: string } | null>;
   revokeUrl?(url: string): void;
+  /** Grid previews default to thumbnails; lightboxes pass false for full resolution. */
+  thumbnail?: boolean;
 }
 interface Entry { promise: Promise<string | null>; url?: string | null }
 
 /** Each UI instance owns a scope. Late results from retired entries are revoked immediately. */
 export function createImageAssetUrls(options: ImageAssetUrlOptions = {}) {
-  const load = options.loadAsset || (id => getImageAssetObjectUrl(id, { thumbnail: false, touch: false }));
+  const useThumbnail = options.thumbnail !== false;
+  const load = options.loadAsset || (id => getImageAssetObjectUrl(id, { thumbnail: useThumbnail, touch: false }));
   const revoke = options.revokeUrl || (url => URL.revokeObjectURL(url));
   const entries = new Map<string, Entry>();
   let disposed = false;
