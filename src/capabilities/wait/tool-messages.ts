@@ -107,6 +107,10 @@ const messages = defineMessages("wait-tools", {
     "zh-CN": "是否在加载完成后截图，默认 false。需要视觉确认时设为 true。",
     en: "Whether to take a screenshot after loading. Default: false. Enable for visual confirmation.",
   },
+  waitForNavigationNext: {
+    "zh-CN": "等待调用后的下一次导航（包括同 URL 刷新），默认 false 只等当前加载完成。流程中 tools.$watch 可确认监听已就绪后再触发动作。",
+    en: "Wait for the next navigation, including a same-URL reload. Default false only settles current loading. In a flow, tools.$watch acknowledges readiness before the triggering action.",
+  },
   waitForNavigationFromUrl: {
     "zh-CN": "可选：上一动作前的 URL，用于判断当前 URL 是否已变化",
     en: "Optional URL from before the preceding action, used to check whether the URL has changed.",
@@ -126,6 +130,10 @@ const messages = defineMessages("wait-tools", {
   waitForElementSelector: {
     "zh-CN": "等待出现的元素 CSS 选择器；可传原始 CSS 或 css:...。不支持 uid:...，因为 uid 是快照引用，不适合等待未来 DOM 状态。",
     en: "CSS selector for the element to wait for. Accepts raw CSS or css:.... Does not support uid:... because a uid is a snapshot reference, unsuitable for waiting on future DOM state.",
+  },
+  waitForElementText: {
+    "zh-CN": "匹配元素 textContent 必须包含的文本；与 selector 一起检查，支持等待文本出现或消失。",
+    en: "Required substring of a matching element's textContent. Combined with selector; supports waiting for text to appear or disappear.",
   },
   waitForElementAbsent: {
     "zh-CN": "反转：等待元素消失，默认 false",

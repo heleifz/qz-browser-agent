@@ -166,6 +166,7 @@ function startWorkerRun(data: Record<string, unknown>) {
     scriptArgs: data.scriptArgs && typeof data.scriptArgs === "object" ? data.scriptArgs : {},
     securityGuardrails: data.securityGuardrails && typeof data.securityGuardrails === "object" ? data.securityGuardrails : {},
     fetchBridge: data.fetchBridge === true,
+    flow: data.flow === true,
   });
 }
 

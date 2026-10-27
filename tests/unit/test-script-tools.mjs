@@ -26,12 +26,12 @@ function fixture(evaluateCdpScript) {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-test('flow page reads do not install a nested tool bridge, even when code references tools', async () => {
+test('flow leaf page evaluations do not install a nested tool bridge, even when code references tools', async () => {
   const definitions = new Map(); let evaluated = '';
   createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
     skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' },
     evaluateCdpScript: async (_tab, options) => { evaluated = options.expression; return { result: { type: 'number', value: 42 } }; } });
-  const result = await definitions.get('run_script').execute({ code: 'async () => { return typeof tools; }', args: { example: true }, tabId: 7 }, undefined, { flowPageRead: true });
+  const result = await definitions.get('run_script').execute({ code: 'async () => { return typeof tools; }', args: { example: true }, tabId: 7 }, undefined, { flowPageLeaf: true });
   assert.equal(result.result, 42);
   assert.doesNotMatch(evaluated, /const tools = new Proxy/);
   assert.match(evaluated, /const input =/);

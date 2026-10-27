@@ -604,6 +604,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_response",
+  behavior: { flowWait: true },
   get description() { return toolT("waitForResponseDescription"); },
   get parameters() { return {
     type: "object",
@@ -690,7 +691,9 @@ registerTool({
         });
       }, timeoutMsValue);
       signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
       monitor.waiters.add(waiter);
+      context.flowWaitReady?.();
       waiter.check();
     });
   },
@@ -698,6 +701,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_network_idle",
+  behavior: { flowWait: true },
   get description() { return toolT("waitForNetworkIdleDescription"); },
   get parameters() { return {
     type: "object",
@@ -773,7 +777,9 @@ registerTool({
         });
       }, timeoutMsValue);
       signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
       monitor.waiters.add(waiter);
+      context.flowWaitReady?.();
       waiter.check();
     });
   },

@@ -158,7 +158,7 @@ function runInnerScript(msg: Record<string, unknown>): Promise<unknown> {
       traceInnerOffscreen("run.start", { requestId });
       postToSandbox({ type: "execute", requestId, scriptSource: String(msg.source || ""),
         scriptArgs: record(msg.scriptArgs), securityGuardrails: record(msg.securityGuardrails),
-        fetchBridge: msg.fetchBridge === true });
+        fetchBridge: msg.fetchBridge === true, flow: msg.reason === "flow" });
     }).catch(error => {
       if (pendingRuns.get(requestId) !== pending) return;
       pendingRuns.delete(requestId);

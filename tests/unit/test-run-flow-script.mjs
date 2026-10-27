@@ -46,7 +46,7 @@ test('flow scopes reject stale identities, unsupported nesting and missing expli
   for (const name of ['navigate', 'act_on_element', 'get_ax_tree', 'wait_for_element', 'wait_for_network_idle']) {
     await assert.rejects(scope.execution.call(name, { target: 'uid:t1.1' }, async () => {}), { code: 'FLOW_TAB_REQUIRED' });
   }
-  for (const [name, args] of [['run_flow', {}], ['run_script', { tabId: 1, target: ' INNER ' }], ['run_script', { tabId: 1, mutatesPage: true }]]) {
+  for (const [name, args] of [['run_flow', {}], ['run_script', { tabId: 1, target: ' INNER ' }], ['run_skill_script', { tabId: 1 }]]) {
     await assert.rejects(scope.execution.call(name, args, async () => {}), { code: 'FLOW_TOOL_UNSUPPORTED' });
   }
   scope.dispose(); assert.throws(() => resolveFlowExecution('request', context.sessionId, context.runId), { code: 'FLOW_EXECUTION_EXPIRED' });
@@ -77,7 +77,7 @@ test('flow bridge uses the normal runtime, captured call identity, deadline sign
     canManageSessions: async () => false, buildRunProfile: async () => ({}), collectArtifacts: () => [],
     getRunToolContext: async () => ({ language: 'en', toolRegistrySnapshot: 'frozen' }),
     toolRuntime: {
-      resolveDefinition: () => ({ behavior: { mayUnloadPage: true } }), getSchemas: () => [],
+      resolveDefinition: () => ({ page: 'owned', behavior: { mayUnloadPage: true } }), getSchemas: () => [],
       async execute(name, args, signal, ctx) {
         calls.push({ name, args, signal, ctx });
         assertScriptPageLifecycle({ name, behavior: { mayUnloadPage: true } }, args, ctx);
@@ -88,7 +88,7 @@ test('flow bridge uses the normal runtime, captured call identity, deadline sign
   });
   const call = (args, extra = {}) => bridge.handleToolCall({ ...context, flowRequestId: 'bridge-flow', toolName: 'navigate', depth: 1, args, ...extra });
   assert.equal((await call({ tabId: 51, url: 'https://example.test/' })).ok, true);
-  assert.equal(calls[0].ctx.flowPageRead, true); assert.equal(calls[0].ctx.toolCallId, context.toolCallId);
+  assert.equal(calls[0].ctx.flowPageLeaf, true); assert.equal(calls[0].ctx.toolCallId, context.toolCallId);
   assert.equal(calls[0].ctx.toolRegistrySnapshot, 'frozen');
   assert.equal((await call({ tabId: 999 })).code, 'SESSION_TAB_FOREIGN');
   await call({ tabId: 51 });

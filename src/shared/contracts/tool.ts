@@ -65,6 +65,8 @@ export interface ToolBehavior {
   nestedObservation?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Optional diagnostic channel; the runtime owns timeout fields and cancellation. */
   timeoutTrace?: string;
+  /** Passive wait; may run beside serialized flow actions. Host signals when armed. */
+  flowWait?: boolean;
 }
 
 export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {

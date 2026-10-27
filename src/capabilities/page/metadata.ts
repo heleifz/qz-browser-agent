@@ -9,6 +9,7 @@ const tools = () => Object.freeze({
   select_element: elementTool(t("selectElement"), { shortTitle: t("selectElementShort") }),
   find_elements: elementTool(t("findElements"), { shortTitle: t("findElementsShort") }),
   inspect_element: elementTool(t("inspectElement"), { shortTitle: t("inspectElementShort") }),
+  upload_files: elementTool(t("uploadFiles")),
   act_on_element: elementTool(t("interactWithElement"), { shortTitle: t("interactWithElementShort") }),
   click_element: elementTool(t("clickElement"), { shortTitle: t("clickElementShort") }),
   fill_input: elementTool(t("fillInput"), { shortTitle: t("fillInputShort") }),

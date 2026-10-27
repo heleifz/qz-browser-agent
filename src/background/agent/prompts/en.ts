@@ -141,17 +141,20 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### act_on_element
 - act_on_element supports target with click/fill/press/select/check/uncheck/scroll only.
-- Do not put page lifecycle actions such as submission, navigation, or closing a tab inside run_script.
+- Run submission, navigation and tab closure through tools in run_flow or direct browser tools, not inside a page-mode run_script that can unload itself.
 - After clicking, check pageAfter/urlChanged/titleChanged or read the page state again to confirm the result. When navigationPending is true, observe or wait for the page; do not repeat the click or form submission.
 - wait_for_navigation returning already_complete means only that the page was loaded when called, not that the preceding action succeeded or failed.
 
 ### Selecting local files
-- When a task needs a local file upload, call wait_for_user and ask the user to select the file on the page and then continue.
+- upload_files sets explicitly provided or task-generated file content on a file input; it cannot read the user's filesystem. For a local file or content beyond its size limit, call wait_for_user and ask the user to select the file on the page and then continue.
 - After resuming, inspect selectedFileCount or page feedback with get_ax_tree or inspect_element before submitting.
 
-## 4. Page scripts and batch processing
+## 4. Browser flows, page scripts and batch processing
 
 ### When to use
+- Prefer run_flow for multi-step browser work, cross-page navigation, multiple tabs, pagination and batch collection. Keep observations, actions, waits, extraction and storage together in the controller; a separate model turn for each step is unnecessary. A simple single action or read can use its direct tool.
+- Use explicit tabId for each page call. Independent tabs may run concurrently with bounded Promise.all batches; actions on the same tab serialize. Full UIDs retain their existing validation; never shorten a UID or reuse a snapshot alias after its snapshot expires. After navigation or stale-element errors, obtain current targets inside the flow.
+- For a future navigation, arm tools.$watch('wait_for_navigation',{tabId,next:true,timeout:10}), trigger the action, then await the handle's wait(). Use element/text or network waits for the condition actually needed. Handle individual failures with catch or tools.$settle and inspect error.observation before recovery. Persist large data in Data/files and emit small checkpoints with tools.$emit; verify completion against the task's acceptance criteria.
 - Use run_script in page mode or a Skill's page tool for reading, parsing, DOM aggregation, and processing API results within a page.
 - For page-independent JavaScript, bulk data_store cleaning/grouping/statistics/deduplication/derived fields, file generation, or ask_llm sub-analysis, use run_script({target:"inner", ...}) directly.
 
@@ -162,6 +165,7 @@ ${READING_CAPABILITY_PROTOCOL}
 - If no working tab is available and the task only involves data_store, files, or pure JavaScript, explicitly set run_script target:"inner".
 
 ### Runtime
+- run_flow runs outside task pages and survives navigation. Its tools proxy calls the normal tool runtime with the same permission, ownership and security checks. A nested run_script targets one page and returns {ok,result,...}; that leaf has document/window and input/args, but no tools/tool. Only the controller orchestrates further tools.
 - run_script target:"page" runs in the page context with document/window/Web APIs, input/args/tabId, and tools/tool.
 - run_script target:"inner" runs in qz's internal Worker with standard JavaScript/Web Worker APIs, input/args, and tools/tool. It has no document/window/DOM/tabId and does not read web pages.
 - Node.js, fs/path/process/require/import/npm, shell commands, and the local filesystem are unavailable, as are DevTools Console helpers such as getEventListeners/$0/copy/monitorEvents.

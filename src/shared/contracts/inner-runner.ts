@@ -5,7 +5,7 @@ export interface FetchResult { status: number; statusText?: string; headers?: [s
 export type FetchBridgeResponse = BridgeFailure | { ok: true; result: FetchResult };
 export interface FetchRequest { url: string; method: string; headers: [string, string][]; bodyBase64: string }
 export interface TraceRow { time: string; level: string; message: string }
-export interface ScriptFailure extends Error { code?: string; details?: unknown; diagnostic?: unknown }
+export interface ScriptFailure extends Error { code?: string; details?: unknown; diagnostic?: unknown; observation?: unknown }
 export type MessageValue = undefined | null | string | boolean | number | MessageValue[] | { [key: string]: MessageValue };
 export interface ScriptEnvelope {
   __runScriptEnvelope: true; ok: boolean; hasResult: boolean; result: MessageValue; resultType: string;
@@ -13,7 +13,7 @@ export interface ScriptEnvelope {
   error?: string; code?: string; details?: MessageValue; diagnostic?: MessageValue; message?: string; artifacts?: MessageValue;
   __lastObservation?: { _image: string; _imageDetail?: string };
 }
-export interface WorkerExecute { type: 'execute'; requestId?: string; source?: string; scriptArgs?: Record<string, unknown>; securityGuardrails?: unknown; fetchBridge?: boolean }
+export interface WorkerExecute { type: 'execute'; requestId?: string; source?: string; scriptArgs?: Record<string, unknown>; securityGuardrails?: unknown; fetchBridge?: boolean; flow?: boolean }
 export type InnerWorkerInput = WorkerExecute
   | { type: 'tool_response'; callId: string; response?: ToolBridgeResponse }
   | { type: 'fetch_response'; callId: string; response?: FetchBridgeResponse };

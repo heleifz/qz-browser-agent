@@ -357,7 +357,7 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
         entry.phase = event.phase || existing.phase || "running";
         entry.statusText = String(event.statusText || "");
         entry.rateLimit = event.rateLimit && typeof event.rateLimit === "object" ? cloneJsonValue(event.rateLimit) : existing.rateLimit || null;
-        entry.result = existing.result ?? null;
+        entry.result = event.partialResult ?? existing.result ?? null;
         entry.image = existing.image || null;
       } else {
         const image = record(event.result)._image;

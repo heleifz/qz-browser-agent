@@ -143,17 +143,20 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### act_on_element 协议
 - act_on_element 只使用 target + click/fill/press/select/check/uncheck/scroll。
-- 提交、导航、关闭 tab 等页面生命周期动作不要塞进 run_script。
+- 提交、导航、关闭 tab 等生命周期动作通过 run_flow 内的工具或直接浏览器工具执行，不放进会卸载自身页面的页面模式 run_script。
 - 点击后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果。navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交表单。
 - wait_for_navigation 的 already_complete 只说明调用时页面已加载，不代表上一动作成功或失败。
 
 ### 本地文件选择
-- 任务需要上传本地文件时，调用 wait_for_user，请用户在页面完成文件选择后点击继续。
+- upload_files 可向文件输入框设置明确提供或任务生成的内容，不能读取用户本机文件系统。本机文件或超出工具大小限制的内容，调用 wait_for_user，请用户在页面完成文件选择后点击继续。
 - 恢复后，用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 
-## 4. 页面脚本与批处理协议
+## 4. 浏览器流程、页面脚本与批处理协议
 
 ### 适用场景
+- 多步浏览器操作、跨页导航、多标签页、翻页与批量采集优先使用 run_flow，把观察、动作、等待、提取和保存放在控制器内，不必每一步都经过一轮模型调用。简单单次动作或读取可以直接使用对应工具。
+- 每个页面调用显式传 tabId；独立标签页可用有界 Promise.all 批次并行，同一 tab 的动作串行。完整 UID 继续执行原有校验，不能截短 UID，也不能在快照过期后复用短别名。导航或遇到过期元素错误后，在流程内重新获取当前目标。
+- 等待未来导航时，先 await tools.$watch('wait_for_navigation',{tabId,next:true,timeout:10}) 确认监听就绪，再触发动作并 await 句柄的 wait()。按实际需要等待元素/文本或网络条件。通过 catch 或 tools.$settle 处理单步失败，检查 error.observation 后再恢复；大数据写入 Data/文件，用 tools.$emit 回传小检查点，并按任务验收标准验证完成情况。
 - 页面内读取、解析、DOM 聚合、接口结果整理时使用 run_script 的页面模式或 Skill page 工具。
 - 与页面无关的纯 JS 计算、data_store 批量清洗/分组/统计/去重/派生字段、生成文件或 ask_llm 子分析，直接使用 run_script({target:"inner", ...})。
 
@@ -164,6 +167,7 @@ ${READING_CAPABILITY_PROTOCOL}
 - 没有工作标签页但任务只处理 data_store/文件/纯 JS 时，显式使用 run_script target:"inner"。
 
 ### 运行环境
+- run_flow 在任务页面之外运行，导航不会终止控制器。tools 代理通过原有工具运行时执行，保持权限、归属和安全检查。嵌套 run_script 只操作一个页面，返回 {ok,result,...}；该叶子脚本可用 document/window 和 input/args，但没有 tools/tool，后续工具编排只在控制器中进行。
 - run_script target:"page" 运行在网页上下文，可用 document/window/Web APIs、input/args/tabId、tools/tool。
 - run_script target:"inner" 运行在轻舟内部 Worker，可用标准 JS/Web Worker APIs、input/args、tools/tool；没有 document/window/DOM/tabId，不读取网页。
 - 不可用 Node.js、fs/path/process/require/import/npm、shell、本地文件系统，也不能使用 getEventListeners/$0/copy/monitorEvents 等 DevTools Console helper。

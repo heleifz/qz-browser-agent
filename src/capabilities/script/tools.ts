@@ -416,7 +416,7 @@ registerTool({
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ code, skill, script, context });
 
     const run = async () => {
-      if (!context.flowPageRead && (scriptUsesToolApi(code) || scriptUsesInputArgs(code) || Object.keys(scriptArgs).length > 0)) {
+      if (!context.flowPageLeaf && (scriptUsesToolApi(code) || scriptUsesInputArgs(code) || Object.keys(scriptArgs).length > 0)) {
         return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api", scriptArgs, securityGuardrails, signal);
       }
 
@@ -429,7 +429,7 @@ registerTool({
           userGesture: true,
         }, signal, context);
         const formatted = formatCdpScriptResult(evalResult, "cdp");
-        if (!context.flowPageRead && !formatted.ok && isToolApiReferenceError(formatted.error)) {
+        if (!context.flowPageLeaf && !formatted.ok && isToolApiReferenceError(formatted.error)) {
           return runScriptWithCdpToolBridgeUnlocked(resolvedTabId, code, context, "tool_api_reference", scriptArgs, securityGuardrails, signal);
         }
         if (formatted.ok || !isExplicitReturnError(formatted.error)) return formatted;
@@ -554,7 +554,14 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
   const depth = Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0));
   const source = wrapRunScriptSource(String(code || ""));
   let unregisterNetworkExecution: (() => void) | null = null;
-  const flow = reason === "flow" ? registerFlowExecution(requestId, context, signal) : null;
+  const flow = reason === "flow" ? registerFlowExecution(requestId, context, signal, progress => {
+    getToolRuntimeDependencies(context).emit?.({
+      type: "tool_execution_update", sessionId, runId,
+      toolName: "run_flow", toolCallId: context.toolCallId, spanId: context.spanId,
+      phase: "running", statusText: JSON.stringify(progress.checkpoint || { tool: progress.tool, phase: progress.phase }),
+      partialResult: { checkpoints: progress.checkpoints },
+    });
+  }) : null;
   try {
     const ready = ensureRunScriptOffscreenDocument();
     await (flow ? waitForFlow(ready, flow.execution.signal) : ready);
@@ -586,7 +593,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       securityGuardrails,
       fetchBridge,
     }, signal);
-    if (flow) response = { ...record(response), execution_world: "flow", finalObservation: await flow.execution.finish() };
+    if (flow) response = { ...record(response), execution_world: "flow", finalObservation: await flow.execution.finish(), checkpoints: [...flow.execution.checkpoints] };
     const envelope = record(response);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
       return compactRunScriptEnvelope(envelope, "offscreen_inner");

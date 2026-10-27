@@ -1,3 +1,4 @@
+import { compactFlowValue, FLOW_MAX_PENDING, FLOW_PROGRESS_CHARS, flowValueSize } from "../shared/flow-script.js";
 import { safeValueForMessage, installSecurityGuards } from "../shared/script-runtime.js";
 import type { FetchResult, InnerWorkerInput, InnerWorkerOutput, ScriptEnvelope, ScriptFailure, ToolBridgeResponse, TraceRow, WorkerExecute } from '../shared/contracts/inner-runner.js';
 
@@ -35,6 +36,7 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       if (response.code) error.code = response.code;
       if (response.diagnostic) error.diagnostic = response.diagnostic;
       if (response.details) error.details = response.details;
+      if (isRecord(response.details) && response.details.observation) error.observation = response.details.observation;
       call.reject(error);
       return;
     }
@@ -63,6 +65,7 @@ async function runInnerScript(payload: WorkerExecute) {
   const startedAt = Date.now();
   const traceRows: TraceRow[] = [];
   const artifacts: unknown[] = [];
+  let artifactCharacters = 0, artifactsTruncated = false;
   const source = String(payload.source || "");
   const input = payload.scriptArgs && typeof payload.scriptArgs === "object" ? payload.scriptArgs : {};
   const args = input;
@@ -98,15 +101,21 @@ async function runInnerScript(payload: WorkerExecute) {
   function addToolArtifacts(items: unknown) {
     const list = Array.isArray(items) ? items : (items ? [items] : []);
     for (const item of list) {
-      if (item && typeof item === "object") artifacts.push(item);
+      if (item && typeof item === "object") {
+        const characters = payload.flow ? flowValueSize(item) : 0;
+        if (payload.flow && (artifacts.length >= 64 || artifactCharacters + characters > 16384)) { artifactsTruncated = true; continue; }
+        artifacts.push(item); artifactCharacters += characters;
+      }
     }
   }
 
   function callTool(name: string, args: unknown = {}) {
     const toolName = String(name || "").trim();
     if (!toolName) throw new Error("tools call requires a tool name");
+    if (payload.flow && pendingToolCalls.size >= FLOW_MAX_PENDING) return Promise.reject(Object.assign(new Error("Await pending flow calls before starting more."), { code: "FLOW_CAPACITY" }));
     const toolArgs = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
     const safeToolArgs = safeValueForMessage(toolArgs);
+    if (payload.flow && flowValueSize(safeToolArgs) > 1024 * 1024) return Promise.reject(Object.assign(new Error("Flow tool arguments exceed 1,048,576 JSON characters; use bounded batches or file/table references."), { code: "FLOW_RESULT_TOO_LARGE" }));
     pushTrace("tool.start", [toolName, toolArgs]);
     const callId = "inner_tool_" + Date.now() + "_" + (++seq);
     send({
@@ -139,6 +148,16 @@ async function runInnerScript(payload: WorkerExecute) {
       if (prop === Symbol.toStringTag) return "RunScriptInnerTools";
       if (prop === "$call") return callTool;
       if (prop === "$list") return () => callTool("__list_tools__", {});
+      if (payload.flow && prop === "$emit") return (value: unknown) => callTool("__flow_emit__", { value: compactFlowValue(safeValueForMessage(value), FLOW_PROGRESS_CHARS) });
+      if (payload.flow && prop === "$settle") return async (name: string, args: unknown = {}) => {
+        try { return { ok: true, result: await callTool(name, args) }; }
+        catch (thrown) { const error = failure(thrown); return { ok: false, error: error.message, code: error.code, details: error.details, observation: error.observation }; }
+      };
+      if (payload.flow && prop === "$watch") return async (name: string, args: unknown = {}) => {
+        const armed = await callTool("__flow_watch__", { name, args });
+        const id = isRecord(armed) ? armed.id : undefined;
+        return { wait: () => callTool("__flow_watch_result__", { id }), cancel: () => callTool("__flow_watch_cancel__", { id }) };
+      };
       if (typeof prop !== "string") return undefined;
       return (args = {}) => callTool(prop, args);
     },
@@ -150,10 +169,11 @@ async function runInnerScript(payload: WorkerExecute) {
   const restoreSecurity = installSecurityGuards(payload.securityGuardrails || {});
   try {
     const fn = new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "\"use strict\"; return (async () => {\n" + source + "\n})();");
-    const result = await fn(input, args, input.$plugin || {}, tools, tool, trace, log, tabId);
+    const value = await fn(input, args, input.$plugin || {}, tools, tool, trace, log, tabId);
+    const result = payload.flow ? compactFlowValue(safeValueForMessage(value)) : value;
     send({
       type: "result",
-      result: { ...makeEnvelope(true, result, null, traceRows, artifacts, startedAt), __lastObservation: lastObservation },
+      result: { ...makeEnvelope(true, result, null, traceRows, artifacts, startedAt, payload.flow), ...(artifactsTruncated ? { artifactsTruncated: true } : {}), __lastObservation: lastObservation },
     });
   } catch (error) {
     decorateSyntaxError(error, source);
@@ -165,7 +185,7 @@ async function runInnerScript(payload: WorkerExecute) {
     pushTrace("error", [error]);
     send({
       type: "result",
-      result: { ...makeEnvelope(false, null, error, traceRows, artifacts, startedAt), __lastObservation: lastObservation },
+      result: { ...makeEnvelope(false, null, error, traceRows, artifacts, startedAt, payload.flow), ...(artifactsTruncated ? { artifactsTruncated: true } : {}), __lastObservation: lastObservation },
     });
   } finally {
     restoreSecurity();
@@ -341,7 +361,7 @@ function findRawNewlineInQuotedString(text: string) {
   return -1;
 }
 
-function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: TraceRow[], artifacts: unknown[], startedAt: number): ScriptEnvelope {
+function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: TraceRow[], artifacts: unknown[], startedAt: number, flow = false): ScriptEnvelope {
   const error = thrown == null ? null : failure(thrown);
   const safeResult = ok && result !== undefined ? safeValueForMessage(result) : null;
   const out: ScriptEnvelope = {
@@ -365,6 +385,11 @@ function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: 
     out.message = "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.";
   }
   if (Array.isArray(artifacts) && artifacts.length) out.artifacts = safeValueForMessage(artifacts.slice());
+  if (flow && !ok) {
+    out.error = out.error?.slice(0, 2048);
+    out.details = safeValueForMessage(compactFlowValue(out.details, 16384));
+    out.diagnostic = safeValueForMessage(compactFlowValue(out.diagnostic, 2048));
+  }
   return out;
 }
 

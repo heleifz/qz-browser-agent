@@ -98,7 +98,7 @@ export async function launchIsolatedExtensionMcp({
     await context?.close().catch(() => undefined);
     await bridge.close();
     rmSync(profile, { recursive: true, force: true });
-    throw error;
+    throw Object.assign(error, { diagnostics });
   }
 }
 

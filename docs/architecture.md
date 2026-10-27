@@ -305,13 +305,23 @@ surface. Preparation failure ends the operation before input is sent.
 bridge](../src/background/tools/run-script-bridge.ts) check page and inner-script access. The inner
 Worker calls tools and fetch through the host; its runtime contains only Worker APIs.
 
-`run_flow` is a top-level cross-page controller using that same Worker host. It calls a bounded
-set of browser tools, page waits, `data_store`, and leaf page-mode `run_script` reads. It requires
+[`run_flow`](flow-scripts.md) is a top-level cross-page controller using that same Worker host.
+It calls the current run's visible core tools and leaf page-mode `run_script` evaluations; recursive
+flows, inner scripts and Skill tools run separately. It requires
 explicit tab IDs even for UID actions. The [flow execution scope](../src/background/tools/flow-execution.ts)
 binds bridge calls to the enclosing script's Session, run, tool-call identity and cancellation
-signal. Calls on each tab queue in Background; different tabs and new-tab creation can proceed
-concurrently. Every call still enters the common tool runtime. Leaf page scripts receive input
+signal. Ordinary calls on each tab queue in Background; different tabs and new-tab creation can
+proceed concurrently. Passive waits opt into `behavior.flowWait` and bypass that action queue.
+`tools.$watch` acknowledges `context.flowWaitReady` before returning an armed wait handle, avoiding
+both same-tab wait/action deadlocks and listener-registration races. Every browser call still
+enters the common tool runtime. Leaf page scripts receive input
 arguments but no tool bridge, preventing recursive orchestration and queue deadlocks.
+
+Step failures include a bounded AX observation and can be recovered with `catch` or `tools.$settle`.
+`tools.$emit` publishes bounded checkpoints through a run-scoped `tool_execution_update.partialResult`;
+transcript projection updates the existing running tool entry. Data/file tools own durable results.
+Worker arguments, results, progress, trace and artifact summaries have explicit budgets. Full UIDs
+still pass unchanged through the element host; no short-alias expansion is introduced.
 
 After pending calls settle, the controller returns a fresh, bounded AX snapshot of the last-used
 remaining tab as `finalObservation`. A failed script also gets this observation; stop or timeout

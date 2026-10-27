@@ -283,14 +283,19 @@ For the cross-page script UX comparison, build each revision into its own output
 
 ```bash
 QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-baseline" npm test -- live flow-script --label baseline --repetitions 2
-QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-prototype" npm test -- live flow-script --label prototype --repetitions 2
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-production" npm test -- live flow-script --label production --repetitions 2
 ```
 
 This explicit live target requires `DEEPSEEK_API_KEY` in the environment. It uses `deepseek-flash`,
 a 1,000,000-token context and vision enabled, with an isolated profile/service per invocation.
 `--cases A,B,C,D` selects PyPI releases, Kyoto infobox images, three catalogue pages and a short
-single-page read. Prompts do not mention the new mode. `--cases smoke,stop --repetitions 1` instead
-runs explicit controller and cancellation probes; keep those out of UX comparisons. `--output`
+single-page read. The default `--cases A,B,C,D,E,F,G` also covers demo login/logout, three separate
+source tabs, and ten product-detail records saved to Data. Objective prompts do not name a tool.
+For counterbalanced comparisons, run separate one-repetition invocations in baseline, new, new,
+baseline order, using unique labels and no overlapping arms.
+`--cases controller,stop --repetitions 1` instead runs explicit navigation/wait/error/UID/upload/hover
+and cancellation probes; keep those out of UX comparisons. Stop waits beyond the attempted delayed
+action and records whether tab URLs stayed unchanged. `--output`
 selects the evidence directory (default `tests/results/flow-script`). Reports include wall time,
 actual provider request counts, provider-reported tokens, tool choice and full snapshots. Review
 business acceptance from the snapshots; a completed Agent status alone is not a pass.

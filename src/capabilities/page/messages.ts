@@ -41,6 +41,7 @@ export default defineMessages("page", {
   "findElementsShort": { "zh-CN": "查找元素", en: "Find elements" },
   "inspectElement": { "zh-CN": "检查元素", en: "Inspect element" },
   "inspectElementShort": { "zh-CN": "检查元素", en: "Inspect element" },
+  "uploadFiles": { "zh-CN": "设置上传文件", en: "Set upload files" },
   "interactWithElement": { "zh-CN": "操作元素", en: "Interact with element" },
   "interactWithElementShort": { "zh-CN": "操作元素", en: "Interact" },
   "clickElement": { "zh-CN": "点击元素", en: "Click element" },

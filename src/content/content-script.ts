@@ -1,3 +1,4 @@
+import { setInputFiles, type UploadFile } from "./file-input.js";
 import { refreshContentLanguage, t } from "./i18n.js";
 import { normalizeImage } from "../shared/images/normalize.js";
 import { assertImageDimensions, IMAGE_MAX_EDGE } from "../shared/images/policy.js";
@@ -16,6 +17,7 @@ interface ElementSummary extends PageAction {
 }
 interface ContentRequest {
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; source?: string; offset?: number; limit?: number;
+  text?: string; files?: UploadFile[];
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -40,7 +42,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-22-iframe-frame";
+  const QZ_CONTENT_VERSION = "2026-10-22-flow-files-text";
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -2159,10 +2161,20 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       };
     },
 
-    querySelector({ selector, limit = 10 }) {
+    setInputFiles({ selector, index = 0, files = [] }) {
       const query = queryAll(selector);
       if (query.error) return query.error;
-      return query.elements.slice(0, limit).map((el, i) => ({
+      const target: unknown = selector;
+      const element = query.elements[target instanceof Element ? 0 : Math.max(0, Math.floor(index))];
+      if (!element) return toolError("ELEMENT_NOT_FOUND", "File input not found; inspect the page and retry.", { selector, index });
+      try { return setInputFiles(element, files); }
+      catch (error) { return toolError("FILE_INPUT_FAILED", errorMessage(error), { recovery: "Inspect the file input and supplied content, or use wait_for_user for a local file." }); }
+    },
+
+    querySelector({ selector, limit = 10, text = "" }) {
+      const query = queryAll(selector);
+      if (query.error) return query.error;
+      return query.elements.filter(element => !text || element.textContent?.includes(text)).slice(0, limit).map((el, i) => ({
         index: i,
         selector: getAbsoluteSelector(el),
         tag: el.tagName.toLowerCase(),

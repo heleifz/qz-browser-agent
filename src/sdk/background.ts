@@ -13,6 +13,8 @@ export interface ToolContext extends SkillActivationContext {
   toolRegistrySnapshot?: unknown;
   toolCallId?: string;
   workingTabId?: number | null;
+  /** Trusted flow host callback, acknowledged only after a passive wait is armed. */
+  flowWaitReady?: () => void;
   sourceWindowId?: number | null;
   runProfile?: ToolRunProfile | null;
   profile?: ToolRunProfile | null;

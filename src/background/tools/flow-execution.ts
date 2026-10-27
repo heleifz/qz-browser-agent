@@ -1,19 +1,22 @@
 import type { ToolContext } from "../../sdk/background.js";
+import type { ToolBehavior, ToolPageAccess } from "../../shared/contracts/tool.js";
+import { compactFlowValue, FLOW_MAX_PENDING, FLOW_PROGRESS_CHARS, FLOW_STEP_CHARS, flowValueSize } from "../../shared/flow-script.js";
 import { ToolExecutionError } from "./arguments.js";
 
 type Fields = Record<string, unknown>;
+export interface FlowToolPolicy {
+  page?: ToolPageAccess | ((args: Fields) => ToolPageAccess);
+  behavior?: Readonly<ToolBehavior>;
+  source?: string;
+  hidden?: boolean;
+}
 const executions = new Map<string, FlowExecution>();
-// Shared between flow invocations, including concurrent calls in the same run.
 const tabTails = new Map<number, Promise<unknown>>();
-const supported = new Set(["open_tab", "close_tab", "navigate", "find_elements", "inspect_element",
-  "act_on_element", "get_ax_tree", "screenshot", "wait_for_element", "wait_for_network_idle", "data_store", "run_script"]);
+const record = (value: unknown): Fields => value && typeof value === "object" ? value as Fields : {};
 const aborted = () => new ToolExecutionError("OPERATION_ABORTED", "Flow stopped; inspect the page before retrying.");
 
 export function waitForFlow<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    void promise.catch(() => {});
-    return Promise.reject(aborted());
-  }
+  if (signal.aborted) { void promise.catch(() => {}); return Promise.reject(aborted()); }
   return new Promise((resolve, reject) => {
     const abort = () => reject(aborted());
     signal.addEventListener("abort", abort, { once: true });
@@ -26,68 +29,142 @@ export class FlowExecution {
   readonly signal: AbortSignal;
   private readonly pending = new Set<Promise<unknown>>();
   private readonly tabs = new Set<number>();
-  observe?: (tabId: number) => Promise<unknown>;
-  constructor(readonly context: ToolContext, parent?: AbortSignal) {
+  private readonly watches = new Map<string, { controller: AbortController; result: Promise<Fields> }>();
+  readonly checkpoints: unknown[] = [];
+  private sequence = 0;
+  private lastPublished = 0;
+  observe?: (tabId: number, signal?: AbortSignal) => Promise<unknown>;
+  constructor(readonly context: ToolContext, parent?: AbortSignal, private readonly publish?: (progress: Fields) => void) {
     this.signal = parent ? AbortSignal.any([parent, this.controller.signal]) : this.controller.signal;
   }
-  allows(name: string) { return supported.has(name); }
-  async call<T>(name: string, args: Fields, execute: () => Promise<T>): Promise<T> {
+  allows(name: string, policy: FlowToolPolicy = {}) {
+    return !policy.hidden && policy.source !== "plugin" && !["run_flow", "run_skill_script"].includes(name);
+  }
+  emit(value: unknown) {
     if (this.signal.aborted) throw aborted();
-    if (!this.allows(name) || (name === "run_script" && (String(args.target || "page").trim().toLowerCase() !== "page" || args.mutatesPage === true))) {
-      throw new ToolExecutionError("FLOW_TOOL_UNSUPPORTED", "Flow supports browser tools, data_store and leaf page reads. Call other tools separately.", { toolName: name });
+    const checkpoint = { sequence: ++this.sequence, value: compactFlowValue(value, FLOW_PROGRESS_CHARS) };
+    this.checkpoints.push(checkpoint);
+    if (this.checkpoints.length > 16) this.checkpoints.shift();
+    this.progress({ checkpoint }, true);
+    return checkpoint;
+  }
+  private progress(value: Fields, explicit = false) {
+    if (this.signal.aborted || (!explicit && Date.now() - this.lastPublished < 200)) return;
+    this.lastPublished = Date.now();
+    this.publish?.({ ...value, checkpoints: [...this.checkpoints] });
+  }
+  async call<T>(name: string, args: Fields, execute: () => Promise<T>, policy: FlowToolPolicy = { page: ["open_tab", "data_store"].includes(name) ? false : "owned" }, signal = this.signal): Promise<T> {
+    if (signal.aborted) throw aborted();
+    if (!this.allows(name, policy) || (name === "run_script" && String(args.target || "page").trim().toLowerCase() !== "page")) {
+      throw new ToolExecutionError("FLOW_TOOL_UNSUPPORTED", "Use core tools and leaf page scripts in a flow; recursive/Skill scripts run separately.", { toolName: name });
     }
-    const page = name !== "open_tab" && name !== "data_store";
+    if (this.pending.size >= FLOW_MAX_PENDING) throw new ToolExecutionError("FLOW_CAPACITY", "Await pending flow calls before starting more.");
+    const page = typeof policy.page === "function" ? policy.page(args) : policy.page;
     const tabId = Number(args.tabId);
     if (page && (!Number.isInteger(tabId) || tabId <= 0)) {
-      throw new ToolExecutionError("FLOW_TAB_REQUIRED", "Pass an explicit owned tabId to each flow page tool, including UID actions.", { toolName: name });
+      throw new ToolExecutionError("FLOW_TAB_REQUIRED", "Pass an explicit owned tabId to every page call, including UID actions.", { toolName: name });
     }
-    const previous = page ? tabTails.get(tabId) : undefined;
+    const waiter = policy.behavior?.flowWait === true;
+    const previous = page && !waiter ? tabTails.get(tabId) : undefined;
     const operation = (async () => {
-      if (previous) await waitForFlow(previous.catch(() => {}), this.signal);
-      if (this.signal.aborted) throw aborted();
-      // Even a failed action may have changed the page before its observation failed.
+      if (previous) await waitForFlow(previous.catch(() => {}), signal);
+      if (signal.aborted) throw aborted();
       if (page) { this.tabs.delete(tabId); this.tabs.add(tabId); }
-      // Keep the lock until the runtime settles, even if the caller stops waiting.
-      const result = await execute();
-      if (this.signal.aborted) throw aborted();
-      const output = result && typeof result === "object" ? result as Fields : {};
-      if (name === "close_tab" && output.ok !== false && !output.error) this.tabs.delete(tabId);
-      else {
-        const touched = page ? tabId : name === "open_tab" ? Number(output.id) : 0;
-        if (touched > 0) { this.tabs.delete(touched); this.tabs.add(touched); }
+      this.progress({ tool: name, phase: "start", tabId: page ? tabId : undefined });
+      try {
+        const result = await execute();
+        if (signal.aborted) throw aborted();
+        const output = record(result);
+        if (output.ok === false || output.error != null || output.isError === true || output.timedOut === true || output.status === "timeout") {
+          throw new ToolExecutionError(String(output.code || (output.timedOut || output.status === "timeout" ? "FLOW_STEP_TIMEOUT" : "FLOW_STEP_FAILED")),
+            String(output.error || "Flow step failed; inspect its observation before retrying.").slice(0, 2048), { result: compactFlowValue(result, 8192) });
+        }
+        // Images use the existing image budget, not the structured-data budget.
+        const { _image, _display, ...data } = output;
+        if (flowValueSize(typeof result === "object" && result !== null && !Array.isArray(result) ? data : result) > FLOW_STEP_CHARS) {
+          throw new ToolExecutionError("FLOW_RESULT_TOO_LARGE", "Store large data in Data/files; request a smaller page/tool result.", { toolName: name, maxCharacters: FLOW_STEP_CHARS });
+        }
+        if (name === "close_tab") this.tabs.delete(tabId);
+        else {
+          const touched = page ? tabId : name === "open_tab" ? Number(output.id) : 0;
+          if (touched > 0) { this.tabs.delete(touched); this.tabs.add(touched); }
+        }
+        this.progress({ tool: name, phase: "complete", tabId: page ? tabId : undefined });
+        return result;
+      } catch (error) {
+        if (signal.aborted) throw aborted();
+        // Observe before releasing an action's tab lock. Waiters acquire a separate
+        // observation turn so they cannot take a snapshot in the middle of an action.
+        const observation = page ? await (waiter ? this.snapshot(tabId) : this.observeSafely(tabId)) : undefined;
+        const failure = record(error);
+        throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+          details: { ...record(failure.details), ...(observation ? { observation } : {}) },
+        });
       }
-      return result;
     })();
     this.pending.add(operation);
     const tail = Promise.allSettled([previous, operation]);
-    if (page) tabTails.set(tabId, tail);
+    if (page && !waiter) tabTails.set(tabId, tail);
     void operation.finally(() => this.pending.delete(operation)).catch(() => {});
-    void tail.then(() => {
-      if (page && tabTails.get(tabId) === tail) tabTails.delete(tabId);
-    });
-    return waitForFlow(operation, this.signal);
+    void tail.then(() => { if (page && tabTails.get(tabId) === tail) tabTails.delete(tabId); });
+    return waitForFlow(operation, signal);
   }
-  async finish() {
-    await waitForFlow(Promise.allSettled([...this.pending]), this.signal);
-    const tabId = [...this.tabs].at(-1);
-    if (!tabId || !this.observe) return { available: false, code: "FLOW_NO_OPEN_TAB", message: "No remaining flow tab to observe." };
+  private async observeSafely(tabId: number, signal = this.signal) {
     try {
-      const snapshot = await this.call("get_ax_tree", { tabId }, () => this.observe!(tabId));
-      return { tabId, snapshot };
+      if (!this.observe) throw new Error("No observation host");
+      return { tabId, snapshot: compactFlowValue(await waitForFlow(this.observe(tabId, signal), signal), 16000) };
     } catch (error) {
       if (this.signal.aborted) throw aborted();
       return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error), recovery: "Inspect this tab with get_ax_tree or screenshot." };
     }
   }
-  dispose() { this.controller.abort(); }
+  private snapshot(tabId: number) {
+    const signal = AbortSignal.any([this.signal, AbortSignal.timeout(5000)]);
+    return this.call("__flow_snapshot__", { tabId }, () => this.observeSafely(tabId, signal), { page: "owned" }, signal).catch(error => {
+      if (this.signal.aborted) throw aborted();
+      return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error), recovery: "Inspect this tab after its current operation finishes." };
+    });
+  }
+  async watch(run: (ready: () => void, signal: AbortSignal) => Promise<Fields>) {
+    if (this.watches.size >= 32) throw new ToolExecutionError("FLOW_CAPACITY", "Consume or cancel existing watches first.");
+    const id = `watch_${++this.sequence}`;
+    const controller = new AbortController();
+    let ready!: () => void;
+    const armed = new Promise<void>(resolve => { ready = resolve; });
+    const result = run(ready, AbortSignal.any([this.signal, controller.signal]));
+    this.watches.set(id, { controller, result });
+    // A waiter that completes/fails before arming must not strand its caller.
+    void result.then(ready, ready);
+    await waitForFlow(armed, this.signal);
+    return { id };
+  }
+  async consumeWatch(id: string, cancel = false): Promise<Fields> {
+    const watch = this.watches.get(id);
+    if (!watch) throw new ToolExecutionError("FLOW_WATCH_EXPIRED", "This watch was consumed or cancelled. Arm a new watch.");
+    this.watches.delete(id);
+    if (cancel) { watch.controller.abort(); return { ok: true, result: { cancelled: true } }; }
+    return waitForFlow(watch.result, this.signal);
+  }
+  async finish() {
+    for (const watch of this.watches.values()) watch.controller.abort();
+    this.watches.clear();
+    await waitForFlow(Promise.allSettled([...this.pending]), this.signal);
+    const tabId = [...this.tabs].at(-1);
+    if (!tabId) return { available: false, code: "FLOW_NO_OPEN_TAB", message: "No remaining flow tab to observe." };
+    return this.snapshot(tabId);
+  }
+  dispose() {
+    this.controller.abort();
+    for (const watch of this.watches.values()) watch.controller.abort();
+    this.watches.clear();
+  }
 }
 
-export function registerFlowExecution(requestId: string, context: ToolContext, signal?: AbortSignal) {
-  const execution = new FlowExecution(context, signal);
+export function registerFlowExecution(requestId: string, context: ToolContext, signal?: AbortSignal, publish?: (progress: Fields) => void) {
+  const execution = new FlowExecution(context, signal, publish);
   executions.set(requestId, execution);
   return { execution, dispose() { executions.delete(requestId); execution.dispose(); } };
 }
-
 export function resolveFlowExecution(requestId: string, sessionId: string, runId: string) {
   const execution = executions.get(requestId);
   if (!execution || execution.signal.aborted || execution.context.sessionId !== sessionId || execution.context.runId !== runId) {
