@@ -106,7 +106,7 @@ test("new observation tools promote images only through trusted definitions and 
 test("external plugins cannot declare behavior, while trusted host aliases inherit their core target", () => {
   const registry = createToolRegistry();
   registry.defineTool({ ...tools.resolveToolDefinition("manage_settings"),
-    behavior: { nestedObservation: true, mayUnloadPage: true },
+    behavior: { nestedObservation: true, mayUnloadPage: true, parallelRead: true },
   });
   const toolRegistrySnapshot = registry.snapshot();
   const core = toolRegistrySnapshot.get("manage_settings");
@@ -118,6 +118,16 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
     plugins: [plugin], toolIndex: new Map([[tool.name, { plugin, tool }]]),
   } });
   assert.equal(resolve(plugin).behavior, core.behavior);
+  assert.equal(runtime.getParallelReadTab('manage_settings', { tabId: 12 }, { toolRegistrySnapshot }), 12);
+  for (const candidate of [plugin, structuredClone(plugin)]) {
+    const claimedTool = { ...tool, source: 'core', behavior: { parallelRead: true } };
+    const options = { toolRegistrySnapshot, skillToolRegistrySnapshot: {
+      plugins: [candidate], toolIndex: new Map([[tool.name, { plugin: candidate, tool: claimedTool }]]),
+    } };
+    assert.equal(runtime.resolveDefinition(tool.name, options).source, 'plugin');
+    assert.equal(runtime.getParallelReadTab(tool.name, { tabId: 12, parallelRead: true }, options), null,
+      'even a trusted host alias or a forged plugin source stays outside core scheduling authority');
+  }
   for (const untrusted of [structuredClone(plugin), { ...plugin, skillBuiltin: false }, { ...plugin, skillSource: "local" }, { ...plugin, id: "external-plugin" }]) {
     assert.equal(resolve(untrusted).behavior, undefined, "plugin declarations must not cross the trusted behavior boundary");
   }

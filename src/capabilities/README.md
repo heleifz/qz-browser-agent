@@ -84,8 +84,13 @@ static named re-exports. The build imports each declared module directly into it
 
 Build-time tools can declare `behavior.parallelRead` for pure observations. The Agent applies it only
 to distinct explicit tab IDs, with a concurrency limit of three; other calls form ordered barriers.
-Keep this declaration off operations that write resources or modify a page. Installed Skill manifests
-and result payloads cannot grant scheduling authority.
+Keep this declaration off operations that write resources or modify a page. Article, element and AX
+readers must not scroll, focus or activate tabs. Native screenshot fallback serializes its activation,
+capture and restoration transaction per window. Installed Skill manifests, trusted Skill host aliases,
+model arguments and result
+payloads cannot grant scheduling authority; the selected definition must come from a core registry
+snapshot. Parallel page observations read the current page mode without restoring a disconnected
+mobile preference, because restoration may reload the document.
 
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies
 that result into a call-local slot, reads it only at the existing hard timeout, and revokes late

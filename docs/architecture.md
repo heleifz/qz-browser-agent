@@ -395,6 +395,10 @@ retain the working tab; effects, final tool events and model results commit in c
 progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
 Stopping settles every started call in the current batch, including cancellation errors, before ending
 scheduling. Completed observations remain in the ledger while revoked effects stay unapplied.
+Parallel `read_article`, `find_elements` and `get_ax_tree` do not scroll, focus or activate tabs.
+They observe the current mode and skip
+mobile-preference restoration that could reload a disconnected page. Sequential preparation keeps
+its existing restoration behavior.
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,

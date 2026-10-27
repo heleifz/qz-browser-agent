@@ -16,6 +16,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
   const server = createServer((req, res) => {
     const path = req.url;
     counts.set(path, (counts.get(path) || 0) + 1);
+    if (path.startsWith('/observation')) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<title>Observation fixture</title><div style="height:900px"></div><article id="story"><h1>Read without moving</h1><p>Stable observation content.</p><input id="focused"><button id="target">Observe target</button></article><div style="height:2000px"></div>');
+      return;
+    }
     if (path === "/redirect") { res.writeHead(302, { Location: `http://localhost:${server.address().port}/landed` }); res.end(); return; }
     if (path === "/fail") { req.socket.destroy(); return; }
     if (path.startsWith("/busy-open-")) {
@@ -72,6 +77,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
           updateWorkingTab: async ({ tab }) => { owned.add(tab.id); },
         },
       });
+      globalThis.navigationRuntime = runtime;
       globalThis.navigationCall = async (name, args) => {
         globalThis.navigationAbort = new AbortController();
         try { return await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" }); }
@@ -125,6 +131,60 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     expect((await worker.evaluate(tabId => chrome.tabs.get(tabId), tabId)).status).toBe("loading");
     release("/image");
     release("/slow-child");
+
+    if (!watchNetwork) {
+      const observations = [];
+      for (let index = 0; index < 3; index++) observations.push((await call('open_tab', { url: `${origin}/observation-${index}` })).id);
+      const observed = await worker.evaluate(async tabIds => {
+        const activeBefore = (await chrome.tabs.query({ active: true })).map(tab => tab.id);
+        for (const tabId of tabIds) {
+          await chrome.scripting.executeScript({ target: { tabId }, func: () => {
+            document.querySelector('#focused').focus({ preventScroll: true });
+            window.scrollTo(0, 600);
+            globalThis.readSideEffects = [];
+            for (const [object, name] of [[HTMLElement.prototype, 'focus'], [Element.prototype, 'scrollIntoView'],
+              [window, 'scrollTo'], [window, 'scrollBy']]) {
+              const original = object[name];
+              object[name] = function (...args) { readSideEffects.push(name); return original.apply(this, args); };
+            }
+            globalThis.beforeRead = { focus: document.activeElement.id, x: scrollX, y: scrollY };
+          } });
+        }
+        const effects = [], update = chrome.tabs.update.bind(chrome.tabs), command = chrome.debugger.sendCommand.bind(chrome.debugger);
+        chrome.tabs.update = (...args) => { if (args[1]?.active) effects.push('activate'); return update(...args); };
+        chrome.debugger.sendCommand = (...args) => {
+          if (/^(Input\.|DOM\.(focus|scrollIntoViewIfNeeded)$|Page\.(bringToFront|reload)$)/.test(args[1])) effects.push(args[1]);
+          return command(...args);
+        };
+        try {
+          const rounds = [];
+          for (const scoped of [false, true]) {
+            const names = ['read_article', 'find_elements', 'get_ax_tree'];
+            rounds.push(await Promise.all(names.map((name, index) => {
+              const args = { tabId: tabIds[index], ...(name === 'read_article' ? { limit: 1200 } : {}),
+                ...(scoped ? name === 'get_ax_tree' ? { root: 'css:#story' } : { selector: '#story', ...(name === 'read_article' ? { source: 'selector' } : {}) } : {}) };
+              if (navigationRuntime.getParallelReadTab(name, args) !== args.tabId) throw new Error('fixture must exercise eligible parallel reads');
+              return navigationRuntime.execute(name, args, new AbortController().signal,
+                { sessionId: 'navigation', runId: 'run', toolCallId: `observe-${scoped}-${index}`, preserveWorkingTab: true });
+            })));
+          }
+          const pages = await Promise.all(tabIds.map(async tabId => (await chrome.scripting.executeScript({ target: { tabId }, func: () => ({
+            before: beforeRead, after: { focus: document.activeElement.id, x: scrollX, y: scrollY }, effects: readSideEffects,
+          }) }))[0].result));
+          return { rounds, pages, effects, activeBefore, activeAfter: (await chrome.tabs.query({ active: true })).map(tab => tab.id) };
+        } finally { chrome.tabs.update = update; chrome.debugger.sendCommand = command; }
+      }, observations);
+      expect(observed.effects).toEqual([]);
+      expect(observed.activeAfter).toEqual(observed.activeBefore);
+      for (const page of observed.pages) { expect(page.after).toEqual(page.before); expect(page.effects).toEqual([]); }
+      for (const [article, elements, ax] of observed.rounds) {
+        for (const result of [article, elements, ax]) { expect(result).not.toHaveProperty('error'); expect(result).not.toHaveProperty('incomplete'); }
+        expect(article.text).toContain('Stable observation content');
+        expect(JSON.stringify(elements)).toContain('Observe target');
+        expect(ax.snapshot).toContain('Observe target');
+      }
+      for (const tabId of observations) await call('close_tab', { tabId });
+    }
 
     expect((await call("navigate", { tabId, url: `${origin}/fail` })).code).toBe("NAVIGATION_FAILED");
     expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
