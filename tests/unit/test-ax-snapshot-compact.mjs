@@ -470,8 +470,8 @@ assert.deepEqual(viewport.viewportOmitted, { above: 1, below: 1, unmeasured: 0 }
 assert.match(viewport.snapshot, /↑.*1/);
 assert.match(viewport.snapshot, /↓.*1/);
 assert.doesNotMatch(viewport.snapshot, /"Above"|"Below"/);
-assert.doesNotMatch(line(viewport.snapshot, "Off-band ancestor"), /target=/);
-assert.equal(registeredRefs.some(ref => ref.backendNodeId === 3 || ref.backendNodeId === 6), false);
+assert.match(line(viewport.snapshot, "Off-band ancestor"), /target=/, "retained off-band groups are ordinary subtree entry points");
+assert.equal(registeredRefs.some(ref => ref.backendNodeId === 6), false, "off-screen guaranteed buttons still cannot reappear");
 assert.equal(viewport.returnedNodeCount, 20);
 assert.equal(viewport.outlineTruncated, true, "BFS still applies after viewport filtering");
 const viewportLarge = await run({ ...viewportScenario, limit: 300 });
@@ -503,4 +503,66 @@ assert.match(line(rectOnly.snapshot, "Rect inside"), /target=/);
 assert.doesNotMatch(rectOnly.snapshot, /Rect below|Unknown action|↑|↓/);
 assert.equal(registeredRefs.length, 2, "only the root and measured in-band synthetic action get targets");
 assert.deepEqual(rectOnly.viewportOmitted, { above: 0, below: 0, unmeasured: 0 });
+const foldedNodes = [
+  ax({ id: "root", backend: 1, role: "RootWebArea", children: ["region", "about"] }),
+  ax({ id: "region", parent: "root", backend: 2, role: "region", name: "Scores", children: ["list"] }),
+  ax({ id: "list", parent: "region", backend: 3, role: "list", children: ["one", "two", "three"] }),
+  ax({ id: "one", parent: "list", backend: 4, role: "listitem", name: "Visible record" }),
+  ax({ id: "two", parent: "list", backend: 5, role: "listitem", name: "Hidden record beta" }),
+  ax({ id: "three", parent: "list", backend: 6, role: "listitem", name: "Hidden record gamma" }),
+  ax({ id: "about", parent: "root", backend: 7, role: "generic", ignored: true, children: ["heading-wrap", "details"] }),
+  ax({ id: "heading", parent: "heading-wrap", backend: 8, role: "heading", name: "About this article" }),
+  ax({ id: "details", parent: "about", backend: 9, role: "paragraph", name: "Co-authors: 57" }),
+  ax({ id: "heading-wrap", parent: "about", backend: 10, role: "generic", ignored: true, children: ["heading", "arrow"] }),
+  ax({ id: "arrow", parent: "heading-wrap", backend: 11, role: "link", name: "More metadata" }),
+];
+const folded = await run({
+  scope: "viewport", limit: 20, nodes: foldedNodes,
+  overview: { title: "Folded blocks", url: currentUrl, viewport: { height: 600 }, actions: [] },
+  geometry: { documents: [{ nodes: { backendNodeId: foldedNodes.map(n => n.backendDOMNodeId) }, layout: {
+    nodeIndex: foldedNodes.map((_n, i) => i),
+    bounds: [[0,0,800,1500],[0,0,800,900],[0,20,800,880],[0,40,100,40],[0,700,100,40],[0,800,100,40],[0,1000,800,200],[0,1000,300,40],[0,1100,300,40],[0,1000,800,50],[0,1000,20,20]],
+  } }] },
+});
+assert.match(folded.snapshot, /list items=3/);
+assert.doesNotMatch(folded.snapshot, /Hidden record|Co-authors/);
+const listTarget = line(folded.snapshot, "items=3").match(/target=(uid:\S+)/)?.[1];
+const aboutTarget = `uid:${registeredRefs.find(ref => ref.backendNodeId === 7).uid}`;
+assert.match(line(folded.snapshot, "About this article"), /target=uid:/);
+assert.ok(folded.snapshot.indexOf(`root="${listTarget}"`) > folded.snapshot.indexOf("Visible record"));
+assert.ok(folded.snapshot.indexOf(`root="${listTarget}"`) < folded.snapshot.indexOf("About this article"), "fold marker stays at the list boundary, not a separate outline");
+assert.ok(folded.snapshot.includes(`root="${aboutTarget}"`));
+assert.ok(folded.snapshot.includes('scope:"full"'));
+assert.equal(folded.outline, undefined, "off-screen structure stays in the existing tree protocol");
+const listSubtree = await definition.execute({ tabId: 8, root: listTarget }, null, context);
+assert.equal(listSubtree.scope, "full");
+assert.match(listSubtree.snapshot, /Hidden record beta/);
+const aboutSubtree = await definition.execute({ tabId: 8, root: aboutTarget }, null, context);
+assert.match(aboutSubtree.snapshot, /Co-authors: 57/, "a retained generic section UID reads the heading's sibling details");
+const scrolledFolds = await run({ ...scenario, scope: "viewport",
+  geometry: { documents: scenario.geometry.documents.map(doc => ({ ...doc, scrollOffsetY: 750 })) },
+});
+const scrolledList = line(scrolledFolds.snapshot, "items=3").match(/target=(uid:\S+)/)?.[1];
+const upperFold = scrolledFolds.snapshot.indexOf(`root="${scrolledList}"`);
+assert.ok(upperFold > scrolledFolds.snapshot.indexOf("items=3"));
+assert.ok(upperFold < scrolledFolds.snapshot.indexOf("Hidden record gamma"), "upper fold stays before the container's remaining items");
+assert.doesNotMatch(scrolledFolds.snapshot, /Visible record|Hidden record beta/);
+
+const farIds = Array.from({ length: 300 }, (_, i) => `far${i}`);
+const farNodes = [ax({ id: "root", backend: 1, role: "RootWebArea", children: ["visible", ...farIds] }),
+  ax({ id: "visible", parent: "root", backend: 2, role: "button", name: "Visible action" }),
+  ...farIds.map((id, i) => ax({ id, parent: "root", backend: 10+i, role: "heading", name: `Far section ${i+1} ${"x".repeat(70)}` })),
+];
+const far = await run({ scope: "viewport", nodes: farNodes,
+  overview: { title: "Many headings", url: currentUrl, viewport: { height: 600 }, actions: [] },
+  geometry: { documents: [{ nodes: { backendNodeId: farNodes.map(n => n.backendDOMNodeId) }, layout: {
+    nodeIndex: farNodes.map((_n, i) => i), bounds: farNodes.map((_n, i) => [0, i<2?20:1000+i*30, 800, 20]),
+  } }] },
+});
+assert.match(far.snapshot, /Visible action/);
+assert.match(far.snapshot, /Far section 1 /);
+assert.match(far.snapshot, /Far section 300 /);
+assert.ok(far.snapshot.indexOf("Far section 1 ") < far.snapshot.indexOf("Far section 300 "), "retained headings keep tree order");
+assert.ok(far.snapshot.length < 2200, `bounded structural context: ${far.snapshot.length} chars`);
+assert.ok(far.viewportOmitted.below > 280);
 console.log("ax snapshot compact tests passed");

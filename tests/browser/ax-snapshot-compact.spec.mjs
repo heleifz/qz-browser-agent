@@ -28,6 +28,7 @@ async function createHarness() {
   const server = createServer(async (req, res) => {
     const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
     const body = pathname === "/band" ? await readFile(new URL("../fixtures/ax-snapshot/viewport-band.html", import.meta.url), "utf8")
+      : pathname === "/folds" ? await readFile(new URL("../fixtures/ax-snapshot/viewport-folds.html", import.meta.url), "utf8")
       : pathname === "/repeated-text" ? repeatedHtml : html;
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(body);
@@ -163,7 +164,7 @@ test.describe("compact accessibility snapshot", () => {
     const bottom = await h.call("get_ax_tree", {});
     expect(bottom.viewportOmitted.above).toBeGreaterThan(0);
     expect(bottom.snapshot).toContain('"Save"');
-    expect(bottom.snapshot).not.toContain('"Section 1"');
+    expect(target(bottom.snapshot, '"Section 1"')).toMatch(/^uid:/);
     const subtree = await h.call("get_ax_tree", { root: "css:body" });
     expect(subtree.scope).toBe("full");
     expect(subtree.snapshot).toContain('"Section 1"');
@@ -178,7 +179,7 @@ test.describe("compact accessibility snapshot", () => {
     expect(result.snapshot).not.toContain("Above band");
     expect(result.snapshot).not.toContain("Below band");
     expect(result.snapshot).not.toContain("Frame below");
-    expect(line(result.snapshot, "Off-band ancestor")).not.toContain("target=");
+    expect(target(result.snapshot, "Off-band ancestor")).toMatch(/^uid:/);
     expect(result.viewportOmitted.above).toBeGreaterThan(0);
     expect(result.viewportOmitted.below).toBeGreaterThan(0);
   });
@@ -194,6 +195,31 @@ test.describe("compact accessibility snapshot", () => {
       expect(target(top.snapshot, name), top.snapshot).toMatch(/^uid:/);
       expect(target(bottom.snapshot, name), bottom.snapshot).toMatch(/^uid:/);
     }
+  });
+
+  test("keeps off-screen structure in tree order with local folds and working subtree UIDs", async () => {
+    await h.call("open_tab", { url: `${h.baseURL}/folds` });
+    const result = await h.call("get_ax_tree", {});
+    const list = target(result.snapshot, "list", "items=7");
+    expect(list, result.snapshot).toMatch(/^uid:/);
+    expect(target(result.snapshot, "About this article"), result.snapshot).toMatch(/^uid:/);
+    expect(result.snapshot).not.toContain("ORBIT-7");
+    expect(result.snapshot).not.toContain("MEADOW-57");
+    const boundary = result.snapshot.indexOf(`root="${list}"`);
+    expect(boundary).toBeGreaterThan(result.snapshot.indexOf("First visible card"));
+    expect(boundary).toBeLessThan(result.snapshot.indexOf("About this article"));
+    const listSubtree = await h.call("get_ax_tree", { root: list });
+    expect(listSubtree.scope).toBe("full");
+    expect(listSubtree.snapshot, JSON.stringify(listSubtree)).toContain("ORBIT-7");
+    const afterAbout = result.snapshot.slice(result.snapshot.indexOf("About this article"));
+    const section = afterAbout.match(/root="(uid:[^"]+)"/)?.[1];
+    expect(section, result.snapshot).toMatch(/^uid:/);
+    const aboutSubtree = await h.call("get_ax_tree", { root: section });
+    expect(aboutSubtree.snapshot, JSON.stringify(aboutSubtree)).toContain("MEADOW-57");
+    await h.call("act_on_element", { target: section, action: "scroll" });
+    const scrolled = await h.call("get_ax_tree", {});
+    expect(scrolled.viewportOmitted.above).toBeGreaterThan(0);
+    expect(scrolled.snapshot).toContain('scope:"full"');
   });
 
   test("keeps same-named sibling StaticText for repeated values", async () => {

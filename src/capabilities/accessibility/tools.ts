@@ -1,6 +1,6 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
-import { filterViewportNodes, readViewportBands, verticalBand } from "./viewport.js";
+import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { directChildFrames, openChildFrame, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
@@ -63,6 +63,7 @@ type DisplayNode = {
   uid: string; target: string; depth: number; nodeId: string; parentUid?: string;
   omitted?: number; suppressName?: boolean; unavailable?: boolean; placeholder?: string; inputType?: string;
   accept?: string; multiple?: boolean; selectedFileCount?: number;
+  viewportAbove?: number; viewportBelow?: number; listItems?: number;
 } & Partial<CompactNode>;
 function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, limit, sessionId = "", pageUrl = "", documentId = "", rootBackendNodeId = 0, rootFrameId = "", maxDepth = Infinity, loaderId = "", actions = [], viewportBands, viewportHeight = 0 }: SnapshotContext & { limit: number; rootBackendNodeId?: number; rootFrameId?: string; maxDepth?: number; loaderId?: string; actions?: ActionAnchor[]; viewportBands?: Awaited<ReturnType<typeof readViewportBands>>; viewportHeight?: number }) {
   const nodeMap = new Map<string, AxNode>();
@@ -110,8 +111,10 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (!rawNode || (viewportFilter && !viewportFilter.kept.has(rawNode.nodeId))) return;
     const compact = compactAxNode(rawNode);
     const backendNodeId = Number(compact.backendNodeId || 0);
-    const keep = shouldKeepAxNode(compact, depth)
+    const ordinaryKeep = shouldKeepAxNode(compact, depth)
       || (compact.documentFrameId === rootFrameId && actionBackendIds.has(backendNodeId));
+    const folded = viewportFilter?.collapsed.has(rawNode.nodeId);
+    const keep = ordinaryKeep || folded;
     let nextDepth = depth;
     let nextParentNode = parentNode;
 
@@ -121,7 +124,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
         depth,
         parent: parentNode,
         children: [],
-        unavailable: viewportFilter?.structural.has(rawNode.nodeId) || undefined,
+        unavailable: (viewportFilter?.structural.has(rawNode.nodeId) && !isViewportStructure(rawNode) && !folded) || undefined,
       };
       semanticNodes.push(semanticNode);
       if (parentNode) {
@@ -129,7 +132,8 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
       } else {
         semanticRoots.push(semanticNode);
       }
-      nextDepth = depth + 1;
+      // Newly exposed fold containers do not consume the existing detail-depth allowance.
+      nextDepth = depth + (ordinaryKeep ? 1 : 0);
       nextParentNode = semanticNode;
     }
 
@@ -164,10 +168,26 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
     if (compact.role) item.role = compact.role;
     if (compact.name) item.name = compact.name;
     if (compact.name && semanticNode.parent && compact.name === visibleName(semanticNode.parent) && !semanticNode.actionNode && !hasOwnValueOrFlags(semanticNode)) item.suppressName = true;
-    if (compact.value) item.value = compact.value;
-    if (compact.description) item.description = compact.description;
-    if (compact.url) item.url = compact.url;
-    if (compact.flags?.length) item.flags = compact.flags;
+    // Off-band retained nodes are ordinary subtree entries; omit their detailed attributes.
+    if (!viewportFilter?.structural.has(compact.nodeId)) {
+      if (compact.value) item.value = compact.value;
+      if (compact.description) item.description = compact.description;
+      if (compact.url) item.url = compact.url;
+      if (compact.flags?.length) item.flags = compact.flags;
+    }
+    const folded = viewportFilter?.collapsed.get(compact.nodeId);
+    if (folded?.above) item.viewportAbove = folded.above;
+    if (folded?.below) item.viewportBelow = folded.below;
+    if (viewportFilter && String(compact.role).toLowerCase() === "list") {
+      const countItems = (id: string): number => {
+        const node = nodeMap.get(id);
+        const role = String(node?.role?.value || "").toLowerCase();
+        if (!node || role === "list") return 0;
+        if (role === "listitem") return 1;
+        return (node.childIds || []).reduce((sum, child) => sum + countItems(child), 0);
+      };
+      item.listItems = (nodeMap.get(compact.nodeId)?.childIds || []).reduce((sum, id) => sum + countItems(id), 0);
+    }
     if (semanticNode.placeholder) item.placeholder = semanticNode.placeholder;
     if (semanticNode.inputType) item.inputType = semanticNode.inputType;
     if (semanticNode.accept) item.accept = semanticNode.accept;
@@ -191,7 +211,7 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
       index: semanticNode.locator?.index,
       role: item.role,
       name: item.name,
-      url: item.url,
+      url: compact.url || undefined,
       snapshotId,
     });
     for (const child of semanticNode.children) emitDisplayNode(child, uid);
@@ -199,7 +219,20 @@ function buildAccessibilitySnapshot(rawNodes: AxNode[], { tabId, snapshotId, lim
 
   for (const root of semanticRoots) emitDisplayNode(root, null);
 
-  const lines = displayNodes.map(node => formatSnapshotLine(node));
+  const lines: string[] = [];
+  const pending: DisplayNode[] = [];
+  const foldLine = (node: DisplayNode, direction: "above" | "below") => {
+    const count = direction === "above" ? node.viewportAbove : node.viewportBelow;
+    const capability = node.target ? toolT("readViewportRoot", { target: node.target }) : 'scope:"full"';
+    return `${" ".repeat(node.depth + 1)}${toolT(direction === "above" ? "foldedAbove" : "foldedBelow", { count: count || 0, capability })}`;
+  };
+  for (const node of displayNodes) {
+    while (pending.length && pending[pending.length - 1]!.depth >= node.depth) lines.push(foldLine(pending.pop()!, "below"));
+    lines.push(formatSnapshotLine(node));
+    if (node.viewportAbove) lines.push(foldLine(node, "above"));
+    if (node.viewportBelow) pending.push(node);
+  }
+  while (pending.length) lines.push(foldLine(pending.pop()!, "below"));
   if (viewportFilter) {
     if (viewportFilter.above) lines.unshift(toolT("aboveViewport", { count: viewportFilter.above }));
     if (viewportFilter.below) lines.push(toolT("belowViewport", { count: viewportFilter.below }));
@@ -510,6 +543,7 @@ function formatSnapshotLine(node: DisplayNode) {
   if (node.accept) attrs.push(`accept="${truncateInline(node.accept, 120)}"`);
   if (node.multiple) attrs.push("multiple");
   if (node.selectedFileCount != null) attrs.push(`selectedFileCount=${node.selectedFileCount}`);
+  if (node.listItems != null) attrs.push(`items=${node.listItems}`);
   const omitted = Number(node.omitted || 0);
   if (omitted) attrs.push(`(truncated, ${omitted} more)`);
   return `${" ".repeat(Math.max(0, Number(node.depth) || 0))}${attrs.join(" ")}`;

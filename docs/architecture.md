@@ -314,11 +314,23 @@ explicit `uid:`/`css:` roots default to full subtree scope. Both retain depth an
 The [accessibility capability](../src/capabilities/accessibility/tools.ts) filters raw AX nodes
 by positive Y overlap before semantic pruning, depth limits, redundant-text removal and BFS.
 Horizontal overflow stays eligible. Zero-height boxes are in-band when their Y coordinate is within
-`[0, viewportHeight)`. Off-band ancestors stay structural without targets. Guaranteed actions are
-filtered too; unmatched actions need an in-band rectangle before they can receive a target.
+`[0, viewportHeight)`. The same filter also retains bounded off-screen headings, regions/landmarks,
+lists and longer named links in their original tree positions, with UIDs for subtree reads. Other
+off-band ancestors remain structural. Guaranteed actions are filtered too; unmatched actions need
+an in-band rectangle before they can receive a target.
 
-The `↑`/`↓` markers (only when nonzero) and `viewportOmitted.above/below` count actual raw AX nodes dropped, including
-text fragments that semantic formatting may later merge or remove. Retained ancestors are excluded.
+Global `↑`/`↓` markers (only when nonzero) and `viewportOmitted.above/below` count raw AX nodes
+dropped, including text fragments that semantic formatting may later merge or remove. Retained
+structure and ancestors are excluded. Local fold markers sit before/after each retained container's
+remaining children and count folded semantic branches, not repeated text descendants. A list's
+`items` attribute counts its existing direct AX list items, excluding nested lists. Markers expose
+`scope:"full"` and UID-root capabilities with their depth/limit constraints.
+
+A conservative 1800-character allowance bounds additional off-screen structure and its ancestors;
+selection samples both document ends. These are ordinary tree nodes, not a separate outline. A
+heading's nearest content-bearing wrapper can remain as a subtree entry so its sibling content
+is addressable. The existing BFS/depth limits still apply, and off-screen value/URL/flag details
+remain folded.
 These counts are independent of BFS leftovers and cover only the browser's existing AX/DOM set;
 unloaded lazy/virtual items and browser-adapter collection caps are outside that set. The default
 BFS budget remains 120 optional nodes (maximum 300), plus guaranteed actions and their ancestors.
