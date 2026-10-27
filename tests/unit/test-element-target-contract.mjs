@@ -167,7 +167,7 @@ function assertAxTreeCompactContract() {
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
-  assert.match(block, /const fetchDepth = rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
+  assert.match(block, /const fetchDepth = snapshotScope === "viewport" \? (?:undefined|void 0) : rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
   assert.match(block, /maxDepth: axDepth/, "get_ax_tree subtree output should still respect the requested depth");
   assert.match(block, /selector: overviewSelector \|\| "body"/, "get_ax_tree actions/headings should be scoped to the requested root");
   assert.doesNotMatch(block, /actions: compactAxActionsForModel\(actions\)/, "get_ax_tree should not return a separate actions list");

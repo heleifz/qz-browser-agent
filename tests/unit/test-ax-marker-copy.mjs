@@ -15,11 +15,11 @@ for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
     ["unmeasuredViewport", en ? "Geometry unavailable: 7 nodes." : "几何信息缺失：7 个节点。"],
   ]) assert.equal(toolT(key, { count: 7, capability }), expected);
 
-  assert.equal(toolT("getAxTreeDepth"), en ? "Maximum tree depth: default 16, range 1–40." : "最大树深度，默认 16，范围 1–40。");
-  assert.equal(toolT("getAxTreeActionsLimit"), en ? "Maximum reserved action nodes: default 40, range 5–80." : "优先保留的可操作节点上限，默认 40，范围 5–80。");
-  assert.match(toolT("getAxTreeLimit"), en ? /breadth-first.*120.*20–300.*Reserved action nodes and their ancestors are counted separately/ : /广度优先.*120.*20–300.*优先保留的可操作节点及其祖先另计/);
   assert.match(toolT("getAxTreeScope"), en ? /Page roots default to viewport; uid:\/css: element roots default to full/ : /整页根默认 viewport，uid:\/css: 元素根默认 full/);
-  assert.doesNotMatch(toolT("getAxTreeScope") + toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" }), /depth|limit|alias/);
-  assert.match(toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" }), /items.*\(truncated, N more\)/);
+  const description = toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" });
+  assert.match(description, en ? /default to scope:"viewport"/ : /整页默认 scope:"viewport"/);
+  assert.match(description, /↑\/↓/);
+  assert.match(description, /items=N.*\(truncated, N more\)/);
+  assert.match(toolT("getAxTreeRoot"), en ? /scope controls the range/ : /范围由 scope 控制/);
 });
 console.log("Bilingual AX marker and budget copy passed");
