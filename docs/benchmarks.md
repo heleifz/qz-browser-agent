@@ -47,7 +47,7 @@ Content handlers execute actions and scrolling; DOM state checks answers and sid
 For the public-site matrix, use the same isolated AX/Content harness:
 
 ```bash
-npm test -- live ax-viewport-public --output tests/results/viewport-ax/round2
+npm test -- live ax-viewport-public --trials 2 --output tests/results/viewport-ax/round3
 npm test -- live ax-viewport-public --cases github,mdn --output tests/results/viewport-ax/follow-up
 ```
 
@@ -57,8 +57,9 @@ specified. Access challenges, HTTP errors, missing facts and invalid initial geo
 as precondition failures, not model failures. Read tasks do not submit forms or follow external
 links; the two fill tasks use synthetic text without submitting. No login or purchase is performed.
 
-Baseline/prototype order alternates. Any failed pair gets two additional paired trials; Baidu and
-PyPI always receive those repeats because preflight found intermittent challenges. Every attempt,
+Baseline/prototype order alternates by task and trial. `--trials` sets the minimum paired trials
+(default1, range1–3). Any failure raises that task to three paired trials; Baidu and PyPI always
+receive three because preflight found intermittent challenges. Every attempt,
 including provider errors, stays in `results.json` and its transcript. The runner continues after
 failures so later sites still produce evidence; exit zero means the matrix completed, not that all
 tasks passed. `--concurrency` defaults to 2 and supports 1–3; `--repeat-all` runs three paired trials

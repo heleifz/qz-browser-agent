@@ -7,7 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { createAxViewportHarness } from '../support/ax-viewport-harness.mjs';
 import { publicSites, preparePublicTask, readPublicOracle, normalizeAnswer } from './ax-viewport-public-cases.mjs';
 
-const { values } = parseArgs({ options: { cases: { type: 'string' }, output: { type: 'string' }, concurrency: { type: 'string', default: '2' }, 'repeat-all': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { cases: { type: 'string' }, output: { type: 'string' }, concurrency: { type: 'string', default: '2' }, trials: { type: 'string', default: '1' }, 'repeat-all': { type: 'boolean', default: false } } });
+const minimumTrials = Number(values.trials);
+assert.ok(Number.isInteger(minimumTrials) && minimumTrials >= 1 && minimumTrials <= 3, '--trials must be 1, 2 or 3');
 const apiKey = process.env.DEEPSEEK_API_KEY;
 assert.ok(apiKey, 'Source /home/box/shared/qz/deepseek.env before this explicit live run.');
 const output = resolve(values.output || 'tests/results/viewport-ax/round2');
@@ -19,7 +21,7 @@ const tasks = publicSites.flatMap(site => site.tasks.map(task => ({ ...task, id:
   .filter(task => !selected || selected.includes(task.id) || selected.includes(task.site));
 assert.ok(tasks.length, 'No matching cases');
 const report = { at: new Date().toISOString(), sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), config,
-  protocol: 'Round 1 isolated AX/Content harness, 1280x720, temperature 0, 16 turns; paired order alternates; failed pairs repeat twice; Baidu/PyPI repeat twice due to preflight availability flakiness', tasks, runs: [], sizes: [] };
+  protocol: `Isolated AX/Content harness, 1280x720, temperature 0, 16 turns; minimum ${minimumTrials} paired trials; order alternates by task and trial; failed pairs and preflight-flaky Baidu/PyPI receive 3 trials`, tasks, runs: [], sizes: [] };
 const redact = text => String(text).split(apiKey).join('[redacted]');
 let saveQueue = Promise.resolve();
 const save = () => { saveQueue = saveQueue.then(() => writeFile(resolve(output, 'results.json'), redact(JSON.stringify(report, null, 2)))); return saveQueue; };
@@ -138,9 +140,10 @@ async function runTask(task, baseline, trial) {
 let next = 0;
 await Promise.all(Array.from({ length: Math.max(1,Math.min(3,Number(values.concurrency)||2)) }, async () => {
   while (next < tasks.length) {
-    const index = next++, task = tasks[index], order = index % 2 ? [false,true] : [true,false];
+    const index = next++, task = tasks[index];
     let repeat = values['repeat-all'] || ['baidu','pypi'].includes(task.site);
-    for (let trial = 1; trial <= (repeat ? 3 : 1); trial++) {
+    for (let trial = 1; trial <= (repeat ? 3 : minimumTrials); trial++) {
+      const order = (index + trial - 1) % 2 ? [false,true] : [true,false];
       for (const baseline of order) {
         const run = await runTask(task, baseline, trial);
         if (!run.pass) repeat = true;
