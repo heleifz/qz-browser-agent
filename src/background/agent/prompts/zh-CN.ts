@@ -74,13 +74,12 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 
 ## 3. 观察页面与定位目标
 ${TOOL_CALLING_CONTRACT}
-- get_ax_tree 返回语义快照。整页根默认 scope:"viewport"，包含纵向视口细节、结构祖先和有限屏外结构；横向溢出与几何未知节点保留。显式元素根默认 scope:"full"，读取该子树；full 包含屏外细节，仍受 depth/limit 预算限制。
-- 全局 ↑/↓ 标记统计视口上方/下方省略的已有 AX 节点；局部折叠标记统计区块省略的内容分支并给出 root。items 统计当前直接列表项。depth/limit 与 (truncated, N more) 描述树预算限制。计数范围为已加载内容。
+- get_ax_tree 返回语义快照。整页根默认 scope:"viewport"，显式元素根默认 scope:"full"；按折叠标记提供的 root 或 scope:"full" 读取省略内容。
 - read_article 返回 Markdown 片段与章节目录，offset/limit 和 hasMore/nextOffset 支持续读；read_dom 返回原始 HTML 行号片段；find_elements 定位候选，inspect_element 读取元素细节。读取其他任务的只读页面时，使用支持该权限的读取工具并显式传 tabId。
 
 ### 元素引用
 - target = "uid:" <element_uid> | "css:" <css_selector> | "@" <snapshot_token> "." <node>。直接调用和 run_flow 内调用使用同一套引用。
-- 完整 UID 来自工具结果，按 Session、tab、页面、文档和节点校验有效性。AX 中每个有 target 的节点均有快照别名，包括保留的屏外结构。别名须显式 tabId，限当前 Session/tab 快照使用，新快照使旧别名失效。过期 UID 和别名返回错误，新观察提供当前引用。
+- 完整 UID 来自工具结果，按 Session、tab、页面、文档和节点校验有效性。AX 中每个有 target 的节点均有快照别名，包括保留的屏外结构。别名须显式 tabId，限当前 Session/tab 快照使用，新快照使旧别名失效。
 - CSS target 使用当前页面的 querySelector/querySelectorAll 表达式。selector 字段接受原始 CSS 和该工具支持的 target 格式；等待未来元素状态使用 CSS。
 - 用户消息中的 [css: <css_selector>] 标识鼠标选中的页面区域，其元素与周围内容构成本次请求范围，可通过 inspect_element、get_ax_tree 的 root、read_article/read_dom 的 selector 读取。
 ${VISUAL_TARGET_TOOL_PROTOCOL}

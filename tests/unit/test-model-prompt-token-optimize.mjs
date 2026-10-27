@@ -9,6 +9,7 @@ const { resolveToolDefinition } = await import('../../src/background/tools/runti
 
 for (const language of ['en', 'zh-CN']) test(`unified observation/action vocabulary in ${language}`, () => {
   const prompt = getAgentPrompts(language).SYSTEM_PROMPT;
+  assert.doesNotMatch(prompt, /depth\/limit|Global ↑|Local folds|全局 ↑|局部折叠/);
   const tool = name => resolveToolDefinition(name, { language });
   const ax = tool('get_ax_tree'), flow = tool('run_flow');
   assert.deepEqual(ax.parameters.properties.scope.enum, ['viewport', 'full']);

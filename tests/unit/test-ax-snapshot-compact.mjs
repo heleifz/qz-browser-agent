@@ -526,6 +526,8 @@ const folded = await run({
   } }] },
 });
 assert.match(folded.snapshot, /list items=3/);
+assert.doesNotMatch(folded.snapshot, /depth\/limit|仍受|still apply|still subject/);
+assert.match(folded.snapshot, /此区块下方省略 \d+ 项内容/);
 assert.doesNotMatch(folded.snapshot, /Hidden record|Co-authors/);
 const listTarget = line(folded.snapshot, "items=3").match(/target=(uid:\S+)/)?.[1];
 const aboutTarget = `uid:${registeredRefs.find(ref => ref.backendNodeId === 7).uid}`;

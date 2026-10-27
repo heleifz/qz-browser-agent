@@ -289,7 +289,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   const requestedSelector = String(normalized.selector || "").trim();
   if (!requestedUid && !requestedSelector) {
-    throw new ToolExecutionError("MISSING_ELEMENT_REFERENCE", "Element reference requires target: uid:<element_uid> or css:<css_selector>", {
+    throw new ToolExecutionError("MISSING_ELEMENT_REFERENCE", "Supply target: a full uid:<element_uid>, css:<selector> or snapshot alias.", {
       target,
       expected: ELEMENT_TARGET_GRAMMAR,
       examples: getElementTargetExamples(),
@@ -305,7 +305,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   if (!ref) {
     throw new ToolExecutionError(
       "STALE_ELEMENT_UID",
-      `Element target is stale or unknown: uid:${requestedUid}. Take a fresh get_ax_tree snapshot, then retry with a new target.`,
+      "Element reference expired. Use get_ax_tree for current UIDs or snapshot aliases.",
       { target: elementTargetForUid(requestedUid) },
     );
   }
@@ -322,7 +322,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     if (matched == null) {
       throw new ToolExecutionError(
         "STALE_ELEMENT_UID",
-        `Element target is stale or unknown: uid:${requestedUid}. Its tab suffix does not match a tab owned by this task. Take a fresh get_ax_tree snapshot, then retry.`,
+        "Element reference expired. Use get_ax_tree for current UIDs or snapshot aliases.",
         { target: elementTargetForUid(requestedUid) },
       );
     }
@@ -340,7 +340,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   if (currentSessionId && refSessionId && currentSessionId !== refSessionId) {
     throw new ToolExecutionError(
       "ELEMENT_UID_SESSION_MISMATCH",
-      `Element target belongs to another session. Take a fresh get_ax_tree snapshot in this session, then retry.`,
+      "The reference belongs to another Session. Use get_ax_tree for a reference in this Session.",
       { target: elementTargetForUid(requestedUid), sessionId: currentSessionId, refSessionId },
     );
   }
@@ -383,7 +383,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     if (currentUrl && !samePageUrl(currentUrl, ref.pageUrl)) {
       throw new ToolExecutionError(
         "STALE_ELEMENT_UID_PAGE_CHANGED",
-        `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+        "The page changed; this reference expired. Use get_ax_tree for current UIDs or snapshot aliases.",
         { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
       );
     }
@@ -673,7 +673,7 @@ function asElementReply(value: unknown, action: string) {
 }
 
 function staleElement(target: unknown) {
-  return new ToolExecutionError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", { target });
+  return new ToolExecutionError("STALE_ELEMENT_UID", "Element reference expired. Use get_ax_tree for current UIDs or snapshot aliases.", { target });
 }
 
 function samePageUrl(a: unknown, b: unknown) {

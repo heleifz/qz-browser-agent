@@ -210,6 +210,7 @@ test.describe("compact accessibility snapshot", () => {
   test("keeps off-screen structure in tree order with local folds and working subtree UIDs", async () => {
     await h.call("open_tab", { url: `${h.baseURL}/folds` });
     const result = await h.call("get_ax_tree", {});
+    expect(result.snapshot).not.toMatch(/depth\/limit|仍受|still apply|still subject/);
     const list = target(result.snapshot, "list", "items=7");
     expect(list, result.snapshot).toMatch(/^uid:/);
     expect(target(result.snapshot, "About this article"), result.snapshot).toMatch(/^uid:/);

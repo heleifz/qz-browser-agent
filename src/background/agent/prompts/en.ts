@@ -74,13 +74,12 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 
 ## 3. Observe pages and identify targets
 ${TOOL_CALLING_CONTRACT}
-- get_ax_tree returns a semantic snapshot. Page roots default to scope:"viewport": vertical viewport detail, structural ancestors and bounded off-screen structure. Horizontal overflow and unknown geometry remain eligible. Explicit element roots default to scope:"full" for that subtree; full scope includes off-screen detail within depth/limit budgets.
-- Global ↑/↓ markers count existing AX nodes omitted above/below the viewport. Local folds count omitted content branches in a block and expose its root. items counts current direct list items. depth/limit and (truncated, N more) describe tree-budget limits. Counts cover loaded content.
+- get_ax_tree returns a semantic snapshot. Page roots default to scope:"viewport"; explicit element roots default to scope:"full". Fold markers provide root or scope:"full" reads for omitted content.
 - read_article returns Markdown segments and a section outline; offset/limit and hasMore/nextOffset support continuation. read_dom returns raw HTML line ranges. find_elements locates candidates; inspect_element returns element details. Read-only access to another task's page uses an eligible reading tool with explicit tabId.
 
 ### Element references
 - target = "uid:" <element_uid> | "css:" <css_selector> | "@" <snapshot_token> "." <node>. Tools accept these same references directly and inside run_flow.
-- Full UIDs come from tool results and retain Session, tab, page, document and node validity checks. Every target-bearing AX node has a snapshot alias, including retained off-screen structure. Aliases require explicit tabId and the current Session/tab snapshot; a newer snapshot expires them. Stale UIDs and aliases return an error. Fresh observations supply current references.
+- Full UIDs come from tool results and retain Session, tab, page, document and node validity checks. Every target-bearing AX node has a snapshot alias, including retained off-screen structure. Aliases require explicit tabId and the current Session/tab snapshot; a newer snapshot expires them.
 - CSS targets use a current querySelector/querySelectorAll expression. selector fields accept raw CSS and the target forms supported by that tool; future element waits use CSS.
 - A user-supplied [css: <css_selector>] identifies a mouse-selected page region. Its element and surrounding content define the requested scope; inspect_element, get_ax_tree root and read_article/read_dom selector can read that region.
 ${VISUAL_TARGET_TOOL_PROTOCOL}

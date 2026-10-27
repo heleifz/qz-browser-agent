@@ -128,7 +128,7 @@ async function assertPromptAndUiUseTarget() {
     "Agent applies the registered projection and strips chat-only display and diagnostic fields");
   assert.deepEqual(result, original, "Agent sanitization must not modify the UI result");
   assert.match(browserOperationsRenderer, /data\.target \|\| args\.target/, "tool renderer should display target first");
-  assert.match(localization, /请提供 target：/, "localized errors should tell users to provide target");
+  assert.match(localization, /提供 target：/, "localized errors should tell users to provide target");
 }
 
 function assertElementActionClickContract() {
@@ -155,16 +155,16 @@ function assertElementActionRoutingContract() {
 
 function assertAxTreeCompactContract() {
   const block = toolBlock("get_ax_tree");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /有 target 的节点均带快照别名，可用于元素工具和 run_flow/);
-  assert.match(resolveToolDefinition("get_ax_tree").description, /BFS 预算省略的节点数/);
+  assert.match(resolveToolDefinition("get_ax_tree").description, /每个 target 均带快照别名，可用于元素工具与 run_flow/);
+  assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\) 为省略节点数/);
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases 返回 name\/rect\/inViewport\/bitmapSize/, "get_ax_tree should advertise large Canvas discovery");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉坐标来自 screenshot\(\{actionable:true\}\)/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作使用 screenshot\(\{actionable:true\}\) 的坐标/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
   assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
   assert.match(resolveToolDefinition("get_ax_tree").description, /整页根默认 viewport/, "get_ax_tree should document root=root");
-  assert.match(resolveToolDefinition("get_ax_tree").parameters.properties.limit.description, /BFS 可选节点预算/);
+  assert.match(resolveToolDefinition("get_ax_tree").parameters.properties.limit.description, /广度优先选取的可选节点上限/);
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
