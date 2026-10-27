@@ -2663,74 +2663,77 @@ export class Agent {
       toolRegistrySnapshot: this._toolRegistrySnapshot,
       language: this._runLanguage,
     };
+    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity: object = {}) => {
+      const err = record(error);
+      const details = record(err.details);
+      const result = {
+        error: err.message || String(error),
+        code: err.name === "AbortError" ? "OPERATION_ABORTED" : err.code || "TOOL_EXECUTION_FAILED",
+        ...(err.codeLabel ? { codeLabel: err.codeLabel } : {}),
+        details,
+        ...(details._tabId != null ? { _tabId: details._tabId } : {}),
+        ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
+        ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
+      };
+      return { id: tc.id, toolName: normalizeToolCallName(tc), toolIdentity, args, result: result as unknown, isError: true };
+    };
     await scheduleToolCalls(toolCalls, {
       signal,
       tab: tc => this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), parseToolCallArguments(getToolCallArgumentsValue(tc)), lookup) ?? null,
+      reject: (tc, error) => failure(tc, error),
       execute: async (tc, callSignal, parallel) => {
-      const { id } = tc;
-      const toolName = normalizeToolCallName(tc);
-      let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
-      args = this._normalizeToolCallArgs(toolName, args);
-      const toolIdentity = this._toolRuntime.getIdentity(toolName, {
-        skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
-        toolRegistrySnapshot: this._toolRegistrySnapshot,
-        language: this._runLanguage,
-      });
-
-      this._emit({
-        type: "tool_execution_start",
-        spanId: this._makeToolSpanId(id),
-        toolCallId: id,
-        toolName,
-        ...toolIdentityEventFields(toolIdentity),
-        args,
-      });
-
-      let result;
-      let isError = false;
-      try {
-        const toolRuntimeContext = await this._collectToolRuntimeContext();
-        args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
-        callSignal.throwIfAborted();
-        result = await this._toolRuntime.execute(toolName, args, callSignal, {
-          preserveWorkingTab: parallel,
-          sessionId: this.sessionId,
-          runId: this._currentRunId,
-          spanId: this._makeToolSpanId(id),
-          toolCallId: id,
-          workingTabId: toolRuntimeContext.workingTabId || null,
-          workingTab: toolRuntimeContext.workingTab || null,
-          sourceWindowId: this._dynamicContextSnapshot?.sourceWindowId ?? null,
-          dynamicContext: this._dynamicContextSnapshot,
-          loadedPluginSkillNames: this._loadedSkillToolNames,
-          runProfile: this._runProfile,
-          skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
-          toolRegistrySnapshot: this._toolRegistrySnapshot,
-          language: this._runLanguage,
-        });
-        if (result && typeof result === "object" && record(result).error) {
-          isError = true;
-        }
-      } catch (err) {
-        const details = record(record(err).details);
-        const code = record(err).code || "TOOL_EXECUTION_FAILED";
-        result = {
-          error: record(err).message,
-          code,
-          ...(record(err).codeLabel ? { codeLabel: record(err).codeLabel } : {}),
-          details,
-          ...(details._tabId != null ? { _tabId: details._tabId } : {}),
-          ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
-          ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
+        const { id } = tc;
+        const toolName = normalizeToolCallName(tc);
+        let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
+        let toolIdentity: object = {};
+        let started = false;
+        const start = () => {
+          started = true;
+          this._emit({
+            type: "tool_execution_start", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
+            ...toolIdentityEventFields(toolIdentity), args,
+          });
         };
-        isError = true;
-      }
-
-      return { id, toolName, toolIdentity, args, result, isError };
+        const assertActive = () => {
+          if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
+        };
+        try {
+          args = this._normalizeToolCallArgs(toolName, args);
+          toolIdentity = this._toolRuntime.getIdentity(toolName, {
+            skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
+            toolRegistrySnapshot: this._toolRegistrySnapshot,
+            language: this._runLanguage,
+          });
+          const toolRuntimeContext = await this._collectToolRuntimeContext();
+          args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
+          start();
+          assertActive();
+          const result = await this._toolRuntime.execute(toolName, args, callSignal, {
+            preserveWorkingTab: parallel,
+            sessionId: this.sessionId,
+            runId: this._currentRunId,
+            spanId: this._makeToolSpanId(id),
+            toolCallId: id,
+            workingTabId: toolRuntimeContext.workingTabId || null,
+            workingTab: toolRuntimeContext.workingTab || null,
+            sourceWindowId: this._dynamicContextSnapshot?.sourceWindowId ?? null,
+            dynamicContext: this._dynamicContextSnapshot,
+            loadedPluginSkillNames: this._loadedSkillToolNames,
+            runProfile: this._runProfile,
+            skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
+            toolRegistrySnapshot: this._toolRegistrySnapshot,
+            language: this._runLanguage,
+          });
+          assertActive();
+          return { id, toolName, toolIdentity, args, result, isError: Boolean(record(result).error) };
+        } catch (error) {
+          if (!started) start();
+          return failure(tc, error, args, toolIdentity);
+        }
       },
       commit: async ({ id, toolName, toolIdentity, args, result, isError }) => {
         try {
-          followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
+          if (!signal.aborted) followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
         } catch (error) {
           result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
           isError = true;

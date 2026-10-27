@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
+import { scheduleToolCalls } from '../../src/background/tools/tool-scheduler.js';
 globalThis.chrome = {};
 const { getParallelReadTab } = await import('../../src/background/tools/runtime.js');
 import { createTestAgentOptions } from '../support/agent-services.mjs';
@@ -84,6 +85,83 @@ test('stop cancels each running call and revokes pending effects and later barri
   } }));
   agent._applyToolResultEffects = async () => { commits++; return []; };
   const run = agent._executeToolCalls([call('1','read_article',1),call('2','read_article',2),call('3','navigate',3)], controller.signal);
-  await tick(); controller.abort(); await run;
+  await tick(); controller.abort();
+  const messages = await run;
   assert.equal(signals.length, 2); assert.ok(signals.every(signal => signal.aborted)); assert.equal(commits, 0);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2']);
+  assert.ok(messages.every(message => JSON.stringify(message).includes('OPERATION_ABORTED')));
+});
+
+test('stop retains an already completed result and the interrupted call in ledger order', async () => {
+  const controller = new AbortController(), executed = [];
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, args, signal) {
+      executed.push(args.tabId);
+      if (args.tabId === 1) return { completed: true };
+      await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      throw Object.assign(new Error('stopped'), { code: 'OPERATION_ABORTED' });
+    },
+  } }));
+  const run = agent._executeToolCalls([call('1','read_article',1),call('2','read_article',2),call('3','navigate',3)], controller.signal);
+  await tick(); controller.abort();
+  const messages = await run;
+  assert.deepEqual(executed, [1, 2]);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2']);
+  assert.match(JSON.stringify(messages[0]), /completed/);
+  assert.match(JSON.stringify(messages[1]), /OPERATION_ABORTED/);
+});
+
+test('scheduler settles siblings before committing an unexpected execute rejection', async () => {
+  for (const convert of [false, true]) {
+    const committed = [], releases = new Map(), error = new Error('unexpected host failure');
+    const run = scheduleToolCalls([1, 2, 3], {
+      tab: item => item,
+      signal: new AbortController().signal,
+      execute: async item => {
+        if (item === 2) throw error;
+        await new Promise(resolve => releases.set(item, resolve));
+        return item;
+      },
+      ...(convert ? { reject: (item, reason) => { assert.equal(reason, error); return `failed:${item}`; } } : {}),
+      commit: async result => { committed.push(result); },
+    });
+    const settled = run.then(() => null, failure => failure);
+    await tick(); assert.deepEqual(committed, []);
+    releases.get(3)(); await tick(); assert.deepEqual(committed, []);
+    releases.get(1)();
+    assert.equal(await settled, convert ? null : error);
+    assert.deepEqual(committed, convert ? [1, 'failed:2', 3] : [1, 3]);
+  }
+});
+
+test('start events contain enriched args and preparation failures preserve sibling results', async () => {
+  for (const stage of ['collect', 'enrich']) {
+    const events = [], executed = [];
+    let collections = 0;
+    const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+      getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+      async execute(_name, args) { executed.push(args.tabId); assert.ok(args._pageUrl); return { value: args.tabId }; },
+    } }));
+    agent._emit = event => events.push(event);
+    agent._collectToolRuntimeContext = async () => {
+      if (++collections === 2 && stage === 'collect') throw new Error('collect failed');
+      return { workingTabId: 10 };
+    };
+    agent._enrichToolCallArgsWithPageContext = async (_name, args, context) => {
+      assert.equal(context.workingTabId, 10);
+      if (args.tabId === 2 && stage === 'enrich') throw new Error('enrich failed');
+      return { ...args, _pageUrl: `https://example.test/${args.tabId}` };
+    };
+    const messages = await agent._executeToolCalls([1, 2, 3].map(id => call(String(id), 'read_article', id)), new AbortController().signal);
+    assert.deepEqual(executed, [1, 3]);
+    assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2', '3']);
+    for (const id of ['1', '3']) {
+      const start = events.find(event => event.type === 'tool_execution_start' && event.toolCallId === id);
+      assert.equal(start.args._pageUrl, `https://example.test/${id}`);
+    }
+    const failed = events.find(event => event.type === 'tool_execution_end' && event.toolCallId === '2');
+    assert.equal(failed.isError, true);
+    assert.match(failed.result.error, new RegExp(`${stage} failed`));
+  }
 });

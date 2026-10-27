@@ -389,6 +389,8 @@ The Agent batches up to three statically declared read-only observations on dist
 Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
 retain the working tab; effects, final tool events and model results commit in call order. In-flight
 progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
+Stopping settles every started call in the current batch, including cancellation errors, before ending
+scheduling. Completed observations remain in the ledger while revoked effects stay unapplied.
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,

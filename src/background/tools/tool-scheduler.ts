@@ -3,6 +3,7 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
   tab(item: T): number | null;
   execute(item: T, signal: AbortSignal, parallel: boolean): Promise<R>;
   commit(result: R): Promise<void>;
+  reject?(item: T, error: unknown): R;
   signal: AbortSignal;
 }) {
   let index = 0;
@@ -21,7 +22,7 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
       }
     }
     const run = async (group: T[]) => {
-      const results = await Promise.all(group.map(async item => {
+      const results = await Promise.allSettled(group.map(async item => {
         const controller = new AbortController();
         const abort = () => controller.abort(options.signal.reason);
         options.signal.addEventListener("abort", abort, { once: true });
@@ -29,10 +30,16 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
         try { return await options.execute(item, controller.signal, group.length > 1); }
         finally { options.signal.removeEventListener("abort", abort); }
       }));
-      for (const result of results) {
-        if (options.signal.aborted) break;
-        await options.commit(result);
+      const failures: unknown[] = [];
+      for (const [index, result] of results.entries()) {
+        try {
+          if (result.status === "fulfilled") await options.commit(result.value);
+          else if (options.reject) await options.commit(options.reject(group[index]!, result.reason));
+          else failures.push(result.reason);
+        } catch (error) { failures.push(error); }
       }
+      // Settle this entire ledger boundary before stopping or surfacing a host failure.
+      if (failures.length) throw failures[0];
     };
     await run(batch);
     // A repeated tab is itself a barrier, including for calls following it.
