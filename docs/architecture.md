@@ -323,8 +323,9 @@ Global `↑`/`↓` markers (only when nonzero) and `viewportOmitted.above/below`
 dropped, including text fragments that semantic formatting may later merge or remove. Retained
 structure and ancestors are excluded. Local fold markers sit before/after each retained container's
 remaining children and count folded semantic branches, not repeated text descendants. A list's
-`items` attribute counts its existing direct AX list items, excluding nested lists. Markers expose
-`scope:"full"` and UID-root capabilities with their depth/limit constraints.
+`items` attribute counts its existing direct AX list items, excluding nested lists. Markers give
+`scope:"full"` and UID-root read targets. Depth and node budgets are documented in the tool's
+parameter descriptions; markers report omissions without repeating those definitions.
 
 A conservative 1800-character allowance bounds additional off-screen structure and its ancestors;
 selection samples both document ends. These are ordinary tree nodes, not a separate outline. A
