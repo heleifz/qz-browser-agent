@@ -63,7 +63,9 @@ receive three because preflight found intermittent challenges. Every attempt,
 including provider errors, stays in `results.json` and its transcript. The runner continues after
 failures so later sites still produce evidence; exit zero means the matrix completed, not that all
 tasks passed. `--concurrency` defaults to 2 and supports 1–3; `--repeat-all` runs three paired trials
-for every selected task. Existing result directories are rejected to preserve earlier attempts.
+for every selected task. `--pause-ms` adds a per-lane cooldown between attempts (0–60000ms,
+default0); combine it with `--concurrency 1` for availability follow-ups without request bursts.
+Existing result directories are rejected to preserve earlier attempts.
 Read tasks also capture a final DOM oracle to distinguish source changes from wrong answers;
 the initial-oracle score is retained even when the page changes. The harness uses one document
 handle for unique-selector binding and supports selector-only UIDs for subtree reads and actions,

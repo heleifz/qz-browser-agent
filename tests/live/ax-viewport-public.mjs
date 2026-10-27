@@ -4,12 +4,15 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { setTimeout as pause } from 'node:timers/promises';
 import { createAxViewportHarness } from '../support/ax-viewport-harness.mjs';
 import { publicSites, preparePublicTask, readPublicOracle, normalizeAnswer } from './ax-viewport-public-cases.mjs';
 
-const { values } = parseArgs({ options: { cases: { type: 'string' }, output: { type: 'string' }, concurrency: { type: 'string', default: '2' }, trials: { type: 'string', default: '1' }, 'repeat-all': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { cases: { type: 'string' }, output: { type: 'string' }, concurrency: { type: 'string', default: '2' }, trials: { type: 'string', default: '1' }, 'pause-ms': { type: 'string', default: '0' }, 'repeat-all': { type: 'boolean', default: false } } });
 const minimumTrials = Number(values.trials);
 assert.ok(Number.isInteger(minimumTrials) && minimumTrials >= 1 && minimumTrials <= 3, '--trials must be 1, 2 or 3');
+const pauseMs = Number(values['pause-ms']);
+assert.ok(Number.isInteger(pauseMs) && pauseMs >= 0 && pauseMs <= 60000, '--pause-ms must be an integer from 0 to 60000');
 const apiKey = process.env.DEEPSEEK_API_KEY;
 assert.ok(apiKey, 'Source /home/box/shared/qz/deepseek.env before this explicit live run.');
 const output = resolve(values.output || 'tests/results/viewport-ax/round2');
@@ -21,7 +24,7 @@ const tasks = publicSites.flatMap(site => site.tasks.map(task => ({ ...task, id:
   .filter(task => !selected || selected.includes(task.id) || selected.includes(task.site));
 assert.ok(tasks.length, 'No matching cases');
 const report = { at: new Date().toISOString(), sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), config,
-  protocol: `Isolated AX/Content harness, 1280x720, temperature 0, 16 turns; minimum ${minimumTrials} paired trials; order alternates by task and trial; failed pairs and preflight-flaky Baidu/PyPI receive 3 trials`, tasks, runs: [], sizes: [] };
+  protocol: `Isolated AX/Content harness, 1280x720, temperature 0, 16 turns; minimum ${minimumTrials} paired trials; ${pauseMs}ms pause between attempts per lane; order alternates by task and trial; failed pairs and preflight-flaky Baidu/PyPI receive 3 trials`, tasks, runs: [], sizes: [] };
 const redact = text => String(text).split(apiKey).join('[redacted]');
 let saveQueue = Promise.resolve();
 const save = () => { saveQueue = saveQueue.then(() => writeFile(resolve(output, 'results.json'), redact(JSON.stringify(report, null, 2)))); return saveQueue; };
@@ -147,6 +150,7 @@ await Promise.all(Array.from({ length: Math.max(1,Math.min(3,Number(values.concu
       for (const baseline of order) {
         const run = await runTask(task, baseline, trial);
         if (!run.pass) repeat = true;
+        if (pauseMs) await pause(pauseMs);
       }
     }
   }
