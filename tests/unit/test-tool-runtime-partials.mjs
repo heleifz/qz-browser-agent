@@ -5,6 +5,7 @@ import { Agent } from '../../src/background/agent/agent.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 import { localizeToolFailureCode } from '../../src/shared/tools/tool-error-localization.js';
 import { withLanguage } from '../../src/shared/i18n/index.js';
+import { clearTraceLog, getTraceLog } from '../../src/background/trace.js';
 
 const never = () => new Promise(() => {});
 const context = { sessionId: 'partials', runId: 'run', workingTabId: 1 };
@@ -85,7 +86,13 @@ test('normal reads never wait for or start a page-state probe', async () => {
   chrome.scripting.executeScript = () => { probes++; return never(); };
   try {
     for (const name of ['read_article', 'find_elements']) {
-      const result = await runtime.execute(name, { tabId: 1, limit: 100 }, undefined, context);
+      await clearTraceLog();
+      const result = await runtime.execute(name, { tabId: 1, limit: 100 }, undefined, { ...context, toolCallId: 'call' });
+      const phases = (await getTraceLog()).filter(line => line.includes(' tool_phase '));
+      assert.equal(phases.length, 1);
+      assert.match(phases[0], /call=call /);
+      assert.match(phases[0], /injectionCount=1 injectionMs=\d+ extractionCount=1 extractionMs=\d+/);
+      assert.doesNotMatch(JSON.stringify(result), /tool_phase|injectionMs|extractionMs/);
       assert.equal(result.incomplete, undefined);
       assert.equal(result.error, undefined);
     }

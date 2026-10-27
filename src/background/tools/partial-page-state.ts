@@ -1,13 +1,15 @@
+import type { ToolContext } from "../../sdk/background.js";
 import { ToolExecutionError } from "./arguments.js";
 
 type Fields = Record<string, unknown>;
 /** Sample actual document readiness. An unavailable renderer keeps the last observed state. */
-export async function readPartialPageState(tabId: number, previous: Fields = {}) {
+export async function readPartialPageState(tabId: number, previous: Fields = {}, context: ToolContext = {}) {
   let tab: chrome.tabs.Tab;
   try { tab = await chrome.tabs.get(tabId); }
   catch { throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The target tab is unavailable", { tabId }); }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let observation: Fields = {};
+  const finishPhase = context.measurePhase?.("measurement");
   try {
     const results = await Promise.race([
       chrome.scripting.executeScript({
@@ -24,7 +26,7 @@ export async function readPartialPageState(tabId: number, previous: Fields = {})
       observation = { ...frame.result, documentId: frame.documentId || "" };
     }
   } catch { /* The renderer may be busy or the document may be unavailable. */ }
-  finally { clearTimeout(timer); }
+  finally { clearTimeout(timer); finishPhase?.(); }
   const url = tab.url || "";
   const retained = previous.url === url ? previous : {};
   return {

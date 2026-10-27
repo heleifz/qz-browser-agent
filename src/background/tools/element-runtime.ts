@@ -540,7 +540,7 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
     }
     const objectId = await objectFromBackend(nodeSend, binding, objectGroup, contextId);
     try {
-      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup));
+      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup, context));
     } finally {
       try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
@@ -630,17 +630,20 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   return id;
 }
 
-async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string) {
-  const remote = record(await send("Runtime.callFunctionOn", {
-    objectId, objectGroup, awaitPromise: true, returnByValue: true,
-    functionDeclaration: ISOLATED_CONTENT_INVOKE,
-    arguments: [{ value: { ...params, action } }],
-  }));
-  const details = record(remote.exceptionDetails);
-  if (details.text || details.exception) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
-  }
-  return asElementReply(record(remote.result).value, action);
+async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string, context: ToolContext) {
+  const finishPhase = context.measurePhase?.("extraction");
+  try {
+    const remote = record(await send("Runtime.callFunctionOn", {
+      objectId, objectGroup, awaitPromise: true, returnByValue: true,
+      functionDeclaration: ISOLATED_CONTENT_INVOKE,
+      arguments: [{ value: { ...params, action } }],
+    }));
+    const details = record(remote.exceptionDetails);
+    if (details.text || details.exception) {
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
+    }
+    return asElementReply(record(remote.result).value, action);
+  } finally { finishPhase?.(); }
 }
 
 function asElementReply(value: unknown, action: string) {

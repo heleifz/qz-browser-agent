@@ -371,8 +371,12 @@ including prepared but not yet committed conversations in the live reference set
 
 Ordinary screenshot CSS measurement injects immediately with a 150 ms probe budget. An unavailable
 measurement leaves an observation image without coordinates. Native capture fallback serializes
-activation, capture and focus restoration per window. Debug logs record injection, extraction, CDP,
-measurement, normalization and result postprocessing durations.
+activation, capture and focus restoration per window. A call-local accumulator records injection,
+extraction, CDP, measurement, normalization and result postprocessing counts and cumulative durations.
+Tool settlement emits one `tool_phase` diagnostic row with the call ID, including work still pending at
+settlement. Concurrent phase durations may overlap; these are not a wall-clock breakdown. Late work
+cannot change the closed summary. CDP commands emit no individual phase rows, and timing stays out of
+model-visible results.
 
 Actionable screenshots register coordinates from the final encoded dimensions. Capture reads page
 identity and viewport geometry, takes the image, waits 200 ms, then compares the current state. A

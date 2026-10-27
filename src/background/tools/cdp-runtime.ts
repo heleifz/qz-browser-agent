@@ -1,4 +1,3 @@
-import { diagnosticTrace, formatTraceFields } from "../trace.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import { forgetIsolatedContexts } from './isolated-contexts.js';
@@ -214,7 +213,7 @@ export function createCdpRuntime({
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     try {
-      return await sendForState(state, method, params, check);
+      return await sendForState(state, method, params, check, "", context);
     } catch (err) {
       if (record(err).code === "CDP_RUN_RELEASED") throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, {
@@ -264,11 +263,14 @@ export function createCdpRuntime({
       : null;
     const runCommand = async (method: string, commandParams: Record<string, unknown>) => {
       check();
-      const command = debuggerApi.sendCommand(state.target, method, commandParams);
-      command.catch(() => {});
-      const result = await (abortPromise ? Promise.race([command, abortPromise]) : command);
-      check();
-      return result;
+      const finishPhase = context.measurePhase?.("cdp");
+      try {
+        const command = debuggerApi.sendCommand(state.target, method, commandParams);
+        command.catch(() => {});
+        const result = await (abortPromise ? Promise.race([command, abortPromise]) : command);
+        check();
+        return result;
+      } finally { finishPhase?.(); }
     };
 
     try {
@@ -300,7 +302,7 @@ export function createCdpRuntime({
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     check();
-    const result = await fn(state.target, bindSend(state, check));
+    const result = await fn(state.target, bindSend(state, check, "", context));
     check();
     return result;
   }
@@ -509,18 +511,18 @@ export function createCdpRuntime({
     };
   }
 
-  function bindSend(state: CdpState, check: () => void, sessionId = ""): CdpCommand {
-    const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId)) as CdpCommand;
-    send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""));
+  function bindSend(state: CdpState, check: () => void, sessionId = "", context: ToolContext = {}): CdpCommand {
+    const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId, context)) as CdpCommand;
+    send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""), context);
     send.tabId = state.tabId;
     send.connectionId = state.connectionId;
     return send;
   }
 
-  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "") {
+  async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "", context: ToolContext = {}) {
     assertStateActive(state);
     check();
-    const started = Date.now();
+    const finishPhase = context.measurePhase?.("cdp");
     try {
       const target = sessionId ? { ...state.target, sessionId } : state.target;
       const result = await debuggerApi.sendCommand(target, method, params);
@@ -532,7 +534,7 @@ export function createCdpRuntime({
       check();
       throw error;
     } finally {
-      diagnosticTrace(`tool_phase${formatTraceFields({ phase: "cdp", method, tab: state.tabId, session: state.sessionId, run: state.runId, elapsedMs: Date.now() - started })}`);
+      finishPhase?.();
     }
   }
 

@@ -14,7 +14,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; de
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { scriptTimeout, diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
+import { scriptTimeout } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -693,7 +693,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
   const runId = typeof context.runId === "string" ? context.runId : "";
   const depth = Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0));
   try {
-    await ensureRunScriptToolBridge(tabId);
+    await ensureRunScriptToolBridge(tabId, context);
   } catch (err) {
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
     return makePageContextUnavailableResult(err, { tabId, reason, phase: "tool_bridge_install" });
@@ -736,8 +736,8 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
   });
 }
 
-async function ensureRunScriptToolBridge(tabId: number) {
-  const started = Date.now();
+async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {
+  const finishPhase = context.measurePhase?.("injection");
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -746,7 +746,7 @@ async function ensureRunScriptToolBridge(tabId: number) {
       injectImmediately: true,
     });
   } finally {
-    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "injection", bridge: "run_script", tab: tabId, elapsedMs: Date.now() - started })}`);
+    finishPhase?.();
   }
 }
 

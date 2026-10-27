@@ -3,6 +3,8 @@ import type { SkillActivationContext } from "../shared/skills/skill-manifest.js"
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
 export type { ToolSchema, ToolArguments, ToolParameter } from "../shared/contracts/tool.js";
 
+export type ToolExecutionPhase = "injection" | "extraction" | "cdp" | "measurement" | "normalization" | "postprocess";
+
 export interface ToolContext extends SkillActivationContext {
   dynamicContext?: SkillActivationContext | null;
   skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
@@ -14,6 +16,8 @@ export interface ToolContext extends SkillActivationContext {
   preserveWorkingTab?: boolean;
   /** Publish an immutable completed stage for this call's existing hard deadline. */
   reportPartial?(result: Record<string, unknown>, pending: string): void;
+  /** Call-local diagnostic accumulator. End the measurement in a finally block. */
+  measurePhase?(phase: ToolExecutionPhase): () => void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */
   language?: string;
   toolRegistrySnapshot?: unknown;

@@ -256,7 +256,12 @@ assert.throws(
   "cross-field screenshot validation should live beside the tool definition",
 );
 
-const cdpShot = await runtime.captureTabScreenshot(3, { format: "jpeg", quality: 70 });
+const phasesStarted = [], phasesFinished = [];
+const cdpShot = await runtime.captureTabScreenshot(3, { format: "jpeg", quality: 70 }, {
+  measurePhase(phase) { phasesStarted.push(phase); return () => phasesFinished.push(phase); },
+});
+assert.deepEqual(phasesStarted.sort(), ['measurement', 'normalization']);
+assert.deepEqual(phasesFinished.sort(), phasesStarted);
 assert.equal(cdpShot.method, "cdp");
 assert.equal(cdpShot.dataUrl, "data:image/jpeg;base64,Y2Rw");
 assert.equal(cdpShot.cssWidth, 1000);

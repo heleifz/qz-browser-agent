@@ -2,6 +2,7 @@ import { t } from "../../shared/i18n/backend.js";
 import { t as toolT } from "./messages.js";
 import { runToolWithTimeout, type ToolPartialResult } from "./tool-timeout.js";
 import { readPartialPageState } from "./partial-page-state.js";
+import { createToolPhaseTiming } from "./phase-timing.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { chat, getConfig, saveConfig, applyModelPreset, deleteModelPreset, listModels, listProviderSummaries } from "../llm/index.js";
 import { createCapabilityChat } from "../llm/capability-chat.js";
@@ -105,8 +106,9 @@ async function withContentSignal<T>(operation: Promise<T>, signal?: AbortSignal)
   finally { signal.removeEventListener("abort", onAbort); }
 }
 
-async function ensureContentScript(tabId: number, force = false, signal?: AbortSignal) {
-  const started = Date.now();
+async function ensureContentScript(tabId: number, force = false, context: ToolContext = {}) {
+  const signal = context.signal;
+  const finishPhase = context.measurePhase?.("injection");
   try {
     if (!force) {
       try {
@@ -129,7 +131,7 @@ async function ensureContentScript(tabId: number, force = false, signal?: AbortS
       throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
     }
   } finally {
-    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "injection", tab: tabId, elapsedMs: Date.now() - started })}`);
+    finishPhase?.();
   }
 }
 
@@ -151,11 +153,11 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
-  await ensureContentScript(tabId, false, context.signal);
+  await ensureContentScript(tabId, false, context);
   context.signal?.throwIfAborted();
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   context.signal?.throwIfAborted();
-  const started = Date.now();
+  const finishPhase = context.measurePhase?.("extraction");
   try {
     const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
     context.signal?.throwIfAborted();
@@ -173,7 +175,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
       tabId,
     });
   } finally {
-    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "extraction", action, tab: tabId, elapsedMs: Date.now() - started })}`);
+    finishPhase?.();
   }
 }
 
@@ -365,6 +367,8 @@ function getLocalizedToolSchemas(options: ToolOptions, snapshot: ReturnType<type
  */
 export async function executeTool(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
   const startedAtMs = Date.now();
+  const timing = createToolPhaseTiming(name, context);
+  context = withToolRuntimeContext({ ...context, measurePhase: timing.start }, getToolRuntimeDependencies(context));
   const language = isCoreToolSnapshot(context.toolRegistrySnapshot) ? context.toolRegistrySnapshot.language : context.language || getLanguage();
   let effectiveArgs = args;
   let definition: RuntimeTool | null = null;
@@ -449,7 +453,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         signal,
         timeoutMs,
         async (partial, timeoutError) => {
-          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError); }
+          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context); }
           catch (error) {
             if (selectedDefinition.workingTab === "created" && Number(partial.result.tabId) > 0) {
               try { await chrome.tabs.remove(Number(partial.result.tabId)); } catch { /* Already closed. */ }
@@ -469,19 +473,20 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         (nestedName, nestedArgs, nestedSignal, nestedContext) => executeTool(nestedName, nestedArgs, nestedSignal,
           withToolRuntimeContext(nestedContext, getToolRuntimeDependencies(context))));
     }
-    const postprocessStarted = Date.now();
-    const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
-    const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
-    if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
-      issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
-      await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
-    }
-    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "postprocess", name, call: context.toolCallId, elapsedMs: Date.now() - postprocessStarted })}`);
-    if (traceTool) {
-      const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
-      toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
-    }
-    return localizedResult;
+    const finishPostprocess = context.measurePhase?.("postprocess");
+    try {
+      const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
+      const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
+      if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
+        issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
+        await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
+      }
+      if (traceTool) {
+        const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
+        toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
+      }
+      return localizedResult;
+    } finally { finishPostprocess?.(); }
   } catch (err) {
     attachToolRetryContext(err, parameters, effectiveArgs);
     const localized = withLanguage(language, () => localizeToolFailureError(err, { toolName: name }));
@@ -489,7 +494,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       toolTrace(`[tool] error name=${name} code=${record(localized).code || record(err).code || ""} label=${record(localized).codeLabel || ""} message=${record(localized).message || record(err).message || err} durationMs=${Date.now() - startedAtMs} details=${summarizeToolArgsForTrace(record(localized).details || record(err).details || {})}`);
     }
     throw localized;
-  }
+  } finally { timing.finish(); }
 }
 
 function emitToolExecutionUpdate(name: string, args: unknown = {}, update: Fields = {}, context: ToolContext = {}) {
@@ -720,7 +725,7 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError) {
+async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext) {
   let result = partial.result;
   let pending = partial.pending;
   const kind = definition.behavior?.timeoutResult?.kind;
@@ -728,7 +733,7 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
   if (tabId > 0) {
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
     const before = record(result.pageState);
-    const pageState = await readPartialPageState(tabId, before);
+    const pageState = await readPartialPageState(tabId, before, context);
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
     const oldDocument = result.documentId || before.documentId;
     const changed = (oldDocument && pageState.documentId && oldDocument !== pageState.documentId)
@@ -1393,7 +1398,7 @@ const elementRuntime = createElementRuntime({
   sendToContent,
   initializeContentScript: async (tabId, context) => {
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action: "initialize" });
-    await ensureContentScript(tabId, true, context?.signal);
+    await ensureContentScript(tabId, true, context);
   },
 });
 const { isUidElementTarget } = elementRuntime;

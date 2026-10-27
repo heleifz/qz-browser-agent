@@ -1737,9 +1737,9 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
       clip,
     });
   }
-  const normalized = await resizeDataUrlToMaxSize(`data:image/${format};base64,${result.data}`, {
+  const normalized = await normalizeScreenshot(`data:image/${format};base64,${result.data}`, {
     maxWidth, maxHeight, format, quality: normalizeImageQuality(quality),
-  });
+  }, context);
   return {
     dataUrl: normalized.dataUrl,
     method: `cdp_element_${boundsInfo.method || "box_model"}`,
@@ -1935,8 +1935,14 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
-  const started = Date.now();
+async function normalizeScreenshot(dataUrl: string, options: Parameters<typeof resizeDataUrlToMaxSize>[1], context: ToolContext) {
+  const finishPhase = context.measurePhase?.("normalization");
+  try { return await resizeDataUrlToMaxSize(dataUrl, options); }
+  finally { finishPhase?.(); }
+}
+
+async function screenshotCssSize(tabId: number, native = false, context: ToolContext = {}): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
+  const finishPhase = context.measurePhase?.("measurement");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -1945,7 +1951,7 @@ async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Sc
     ]);
   } finally {
     clearTimeout(timer);
-    recordScreenCaptureTrace("measurement.done", tabId, {}, { elapsedMs: Date.now() - started });
+    finishPhase?.();
   }
 }
 
@@ -2010,7 +2016,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
   await ensurePageSurface(tabId, (method, params) => sendCdp(tabId, method, params || {}, context));
 
   try {
-    const cssSizePending = screenshotCssSize(tabId);
+    const cssSizePending = screenshotCssSize(tabId, false, context);
     const params: Fields = {
       format,
       fromSurface: true,
@@ -2029,12 +2035,12 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       phaseStartedAt = Date.now();
       currentPhase = "normalize";
       recordScreenCaptureTrace("normalize.started", tabId, context, { source: "cdp" });
-      const normalized = await resizeDataUrlToMaxSize(`data:image/${format};base64,${result.data}`, {
+      const normalized = await normalizeScreenshot(`data:image/${format};base64,${result.data}`, {
         maxWidth,
         maxHeight,
         format,
         quality: normalizeImageQuality(quality),
-      });
+      }, context);
       recordScreenCaptureTrace("normalize.done", tabId, context, {
         source: "cdp",
         elapsedMs: Date.now() - phaseStartedAt,
@@ -2083,7 +2089,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     }
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("visible_tab.started", tabId, context, { format });
-    const cssSizePending = screenshotCssSize(tabId, true);
+    const cssSizePending = screenshotCssSize(tabId, true, context);
     context.signal?.throwIfAborted();
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
       format,
@@ -2095,12 +2101,12 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     });
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("normalize.started", tabId, context, { source: "visible_tab" });
-    const normalized = await resizeDataUrlToMaxSize(dataUrl, {
+    const normalized = await normalizeScreenshot(dataUrl, {
       maxWidth,
       maxHeight,
       format,
       quality: normalizeImageQuality(quality),
-    });
+    }, context);
     recordScreenCaptureTrace("normalize.done", tabId, context, {
       source: "visible_tab",
       elapsedMs: Date.now() - phaseStartedAt,
