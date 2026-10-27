@@ -46,6 +46,35 @@ test('CDP commands and child sessions aggregate into exactly one summary per too
   }
 });
 
+test('script cancellation includes its termination command in the same call summary', async () => {
+  await clearTraceLog();
+  let entered;
+  const evaluating = new Promise(resolve => { entered = resolve; });
+  const runtime = createCdpRuntime({
+    ToolExecutionError,
+    debuggerApi: {
+      onDetach: { addListener() {} }, async attach() {}, async detach() {},
+      async sendCommand(_target, method) {
+        if (method === 'Runtime.evaluate') { entered(); return new Promise(() => {}); }
+        assert.equal(method, 'Runtime.terminateExecution');
+        return {};
+      },
+    },
+    isRunCurrent: () => true, async assertTabAllowed() {}, async authorizeRunTab() {},
+  });
+  const context = { sessionId: 'timing', runId: 'run', toolCallId: 'cancelled-script' };
+  const timing = createToolPhaseTiming('run_script', context), controller = new AbortController();
+  context.measurePhase = timing.start;
+  const run = runtime.evaluateCdpScript(1, {}, controller.signal, context);
+  await evaluating; controller.abort();
+  await assert.rejects(run, { code: 'OPERATION_ABORTED' });
+  assert.deepEqual(await summaries(), []);
+  timing.finish();
+  const rows = await summaries();
+  assert.equal(rows.length, 1);
+  assert.match(rows[0], /call=cancelled-script .*cdpCount=2 cdpMs=\d+/);
+});
+
 test('settlement includes active phases once and ignores late completion or new measurements', async () => {
   await clearTraceLog();
   const timing = createToolPhaseTiming('read_article', { toolCallId: 'stopped' });

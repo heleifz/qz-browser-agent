@@ -251,7 +251,9 @@ export function createCdpRuntime({
           aborted = true;
           // A late abort must not terminate the next run on this retained connection.
           if (state.ownerKey === ownerKey && state.attached && !state.releasing) {
-            debuggerApi.sendCommand(state.target, "Runtime.terminateExecution").catch(() => {});
+            const finishPhase = context.measurePhase?.("cdp");
+            debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
+              .finally(() => finishPhase?.()).catch(() => {});
           }
           reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running script", {
             tabId: state.tabId,
