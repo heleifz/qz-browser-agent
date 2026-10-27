@@ -1,12 +1,13 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
+import { viewportTree } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { directChildFrames, openChildFrame, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
-  "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
+  "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "elementAliasForUid" | "registerElementRef" | "resolveElementReference"
   | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
@@ -27,6 +28,7 @@ export function registerAccessibilityTools({
   makeSnapshotId,
   makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
   elementTargetForUid,
+  elementAliasForUid = () => "",
   registerElementRef,
   resolveElementReference,
   backendNodeIdForSelector,
@@ -480,6 +482,8 @@ function formatSnapshotLine(node: DisplayNode) {
   if (node.accept) attrs.push(`accept="${truncateInline(node.accept, 120)}"`);
   if (node.multiple) attrs.push("multiple");
   if (node.selectedFileCount != null) attrs.push(`selectedFileCount=${node.selectedFileCount}`);
+  const alias = target ? elementAliasForUid(node.uid) : "";
+  if (alias) attrs.push(`alias=${alias}`);
   const omitted = Number(node.omitted || 0);
   if (omitted) attrs.push(`(truncated, ${omitted} more)`);
   return `${" ".repeat(Math.max(0, Number(node.depth) || 0))}${attrs.join(" ")}`;
@@ -663,6 +667,7 @@ registerTool({
     properties: {
       tabId: { type: "number", description: toolT("getAxTreeTabId") },
       root: { type: "string", description: toolT("getAxTreeRoot") },
+      scope: { type: "string", enum: ["viewport", "full_page"], description: toolT("getAxTreeScope") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
@@ -670,7 +675,7 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", scope = "full_page", depth = 16, limit = 120, actionsLimit = 40 }, signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
@@ -708,7 +713,6 @@ registerTool({
       root: requestedRoot,
     });
 
-    snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
     try {
       const result = rootRef?.uid
@@ -728,7 +732,7 @@ registerTool({
     const pageUrl = String(rootRef?.ref?.frameId ? rootRef.ref.pageUrl || "" : overview?.url || "").trim();
     const documentId = await readMainDocumentId(targetTabId);
     const ax = await withDebugger(targetTabId, async (_target, send) => {
-      const actionList = overview?.actions || [];
+      const actionList = (overview?.actions || []).filter(action => scope !== "viewport" || action.inViewport);
       const rootFrameId = String(rootRef?.ref?.frameId || "");
       const bound = await bindBackendNodes(targetTabId, actionList.map(action => String(action?.selector || "")), context, rootRef?.ref);
       const frame = rootFrameId ? await openChildFrame(send, rootFrameId) : null;
@@ -740,10 +744,19 @@ registerTool({
       const result = await send("Accessibility.getFullAXTree", { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
       const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
-      return buildAccessibilitySnapshot(withFrames, {
+      const visible = scope === "viewport" ? await viewportTree(send, withFrames, anchors.map(anchor => ({
+        nodeId: `action:${anchor.backendNodeId}`, backendDOMNodeId: anchor.backendNodeId,
+        documentFrameId: rootFrameId, documentLoaderId: bound.loaderId,
+      })), signal) : null;
+      signal?.throwIfAborted();
+      // Mint aliases only once this observation is ready to publish; a failed read does not replace them.
+      snapshotId = makeSnapshotId(targetTabId!, context);
+      const snapshot = buildAccessibilitySnapshot(visible?.nodes || withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
-        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId,
+        actions: visible ? anchors.filter(anchor => visible.inViewport({ nodeId: "", backendDOMNodeId: anchor.backendNodeId, documentFrameId: rootFrameId })) : anchors,
       });
+      return { ...snapshot, viewportTruncated: visible?.truncated };
     }, context);
     return {
       tabId: targetTabId,
@@ -752,6 +765,8 @@ registerTool({
       viewport: overview?.viewport,
       snapshotId,
       root: resolvedRoot,
+      scope,
+      viewportTruncated: ax.viewportTruncated,
       rootFound: ax.rootFound,
       depth: axDepth,
       nodeCount: ax.nodeCount,
@@ -759,7 +774,7 @@ registerTool({
       returnedNodeCount: ax.returnedNodeCount,
       outlineTruncated: ax.outlineTruncated,
       snapshot: ax.snapshot,
-      canvases: compactAxCanvasesForModel(overview?.canvases || []),
+      canvases: compactAxCanvasesForModel((overview?.canvases || []).filter(canvas => scope !== "viewport" || canvas.inViewport)),
       pageOverviewError: overview?.error ? {
         error: overview.error,
         code: overview.code,

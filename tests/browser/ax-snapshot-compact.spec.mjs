@@ -27,7 +27,11 @@ const html = `<!doctype html><meta charset="utf-8"><title>Compact snapshot</titl
 async function createHarness() {
   const server = createServer((req, res) => {
     const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
-    const body = pathname === "/repeated-text" ? repeatedHtml : html;
+    const body = pathname === "/repeated-text" ? repeatedHtml : pathname === "/frames"
+      ? `<!doctype html><title>Frames</title><iframe src="/child" style="height:100px"></iframe>
+          <iframe src="http://frame.test:${server.address().port}/child?remote" style="height:100px"></iframe>
+          <iframe src="/child?offscreen" style="display:block;margin-top:2000px;height:100px"></iframe>`
+      : pathname === "/child" ? `<!doctype html><button>${req.url.includes('offscreen') ? 'Offscreen frame' : req.url.includes('remote') ? 'Remote frame' : 'Local frame'}</button>` : html;
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(body);
   });
@@ -52,7 +56,7 @@ async function createHarness() {
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
       headless: true, executablePath: chromium.executablePath(), ignoreDefaultArgs: ["--disable-extensions", "--hide-scrollbars"],
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-proxy-server",
-        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
+        "--host-resolver-rules=MAP frame.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
     });
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
     await worker.evaluate(() => {
@@ -144,6 +148,47 @@ test.describe("compact accessibility snapshot", () => {
     const extra = await h.call("act_on_element", { target: clicky, action: "click" });
     expect(extra, JSON.stringify(extra)).not.toHaveProperty("code");
     expect((await h.state()).hits.clicky).toBe(1);
+  });
+
+  test("viewport snapshots clip offscreen content and aliases expire without relaxing full UIDs", async () => {
+    await h.call("act_on_element", { target: "css:h1", action: "scroll" });
+    const top = await h.call("get_ax_tree", { scope: "viewport", limit: 40, depth: 8 });
+    expect(top.code, JSON.stringify(top)).toBeUndefined();
+    expect(top.snapshot).toContain('"Overview"');
+    expect(top.snapshot).not.toContain('"Save"');
+    expect(top.snapshot).not.toContain('"Section 40"');
+    await h.call("act_on_element", { target: "css:#name", action: "scroll" });
+    const bottom = await h.call("get_ax_tree", { scope: "viewport" });
+    expect(bottom.snapshot, JSON.stringify(bottom)).toContain('"Name"');
+    expect(bottom.snapshot).not.toContain('"Overview"');
+    const row = line(bottom.snapshot, "textbox", '"Name"');
+    const alias = row.match(/alias=(@\S+)/)?.[1], uid = target(bottom.snapshot, "textbox", '"Name"');
+    expect(alias).toMatch(/^@[a-z0-9]{6}\.\d+$/);
+    const filled = await h.call("act_on_element", { target: alias, action: "fill", value: "Grace" });
+    expect(filled, JSON.stringify(filled)).not.toHaveProperty("code");
+    expect((await h.state()).name).toBe("Grace");
+    const subtree = await h.call("get_ax_tree", { scope: "full_page", root: uid });
+    expect(subtree.rootFound, JSON.stringify(subtree)).toBe(true);
+    expect(subtree.snapshot).not.toContain('"Save"');
+    const stale = await h.call("act_on_element", { target: alias, action: "fill", value: "wrong" });
+    expect(stale.code).toBe("STALE_ELEMENT_UID");
+    expect((await h.state()).name).toBe("Grace");
+    const full = await h.call("act_on_element", { target: uid, action: "fill", value: "full UID still valid" });
+    expect(full, JSON.stringify(full)).not.toHaveProperty("code");
+    const wrongTab = await h.call("act_on_element", { tabId: 999999, target: uid, action: "click" });
+    expect(wrongTab).toHaveProperty("code");
+  });
+
+  test("viewport clips iframe content in local and separate debugger sessions", async () => {
+    await h.call("open_tab", { url: `${h.baseURL}/frames` });
+    await expect.poll(async () => (await h.state()).ready).toBe("complete");
+    const result = await h.call("get_ax_tree", { scope: "viewport" });
+    expect(result.code, JSON.stringify(result)).toBeUndefined();
+    expect(result.snapshot).toContain('"Local frame"');
+    expect(result.snapshot).toContain('"Remote frame"');
+    expect(result.snapshot).not.toContain('"Offscreen frame"');
+    const full = await h.call("get_ax_tree", { scope: "full_page" });
+    expect(full.snapshot, JSON.stringify(full)).toContain('"Offscreen frame"');
   });
 
   test("keeps same-named sibling StaticText for repeated values", async () => {

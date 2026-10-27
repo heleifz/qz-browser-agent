@@ -19,7 +19,7 @@ test('flow serializes one tab across invocations, permits parallel tabs, and obs
   flow.observe = async tabId => { order.push('snapshot'); return { tabId, text: 'fresh' }; };
   const finished = flow.finish(); await tick(); assert.equal(order.includes('snapshot'), false);
   gate.resolve(); await Promise.all([a, b, c]);
-  assert.deepEqual(await finished, { tabId: 21, snapshot: { tabId: 21, text: 'fresh' } });
+  assert.deepEqual(await finished, { purpose: 'next_turn_start', tabId: 21, snapshot: { tabId: 21, text: 'fresh' } });
   assert.deepEqual(order, ['a', 'independent', 'b', 'c', 'snapshot']);
   flow.dispose(); other.dispose();
 });
@@ -61,8 +61,10 @@ test('final observation covers failed actions, excludes closed tabs, and reports
   assert.equal((await flow.finish()).tabId, 41);
   await assert.rejects(flow.call('navigate', { tabId: 43 }, async () => { throw new Error('failed after action'); }));
   assert.equal((await flow.finish()).tabId, 43);
-  flow.observe = async () => { throw new Error('tab closed externally'); };
-  assert.equal((await flow.finish()).code, 'FLOW_OBSERVATION_FAILED');
+  flow.observe = async () => { throw new Error('tab closed externally' + 'x'.repeat(20000)); };
+  const unavailable = await flow.finish();
+  assert.equal(unavailable.code, 'FLOW_OBSERVATION_FAILED');
+  assert.ok(unavailable.message.length <= 2048);
   await flow.call('close_tab', { tabId: 43 }, async () => ({ ok: true }));
   await flow.call('close_tab', { tabId: 41 }, async () => ({ ok: true }));
   assert.equal((await flow.finish()).code, 'FLOW_NO_OPEN_TAB'); flow.dispose();
@@ -92,8 +94,11 @@ test('flow bridge uses the normal runtime, captured call identity, deadline sign
   assert.equal(calls[0].ctx.toolRegistrySnapshot, 'frozen');
   assert.equal((await call({ tabId: 999 })).code, 'SESSION_TAB_FOREIGN');
   await call({ tabId: 51 });
+  scope.execution.observe = async (tabId, signal, options) => {
+    assert.equal(options.scope, 'viewport'); assert.equal(signal.aborted, false);
+    return { tabId, text: 'end state' };
+  };
   assert.equal((await scope.execution.finish()).snapshot.text, 'end state');
-  assert.equal(calls.at(-1).name, 'get_ax_tree');
   assert.equal((await call({ tabId: 51 }, { depth: 4 })).code, 'RUN_SCRIPT_TOOL_DEPTH_EXCEEDED');
   parent.abort(); assert.equal(calls[0].signal.aborted, true);
   assert.equal((await call({ tabId: 51 })).code, 'FLOW_EXECUTION_EXPIRED');

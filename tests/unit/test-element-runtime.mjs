@@ -256,6 +256,21 @@ const imageRef = await runtime.resolveElementReference(undefined, { target: `uid
 assert.equal(imageRef.uid, imageUid);
 assert.equal(imageRef.ref.backendNodeId, 41);
 
+const alias = runtime.elementAliasForUid(imageUid);
+assert.match(alias, /^@[a-z0-9]{6}\.i1$/);
+assert.equal((await runtime.resolveElementReference(5, { target: alias }, context)).uid, imageUid);
+await assert.rejects(runtime.resolveElementReference(undefined, { target: alias }, context), { code: 'MISSING_TAB_ID' });
+await assert.rejects(runtime.resolveElementReference(9, { target: alias }, context), { code: 'STALE_ELEMENT_UID' });
+await assert.rejects(runtime.resolveElementReference(5, { target: alias }, { ...context, sessionId: 'foreign' }), { code: 'STALE_ELEMENT_UID' });
+await assert.rejects(runtime.resolveElementReference(5, { target: 'uid:1' }, context), { code: 'STALE_ELEMENT_UID' });
+const oldUrl = currentUrl; currentUrl = 'https://example.test/other';
+await assert.rejects(runtime.resolveElementReference(5, { target: alias }, context), { code: 'STALE_ELEMENT_UID_PAGE_CHANGED' });
+currentUrl = oldUrl;
+const newerSnapshot = runtime.makeSnapshotId(5, context);
+assert.notEqual(newerSnapshot, snapshotId);
+await assert.rejects(runtime.resolveElementReference(5, { target: alias }, context), { code: 'STALE_ELEMENT_UID' });
+assert.equal((await runtime.resolveElementReference(5, { target: `uid:${imageUid}` }, context)).uid, imageUid, 'a newer snapshot does not change full-UID validation');
+
 runtime.registerElementRef({
   uid: "t9999.000001.1",
   tabId: 5,

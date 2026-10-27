@@ -1,4 +1,5 @@
 import type { ToolContext } from "../../sdk/background.js";
+import type { PageSnapshotOptions } from "../../sdk/background/browser.js";
 import type { ToolBehavior, ToolPageAccess } from "../../shared/contracts/tool.js";
 import { compactFlowValue, FLOW_MAX_PENDING, FLOW_PROGRESS_CHARS, FLOW_STEP_CHARS, flowValueSize } from "../../shared/flow-script.js";
 import { ToolExecutionError } from "./arguments.js";
@@ -33,9 +34,11 @@ export class FlowExecution {
   readonly checkpoints: unknown[] = [];
   private sequence = 0;
   private lastPublished = 0;
-  observe?: (tabId: number, signal?: AbortSignal) => Promise<unknown>;
+  observe?: (tabId: number, signal: AbortSignal, options: PageSnapshotOptions) => Promise<unknown>;
   constructor(readonly context: ToolContext, parent?: AbortSignal, private readonly publish?: (progress: Fields) => void) {
     this.signal = parent ? AbortSignal.any([parent, this.controller.signal]) : this.controller.signal;
+    const tabId = Number(context.workingTabId);
+    if (Number.isInteger(tabId) && tabId > 0) this.tabs.add(tabId);
   }
   allows(name: string, policy: FlowToolPolicy = {}) {
     return !policy.hidden && policy.source !== "plugin" && !["run_flow", "run_skill_script"].includes(name);
@@ -95,7 +98,7 @@ export class FlowExecution {
         if (signal.aborted) throw aborted();
         // Observe before releasing an action's tab lock. Waiters acquire a separate
         // observation turn so they cannot take a snapshot in the middle of an action.
-        const observation = page ? await (waiter ? this.snapshot(tabId) : this.observeSafely(tabId)) : undefined;
+        const observation = page ? await (waiter ? this.snapshot(tabId, { scope: "viewport" }) : this.observeSafely(tabId)) : undefined;
         const failure = record(error);
         throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
           details: { ...record(failure.details), ...(observation ? { observation } : {}) },
@@ -109,20 +112,22 @@ export class FlowExecution {
     void tail.then(() => { if (page && tabTails.get(tabId) === tail) tabTails.delete(tabId); });
     return waitForFlow(operation, signal);
   }
-  private async observeSafely(tabId: number, signal = this.signal) {
+  private async observeSafely(tabId: number, signal = this.signal, options: PageSnapshotOptions = { scope: "viewport" }) {
+    signal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
     try {
       if (!this.observe) throw new Error("No observation host");
-      return { tabId, snapshot: compactFlowValue(await waitForFlow(this.observe(tabId, signal), signal), 16000) };
+      const snapshot = compactFlowValue(await waitForFlow(this.observe(tabId, signal, options), signal), 16000);
+      return { tabId, snapshot };
     } catch (error) {
       if (this.signal.aborted) throw aborted();
-      return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error), recovery: "Inspect this tab with get_ax_tree or screenshot." };
+      return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error).slice(0, 2048), recovery: "Inspect this tab with get_ax_tree or screenshot." };
     }
   }
-  private snapshot(tabId: number) {
+  private snapshot(tabId: number, options: PageSnapshotOptions) {
     const signal = AbortSignal.any([this.signal, AbortSignal.timeout(5000)]);
-    return this.call("__flow_snapshot__", { tabId }, () => this.observeSafely(tabId, signal), { page: "owned" }, signal).catch(error => {
+    return this.call("__flow_snapshot__", { tabId }, () => this.observeSafely(tabId, signal, options), { page: "owned" }, signal).catch(error => {
       if (this.signal.aborted) throw aborted();
-      return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error), recovery: "Inspect this tab after its current operation finishes." };
+      return { tabId, available: false, code: "FLOW_OBSERVATION_FAILED", message: String(error).slice(0, 2048), recovery: "Inspect this tab after its current operation finishes." };
     });
   }
   async watch(run: (ready: () => void, signal: AbortSignal) => Promise<Fields>) {
@@ -145,13 +150,14 @@ export class FlowExecution {
     if (cancel) { watch.controller.abort(); return { ok: true, result: { cancelled: true } }; }
     return waitForFlow(watch.result, this.signal);
   }
-  async finish() {
+  async finish({ observe = true, tabId: requestedTabId, scope = "viewport", root = "root" }: PageSnapshotOptions & { observe?: boolean; tabId?: number } = {}) {
     for (const watch of this.watches.values()) watch.controller.abort();
     this.watches.clear();
     await waitForFlow(Promise.allSettled([...this.pending]), this.signal);
-    const tabId = [...this.tabs].at(-1);
+    if (!observe) return { available: false, reason: "disabled" };
+    const tabId = requestedTabId ?? [...this.tabs].at(-1);
     if (!tabId) return { available: false, code: "FLOW_NO_OPEN_TAB", message: "No remaining flow tab to observe." };
-    return this.snapshot(tabId);
+    return { purpose: "next_turn_start", ...await this.snapshot(tabId, { scope, root }) };
   }
   dispose() {
     this.controller.abort();

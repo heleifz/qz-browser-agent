@@ -22,7 +22,7 @@ const screenActionRuntime = read("src/capabilities/media/screen-action-runtime.j
 const accessibilityTools = read("src/capabilities/accessibility/tools.js");
 const elementRuntime = read("src/background/tools/element-runtime.js");
 const tools = [toolsRuntime, elementRuntime, pageElementTools, mediaTools, accessibilityTools].join("\n");
-const waitTools = read("src/capabilities/wait/tools.ts");
+const waitTools = read("src/capabilities/wait/tools.ts") + read("src/capabilities/wait/navigation-wait.ts");
 const prompt = SYSTEM_PROMPT;
 globalThis.chrome ||= {};
 const { resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
@@ -48,7 +48,9 @@ assertImageCandidateTargetContract();
 console.log("element target contract tests passed");
 
 function assertTargetInfrastructure() {
-  assert.match(tools, /const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> \| "css:" <css_selector>'/, "target grammar should be centralized");
+  assert.match(elementRuntime, /const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> \| "css:" <css_selector> \| "@" <snapshot_token> "\." <node>/, "target grammar and snapshot-scoped aliases should be centralized");
+  assert.deepEqual(resolveToolDefinition("get_ax_tree").parameters.properties.scope.enum, ["viewport", "full_page"]);
+  assert.equal(resolveToolDefinition("run_flow").parameters.properties.observe.type, "boolean");
   assert.match(tools, /function parseElementTarget\(target = ""\)/, "target parser should exist");
   assert.match(tools, /function resolveSelectorTarget\(tabId, selector = "", index = 0, context = \{\}\)/, "selector target compatibility helper should exist");
   assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw \};/, "raw CSS selectors should remain valid selector arguments");
@@ -89,7 +91,7 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
   assert.match(prompt, /selector 时表示 CSS 范围(?:\/|或)过滤条件，可传原始 CSS，也可传 target 格式/, "system prompt should define selector compatibility");
-  assert.match(prompt, /点击后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click results");
+  assert.match(prompt, /pageAfter\/urlChanged\/titleChanged 与 run_flow\.finalObservation 提供动作后的状态/, "system prompt should expose existing post-action evidence without requiring another read");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
@@ -217,7 +219,7 @@ function assertOrderedSubstrings(value, expected, message) {
 
 function assertFileInputHandoffContract() {
   const actBlock = toolBlock("act_on_element");
-  assert.match(prompt, /任务需要上传本地文件时.*调用 wait_for_user/, "file handoff should be conditioned on the current task requiring a local file");
+  assert.match(prompt, /不能读取用户本机文件系统。.*本机文件或超出工具大小限制的内容，调用 wait_for_user/, "local files and oversized content require user handoff; explicit in-memory uploads do not");
   assert.match(prompt, /检查 selectedFileCount 或页面反馈/, "the model should verify file selection after the user resumes");
   assert.match(resolveToolDefinition("wait_for_user").description, /本地文件选择等必须亲自操作的步骤/, "wait_for_user should cover user-owned local file selection");
   assert.match(resolveToolDefinition("act_on_element").description, /本地文件选择通过 wait_for_user 交给用户完成/, "act_on_element should route local file selection to wait_for_user");

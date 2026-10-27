@@ -131,7 +131,7 @@ ${TOOL_CALLING_CONTRACT}
 4. read_dom 只用于验证原始 HTML/DOM 行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
 
 ### 元素引用协议
-- 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>。
+- 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector> | "@" <snapshot_token> "." <node>。输出的别名须显式传 tabId 且属于当前快照，不是裸节点编号。
 - element_uid 来自 get_ax_tree/find_elements/list_images 返回的 uid 或 target；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。
 - 示例：uid:t5493.000001.12、uid:t5493.000001.i3、css:button[aria-label="下一页"]、css:a[href*="page=2"]、css:input[name="q"]、css:textarea[placeholder*="评论"]、css:[data-testid="submit"]。
 - 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。处理该请求时，把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及其所在区域，读取内容时把它作为 read_article/read_dom 的 selector；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
@@ -144,7 +144,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ### act_on_element 协议
 - act_on_element 只使用 target + click/fill/press/select/check/uncheck/scroll。
 - 提交、导航、关闭 tab 等生命周期动作通过 run_flow 内的工具或直接浏览器工具执行，不放进会卸载自身页面的页面模式 run_script。
-- 点击后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果。navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交表单。
+- pageAfter/urlChanged/titleChanged 与 run_flow.finalObservation 提供动作后的状态。navigationPending 表示导航尚未稳定；重复点击或提交表单可能重复已送达的动作。
 - wait_for_navigation 的 already_complete 只说明调用时页面已加载，不代表上一动作成功或失败。
 
 ### 本地文件选择
@@ -154,7 +154,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ## 4. 浏览器流程、页面脚本与批处理协议
 
 ### 适用场景
-- 多步浏览器操作、跨页导航、多标签页、翻页与批量采集优先使用 run_flow，把观察、动作、等待、提取和保存放在控制器内，不必每一步都经过一轮模型调用。简单单次动作或读取可以直接使用对应工具。
+- run_flow 一次调用可完成整段交互：登录、后续动作、条件等待与验证，可跨页、跨标签页。默认 finalObservation（purpose=next_turn_start）是最新 viewport AX 快照，直接作为下一轮起点，无需为同一状态另调观察工具。observe:false 关闭，observationTabId/observationScope/observationRoot 指定标签页、范围与子树。快照只捕获当前时刻，不表示应用已就绪。页面模式 run_script 支持批量 DOM 提取与解析；直接工具提供单项动作和读取。
 - 每个页面调用显式传 tabId；独立标签页可用有界 Promise.all 批次并行，同一 tab 的动作串行。完整 UID 继续执行原有校验，不能截短 UID，也不能在快照过期后复用短别名。导航或遇到过期元素错误后，在流程内重新获取当前目标。
 - 等待未来导航时，先 await tools.$watch('wait_for_navigation',{tabId,next:true,timeout:10}) 确认监听就绪，再触发动作并 await 句柄的 wait()。按实际需要等待元素/文本或网络条件。通过 catch 或 tools.$settle 处理单步失败，检查 error.observation 后再恢复；大数据写入 Data/文件，用 tools.$emit 回传小检查点，并按任务验收标准验证完成情况。
 - 页面内读取、解析、DOM 聚合、接口结果整理时使用 run_script 的页面模式或 Skill page 工具。
@@ -167,7 +167,7 @@ ${READING_CAPABILITY_PROTOCOL}
 - 没有工作标签页但任务只处理 data_store/文件/纯 JS 时，显式使用 run_script target:"inner"。
 
 ### 运行环境
-- run_flow 在任务页面之外运行，导航不会终止控制器。tools 代理通过原有工具运行时执行，保持权限、归属和安全检查。嵌套 run_script 只操作一个页面，返回 {ok,result,...}；该叶子脚本可用 document/window 和 input/args，但没有 tools/tool，后续工具编排只在控制器中进行。
+- run_flow 在任务页面之外运行，导航不会终止控制器。tools 代理通过原有工具运行时执行，保持权限、归属和安全检查。嵌套 run_script 只操作一个页面，返回 {ok,result,...}；该叶子脚本可用 document/window 和 input/args，但没有 tools/tool，后续工具编排只在控制器中进行。快照 target 或输出的快照范围别名可直接用于流程动作，须显式填写 tabId；新快照或导航后旧别名失效，完整 UID 校验不变。
 - run_script target:"page" 运行在网页上下文，可用 document/window/Web APIs、input/args/tabId、tools/tool。
 - run_script target:"inner" 运行在轻舟内部 Worker，可用标准 JS/Web Worker APIs、input/args、tools/tool；没有 document/window/DOM/tabId，不读取网页。
 - 不可用 Node.js、fs/path/process/require/import/npm、shell、本地文件系统，也不能使用 getEventListeners/$0/copy/monitorEvents 等 DevTools Console helper。

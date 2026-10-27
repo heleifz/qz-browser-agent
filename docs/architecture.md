@@ -321,10 +321,18 @@ Step failures include a bounded AX observation and can be recovered with `catch`
 `tools.$emit` publishes bounded checkpoints through a run-scoped `tool_execution_update.partialResult`;
 transcript projection updates the existing running tool entry. Data/file tools own durable results.
 Worker arguments, results, progress, trace and artifact summaries have explicit budgets. Full UIDs
-still pass unchanged through the element host; no short-alias expansion is introduced.
+still pass unchanged through the element host. Printed aliases include a snapshot token and require
+explicit tab ID plus the current Session/tab snapshot before resolving through those same checks.
+A newer snapshot expires old aliases rather than rebinding their node numbers.
 
-After pending calls settle, the controller returns a fresh, bounded AX snapshot of the last-used
-remaining tab as `finalObservation`. A failed script also gets this observation; stop or timeout
+After pending calls settle, the controller returns a fresh, bounded viewport AX snapshot of the
+last-used remaining tab as `finalObservation`, marked `purpose:next_turn_start`. It falls back to
+the working tab when no page was called. The script capability initializes a bounded
+`readPageSnapshot` host port, which dispatches `get_ax_tree` through the common runtime even for a
+flow without nested calls. `observe`, `observationTabId`, `observationScope` and `observationRoot`
+control that final observation. Viewport geometry uses the shared debugger box-model protocol;
+structural ancestors and visible direct-child frames are retained within the existing AX budget.
+A failed script also gets this observation; stop or timeout
 revokes the scope instead of delaying cancellation for a snapshot. Closed/unavailable tabs have an
 explicit unavailable result. Nested screenshots retain their separate last-completed image, which
 may precede the final snapshot. Stop terminates the Worker and cancels nested/queued tools; it does

@@ -152,15 +152,6 @@ export function createRunScriptBridge({
         senderTabId: sender?.tab?.id || null,
         ...(flow ? { flowPageLeaf: true, flowWaitReady: watch.ready, toolCallId: flow.context.toolCallId, spanId: flow.context.spanId } : {}),
       };
-      if (flow) flow.observe = async (tabId, observationSignal = flow.signal) => {
-        const stopped = stoppedBridgeError(sessionId, runId, "get_ax_tree", flow.signal);
-        if (stopped) throw Object.assign(new Error(String(plainObject(stopped).error)), stopped);
-        const result = await toolRuntime.execute("get_ax_tree", { tabId, limit: 40, depth: 8 }, AbortSignal.any([observationSignal, AbortSignal.timeout(5000)]), {
-          ...context, ...await resolveToolContext(sessionId, runId), flowWaitReady: undefined,
-        });
-        if (plainObject(result).error) throw new Error(String(plainObject(result).error));
-        return result;
-      };
       const execute = () => toolRuntime.execute(toolName, toolArgs, signal, context);
       const result = await (flow ? flow.call(toolName, toolArgs, execute, definition || {}, signal) : execute());
       // A host or zero-timeout handler may complete after its run was revoked.

@@ -1,7 +1,9 @@
 # Browser flow scripts
 
-Use `run_flow` for multi-step browser operations, navigation, multiple tabs and batch collection.
-The Agent's system prompt prefers it for these tasks; a single action or read can use a direct tool.
+`run_flow` can complete an entire interaction—login, actions, condition waits and verification—in
+one call, across pages or tabs. Its default final viewport snapshot is the next round's starting
+view, so that round does not need another observation call for the same state. Page-mode
+`run_script` handles bulk DOM extraction and parsing; direct tools expose individual operations.
 The controller runs in a Worker outside task pages. Navigation and closing a tab do not unload it.
 
 ```javascript
@@ -65,8 +67,14 @@ the underlying listener is installed before returning its handle:
 const navigation = await tools.$watch("wait_for_navigation", {
   tabId, next: true, timeout: 10
 });
-await tools.act_on_element({tabId, target: nextTarget, action: "click"});
-const loaded = await navigation.wait();
+try {
+  await tools.act_on_element({tabId, target: nextTarget, action: "click"});
+  await navigation.wait();
+} finally {
+  await navigation.cancel().catch(() => {}); // Already-consumed handles need no cleanup.
+}
+await tools.wait_for_element({tabId, selector: "#flash", text: "logged out", timeout: 10});
+return {done: true}; // run_flow appends the fresh final snapshot automatically.
 ```
 
 The handle can be consumed once or cancelled with `await navigation.cancel()`. Unconsumed watches
@@ -100,9 +108,14 @@ with `partialResult`. Transcript projection preserves the running tool's identit
 partial result on completion. This is progress, not a durable script-resume journal. Persist large
 or important intermediate data with the owning Data/file tools and emit their identifiers.
 
-Full UIDs are passed unchanged to the existing element runtime. This branch does not introduce
-short aliases: incomplete UIDs fail rather than being expanded. A stale full UID after navigation
-also fails. No alias from a previous snapshot can acquire authority through a flow.
+Snapshot lines print both `target=uid:t5493.abcdef.12` and `alias=@abcdef.12`. Either value works
+unchanged in `tools.act_on_element({tabId, target, action: "click"})`, including a target from the
+previous flow's final snapshot. Aliases require explicit `tabId` and the current Session/tab
+snapshot. The token binds the alias to that snapshot rather than rebinding `@12` to a new element.
+A newer snapshot (including image snapshots) expires old aliases. Navigation, replaced documents,
+TTL expiry and missing registry entries still reject stale references. `uid:12` is not expanded.
+Full UIDs continue through the existing Session/tab/document/loader/node checks; a new snapshot
+alone does not change those full-UID checks.
 
 ## Limits and lifecycle
 
@@ -120,10 +133,28 @@ also fails. No alias from a previous snapshot can acquire authority through a fl
 | Images | Existing normalized image budget: 2 MiB, 2,048-pixel long edge |
 | File input | Five files, 512 KiB combined decoded bytes; no OS paths; empty array clears selection |
 
-The final envelope contains the bounded script result, checkpoints and `finalObservation` for the
-last-used remaining tab. If no tab remains, or observation is unavailable, the result says so.
-The most recent nested screenshot can predate the final observation. Request other tab summaries
-explicitly when they matter.
+The final envelope contains the bounded script result, checkpoints and
+`finalObservation: {purpose: "next_turn_start", tabId, snapshot}`. `snapshot` is the ordinary
+`get_ax_tree` result with URL, title, viewport, scope, snapshot ID and actionable snapshot text.
+It defaults to the last-used remaining tab, or the Session's working tab when no page was called.
+A snapshot captures the current moment; application readiness comes from explicit conditions.
+
+| run_flow parameter | Default / behavior |
+| --- | --- |
+| `observe` | `true`; `false` omits the final snapshot but not failure observations |
+| `observationTabId` | Explicit owned tab override; normal ownership/permission checks apply |
+| `observationScope` | `viewport`; `full_page` includes offscreen content within the same budgets |
+| `observationRoot` | `root`; a full UID, current alias or `css:` target restricts the subtree |
+
+Viewport snapshots retain structural ancestors, visible direct-child frame content and the
+existing node/depth budgets. Geometry reads are bounded to 2,000 nodes; `viewportTruncated` signals
+that bound. They describe geometric visibility, not pixel-level occlusion. Standalone `get_ax_tree`
+keeps its `full_page` default and accepts the same `scope`/`root` controls. A stale root is rejected,
+not silently replaced with a whole-page observation.
+
+If no tab remains, or observation is unavailable, the result says so. The five-second observation
+deadline includes queue time; Stop does not wait for it. The most recent nested screenshot can
+predate the final observation. Other tabs are not automatically snapshotted.
 
 `timeout` is required in seconds; a nonpositive value is unlimited. Stop and timeout revoke the
 scope before cleanup, reject queued/future calls and cancel Worker timers and passive watches.
@@ -132,6 +163,7 @@ page JavaScript and its timers. Extension restart loses in-memory script state; 
 can support a new run, but automatic controller resume is not implemented.
 
 Chrome uses native offscreen support. Firefox uses the same sandbox/Worker through its existing
-hidden-frame/minimized-window adapter, selected by feature detection. No new browser permission,
-UID interpretation or Firefox-only controller is introduced. See [architecture](architecture.md)
+hidden-frame/minimized-window adapter, selected by feature detection. Viewport filtering uses the
+shared debugger box-model interface already implemented by both hosts. No new browser permission
+or Firefox-only controller is introduced; full-UID authority checks are unchanged. See [architecture](architecture.md)
 and [live test commands](../tests/README.md#real-model-tests) for the implementation and evidence.

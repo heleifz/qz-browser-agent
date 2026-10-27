@@ -18,6 +18,7 @@ export interface BrowserDebugger {
   withTemporaryDebugger<T>(tabId: unknown, fn: CdpOperation<T>, label?: string): Promise<T>;
   evaluateCdpScript(tabId: unknown, params?: Record<string, unknown>, signal?: AbortSignal, context?: ToolContext): Promise<unknown>;
 }
+export interface PageSnapshotOptions { scope?: "viewport" | "full_page"; root?: string }
 export interface ElementTarget {
   tabId?: number; selector: string; index?: number; target?: string; uid?: string; ref?: ElementReference;
 }
@@ -28,6 +29,7 @@ export interface ElementAccess {
   makeElementUid(snapshotId: string, seq: number, mark?: string): string;
   registerElementRef(ref: ElementReference): void;
   elementTargetForUid(uid: unknown): string;
+  elementAliasForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;
   elementTargetForRef(ref?: ElementReference): string;
   isUidElementTarget(value: unknown): boolean;

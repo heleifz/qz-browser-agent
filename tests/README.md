@@ -300,6 +300,21 @@ selects the evidence directory (default `tests/results/flow-script`). Reports in
 actual provider request counts, provider-reported tokens, tool choice and full snapshots. Review
 business acceptance from the snapshots; a completed Agent status alone is not a pass.
 
+For a minimal tool-only E reproduction (not a UX or model-selection benchmark):
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-interaction" npm test -- live flow-interaction --label E --recover
+```
+
+This target uses a scripted provider response, the real Agent/flow/tool runtime, a fresh private
+profile/MCP service and the public demo login site. It needs no provider key or inference. The
+script arms navigation waits, checks success text, uses a full UID and a printed alias, and verifies
+the automatically returned viewport snapshot. `--recover` enables explicit recovery after checking
+an undelivered click's state; `--logout-href` independently verifies this demo's ordinary GET-link
+workaround. `--cycles 1-3`, `--warmup screenshot|hover` and `--native-viewport` support bounded input
+diagnostics. Reports retain errors and recovery labels under `tests/results/flow-interaction`;
+`--output` selects another directory. Use distinct labels to preserve earlier attempts.
+
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
 `cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses

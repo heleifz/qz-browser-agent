@@ -437,7 +437,7 @@ export const backendMessages = defineMessages("backend", {
   "toolError.GIT_PUBLISH_TARGET_UNAVAILABLE.label": {"zh-CN": "Git 发布目标不可用", "en": "Git publishing target unavailable"},
   "toolError.GIT_PUBLISH_RESOURCE_BINARY_INVALID.label": {"zh-CN": "Git 发布的二进制资源无效", "en": "Invalid binary resource for Git publishing"},
   "toolError.INPUT_NOT_DELIVERED.label": {"zh-CN": "输入未送达", "en": "Input was not delivered"},
-  "toolError.INPUT_NOT_DELIVERED.message": {"zh-CN": "页面没有收到这次点击。请先让标签页完成排版后再试。", "en": "The page received no click. Let the tab finish laying out, then try again."},
+  "toolError.INPUT_NOT_DELIVERED.message": {"zh-CN": "未记录到点击送达回执。请根据观察或当前页面状态选择恢复方式，不要盲目重复已经发出的动作。", "en": "No click delivery receipt was recorded. Inspect the observation or current page before recovery; do not blindly repeat a dispatched action."},
   "toolError.STALE_ELEMENT_UID.label": {"zh-CN": "元素引用已过期", "en": "Element reference has expired"},
   "toolError.STALE_ELEMENT_UID.message": {"zh-CN": "元素 target 已过期或不存在，请重新获取页面结构后再试。", "en": "The element target has expired or does not exist. Get the page structure again."},
   "toolError.STALE_ELEMENT_UID_PAGE_CHANGED.label": {"zh-CN": "页面已变化，元素引用过期", "en": "Page changed; element reference expired"},

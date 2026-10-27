@@ -15,6 +15,7 @@ export const EXTENSION_PATH = await ensureTestExtension();
 export async function launchIsolatedExtensionMcp({
   profilePrefix = "qingzhou-mcp-e2e-",
   headless = true,
+  viewport = { width: 980, height: 860 },
   requestTimeoutSeconds = 300,
   downloadDirectory,
 } = {}) {
@@ -34,7 +35,7 @@ export async function launchIsolatedExtensionMcp({
       executablePath,
       ...(downloadDirectory ? { downloadsPath: resolve(downloadDirectory) } : {}),
       ignoreDefaultArgs: ["--disable-extensions"],
-      viewport: { width: 980, height: 860 },
+      viewport,
       args: [
         "--lang=zh-CN",
         `--disable-extensions-except=${EXTENSION_PATH}`,

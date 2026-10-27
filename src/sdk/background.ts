@@ -37,7 +37,7 @@ import type { PageNavigationHost, PreparedNavigation } from "../background/tools
 import type { PageState, Screenshot, ScreenshotOptions } from "../background/tools/page-observation.js";
 import type { ElementReply, PagePoint } from "../shared/contracts/page-content.js";
 import type { SecurityGuardrails, GuardrailDecision } from "../shared/security-guardrails.js";
-import type { BrowserDebugger, CdpCommand, ElementAccess } from "./background/browser.js";
+import type { BrowserDebugger, CdpCommand, ElementAccess, PageSnapshotOptions } from "./background/browser.js";
 export type { PreparedNavigation } from "../background/tools/page-navigation.js";
 export type { GetToolRuntimeDependencies, ToolRuntimeDependencies, ToolSkillsRuntime, ToolSkillSetting, ToolEvent, UserWaitRuntime } from "./background/services.js";
 export type { ModelService, ModelRequestOptions } from "./background/services.js";
@@ -55,6 +55,8 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   readonly ToolExecutionError: ToolErrorConstructor;
   readonly getToolRuntimeDependencies: GetToolRuntimeDependencies;
   readonly element: ElementAccess;
+  /** Bounded semantic observation through the normal get_ax_tree permission/ownership runtime. */
+  readPageSnapshot(tabId: number, options: PageSnapshotOptions, signal: AbortSignal, context: ToolContext): Promise<unknown>;
   getBookmarks(): typeof chrome.bookmarks;
   getHistory(): typeof chrome.history;
   readonly getSecurityGuardrails: () => Promise<SecurityGuardrails>;
