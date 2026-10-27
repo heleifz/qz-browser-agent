@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runToolWithTimeout } from '../../src/background/tools/tool-timeout.js';
+import { Agent } from '../../src/background/agent/agent.js';
+import { createTestAgentOptions } from '../support/agent-services.mjs';
+import { localizeToolFailureCode } from '../../src/shared/tools/tool-error-localization.js';
+import { withLanguage } from '../../src/shared/i18n/index.js';
 
 const never = () => new Promise(() => {});
 const context = { sessionId: 'partials', runId: 'run', workingTabId: 1 };
@@ -130,6 +134,44 @@ test('side-effect timeout reports an unconfirmed attempt without replay', async 
   assert.equal(result.incomplete.reason, 'timeout'); assert.equal(result.status, 'unconfirmed');
   assert.equal(result.mayHaveTakenEffect, true); assert.equal(result.automaticReplay, false);
   assert.equal(contentCalls, 1);
+  assert.ok(result.error);
+  assert.equal(result.code, 'TOOL_TIMEOUT');
+  assert.equal(updates.length, 0, 'an unconfirmed action must not update the working tab');
+});
+
+test('action timeout stays an error in Agent events and never issues effects', async () => {
+  let attempts = 0, effectCalls = 0;
+  defineTool({ name: '__partial_action', description: 'Synthetic action', timeout: 20,
+    parameters: { type: 'object', properties: { tabId: { type: 'number' } } },
+    behavior: { timeoutResult: { kind: 'action', pending: 'action outcome confirmation' } },
+    effects: () => { effectCalls++; return [{ type: 'context.siteChanged' }]; },
+    execute: async () => { attempts++; return never(); },
+  });
+  for (const language of ['zh-CN', 'en']) {
+    reset();
+    const before = attempts, events = [];
+    const agent = new Agent(context.sessionId, createTestAgentOptions({ tools: runtime }));
+    agent._currentRunId = context.runId;
+    agent._runLanguage = language;
+    agent._emit = event => events.push(event);
+    const messages = await agent._executeToolCalls([{ id: 'action', function: {
+      name: '__partial_action', arguments: JSON.stringify({ tabId: 1 }),
+    } }], new AbortController().signal);
+    const end = events.find(event => event.type === 'tool_execution_end');
+    assert.equal(end.isError, true);
+    assert.ok(end.result.error);
+    assert.equal(end.result.code, 'TOOL_TIMEOUT');
+    assert.equal(end.result.codeLabel, withLanguage(language, () => localizeToolFailureCode('TOOL_TIMEOUT')));
+    assert.equal(end.result.details.timeout, 20);
+    assert.match(end.result.note, language === 'en' ? /may have taken effect/ : /可能已生效/);
+    assert.equal(end.result.mayHaveTakenEffect, true);
+    assert.equal(end.result.automaticReplay, false);
+    assert.match(JSON.stringify(messages), /TOOL_TIMEOUT/);
+    assert.deepEqual(runtime.consumeEffects(end.result, context), []);
+    assert.equal(effectCalls, 0);
+    assert.equal(updates.length, 0);
+    assert.equal(attempts - before, 1);
+  }
 });
 
 defineTool({ name: '__partial_read', description: 'Synthetic staged read', parameters: { type: 'object', properties: {} },

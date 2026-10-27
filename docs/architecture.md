@@ -408,7 +408,8 @@ AX snapshots cache ancestor descriptions within one read and fetch up to four ch
 merging in frame order. A timed-out AX read retains the main document and completed children. Until
 viewport geometry completes, this partial explicitly uses `scope:"full"` and lists filtering in
 `pending`; successful output retains the requested scope. Screenshot partials use normalized images
-without coordinates. Action timeouts report an unconfirmed outcome that may already have taken effect;
+without coordinates. Action timeouts remain localized `TOOL_TIMEOUT` errors, with an unconfirmed
+outcome that may already have taken effect. They issue no success effects or working-tab update;
 the runtime preserves the attempt without replaying it.
 
 [Skill tools](../src/background/skills/skill-tool-runtime.ts) use the same execution and identity

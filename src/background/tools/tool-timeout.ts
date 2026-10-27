@@ -11,7 +11,7 @@ export async function runToolWithTimeout(
   execute: (signal: AbortSignal, reportPartial: NonNullable<ToolContext["reportPartial"]>) => Promise<unknown>,
   parentSignal: AbortSignal | undefined,
   timeoutMs: number,
-  fallback: (partial: ToolPartialResult) => Promise<unknown>,
+  fallback: (partial: ToolPartialResult, error: ToolExecutionError) => Promise<unknown>,
   context: ToolContext,
   timeoutTrace?: string,
 ): Promise<unknown> {
@@ -41,7 +41,7 @@ export async function runToolWithTimeout(
       // Capture the slot before abort listeners run. Timeout owns settlement from this point.
       const saved = partial;
       controller.abort(error);
-      if (saved) resolve(fallback(saved));
+      if (saved) resolve(fallback(saved, error));
       else reject(error);
     }, timeoutMs);
   });

@@ -448,8 +448,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         },
         signal,
         timeoutMs,
-        async partial => {
-          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language); }
+        async (partial, timeoutError) => {
+          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError); }
           catch (error) {
             if (selectedDefinition.workingTab === "created" && Number(partial.result.tabId) > 0) {
               try { await chrome.tabs.remove(Number(partial.result.tabId)); } catch { /* Already closed. */ }
@@ -474,8 +474,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
     if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
       issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
+      await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
     }
-    await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
     diagnosticTrace(`tool_phase${formatTraceFields({ phase: "postprocess", name, call: context.toolCallId, elapsedMs: Date.now() - postprocessStarted })}`);
     if (traceTool) {
       const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
@@ -720,7 +720,7 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string) {
+async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError) {
   let result = partial.result;
   let pending = partial.pending;
   const kind = definition.behavior?.timeoutResult?.kind;
@@ -741,7 +741,8 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
     if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
-  if (kind === "action") result = { ...result, status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
+  if (kind === "action") result = { ...result, error: timeoutError.message, code: timeoutError.code, details: timeoutError.details,
+    status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
     note: withLanguage(language, () => toolT("actionTimeout")) };
   // Only a fully validated successful screenshot can grant coordinates.
   if (result._image) {
