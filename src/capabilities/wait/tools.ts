@@ -22,7 +22,7 @@ interface WaitDependencies {
   sendToContent(tabId: number | undefined, action: string, args: Record<string, unknown>): Promise<unknown>;
 }
 type QuestionField = Record<string, unknown>;
-interface NavigationResult { status: string; waited: boolean; url?: string; title?: string }
+import { waitForNavigation } from "./navigation-wait.js";
 
 /** Human waits and page waits share the same declarative execution contract. */
 export function registerWaitTools({ registerTool, getToolRuntimeDependencies, captureTabScreenshot, sendToContent }: WaitDependencies) {
@@ -425,6 +425,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_navigation",
+  behavior: { flowWait: true, nestedObservation: args => args.screenshot === true },
   model: { noImages: {
     omitParameters: ["screenshot"],
     get description() { return toolT("waitForNavigationNoImages"); },
@@ -437,6 +438,7 @@ registerTool({
       tabId: { type: "number", description: toolT("waitForNavigationTabId") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       screenshot: { type: "boolean", description: toolT("waitForNavigationScreenshot") },
+      next: { type: "boolean", description: toolT("waitForNavigationNext") },
       fromUrl: { type: "string", description: toolT("waitForNavigationFromUrl") },
       fromTitle: { type: "string", description: toolT("waitForNavigationFromTitle") },
     },
@@ -444,44 +446,12 @@ registerTool({
   page: "owned",
   timeout: pageWaitTimeout,
   execute: async (input, signal, context = {}) => {
-    const { tabId, timeout = 10, screenshot = false, fromUrl = "", fromTitle = "" } = input;
+    const { tabId, timeout = 10, screenshot = false, next = false, fromUrl = "", fromTitle = "" } = input;
     const { timeoutMs } = input as Record<string, unknown>;
     const timeoutMsValue = timeoutMs != null ? Math.max(0, Number(timeoutMs) || 0) : secondsToMs(timeout, 10000);
     if (!tabId) throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", t("currentTaskHasNoWorkingTab"));
 
-    // Wait for loading.
-    const tab = await chrome.tabs.get(tabId);
-    let navResult: NavigationResult;
-
-    if (tab.status === "complete") {
-      navResult = { status: "already_complete", waited: false, url: tab.url, title: tab.title };
-    } else {
-      navResult = await new Promise<NavigationResult>((resolve, reject) => {
-        const onAbort = () => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          clearTimeout(timer);
-          reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for navigation", { tabId }));
-        };
-        signal?.addEventListener("abort", onAbort, { once: true });
-
-        const timer = setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          signal?.removeEventListener("abort", onAbort);
-          resolve({ status: "timeout", waited: true });
-        }, timeoutMsValue);
-
-        const listener = (updatedTabId: number, changeInfo: chrome.tabs.OnUpdatedInfo, updatedTab: chrome.tabs.Tab) => {
-          if (updatedTabId !== tabId) return;
-          if (changeInfo.status === "complete") {
-            chrome.tabs.onUpdated.removeListener(listener);
-            clearTimeout(timer);
-            signal?.removeEventListener("abort", onAbort);
-            resolve({ status: "complete", waited: true, url: updatedTab.url, title: updatedTab.title });
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-      });
-    }
+    const navResult = await waitForNavigation(tabId, timeoutMsValue, next, signal, context.flowWaitReady);
 
     const inputFromUrl = String(fromUrl || "");
     const inputFromTitle = String(fromTitle || "");
@@ -539,6 +509,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_element",
+  behavior: { flowWait: true },
   get description() { return toolT("waitForElementDescription"); },
   get parameters() { return {
     type: "object",
@@ -546,6 +517,7 @@ registerTool({
       tabId: { type: "number", description: toolT("waitForElementTabId") },
       selector: { type: "string", description: toolT("waitForElementSelector") },
       absent: { type: "boolean", description: toolT("waitForElementAbsent") },
+      text: { type: "string", description: toolT("waitForElementText") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       intervalSeconds: { type: "number", description: toolT("waitForElementIntervalSeconds") },
     },
@@ -553,21 +525,22 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
-  execute: async (input, signal) => {
+  execute: async (input, signal, context = {}) => {
     let { selector } = input;
-    const { tabId, absent = false, timeout = 10, intervalSeconds = 0.5 } = input;
+    const { tabId, absent = false, text = "", timeout = 10, intervalSeconds = 0.5 } = input;
     const { timeoutMs, interval } = input as Record<string, unknown>;
     selector = normalizeWaitSelector(selector);
     const waitTimeoutMs = timeoutMs != null ? Math.max(0, Number(timeoutMs) || 0) : secondsToMs(timeout, 10000);
     const intervalMs = interval != null ? Math.max(0, Number(interval) || 0) : secondsToMs(intervalSeconds, 500);
     const deadline = Date.now() + waitTimeoutMs;
+    context.flowWaitReady?.();
 
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for element", { selector });
 
       try {
         const result = await sendToContent(tabId, "querySelector", {
-          selector,
+          selector, text,
           limit: 1,
         });
         const found = Array.isArray(result) && result.length > 0;
@@ -581,7 +554,7 @@ registerTool({
         }
       } catch(_e) { /* The page may still be initializing. */ }
 
-      await new Promise((r) => setTimeout(r, intervalMs));
+      await waitDelay(intervalMs, signal, { selector });
     }
 
     return { found: false, selector, timedOut: true };

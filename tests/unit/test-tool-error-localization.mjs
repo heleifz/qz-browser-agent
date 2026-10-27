@@ -67,7 +67,7 @@ assert.equal(
     diagnostic: { category: "page_lifecycle", likelyCause: "页面会卸载" },
     details: { toolName: "open_tab" },
   }, { toolName: "open_tab" });
-  assert.equal(payload.error, "run_script 阻止了会卸载当前页面的内部工具调用，请拆成普通工具步骤执行。");
+  assert.equal(payload.error, "该动作会结束页面脚本的文档生命周期，可通过 run_flow 或直接工具调用执行。");
   assert.equal(payload.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
   assert.equal(payload.codeLabel, "脚本内工具会卸载当前页面");
   assert.equal(payload.diagnostic.category, "页面生命周期");

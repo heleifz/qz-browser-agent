@@ -4,12 +4,12 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("media-tools", {
   screenshotDescription: {
-    "zh-CN": "截图当前视口或指定元素的已渲染区域，并始终以图片形式返回给 LLM。需要随后按页面截图坐标操作时，传 actionable=true；返回的 coordinateSpace 会给出图片原始像素宽高，可直接把图上坐标交给 act_on_screen。传 destination 时会额外把截图保存为该图集的 image asset；不传 destination 则只返回图片不保存。元素级截图适合 read_image 因跨域 canvas 失败后的视觉兜底。{targetGrammar}。",
-    en: "Capture the current viewport or the rendered region of a specified element, and always return the capture to the model as an image. Pass actionable=true if you will use screenshot coordinates for subsequent actions. The returned coordinateSpace gives the original image width and height in pixels, so coordinates from the image can be passed directly to act_on_screen. Providing destination also saves the capture as an image asset in that collection; otherwise the image is returned without being saved. Element screenshots provide a visual fallback when read_image fails because of cross-origin canvas restrictions. {targetGrammar}.",
+    "zh-CN": "截图当前视口或 target 元素的已渲染区域，返回图片。actionable:true 的视口截图建立 act_on_screen 坐标依据，coordinateSpace 给出原始图片像素宽高；destination 将截图另存到图集。{targetGrammar}。",
+    en: "Capture the viewport or target element's rendered region and return an image. actionable:true on a viewport capture establishes the act_on_screen coordinate basis; coordinateSpace gives original image-pixel dimensions. destination also saves it to a gallery. {targetGrammar}.",
   },
   screenshotTabId: {
-    "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页，target 为 uid:... 时可省略。",
-    en: "Target tab ID for this call. Defaults to the current task’s working tab; may be omitted for a uid:... target.",
+    "zh-CN": "目标 tabId，默认工作标签页或完整 UID 所属 tab；别名与流程内调用须显式填写。",
+    en: "Target tabId, default working tab or full UID's tab; explicit for aliases and flow calls.",
   },
   screenshotTarget: {
     "zh-CN": "元素级截图目标。{targetDescription}",
@@ -20,8 +20,8 @@ const messages = defineMessages("media-tools", {
     en: "Match index when a css:... target matches multiple elements. Default: 0.",
   },
   screenshotDestination: {
-    "zh-CN": "可选图集表名。传入时把截图额外保存为该图集的 image asset；不传则不保存。",
-    en: "Optional image collection table name. If provided, also saves the screenshot as an image asset in that collection; otherwise it is not saved.",
+    "zh-CN": "可选图集表名，用于保存截图副本。",
+    en: "Optional gallery table name for a saved copy of the screenshot.",
   },
   screenshotFormat: {
     "zh-CN": "默认 jpeg",
@@ -44,24 +44,24 @@ const messages = defineMessages("media-tools", {
     en: "Maximum returned image height. Default and ceiling: 2048; encoded output is at most 2 MiB.",
   },
   screenshotActionable: {
-    "zh-CN": "是否把当前视口截图作为下一次 act_on_screen 的坐标依据，默认 false；不能与 target 同用",
-    en: "Whether to use the current viewport screenshot as the coordinate basis for the next act_on_screen call. Default: false. Cannot be combined with target.",
+    "zh-CN": "将视口截图设为 act_on_screen 坐标依据，默认 false；仅适用于视口截图。",
+    en: "Establish the act_on_screen coordinate basis, default false; available for viewport captures.",
   },
   actOnScreenDescription: {
-    "zh-CN": "依据最近一次 screenshot(actionable=true) 或 act_on_screen(returnScreenshot:true) 建立的坐标状态，直接操作当前任务页面，不查询 DOM。x/y/endX/endY 是返回页面截图上以左上角为原点的原始像素坐标，范围见 coordinateSpace.width/height。不带 x/y 时无需预先截图：press/type 操作当前焦点，scroll 在当前视口中心滚动；传 x/y 时按截图坐标定位，type 先点击再输入；replace=true 且 text 为空表示清空。调用必须串行并显式填写 returnScreenshot：需要观察本次结果时传 true；已验证且无需逐步观察的连续操作传 false。只有 true 才产生观察截图。结果中的 viewportChange 客观记录浏览器视口变化，coordinateBasisReady 表示当前坐标空间能否继续使用。run_script 返回内部最后一次 screenshot 或 act_on_screen(returnScreenshot:true) 的图片。long_press 会在指定位置持续按住后释放。移动模式自动使用触摸：click/double_click 为轻点/双击，long_press 为长按，drag 为手指滑动；scroll 仍表示滚动内容。移动模式不支持 hover 或鼠标右键/中键。",
-    en: "Interact directly with the current task’s page using the coordinate state established by the latest screenshot(actionable=true) or act_on_screen(returnScreenshot:true), without querying the DOM. x/y/endX/endY are original image-pixel coordinates measured from the top-left corner of the returned page screenshot; see coordinateSpace.width/height for bounds. Without x/y, no prior screenshot is needed: press/type act on the current focus and scroll uses the current viewport center. Supplied x/y use screenshot coordinates; type clicks there before typing. replace=true with empty text clears the field. Calls must be sequential and explicitly include returnScreenshot: use true to observe the result, or false for verified sequences that do not need observation after every step. Only true produces an observation screenshot. viewportChange records browser viewport changes; coordinateBasisReady indicates whether the current coordinate space remains usable. run_script returns the image from its last screenshot or act_on_screen(returnScreenshot:true) call. long_press holds at the specified position and then releases. Mobile mode uses touch input automatically: click/double_click tap once/twice, long_press holds a finger down, and drag swipes between the endpoints. scroll still scrolls content. Hover and right/middle mouse buttons are unavailable in mobile mode.",
+    "zh-CN": "执行一次视觉动作，可直接调用或在 run_flow 中调用。坐标依据为最近的 screenshot(actionable=true) 或 act_on_screen(returnScreenshot:true)，x/y/endX/endY 使用原始图片像素，范围为 coordinateSpace.width/height。省略 x/y 时，press/type 操作当前焦点，scroll 使用视口中心；指定坐标的 type 点击后输入，replace:true 配合空文本清空。long_press 按住后释放；移动模式使用触摸，hover 和右键/中键限桌面模式。返回动作结果、viewportChange 和 coordinateBasisReady，returnScreenshot:true 另带观察图。",
+    en: "Execute one visual action, directly or inside run_flow. Coordinates use the latest screenshot(actionable=true) or act_on_screen(returnScreenshot:true) basis: original image pixels within coordinateSpace.width/height. With x/y omitted, press/type uses current focus and scroll uses viewport center. Coordinate-based type clicks then types; replace:true with empty text clears the field. long_press holds then releases. Mobile mode uses touch; hover and right/middle buttons are desktop-only. Returns action results, viewportChange and coordinateBasisReady; returnScreenshot:true adds an observation image.",
   },
   actOnScreenReturnScreenshot: {
-    "zh-CN": "必须显式填写。需要观察本次操作结果时传 true；已验证且无需逐步观察的连续操作传 false",
-    en: "Required. Use true to observe the result of this action, or false for verified sequences that do not need observation after every step.",
+    "zh-CN": "必填；true 返回动作后的观察图，false 返回动作元数据。",
+    en: "Required; true returns a post-action observation image, false returns action metadata.",
   },
   actOnScreenX: {
-    "zh-CN": "返回图片上的起点横坐标（像素）；scroll 不填时使用当前视口中心，无需预先截图，press/type 可不填",
-    en: "Starting x-coordinate in pixels on the returned image. scroll defaults to the current viewport center without a prior screenshot; optional for press/type.",
+    "zh-CN": "起点图片像素横坐标；省略时 scroll 使用视口中心，press/type 使用当前焦点。",
+    en: "Starting image-pixel x-coordinate; omitted scroll uses viewport center, press/type uses current focus.",
   },
   actOnScreenY: {
-    "zh-CN": "返回图片上的起点纵坐标（像素）；scroll 不填时使用当前视口中心，无需预先截图，press/type 可不填",
-    en: "Starting y-coordinate in pixels on the returned image. scroll defaults to the current viewport center without a prior screenshot; optional for press/type.",
+    "zh-CN": "起点图片像素纵坐标；省略时 scroll 使用视口中心，press/type 使用当前焦点。",
+    en: "Starting image-pixel y-coordinate; omitted scroll uses viewport center, press/type uses current focus.",
   },
   actOnScreenEndX: {
     "zh-CN": "drag 在返回图片上的终点横坐标（像素）",
@@ -80,8 +80,8 @@ const messages = defineMessages("media-tools", {
     en: "Whether type selects all and replaces existing content. Default: false. With empty text, clears the field.",
   },
   actOnScreenKey: {
-    "zh-CN": "press 的按键，如 Enter、Escape、Tab、Meta+A、Control+L；不带 x/y 时无需预先截图",
-    en: "Key for press, such as Enter, Escape, Tab, Meta+A, or Control+L. No prior screenshot is needed when x/y are omitted.",
+    "zh-CN": "press 按键，如 Enter、Escape、Tab、Meta+A、Control+L。",
+    en: "Press key, such as Enter, Escape, Tab, Meta+A or Control+L.",
   },
   actOnScreenButton: {
     "zh-CN": "click/double_click/long_press/drag 使用的鼠标键，默认 left",
@@ -104,16 +104,16 @@ const messages = defineMessages("media-tools", {
     en: "Number of consecutive wheel events at the same coordinates. Default: 1; maximum: 20.",
   },
   listImagesDescription: {
-    "zh-CN": "发现目标页面中的图片候选，只返回简短的 alt、title、可访问名称、说明文字、附近标题与正文、链接语义、尺寸、来源摘要和位置等元信息。每个候选都会返回绑定当前 session、标签页、页面和图片地址的 target；在该页面上下文中完成判断后，把合格候选的 target 原样交给 read_image 或 collect_images。index/rank 仅用于阅读候选列表。",
-    en: "Discover image candidates on the target page. Returns only brief metadata: alt text, title, accessible name, captions, nearby headings and text, link context, dimensions, source summary, and position. Each candidate includes a target bound to the current session, tab, page, and image URL. Evaluate candidates in that page context, then pass selected targets unchanged to read_image or collect_images. index/rank are for reading the candidate list only.",
+    "zh-CN": "列出页面图片候选的 target、alt/title、上下文、尺寸、来源与位置。target 绑定 Session、tab、页面和图片地址，可用于 read_image/collect_images；index/rank 为列表序号。",
+    en: "List page image candidates with target, alt/title, context, dimensions, source and position. target binds Session, tab, page and image URL for read_image/collect_images; index/rank are list positions.",
   },
   listImagesTabId: {
     "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页。",
     en: "Target tab ID for this call. Defaults to the current task’s working tab.",
   },
   listImagesSelector: {
-    "zh-CN": "可选容器或 img CSS selector；也可传 target 格式 css:... / uid:...；不填扫描整个页面",
-    en: "Optional container or img CSS selector, or a css:... / uid:... target. If omitted, scans the whole page.",
+    "zh-CN": "可选容器或 img 范围：原始 CSS、css:、完整 uid: 或当前快照别名，默认整页。",
+    en: "Optional container/img scope: raw CSS, css:, full uid: or current snapshot alias; default whole page.",
   },
   listImagesMinWidth: {
     "zh-CN": "最小图片宽度，按显示宽度或 naturalWidth 判断，默认 1",
@@ -132,12 +132,12 @@ const messages = defineMessages("media-tools", {
     en: "Maximum number of images to return. Default: 100; maximum: 1000.",
   },
   collectImagesDescription: {
-    "zh-CN": "采集已经选定的图片：保存为本地 image assets，并把元信息写入图集 Data 表。页面候选通过 targets 逐张指定，并在发现它们的当前页面上下文中及时采集；直接图片资源通过 urls 逐张指定，并按当前来源上下文采集。同一任务可多次调用并持续写入同一个 table。工具会在写入前解析全部 target，并核对候选页面和图片地址；返回摘要和 assetId。",
-    en: "Collect selected images: save them as local image assets and write metadata to an image collection Data table. Specify page candidates individually with targets and collect them while still in the page context where they were discovered. Specify direct image resources individually with urls and collect them in the current source context. The same task can call this tool repeatedly to append to the same table. Before writing, the tool resolves all targets and verifies the candidate page and image URL. Returns a summary and assetId values.",
+    "zh-CN": "将 targets 或 urls 指定的图片保存为本地资产，元信息写入 table 图集，返回摘要与 assetId。按来源页面上下文读取并校验引用；多次调用可持续写入同一图集。",
+    en: "Save images selected by targets or urls as local assets, write metadata to gallery table and return a summary with assetIds. Reads use the source page context and validate references; repeated calls can append to the same gallery.",
   },
   collectImagesTable: {
-    "zh-CN": "图集表名，必填。用于稳定写入和后续 data_store list/read_image_asset 验证；极端缺失时 runtime 会自动生成随机图集名兜底。",
-    en: "Required image collection table name. Use a consistent name for writes and subsequent verification with data_store list/read_image_asset. The runtime generates a random fallback name if this value is missing.",
+    "zh-CN": "必填，保存图片元信息的图集 Data 表名。",
+    en: "Required gallery Data table name for saved image metadata.",
   },
   collectImagesTargets: {
     "zh-CN": "选中页面图片的 target 列表。每项原样使用 list_images 返回的 target。{targetDescription}",
@@ -196,12 +196,12 @@ const messages = defineMessages("media-tools", {
     en: "Image detail level sent to the vision model. Default: auto.",
   },
   readImageDescription: {
-    "zh-CN": "读取图片并作为图片消息返回给 LLM，url 或 target 二选一。传 url 读取图片资源；传页面 img 或图片容器的 target 读取已经加载的 DOM 图片。页面候选满足采集条件时，在切换页面上下文前把同一个 target 交给 collect_images。用于分析单张图片的视觉内容。{targetGrammar}。",
-    en: "Read an image and return it to the model as an image message. Provide either url or target. Use url to read an image resource, or the target of a page img/image container to read an already loaded DOM image. If a page candidate meets the collection criteria, pass the same target to collect_images before switching page context. Use to analyze the visual content of an individual image. {targetGrammar}.",
+    "zh-CN": "读取单张图片并返回图片消息。url 读取图片资源，target 读取页面已加载的 img 或图片容器，两者选一。{targetGrammar}。",
+    en: "Read one image and return an image message. Choose url for an image resource or target for a loaded page img/image container. {targetGrammar}.",
   },
   readImageUrl: {
-    "zh-CN": "图片 URL。支持 http/https/data:image。传 url 时不需要 tabId/target。",
-    en: "Image URL. Supports http/https/data:image. tabId/target are not needed when url is provided.",
+    "zh-CN": "独立图片资源 URL，支持 http/https/data:image。",
+    en: "Standalone image resource URL, supporting http/https/data:image.",
   },
   readImageTarget: {
     "zh-CN": "页面 img 或图片容器目标。{targetDescription}",

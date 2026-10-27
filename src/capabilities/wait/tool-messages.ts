@@ -88,12 +88,12 @@ const messages = defineMessages("wait-tools", {
     en: "HTTP(S) source link for the card.",
   },
   waitForNavigationNoImages: {
-    "zh-CN": "等待标签页加载完成。在 click/navigate 后调用。默认只返回加载状态、URL、标题；already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。当前模型不支持图片，加载后请用 get_ax_tree/read_article/find_elements 确认状态。",
-    en: "Wait for a tab to finish loading. Use after click/navigate. By default returns only loading status, URL, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. The current model does not support images. Use get_ax_tree/read_article/find_elements to verify the state after loading.",
+    "zh-CN": "等待标签页加载完成，返回状态、URL 与标题。默认等待当前加载；next:true 等待调用后的下一次导航，含同 URL 刷新。run_flow 的 tools.$watch 返回已就绪句柄。already_complete 表示调用时已加载；应用就绪由元素/文本等条件表达。",
+    en: "Wait for tab loading and return status, URL and title. Default waits for current loading; next:true waits for the next navigation, including same-URL reloads. run_flow tools.$watch returns an armed handle. already_complete means loaded at call time; element/text conditions express application readiness.",
   },
   waitForNavigationDescription: {
-    "zh-CN": "等待标签页加载完成。在 click/navigate 后调用。默认只返回加载状态、URL、标题；already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。只有需要视觉确认、弹窗/验证码判断时才传 screenshot:true。",
-    en: "Wait for a tab to finish loading. Use after click/navigate. By default returns only loading status, URL, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. Pass screenshot:true only when visual confirmation is needed, such as checking a dialog or CAPTCHA.",
+    "zh-CN": "等待标签页加载完成，返回状态、URL 与标题；screenshot:true 另带观察图。默认等待当前加载，next:true 等待调用后的下一次导航，含同 URL 刷新。run_flow 的 tools.$watch 返回已就绪句柄。already_complete 表示调用时已加载；应用就绪由元素/文本等条件表达。",
+    en: "Wait for tab loading and return status, URL and title; screenshot:true adds an observation image. Default waits for current loading; next:true waits for the next navigation, including same-URL reloads. run_flow tools.$watch returns an armed handle. already_complete means loaded at call time; element/text conditions express application readiness.",
   },
   waitForNavigationTabId: {
     "zh-CN": "标签页 ID；不填时使用当前任务工作标签页",
@@ -107,6 +107,10 @@ const messages = defineMessages("wait-tools", {
     "zh-CN": "是否在加载完成后截图，默认 false。需要视觉确认时设为 true。",
     en: "Whether to take a screenshot after loading. Default: false. Enable for visual confirmation.",
   },
+  waitForNavigationNext: {
+    "zh-CN": "true 等待调用后的下一次导航（含同 URL 刷新），默认 false 等待当前加载。",
+    en: "true waits for the next navigation, including same-URL reloads; default false waits for current loading.",
+  },
   waitForNavigationFromUrl: {
     "zh-CN": "可选：上一动作前的 URL，用于判断当前 URL 是否已变化",
     en: "Optional URL from before the preceding action, used to check whether the URL has changed.",
@@ -116,16 +120,20 @@ const messages = defineMessages("wait-tools", {
     en: "Optional title from before the preceding action, used to check whether the title has changed.",
   },
   waitForElementDescription: {
-    "zh-CN": "等待页面上出现指定元素。适合等待动态加载内容、弹窗消失、搜索结果渲染等场景。",
-    en: "Wait for a specified element to appear on the page. Useful for dynamic content, dismissing dialogs, and search-result rendering.",
+    "zh-CN": "等待 CSS 范围内出现元素及可选 text 子串，absent:true 等待该匹配消失。返回匹配状态或超时，可直接调用或作为 run_flow 被动等待。",
+    en: "Wait for an element and optional text substring within a CSS scope; absent:true waits for that match to disappear. Returns match status or timeout, directly or as a passive wait inside run_flow.",
   },
   waitForElementTabId: {
     "zh-CN": "标签页 ID",
     en: "Tab ID.",
   },
   waitForElementSelector: {
-    "zh-CN": "等待出现的元素 CSS 选择器；可传原始 CSS 或 css:...。不支持 uid:...，因为 uid 是快照引用，不适合等待未来 DOM 状态。",
-    en: "CSS selector for the element to wait for. Accepts raw CSS or css:.... Does not support uid:... because a uid is a snapshot reference, unsuitable for waiting on future DOM state.",
+    "zh-CN": "未来元素状态的 CSS 选择器，接受原始 CSS 或 css:...。",
+    en: "CSS selector for future element state, accepting raw CSS or css:....",
+  },
+  waitForElementText: {
+    "zh-CN": "匹配元素 textContent 必须包含的文本；与 selector 一起检查，支持等待文本出现或消失。",
+    en: "Required substring of a matching element's textContent. Combined with selector; supports waiting for text to appear or disappear.",
   },
   waitForElementAbsent: {
     "zh-CN": "反转：等待元素消失，默认 false",
@@ -144,8 +152,8 @@ const messages = defineMessages("wait-tools", {
     en: "Number of seconds to wait.",
   },
   waitUntilDescription: {
-    "zh-CN": "等到指定的日期和时间再继续。适合让定时任务提前启动并先做准备，然后等到正式执行时间。最长等待 2 小时；更久请创建或调整定时任务。指定时间已过时立即继续。until 推荐使用带时区的 ISO 8601；也兼容 YYYY-MM-DD HH:mm:ss（按北京时间解释）。",
-    en: "Wait until a specified date and time before continuing. Useful when an automation starts early to prepare, then waits for its execution time. Maximum wait: 2 hours; for longer delays, create or adjust an automation. Continues immediately if the time has already passed. Prefer ISO 8601 with a time zone for until. Also accepts YYYY-MM-DD HH:mm:ss, interpreted as Beijing time.",
+    "zh-CN": "等到 until 指定时刻，最长两小时；过去时刻立即返回。接受带时区 ISO 8601，或按北京时间解释的 YYYY-MM-DD HH:mm:ss。返回等待结果。",
+    en: "Wait until until, up to two hours; past times return immediately. Accepts timezone-qualified ISO 8601 or YYYY-MM-DD HH:mm:ss in Beijing time. Returns the wait result.",
   },
   waitUntilUntil: {
     "zh-CN": "要等到的日期和时间。推荐带时区的 ISO 8601，例如 2026-07-17T12:00:00+08:00；也可传 YYYY-MM-DD HH:mm:ss，此格式固定按北京时间解释。最长等待 2 小时。",

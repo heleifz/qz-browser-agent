@@ -5,7 +5,7 @@ const record = (value: unknown): Record<string, unknown> => value !== null && ty
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 interface PendingRun {
   resolve(result: unknown): void; reject(error: unknown): void;
-  sessionId: string; runId: string; depth: number;
+  sessionId: string; runId: string; depth: number; flowRequestId?: string;
   fetches: Map<string, AbortController>;
 }
 
@@ -150,14 +150,15 @@ function runInnerScript(msg: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const pending: PendingRun = { resolve, reject,
       sessionId: String(msg.sessionId || ""), runId: String(msg.runId || ""),
-      depth: Math.max(0, Math.floor(Number(msg.depth) || 0)), fetches: new Map() };
+      depth: Math.max(0, Math.floor(Number(msg.depth) || 0)), fetches: new Map(),
+      flowRequestId: msg.reason === "flow" ? requestId : undefined };
     pendingRuns.set(requestId, pending);
     void ensureSandboxFrame().then(() => {
       if (pendingRuns.get(requestId) !== pending) return;
       traceInnerOffscreen("run.start", { requestId });
       postToSandbox({ type: "execute", requestId, scriptSource: String(msg.source || ""),
         scriptArgs: record(msg.scriptArgs), securityGuardrails: record(msg.securityGuardrails),
-        fetchBridge: msg.fetchBridge === true });
+        fetchBridge: msg.fetchBridge === true, flow: msg.reason === "flow" });
     }).catch(error => {
       if (pendingRuns.get(requestId) !== pending) return;
       pendingRuns.delete(requestId);
@@ -227,6 +228,7 @@ async function relayInnerToolCall(data: Record<string, unknown>) {
     runId: pending.runId,
     depth: pending.depth + 1,
     inner: true,
+    ...(pending.flowRequestId ? { flowRequestId: pending.flowRequestId } : {}),
   }));
   if (pendingRuns.get(requestId) !== pending) return;
   traceInnerOffscreen("tool.response", {

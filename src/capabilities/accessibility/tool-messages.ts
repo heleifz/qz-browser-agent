@@ -4,20 +4,20 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("accessibility-tools", {
   getAxTreeDescription: {
-    "zh-CN": "页面语义 tree（target、role、name、url）。默认 viewport 保留纵向相交细节及有限屏外结构节点；不横向裁剪，几何未知节点保留。区块折叠标记注明缺失内容及 root/full 能力。depth/limit 仍生效；limit 是 BFS 可选节点预算，(truncated, N more) 表示预算截断。canvases 提供 CSS rect，视觉坐标以 screenshot({actionable:true}) 为准。{targetGrammar}。",
-    en: "Semantic tree (target, role, name, url). Default viewport retains vertical overlap and bounded off-screen structure; horizontal overflow and unknown geometry remain. Block fold markers identify missing content and root/full capabilities. depth/limit still apply; limit budgets optional nodes breadth-first, with (truncated, N more) for budget omissions. canvases provides CSS rect hints; visual coordinates require screenshot({actionable:true}). {targetGrammar}.",
+    "zh-CN": "返回页面语义快照，每行含 target、alias、role、name 等。整页根默认 viewport，保留纵向视口细节与有限屏外结构，横向溢出和几何未知节点保留。全局 ↑/↓ 统计省略的已有 AX 节点，局部折叠统计区块内容分支并标明 root/full 读取能力；items 为直接列表项数。(truncated, N more) 表示 BFS 预算省略的节点数。有 target 的节点均带快照别名，可用于元素工具和 run_flow。canvases 返回 name/rect/inViewport/bitmapSize，rect 为 CSS 位置；视觉坐标来自 screenshot({actionable:true})。",
+    en: "Return a semantic page snapshot with target, alias, role and name on each line. Page roots default to viewport, retaining vertical viewport detail and bounded off-screen structure; horizontal overflow and unknown geometry remain. Global ↑/↓ counts omitted existing AX nodes; local folds count content branches and identify root/full reads. items counts direct list items. (truncated, N more) reports BFS-omitted nodes. Every target-bearing node has a snapshot alias usable in element tools and run_flow. canvases returns name/rect/inViewport/bitmapSize; rect is CSS position, while visual coordinates come from screenshot({actionable:true}).",
   },
   getAxTreeTabId: {
-    "zh-CN": "当前任务拥有的目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "ID of a target tab owned by the current task. Defaults to the current task’s working tab.",
+    "zh-CN": "任务拥有的 tabId，默认工作标签页；别名与流程内页面调用须显式填写。",
+    en: "Owned tabId, default working tab; explicit for aliases and page calls inside flows.",
   },
   getAxTreeRoot: {
-    "zh-CN": "展开根节点，默认 root；uid:... / css:... 仅展开该元素子树。范围由 scope 控制。",
-    en: "Root to expand, default root; uid:... / css:... expands only that element's subtree. scope controls the range.",
+    "zh-CN": "展开根节点，默认 root；uid:... / 当前 alias / css:... 仅展开该元素子树。范围由 scope 控制。",
+    en: "Root to expand, default root; uid:... / current alias / css:... expands only that element's subtree. scope controls the range.",
   },
   getAxTreeScope: {
-    "zh-CN": "viewport：视口细节及有限屏外结构；full：文档/子树范围（仍受 depth/limit 限制）。整页根默认 viewport，uid:/css: 元素根默认 full。",
-    en: "viewport: visible detail and bounded off-screen structure; full: document/subtree range (still subject to depth/limit). Page roots default to viewport; uid:/css: element roots default to full.",
+    "zh-CN": "viewport：视口细节及有限屏外结构；full：文档/子树范围（仍受 depth/limit 限制）。整页根默认 viewport，元素根（含别名）默认 full。",
+    en: "viewport: visible detail and bounded off-screen structure; full: document/subtree range (still subject to depth/limit). Page roots default to viewport; element roots (including aliases) default to full.",
   },
   getAxTreeDepth: {
     "zh-CN": "视口过滤后的 AX 树深度，默认 16，范围 1-40。",

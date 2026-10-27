@@ -7,7 +7,7 @@ import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, t
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
-  "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "registerElementRef" | "resolveElementReference"
+  "makeSnapshotId" | "makeElementUid" | "elementTargetForUid" | "elementAliasForUid" | "registerElementRef" | "resolveElementReference"
   | "backendNodeIdForSelector" | "bindBackendNodes" | "callElement" | "readMainDocumentId" | "elementTargetGrammar">;
 interface AxValue { value?: unknown }
 interface AxNode {
@@ -28,6 +28,7 @@ export function registerAccessibilityTools({
   makeSnapshotId,
   makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
   elementTargetForUid,
+  elementAliasForUid = () => "",
   registerElementRef,
   resolveElementReference,
   backendNodeIdForSelector,
@@ -544,6 +545,8 @@ function formatSnapshotLine(node: DisplayNode) {
   if (node.multiple) attrs.push("multiple");
   if (node.selectedFileCount != null) attrs.push(`selectedFileCount=${node.selectedFileCount}`);
   if (node.listItems != null) attrs.push(`items=${node.listItems}`);
+  const alias = target ? elementAliasForUid(node.uid) : "";
+  if (alias) attrs.push(`alias=${alias}`);
   const omitted = Number(node.omitted || 0);
   if (omitted) attrs.push(`(truncated, ${omitted} more)`);
   return `${" ".repeat(Math.max(0, Number(node.depth) || 0))}${attrs.join(" ")}`;
@@ -735,7 +738,7 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, root = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
@@ -774,7 +777,6 @@ registerTool({
       root: requestedRoot,
     });
 
-    snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
     try {
       const result = rootRef?.uid
@@ -810,6 +812,9 @@ registerTool({
       const viewportHeight = rootFrameId ? 0 : Number(record(overview?.viewport).height);
       const viewportBands = snapshotScope === "viewport"
         ? await readViewportBands(send, withFrames, viewportHeight) : undefined;
+      signal?.throwIfAborted();
+      // Publish UID/alias authority only after the read succeeds, including its deadline.
+      snapshotId = makeSnapshotId(targetTabId!, context);
       return buildAccessibilitySnapshot(withFrames, {
         tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
         rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,

@@ -50,7 +50,7 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
     assert.doesNotMatch(localizedSystem, /\p{Script=Han}/u, "English model instructions contain no Chinese copy");
     assert.match(system, /Prefer the language of the user's current request/);
     assert.match(system, /first matching access rule/);
-    assert.match(system, /not new user instructions/);
+    assert.match(system, /Context snapshots supply initial browser facts/);
   } else {
     assert.match(system, /回复优先使用用户本轮请求的语言/);
     assert.match(system, /访问规则按列表顺序第一条命中生效/);

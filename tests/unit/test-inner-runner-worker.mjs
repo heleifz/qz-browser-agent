@@ -24,7 +24,7 @@ for (const mode of ['development', 'production']) test(`${mode} Worker executes 
           assert.equal(message.args.fn.__qz_uncloneable, 'function');
           assert.equal(message.args.query, 'needle');
         }
-        respond({ type: 'tool_response', callId: message.callId, response: { ok: true, result: 'found', artifacts: [{ id: 'artifact' }] } });
+        respond({ type: 'tool_response', callId: message.callId, response: { ok: true, result: 'found', artifacts: [{ id: 'artifact' }], observation: { _image: 'data:image/png;base64,eA==' } } });
       } else if (message.type === 'fetch_call' && message.request.url.endsWith('/data')) {
         assert.ok(message.request.headers.some(([name, value]) => name === 'date' && value.startsWith('Fri,')));
         respond({ type: 'fetch_response', callId: message.callId, response: { ok: true, result: { status: 200, bodyBase64: Buffer.from('数据').toString('base64') } } });
@@ -34,6 +34,7 @@ for (const mode of ['development', 'production']) test(`${mode} Worker executes 
   assert.equal(result.ok, true, result.error);
   assert.deepEqual(result.result, { response: 'found', body: '数据', cancelled: 'AbortError', typed: { __qz_type: 'Uint8Array', length: 3, sample: [1,2,3] }, config: 7 });
   assert.equal(result.artifacts[0].id, 'artifact');
+  assert.deepEqual(result.__lastObservation, { _image: 'data:image/png;base64,eA==' });
   assert.ok(result.trace.some(row => row.message === 'Hello 轻舟 ✅'));
   const cancelled = events.find(message => message.type === 'fetch_call' && message.request.url.endsWith('/cancel'));
   assert.equal(events.find(message => message.type === 'fetch_cancel').callId, cancelled.callId);

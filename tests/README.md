@@ -279,6 +279,42 @@ npm test -- live cli-mcp --duration-seconds 1800
 npm test -- live multi-browser
 ```
 
+For the cross-page script UX comparison, build each revision into its own output directory and run:
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-baseline" npm test -- live flow-script --label baseline --repetitions 2
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-production" npm test -- live flow-script --label production --repetitions 2
+```
+
+This explicit live target requires `DEEPSEEK_API_KEY` in the environment. It uses `deepseek-flash`,
+a 1,000,000-token context and vision enabled, with an isolated profile/service per invocation.
+`--cases A,B,C,D` selects PyPI releases, Kyoto infobox images, three catalogue pages and a short
+single-page read. The default `--cases A,B,C,D,E,F,G` also covers demo login/logout, three separate
+source tabs, and ten product-detail records saved to Data. Objective prompts do not name a tool.
+For counterbalanced comparisons, run separate one-repetition invocations in baseline, new, new,
+baseline order, using unique labels and no overlapping arms.
+`--cases controller,stop --repetitions 1` instead runs explicit navigation/wait/error/UID/upload/hover
+and cancellation probes; keep those out of UX comparisons. Stop waits beyond the attempted delayed
+action and records whether tab URLs stayed unchanged. `--output`
+selects the evidence directory (default `tests/results/flow-script`). Reports include wall time,
+actual provider request counts, provider-reported tokens, tool choice and full snapshots. Review
+business acceptance from the snapshots; a completed Agent status alone is not a pass.
+
+For a minimal tool-only E reproduction (not a UX or model-selection benchmark):
+
+```bash
+QINGZHOU_TEST_EXTENSION_DIR="$PWD/dist/flow-interaction" npm test -- live flow-interaction --label E --recover
+```
+
+This target uses a scripted provider response, the real Agent/flow/tool runtime, a fresh private
+profile/MCP service and the public demo login site. It needs no provider key or inference. The
+script arms navigation waits, checks success text, uses a full UID and a printed alias, and verifies
+the automatically returned viewport snapshot. `--recover` enables explicit recovery after checking
+an undelivered click's state; `--logout-href` independently verifies this demo's ordinary GET-link
+workaround. `--cycles 1-3`, `--warmup screenshot|hover` and `--native-viewport` support bounded input
+diagnostics. Reports retain errors and recovery labels under `tests/results/flow-interaction`;
+`--output` selects another directory. Use distinct labels to preserve earlier attempts.
+
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
 `cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses

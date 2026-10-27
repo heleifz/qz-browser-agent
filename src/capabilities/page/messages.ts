@@ -41,6 +41,7 @@ export default defineMessages("page", {
   "findElementsShort": { "zh-CN": "查找元素", en: "Find elements" },
   "inspectElement": { "zh-CN": "检查元素", en: "Inspect element" },
   "inspectElementShort": { "zh-CN": "检查元素", en: "Inspect element" },
+  "uploadFiles": { "zh-CN": "设置上传文件", en: "Set upload files" },
   "interactWithElement": { "zh-CN": "操作元素", en: "Interact with element" },
   "interactWithElementShort": { "zh-CN": "操作元素", en: "Interact" },
   "clickElement": { "zh-CN": "点击元素", en: "Click element" },
@@ -65,7 +66,7 @@ export default defineMessages("page", {
   "elementNotCheckable": { "zh-CN": "目标不是原生复选框或单选框，请重新选择元素。", en: "The target is not a native checkbox or radio button. Choose another element." },
   "radioCannotBeUnchecked": { "zh-CN": "不能通过点击取消已选中的单选框，请选择同组的其他选项。", en: "A selected radio button cannot be cleared by clicking it. Choose another option in the group." },
   "elementCheckStateMismatch": { "zh-CN": "点击后未达到指定的勾选状态，请检查元素后再继续。", en: "The control did not reach the requested checked state. Inspect it before continuing." },
-  "inputNotDelivered": { "zh-CN": "输入未送达。页面没有收到这次点击，请先让标签页完成排版后再试。", en: "Input was not delivered. The page received no click. Let the tab finish laying out, then try again." },
+  "inputNotDelivered": { "zh-CN": "未记录到点击送达回执。请根据观察或当前页面状态选择恢复方式，不要盲目重复已经发出的动作。", en: "No click delivery receipt was recorded. Inspect the observation or current page before recovery; do not blindly repeat a dispatched action." },
 }, { historicalLabels: [
   "readArticle", "readHtml", "selectElement", "findElements",
   "inspectElement", "interactWithElement", "clickElement", "fillInput",

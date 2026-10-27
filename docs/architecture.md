@@ -309,7 +309,7 @@ Worker calls tools and fetch through the host; its runtime contains only Worker 
 
 Use `get_ax_tree({scope:"viewport"})` for the current vertical viewport band, or
 `get_ax_tree({scope:"full"})` for the document range. The page root defaults to viewport;
-explicit `uid:`/`css:` roots default to full subtree scope. Both retain depth and BFS limits.
+explicit element roots (`uid:`, current alias or `css:`) default to full subtree scope. Both retain depth and BFS limits.
 
 The [accessibility capability](../src/capabilities/accessibility/tools.ts) filters raw AX nodes
 by positive Y overlap before semantic pruning, depth limits, redundant-text removal and BFS.
@@ -342,6 +342,48 @@ because it lacks DOMSnapshot. Inline fragments without DOM ids inherit
 the parent box classification. Unmeasurable nodes remain eligible and are reported separately;
 geometry failures do not silently discard content. Direct child frame boxes are translated into
 the root viewport. This is a vertical band filter, not an occlusion or nested-scroll clipping test.
+
+## Flow scripts
+
+[`run_flow`](flow-scripts.md) is a top-level cross-page controller using that same Worker host.
+It calls the current run's visible core tools and leaf page-mode `run_script` evaluations; recursive
+flows, inner scripts and Skill tools run separately. It requires
+explicit tab IDs even for UID actions. The [flow execution scope](../src/background/tools/flow-execution.ts)
+binds bridge calls to the enclosing script's Session, run, tool-call identity and cancellation
+signal. Ordinary calls on each tab queue in Background; different tabs and new-tab creation can
+proceed concurrently. Passive waits opt into `behavior.flowWait` and bypass that action queue.
+`tools.$watch` acknowledges `context.flowWaitReady` before returning an armed wait handle, avoiding
+both same-tab wait/action deadlocks and listener-registration races. Every browser call still
+enters the common tool runtime. Leaf page scripts receive input
+arguments but no tool bridge, preventing recursive orchestration and queue deadlocks.
+
+Step failures include a bounded AX observation and can be recovered with `catch` or `tools.$settle`.
+`tools.$emit` publishes bounded checkpoints through a run-scoped `tool_execution_update.partialResult`;
+transcript projection updates the existing running tool entry. Data/file tools own durable results.
+Worker arguments, results, progress, trace and artifact summaries have explicit budgets. Full UIDs
+still pass unchanged through the element host. Printed aliases include a snapshot token and require
+explicit tab ID plus the current Session/tab snapshot before resolving through those same checks.
+A newer snapshot expires old aliases rather than rebinding their node numbers.
+
+After pending calls settle, the controller returns a fresh, bounded viewport AX snapshot of the
+last-used remaining tab as `finalObservation`, marked `purpose:next_turn_start`. It falls back to
+the working tab when no page was called. The script capability initializes a bounded
+`readPageSnapshot` host port, which dispatches `get_ax_tree` through the common runtime even for a
+flow without nested calls. `observe`, `observationTabId`, `observationScope` and `observationRoot`
+control that final observation. Both scopes use the accessibility path above, including its default
+BFS/depth/action budgets, fold markers, UID registration and aliases for retained off-screen structure.
+There is no separate flow viewport filter. The flow envelope adds a 16,000-character limit and a
+queue-inclusive five-second deadline; oversized observations return an explicitly truncated preview.
+A failed script also gets this observation; stop or timeout
+revokes the scope instead of delaying cancellation for a snapshot. Closed/unavailable tabs have an
+explicit unavailable result. Nested screenshots retain their separate last-completed image, which
+may precede the final snapshot. Stop terminates the Worker and cancels nested/queued tools; it does
+not undo completed browser actions. A controller is not durable across an extension restart.
+
+Chrome uses the native offscreen document. Firefox's existing offscreen adapter hosts the same
+sandbox in a hidden event-page frame, with a minimized-window fallback when no host document is
+available. Script startup feature-detects `offscreen.createDocument` and requires the sandbox-ready
+handshake. No flow-specific browser implementation or new browser permission is needed.
 
 ## Images and screenshots
 

@@ -29,7 +29,11 @@ async function createHarness() {
     const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
     const body = pathname === "/band" ? await readFile(new URL("../fixtures/ax-snapshot/viewport-band.html", import.meta.url), "utf8")
       : pathname === "/folds" ? await readFile(new URL("../fixtures/ax-snapshot/viewport-folds.html", import.meta.url), "utf8")
-      : pathname === "/repeated-text" ? repeatedHtml : html;
+      : pathname === "/repeated-text" ? repeatedHtml : pathname === "/frames"
+      ? `<!doctype html><title>Frames</title><iframe src="/child" style="height:100px"></iframe>
+          <iframe src="http://frame.test:${server.address().port}/child?remote" style="height:100px"></iframe>
+          <iframe src="/child?offscreen" style="display:block;margin-top:2000px;height:100px"></iframe>`
+      : pathname === "/child" ? `<!doctype html><button>${req.url.includes('offscreen') ? 'Offscreen frame' : req.url.includes('remote') ? 'Remote frame' : 'Local frame'}</button>` : html;
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(body);
   });
@@ -54,7 +58,7 @@ async function createHarness() {
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
       headless: true, executablePath: chromium.executablePath(), ignoreDefaultArgs: ["--disable-extensions", "--hide-scrollbars"],
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-proxy-server",
-        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
+        "--host-resolver-rules=MAP frame.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
     });
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
     await worker.evaluate(() => {
@@ -70,6 +74,12 @@ async function createHarness() {
           updateWorkingTab: async ({ tab }) => { tabId = tab.id; },
           listOwnedTabIds: () => tabId ? [tabId] : [],
         },
+      });
+      // This fixture owns a synthetic Session; route its Worker completion to the tool host.
+      chrome.runtime.onMessage.addListener(message => {
+        if (message.type === "run_script_inner_result" || message.type === "run_script_inner_trace") {
+          runtime.handleRunScriptInnerRuntimeMessage(message);
+        }
       });
       globalThis.elementHarness = {
         async call(name, args) {
@@ -208,9 +218,19 @@ test.describe("compact accessibility snapshot", () => {
     const boundary = result.snapshot.indexOf(`root="${list}"`);
     expect(boundary).toBeGreaterThan(result.snapshot.indexOf("First visible card"));
     expect(boundary).toBeLessThan(result.snapshot.indexOf("About this article"));
-    const listSubtree = await h.call("get_ax_tree", { root: list });
+    // Every retained UID, including off-screen structure, gets the same snapshot alias.
+    for (const row of result.snapshot.split("\n").filter(row => row.includes("target=uid:"))) {
+      const uid = row.match(/target=uid:t\d+\.([a-z0-9]{6}\.[a-z0-9]+)/)?.[1];
+      expect(row).toContain(`alias=@${uid}`);
+    }
+    const listAlias = line(result.snapshot, "list", "items=7").match(/alias=(@\S+)/)?.[1];
+    const listSubtree = await h.call("get_ax_tree", { root: listAlias });
     expect(listSubtree.scope).toBe("full");
     expect(listSubtree.snapshot, JSON.stringify(listSubtree)).toContain("ORBIT-7");
+    const stale = await h.call("get_ax_tree", { root: listAlias });
+    expect(stale.code).toBe("STALE_ELEMENT_UID");
+    const fullUid = await h.call("get_ax_tree", { root: list });
+    expect(fullUid.snapshot).toContain("ORBIT-7");
     const afterAbout = result.snapshot.slice(result.snapshot.indexOf("About this article"));
     const section = afterAbout.match(/root="(uid:[^"]+)"/)?.[1];
     expect(section, result.snapshot).toMatch(/^uid:/);
@@ -220,6 +240,70 @@ test.describe("compact accessibility snapshot", () => {
     const scrolled = await h.call("get_ax_tree", {});
     expect(scrolled.viewportOmitted.above).toBeGreaterThan(0);
     expect(scrolled.snapshot).toContain('scope:"full"');
+  });
+
+  test("viewport snapshots clip offscreen content and aliases expire without relaxing full UIDs", async () => {
+    await h.call("open_tab", { url: h.baseURL });
+    await h.call("act_on_element", { target: "css:h1", action: "scroll" });
+    const top = await h.call("get_ax_tree", { scope: "viewport", limit: 40, depth: 8 });
+    expect(top.code, JSON.stringify(top)).toBeUndefined();
+    expect(top.snapshot).toContain('"Overview"');
+    expect(top.snapshot).not.toContain('"Save"');
+    expect(target(top.snapshot, '"Section 40"')).toMatch(/^uid:/);
+    await h.call("act_on_element", { target: "css:#name", action: "scroll" });
+    const bottom = await h.call("get_ax_tree", { scope: "viewport" });
+    expect(bottom.snapshot, JSON.stringify(bottom)).toContain('"Name"');
+    expect(target(bottom.snapshot, '"Overview"')).toMatch(/^uid:/);
+    const row = line(bottom.snapshot, "textbox", '"Name"');
+    const alias = row.match(/alias=(@\S+)/)?.[1], uid = target(bottom.snapshot, "textbox", '"Name"');
+    expect(alias).toMatch(/^@[a-z0-9]{6}\.\d+$/);
+    const filled = await h.call("act_on_element", { target: alias, action: "fill", value: "Grace" });
+    expect(filled, JSON.stringify(filled)).not.toHaveProperty("code");
+    expect((await h.state()).name).toBe("Grace");
+    const subtree = await h.call("get_ax_tree", { scope: "full", root: uid });
+    expect(subtree.rootFound, JSON.stringify(subtree)).toBe(true);
+    expect(subtree.snapshot).not.toContain('"Save"');
+    const stale = await h.call("act_on_element", { target: alias, action: "fill", value: "wrong" });
+    expect(stale.code).toBe("STALE_ELEMENT_UID");
+    expect((await h.state()).name).toBe("Grace");
+    const full = await h.call("act_on_element", { target: uid, action: "fill", value: "full UID still valid" });
+    expect(full, JSON.stringify(full)).not.toHaveProperty("code");
+    const wrongTab = await h.call("act_on_element", { tabId: 999999, target: uid, action: "click" });
+    expect(wrongTab).toHaveProperty("code");
+  });
+
+  test("viewport clips iframe content in local and separate debugger sessions", async () => {
+    await h.call("open_tab", { url: `${h.baseURL}/frames` });
+    await expect.poll(async () => (await h.state()).ready).toBe("complete");
+    const result = await h.call("get_ax_tree", { scope: "viewport" });
+    expect(result.code, JSON.stringify(result)).toBeUndefined();
+    expect(result.snapshot).toContain('"Local frame"');
+    expect(result.snapshot).toContain('"Remote frame"');
+    expect(result.snapshot).not.toContain('"Offscreen frame"');
+    const full = await h.call("get_ax_tree", { scope: "full" });
+    expect(full.snapshot, JSON.stringify(full)).toContain('"Offscreen frame"');
+  });
+
+  test("flow finalObservation shares AX defaults, folds and off-screen aliases", async () => {
+    await h.call("open_tab", { url: `${h.baseURL}/folds` });
+    const direct = await h.call("get_ax_tree", {});
+    const flow = await h.call("run_flow", { timeout: 20, code: "() => ({done:true})" });
+    expect(flow.ok, JSON.stringify(flow)).toBe(true);
+    const final = flow.finalObservation;
+    expect(final.purpose).toBe("next_turn_start");
+    const snapshot = final.snapshot;
+    expect(snapshot.scope).toBe("viewport");
+    expect(snapshot.depth).toBe(16);
+    expect(snapshot.viewportOmitted).toEqual(direct.viewportOmitted);
+    expect(snapshot.returnedNodeCount).toBe(direct.returnedNodeCount);
+    expect(snapshot.outlineTruncated).toBe(direct.outlineTruncated);
+    const normalize = text => text.replace(/uid:t\d+\.[a-z0-9]{6}\./g, "uid:SNAP.").replace(/@[a-z0-9]{6}\./g, "@SNAP.");
+    expect(normalize(snapshot.snapshot)).toBe(normalize(direct.snapshot));
+    const listAlias = line(snapshot.snapshot, "list", "items=7").match(/alias=(@\S+)/)?.[1];
+    expect(listAlias, snapshot.snapshot).toBeTruthy();
+    const subtree = await h.call("get_ax_tree", { root: listAlias });
+    expect(subtree.scope).toBe("full");
+    expect(subtree.snapshot).toContain("ORBIT-7");
   });
 
   test("keeps same-named sibling StaticText for repeated values", async () => {

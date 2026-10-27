@@ -8,8 +8,8 @@ const messages = defineMessages("tool-runtime", {
     en: "Hard timeout in seconds. If omitted, the runtime uses the default for this tool type.",
   },
   elementReference: {
-    "zh-CN": "元素机器引用，格式：{grammar}。element_uid 必须来自 get_ax_tree/find_elements/list_images 返回的 uid；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。示例：{examples}。不要传按钮文案、页面标题、URL 或自然语言。",
-    en: "Machine-readable element reference: {grammar}. element_uid must be a uid returned by get_ax_tree/find_elements/list_images; css_selector must match the current page via querySelector/querySelectorAll. Examples: {examples}. Do not pass button text, page titles, URLs, or natural-language descriptions.",
+    "zh-CN": "元素引用：{grammar}。UID 来自工具结果，CSS 匹配当前页面；快照别名须显式 tabId，限当前 Session/tab 快照使用。",
+    en: "Element reference: {grammar}. UIDs come from tool results; CSS matches the current page. Snapshot aliases require explicit tabId and the current Session/tab snapshot.",
   },
   nextPageSelector: { "zh-CN": "下一页", en: "Next page" },
   commentSelector: { "zh-CN": "评论", en: "Comment" },

@@ -26,6 +26,77 @@ function fixture(evaluateCdpScript) {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('flow leaf page evaluations do not install a nested tool bridge, even when code references tools', async () => {
+  const definitions = new Map(); let evaluated = '';
+  createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
+    skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' },
+    evaluateCdpScript: async (_tab, options) => { evaluated = options.expression; return { result: { type: 'number', value: 42 } }; } });
+  const result = await definitions.get('run_script').execute({ code: 'async () => { return typeof tools; }', args: { example: true }, tabId: 7 }, undefined, { flowPageLeaf: true });
+  assert.equal(result.result, 42);
+  assert.doesNotMatch(evaluated, /const tools = new Proxy/);
+  assert.match(evaluated, /const input =/);
+  await assert.rejects(definitions.get('run_flow').execute({ code: '42' }, undefined, { runScriptToolDepth: 1 }), { code: 'FLOW_TOOL_UNSUPPORTED' });
+});
+
+test('flow Stop cancels a Worker without waiting for the offscreen execute acknowledgement', async () => {
+  const definitions = new Map(), sent = [], executing = deferred();
+  const savedChrome = globalThis.chrome;
+  globalThis.chrome = { ...savedChrome,
+    offscreen: { createDocument: async () => {}, hasDocument: async () => true },
+    runtime: { getURL: path => `chrome-extension://fixture/${path}`, async sendMessage(message) {
+      sent.push(message);
+      if (message.type === 'run_script_inner_ping') return { ok: true, ready: true };
+      if (message.type === 'run_script_inner_execute') { executing.resolve(); return new Promise(() => {}); }
+      return { ok: true };
+    } },
+  };
+  try {
+    createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
+      skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript: async () => ({}) });
+    const controller = new AbortController();
+    const pending = definitions.get('run_flow').execute({ code: '42' }, controller.signal, { sessionId: 'task', runId: 'run' });
+    const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
+    await executing.promise; controller.abort(); await rejected;
+    assert.equal(sent.at(-1).type, 'run_script_inner_cancel');
+  } finally { globalThis.chrome = savedChrome; }
+});
+
+test('flow observes even without nested calls; explicit tab/scope/root and opt-out reach the bounded host', { timeout: 10000 }, async () => {
+  const definitions = new Map(), reads = [], savedChrome = globalThis.chrome;
+  let runtime;
+  globalThis.chrome = { ...savedChrome,
+    offscreen: { createDocument: async () => {}, hasDocument: async () => true },
+    runtime: { getURL: path => `chrome-extension://fixture/${path}`, async sendMessage(message) {
+      if (message.type === 'run_script_inner_ping') return { ok: true, ready: true };
+      queueMicrotask(() => runtime.handleRunScriptInnerRuntimeMessage({ type: 'run_script_inner_result', requestId: message.requestId,
+        result: { __runScriptEnvelope: true, ok: true, result: { done: true } } }));
+      return { ok: true };
+    } },
+  };
+  try {
+    runtime = createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
+      skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript: async () => ({}),
+      readPageSnapshot: async (tabId, options, signal, context) => {
+        reads.push({ tabId, options, signal, context });
+        if (tabId === 99) throw Object.assign(new Error('foreign tab'), { code: 'SESSION_TAB_FOREIGN' });
+        return { tabId, snapshot: 'latest state', ...options };
+      } });
+    const run = definitions.get('run_flow').execute, context = { sessionId: 'task', runId: 'run', workingTabId: 7 };
+    const result = await run({ code: '42' }, undefined, context);
+    assert.equal(result.finalObservation.purpose, 'next_turn_start');
+    assert.equal(result.finalObservation.snapshot.snapshot, 'latest state');
+    assert.deepEqual(reads[0].options, { scope: 'viewport', root: 'root' }); assert.equal(reads[0].tabId, 7);
+    assert.equal(reads[0].context, context);
+    await run({ code: '42', observationTabId: 8, observationScope: 'full', observationRoot: 'css:#flash' }, undefined, context);
+    assert.equal(reads[1].tabId, 8); assert.deepEqual(reads[1].options, { scope: 'full', root: 'css:#flash' });
+    const disabled = await run({ code: '42', observe: false }, undefined, context);
+    assert.deepEqual(disabled.finalObservation, { available: false, reason: 'disabled' }); assert.equal(reads.length, 2);
+    const foreign = await run({ code: '42', observationTabId: 99 }, undefined, context);
+    assert.equal(foreign.finalObservation.code, 'FLOW_OBSERVATION_FAILED');
+    assert.match(foreign.finalObservation.message, /foreign tab/);
+  } finally { globalThis.chrome = savedChrome; }
+});
+
 test('page results preserve large structured values and diagnostic envelopes', async () => {
   const value = { text: 'large'.repeat(20000), rows: Array.from({ length: 1200 }, (_, id) => ({ id })) };
   assert.equal((await fixture(async () => ({ result: { type: 'object', value } }))()).result, value);

@@ -36,6 +36,7 @@ registerAccessibilityTools({
     return uid;
   },
   elementTargetForUid: element.elementTargetForUid,
+  elementAliasForUid: element.elementAliasForUid,
   registerElementRef: ref => {
     registeredRefs.push(ref);
     element.registerElementRef(ref);
@@ -534,7 +535,19 @@ assert.ok(folded.snapshot.indexOf(`root="${listTarget}"`) < folded.snapshot.inde
 assert.ok(folded.snapshot.includes(`root="${aboutTarget}"`));
 assert.ok(folded.snapshot.includes('scope:"full"'));
 assert.equal(folded.outline, undefined, "off-screen structure stays in the existing tree protocol");
-const listSubtree = await definition.execute({ tabId: 8, root: listTarget }, null, context);
+for (const row of folded.snapshot.split("\n").filter(row => row.includes("target=uid:"))) {
+  const uid = row.match(/target=uid:(\S+)/)[1];
+  assert.ok(row.includes(`alias=${element.elementAliasForUid(uid)}`), row);
+}
+const listAlias = element.elementAliasForUid(listTarget.slice(4));
+// Cancellation must not publish a new snapshot or revoke the previous aliases.
+const cancelled = new AbortController(); cancelled.abort();
+const countBefore = registeredRefs.length;
+await assert.rejects(definition.execute({ tabId: 8 }, cancelled.signal, context), { name: "AbortError" });
+assert.equal(registeredRefs.length, countBefore);
+const listSubtree = await definition.execute({ tabId: 8, root: listAlias }, null, context);
+await assert.rejects(definition.execute({ tabId: 8, root: listAlias }, null, context), { code: "STALE_ELEMENT_UID" });
+assert.equal((await element.resolveElementReference(8, { target: listTarget }, context)).target, listTarget);
 assert.equal(listSubtree.scope, "full");
 assert.match(listSubtree.snapshot, /Hidden record beta/);
 const aboutSubtree = await definition.execute({ tabId: 8, root: aboutTarget }, null, context);

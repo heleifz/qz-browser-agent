@@ -81,7 +81,7 @@ function readBound<T>(binding: ElementTarget, context: ToolContext, fn: (call?: 
   return useElement(binding.tabId, binding, context, call => fn(call));
 }
 async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null,
-  guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>) {
+  guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>, toolName = "act_on_element") {
   const { pageBefore: dispatchPage, pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
   const delta = pageStateDelta(dispatchPage, pageAfter);
   return {
@@ -89,7 +89,7 @@ async function observeElementNavigation(tabId: number, pageBefore: PageState, pr
       navigated: delta.urlChanged || documentChanged === true
         || (navigationPending || navigationStarted === null ? null : documentChanged ?? (navigationStarted ? null : false)),
       _pageUrl: pageAfter.url, _pageTitle: pageAfter.title },
-    observedNavigation: commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId }),
+    observedNavigation: commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName, tabId }),
   };
 }
 const keyboard = createCdpKeyboard({ sendCdp, ToolExecutionError });
@@ -209,6 +209,48 @@ registerTool({
 // ===========================================================================
 // Page interaction
 // ===========================================================================
+
+registerTool({
+  name: "upload_files",
+  get description() { return toolT("uploadFilesDescription"); },
+  get parameters() { return {
+    type: "object",
+    properties: {
+      tabId: { type: "number", description: toolT("readArticleTabId") },
+      target: { type: "string", description: getElementTargetDescription() },
+      index: { type: "number", description: toolT("inspectElementIndex") },
+      files: { type: "array", maxItems: 5, description: toolT("uploadFilesContent"), items: {
+        type: "object", properties: {
+          name: { type: "string", minLength: 1, maxLength: 255 },
+          content: { type: "string", maxLength: 700000 },
+          mimeType: { type: "string", maxLength: 255 },
+          encoding: { type: "string", enum: ["utf8", "base64"] },
+        }, required: ["name", "content"],
+      } },
+    }, required: ["target", "files"],
+  } as const; },
+  page: "owned",
+  behavior: { mayUnloadPage: true },
+  effects: (_args, result) => result && typeof result === "object" && "navigated" in result && result.navigated === true ? [{ type: "context.siteChanged" }] : [],
+  execute: async ({ tabId, target, index = 0, files }, signal, context = {}) => {
+    const ref = await resolveElementReference(tabId, { target, index }, context);
+    if (!ref.tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"));
+    const ownedTabId = ref.tabId;
+    const perform = async (bound?: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) => {
+      const before = await getTabPageState(ownedTabId);
+      const guardrails = await getSecurityGuardrails();
+      const observation = await beginPageNavigationObservation(ownedTabId, signal);
+      try {
+        if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "File input stopped.");
+        const result = await sendToContent(ref.tabId, "setInputFiles", { selector: ref.selector, index: ref.index, files }, bound);
+        if (result.error) return result;
+        const { pageDelta, observedNavigation } = await observeElementNavigation(ownedTabId, before, null, guardrails, observation, "upload_files");
+        return { ...result, tabId: ref.tabId, target: ref.target, ...pageDelta, ...(observedNavigation ? { observedNavigation } : {}) };
+      } finally { observation.dispose(); }
+    };
+    return ref.uid ? useElement(ref.tabId, ref, context, perform) : perform();
+  },
+});
 
 registerTool({
   name: "act_on_element",

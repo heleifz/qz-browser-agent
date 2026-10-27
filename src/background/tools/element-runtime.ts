@@ -116,9 +116,12 @@ export function createElementRuntime({
 // ---------------------------------------------------------------------------
 
 const elementRefRegistry = new Map<string, ElementReference>();
+const currentSnapshots = new Map<string, string>();
+let lastSnapshotAt = 0;
+const snapshotKey = (tabId: number, context: ToolContext) => `${context.sessionId || ""}:${tabId}`;
 const ELEMENT_REF_TTL_MS = 30 * 60 * 1000;
 const ELEMENT_REF_MAX = 5000;
-const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> | "css:" <css_selector>';
+const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> | "css:" <css_selector> | "@" <snapshot_token> "." <node>';
 function getElementTargetExamples() {
 return [
   "uid:t5493.000001.12",
@@ -169,8 +172,13 @@ function makeSnapshotId(tabId: number, context: ToolContext = {}) {
   const ids = peers.includes(id) ? peers : [...peers, id];
   const suffix = uniqueTabSuffix(id, ids);
   // Milliseconds modulo 36^6. The id comes from the clock, so a worker restart does not reuse a recent snapshot.
-  const serial = (Date.now() % (36 ** 6)).toString(36).padStart(6, "0");
-  return `t${suffix}.${serial}`;
+  lastSnapshotAt = Math.max(Date.now(), lastSnapshotAt + 1);
+  const serial = (lastSnapshotAt % (36 ** 6)).toString(36).padStart(6, "0");
+  const snapshotId = `t${suffix}.${serial}`;
+  currentSnapshots.delete(snapshotKey(id, context));
+  currentSnapshots.set(snapshotKey(id, context), snapshotId);
+  if (currentSnapshots.size > ELEMENT_REF_MAX) currentSnapshots.delete(currentSnapshots.keys().next().value!);
+  return snapshotId;
 }
 
 function makeElementUid(snapshotId: string, seq: number, mark = "") {
@@ -205,6 +213,11 @@ function elementTargetForUid(uid: unknown) {
   return value ? `uid:${value}` : "";
 }
 
+function elementAliasForUid(uid: unknown) {
+  const match = /^t\d+\.([a-z0-9]{6}\.[a-z0-9]+)$/.exec(normalizeElementUid(uid));
+  return match ? `@${match[1]}` : "";
+}
+
 function elementTargetForSelector(selector: unknown) {
   const value = String(selector || "").trim();
   return value ? `css:${value}` : "";
@@ -215,16 +228,17 @@ function elementTargetForRef(ref: ElementReference = {}) {
 }
 
 function isElementTarget(value: unknown) {
-  return /^(uid|css):/i.test(String(value || "").trim());
+  return /^(uid:|css:|@)/i.test(String(value || "").trim());
 }
 
 function isUidElementTarget(value: unknown) {
-  return /^uid:/i.test(String(value || "").trim());
+  return /^(uid:|@)/i.test(String(value || "").trim());
 }
 
 function parseElementTarget(target = "") {
   const raw = String(target || "").trim();
   if (!raw) return { uid: "", selector: "" };
+  if (raw.startsWith("@")) return { uid: raw, selector: "" };
   const separator = raw.indexOf(":");
   const kind = separator >= 0 ? raw.slice(0, separator).trim().toLowerCase() : "";
   const value = separator >= 0 ? raw.slice(separator + 1).trim() : "";
@@ -265,7 +279,14 @@ async function resolveSelectorTarget(tabId: number | undefined, selector = "", i
 
 async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, readOnly = false } = {}, context: ToolContext = {}) {
   const normalized = parseElementTarget(target);
-  const requestedUid = normalizeElementUid(normalized.uid);
+  let requestedUid = normalizeElementUid(normalized.uid);
+  if (requestedUid.startsWith("@")) {
+    if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", "Snapshot aliases require an explicit tabId.", { target });
+    const snapshotId = currentSnapshots.get(snapshotKey(tabId, context));
+    const match = /^@([a-z0-9]{6})\.([a-z0-9]+)$/.exec(requestedUid);
+    if (!match || !snapshotId?.endsWith(`.${match[1]}`)) throw staleElement(target);
+    requestedUid = `${snapshotId}.${match[2]}`;
+  }
   const requestedSelector = String(normalized.selector || "").trim();
   if (!requestedUid && !requestedSelector) {
     throw new ToolExecutionError("MISSING_ELEMENT_REFERENCE", "Element reference requires target: uid:<element_uid> or css:<css_selector>", {
@@ -669,6 +690,7 @@ function samePageUrl(a: unknown, b: unknown) {
     makeElementUid,
     registerElementRef,
     elementTargetForUid,
+    elementAliasForUid,
     elementTargetForSelector,
     elementTargetForRef,
     isUidElementTarget,

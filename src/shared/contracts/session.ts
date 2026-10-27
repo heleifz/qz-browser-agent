@@ -45,6 +45,7 @@ export interface TranscriptAgentEvent extends Omit<Partial<TranscriptEntry>, 'me
   runtime?: { status?: string; reason?: string; runId?: string | null };
   thinking?: string; delta?: unknown; toolName?: string; tool_call_id?: string;
   toolCall?: { id?: string }; argsComplete?: boolean; arguments?: string;
+  partialResult?: unknown;
 }
 
 /** Host projection input also accepts tool/command events and historical wire shapes.

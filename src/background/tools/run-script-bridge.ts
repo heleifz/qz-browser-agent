@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { resolveFlowExecution, type FlowToolPolicy } from "./flow-execution.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
@@ -20,7 +21,7 @@ interface BridgeHost {
   applyNestedToolResult?(input: { sessionId: string; runId: string; toolName: string; args: Fields; result: unknown; isError: boolean }): Promise<unknown>;
   toolRuntime: {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
-    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior> } | null;
+    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): FlowToolPolicy | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
   };
   collectArtifacts(name: string, args: Fields, result: unknown): Fields[];
@@ -64,7 +65,7 @@ export function createRunScriptBridge({
   if (typeof toolRuntime.resolveDefinition !== "function") throw new TypeError("toolRuntime.resolveDefinition is required");
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
 
-  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
+  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, watch: { ready?: () => void; signal?: AbortSignal } = {}): Promise<Fields> {
     await ready();
     let language = getLanguage();
     const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
@@ -83,13 +84,37 @@ export function createRunScriptBridge({
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
 
+    let flow: ReturnType<typeof resolveFlowExecution> | undefined;
+    try {
+      if (message.flowRequestId) flow = resolveFlowExecution(String(message.flowRequestId), sessionId, runId);
+    } catch (error) {
+      return respondFailure({ code: plainObject(error).code, error: String(error) }, { toolName });
+    }
+
+    if (flow && toolName.startsWith("__flow_")) {
+      try {
+        const args = plainObject(message.args);
+        if (toolName === "__flow_emit__") return { ok: true, result: flow.emit(args.value) };
+        if (toolName === "__flow_watch_result__" || toolName === "__flow_watch_cancel__") {
+          return await flow.consumeWatch(String(args.id || ""), toolName === "__flow_watch_cancel__");
+        }
+        if (toolName === "__flow_watch__") {
+          const context = await resolveToolContext(sessionId, runId);
+          const name = String(args.name || "");
+          const definition = toolRuntime.resolveDefinition(name, context);
+          if (!definition?.behavior?.flowWait) return respondFailure({ code: "FLOW_TOOL_UNSUPPORTED", error: "Only passive wait tools can be watched." }, { toolName: name });
+          return { ok: true, result: await flow.watch((ready, signal) => handleToolCall({ ...message, toolName: name, args: args.args }, sender, { ready, signal })) };
+        }
+      } catch (error) { return respondFailure({ code: plainObject(error).code, error: String(error) }, { toolName }); }
+    }
+
     if (toolName === "__list_tools__") {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
       return {
         ok: true,
         result: {
-          tools: toolRuntime.getSchemas(toolContext).map(schema => ({
+          tools: toolRuntime.getSchemas(toolContext).filter(schema => !flow || flow.allows(schema.function?.name || "", toolRuntime.resolveDefinition(schema.function?.name || "", toolContext) || {})).map(schema => ({
             name: schema.function?.name || "",
             description: schema.function?.description || "",
             parameters: schema.function?.parameters || {},
@@ -111,19 +136,24 @@ export function createRunScriptBridge({
     try {
       const toolContext = await resolveToolContext(sessionId, runId);
       language = toolContext.language || language;
-      const signal = supervisor.getAbortSignal(sessionId, runId) || undefined;
+      const runSignal = supervisor.getAbortSignal(sessionId, runId) || undefined;
+      const signals = [runSignal, flow?.signal, watch.signal].filter((value): value is AbortSignal => Boolean(value));
+      const signal = signals.length ? AbortSignal.any(signals) : undefined;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
       const toolArgs = plainObject(message.args);
       const definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: toolContext.skillToolRegistrySnapshot, toolRegistrySnapshot: toolContext.toolRegistrySnapshot, language: toolContext.language });
-      const result = await toolRuntime.execute(toolName, toolArgs, signal, {
+      const context = {
         ...toolContext,
         sessionId,
         runId,
         runScriptToolDepth: depth,
         source: "run_script",
         senderTabId: sender?.tab?.id || null,
-      });
+        ...(flow ? { flowPageLeaf: true, flowWaitReady: watch.ready, toolCallId: flow.context.toolCallId, spanId: flow.context.spanId } : {}),
+      };
+      const execute = () => toolRuntime.execute(toolName, toolArgs, signal, context);
+      const result = await (flow ? flow.call(toolName, toolArgs, execute, definition || {}, signal) : execute());
       // A host or zero-timeout handler may complete after its run was revoked.
       const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (executionStopped) return respondFailure(executionStopped, { toolName });
@@ -142,7 +172,7 @@ export function createRunScriptBridge({
           await appendArtifacts({
             sessionId,
             runId,
-            toolCallId: "",
+            toolCallId: flow?.context.toolCallId || "",
             sourceTool: toolName,
             artifacts,
           });
@@ -151,7 +181,7 @@ export function createRunScriptBridge({
           logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
         }
       }
-      const observation = nestedObservation(definition?.behavior, toolArgs, result);
+      const observation = nestedObservation(flow && typeof output._image === "string" ? { nestedObservation: true } : definition?.behavior, toolArgs, result);
       return {
         ok: true,
         result: stripNestedToolPresentation(result, Boolean(observation)),

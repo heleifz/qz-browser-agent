@@ -5,6 +5,7 @@ import { createCapabilityChat } from "../llm/capability-chat.js";
 import { setCurrentRuntimeConfig } from "../runtime-config.js";
 import { listSkills, loadSkill, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
 import type { ToolContext } from "../../sdk/background.js";
+import type { PageSnapshotOptions } from "../../sdk/background/browser.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
 import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
@@ -1375,6 +1376,7 @@ async function updateModelRuntime(operation: () => ReturnType<typeof getConfig>)
 const capabilityHost: ToolExtensionAPI = Object.freeze({
   getPageContext: (tabId: number) => capabilityBridges.describePage?.(tabId) || {},
   registerTool: defineTool,
+  readPageSnapshot: (tabId: number, options: PageSnapshotOptions, signal: AbortSignal, context: ToolContext) => executeTool("get_ax_tree", { ...options, tabId }, signal, context),
   models: Object.freeze({
     getConfig, saveConfig: (input: Record<string, unknown>, signal?: AbortSignal) => updateModelRuntime(() => saveConfig(input, signal)),
     applyPreset: (id: unknown, signal?: AbortSignal) => updateModelRuntime(() => applyModelPreset(id, signal)),

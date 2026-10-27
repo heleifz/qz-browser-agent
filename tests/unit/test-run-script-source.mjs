@@ -394,19 +394,12 @@ const runSkillScriptStart = toolsSource.indexOf('registerTool({\n  name: "run_sk
 const runSkillScriptEnd = toolsSource.indexOf("\n});\n\nregisterTool({\n  name: \"run_script\"", runSkillScriptStart);
 assert.ok(runSkillScriptStart >= 0 && runSkillScriptEnd > runSkillScriptStart, "should find run_skill_script tool block");
 const runSkillScriptToolBlock = toolsSource.slice(runSkillScriptStart, runSkillScriptEnd);
-assert.match(
-  runScriptDefinition.description,
-  /脚本开始处用一行注释简明说明：这个脚本在什么页面做什么事情，达到什么目的/,
-  "run_script description should require a purpose comment at script start",
-);
-assert.match(
-  runScriptDefinition.description,
-  /async \(\) => \{\n  \/\/ 在当前列表页采集条目文本，形成 rows 摘要用于验证页面解析并支持后续落库。/,
-  "run_script recommended skeleton should show the opening purpose comment",
-);
+assert.doesNotMatch(runScriptDefinition.description, /脚本开始处|推荐骨架|必须维护 stage|先单步|单步试通/,
+  "script descriptions document capabilities, not a prescribed methodology");
+assert.match(runScriptDefinition.description, /async \(\) => \{ \.\.\. \}/, "documents the callable code shape");
 assert.match(
   runScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
+  /tabId，默认 workingTabId/,
   "run_script tabId schema should document strict target policy",
 );
 assert.match(
@@ -431,7 +424,7 @@ assert.match(
 );
 assert.match(
   runSkillScriptDefinition.description,
-  /page 必须使用当前任务已拥有的网页 tab；inner 运行在轻舟内部 Worker，不需要网页 tab/,
+  /page 使用任务拥有的网页，inner 提供页面无关/,
   "run_skill_script description should distinguish page and inner target policy",
 );
 assert.match(
@@ -441,48 +434,46 @@ assert.match(
 );
 assert.match(
   runSkillScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
+  /tabId，默认 workingTabId/,
   "run_skill_script tabId schema should document its working-tab default",
 );
 assert.match(
   runScriptDefinition.description,
-  /target:"inner" 表示轻舟内部 offscreen 运行环境/,
+  /target:"inner" 提供页面无关/,
   "run_script description should document explicit inner mode",
 );
 assert.match(
   runScriptDefinition.description,
-  /target 不填或 target:"page" 表示页面模式，使用显式的当前任务拥有 tabId，或当前任务 workingTabId/,
+  /target:"page" 为默认，在任务拥有的 tabId 或 workingTabId/,
   "run_script description should keep page tasks on page targets",
 );
 assert.match(
   runScriptDefinition.description,
-  /不能用 getEventListeners、\$0、copy、monitorEvents/,
+  /运行能力限浏览器 JavaScript APIs/,
   "run_script description should warn against DevTools Console helpers",
 );
 assert.match(
   runScriptDefinition.description,
-  /tools 是当前运行配置下可用工具的动态代理/,
+  /tools\.\$list\(\) 返回当前可用工具参数/,
   "run_script should explain that its tool surface follows the frozen run profile",
 );
 assert.match(
   runScriptDefinition.description,
-  /不要用 Object\.keys\(tools\) 判断能力，诊断时使用 await tools\.\$list\(\)/,
+  /tools\.\$list\(\) 返回当前可用工具参数/,
   "run_script should give the model one reliable way to discover bridged tools",
 );
+assert.match(resolveToolDefinition("act_on_screen").description, /coordinateSpace[\s\S]*coordinateBasisReady/,
+  "the screen tool owns coordinate definitions");
 assert.match(
   runScriptDefinition.description,
-  /视觉序列先由主 Agent 单步观察[\s\S]*效果符合预期、后续坐标可预测且 viewportChange 表明浏览器视口稳定[\s\S]*串行 await tools\.act_on_screen[\s\S]*检查 coordinateBasisReady[\s\S]*按执行顺序返回最后一张此类图片/,
-  "run_script should teach one evidence-based visual macro principle",
-);
-assert.match(
-  runScriptDefinition.description,
-  /调用 run_script 时设 mutatesPage:true/,
+  /页面修改须声明 mutatesPage:true/,
   "visual macros should declare their page mutation ownership",
 );
+assert.doesNotMatch(runScriptDefinition.description, /先由主 Agent 单步观察|must first observe/, "script descriptions must leave methodology to the model");
 assert.doesNotMatch(toolsSource, /会滚动、缩放、改尺寸.*逐步执行/, "run_script guidance should not overfit policy to action names");
 assert.match(
   runScriptDefinition.description,
-  /自动提升内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/,
+  /最后一张内部 screenshot 或 act_on_screen\(returnScreenshot:true\) 观察图/,
   "run_script summary guidance should explain last-observation promotion",
 );
 assert.match(
