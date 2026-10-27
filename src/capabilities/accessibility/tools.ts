@@ -1,3 +1,4 @@
+import { mapConcurrent } from "./concurrent.js";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
@@ -631,18 +632,25 @@ function sameUrlPrefix(a: string, b: string) {
 }
 
 async function actionAnchors(send: CdpCommand, actions: Action[], ids: number[]) {
-  const anchors: ActionAnchor[] = [];
-  for (let index = 0; index < actions.length; index += 1) {
+  // Cache in-flight requests too: sibling walks share their parent round trips.
+  const descriptions = new Map<string, Promise<Record<string, unknown>>>();
+  const describe = (params: Record<string, unknown>) => {
+    const key = JSON.stringify(params);
+    let pending = descriptions.get(key);
+    if (!pending) { pending = describeNode(send, params); descriptions.set(key, pending); }
+    return pending;
+  };
+  return mapConcurrent(actions, async (action, index): Promise<ActionAnchor> => {
     const backendNodeId = Number(ids[index] || 0);
     const ancestors: ActionAnchor["ancestors"] = [];
     if (backendNodeId > 0) {
-      let described = await describeNode(send, { backendNodeId });
+      let described = await describe({ backendNodeId });
       let currentBackend = backendNodeId;
       for (let hop = 0; hop < 32; hop += 1) {
         const node = record(described.node);
         const parentNodeId = Number(node.parentId || 0);
         if (!parentNodeId) break;
-        const parentDescribed = await describeNode(send, { nodeId: parentNodeId, depth: 1 });
+        const parentDescribed = await describe({ nodeId: parentNodeId, depth: 1 });
         const parent = record(parentDescribed.node);
         const parentBackend = Number(parent.backendNodeId || 0);
         if (!parentBackend || parentBackend === currentBackend) break;
@@ -655,9 +663,8 @@ async function actionAnchors(send: CdpCommand, actions: Action[], ids: number[])
         described = parentDescribed;
       }
     }
-    anchors.push({ action: actions[index] || {}, backendNodeId, ancestors });
-  }
-  return anchors;
+    return { action: action || {}, backendNodeId, ancestors };
+  });
 }
 
 async function describeNode(send: CdpCommand, params: Record<string, unknown>) {
@@ -679,7 +686,7 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
     if (!frames.length) return nodes;
     const combined = nodes.map(node => ({ ...node, childIds: node.childIds ? [...node.childIds] : undefined }));
     const mainIds = new Set(combined.map(node => node.nodeId).filter(Boolean));
-    for (const frame of frames) {
+    const additions = await mapConcurrent(frames, async frame => {
       try {
         const params = { ...(!frame.sessionId ? { frameId: frame.id } : {}), ...(depth == null ? {} : { depth }) };
         const result = await frame.send("Accessibility.getFullAXTree", params);
@@ -687,12 +694,12 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
           ? (result as { nodes: AxNode[] }).nodes : [];
         // Child sessions number their own node ids, so those ids are not an echo of the page tree.
         const echoed = !frame.sessionId && fetched.some(node => node?.nodeId && mainIds.has(node.nodeId));
-        if (!fetched.length || echoed) continue;
+        if (!fetched.length || echoed) return null;
         const owner = record(await send("DOM.getFrameOwner", { frameId: frame.id }));
         const backendNodeId = Number(owner.backendNodeId || 0);
-        if (!backendNodeId) continue;
+        if (!backendNodeId) return null;
         const ownerNode = combined.find(node => !node.documentFrameId && Number(node.backendDOMNodeId || 0) === backendNodeId);
-        if (!ownerNode?.nodeId) continue;
+        if (!ownerNode?.nodeId) return null;
         const present = new Set(fetched.map(node => node?.nodeId).filter(Boolean));
         const prefixed = fetched.filter(node => node?.nodeId).map(node => {
           const parentInFrame = Boolean(node.parentId && present.has(node.parentId));
@@ -706,11 +713,17 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
           };
         });
         const rootIds = prefixed.filter(node => node.parentId === ownerNode.nodeId).map(node => node.nodeId);
-        ownerNode.childIds = [...(ownerNode.childIds || []), ...rootIds];
-        combined.push(...prefixed);
+        return { ownerNode, rootIds, prefixed };
       } catch {
         // One child frame must not drop the rest of the snapshot.
+        return null;
       }
+    });
+    for (const addition of additions) {
+      if (!addition) continue;
+      const { ownerNode, rootIds, prefixed } = addition;
+      ownerNode.childIds = [...(ownerNode.childIds || []), ...rootIds];
+      combined.push(...prefixed);
     }
     return combined;
   } catch {

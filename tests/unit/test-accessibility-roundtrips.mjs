@@ -49,6 +49,6 @@ assert.equal(result.snapshot, `target=uid:snapshot.0 RootWebArea "Page"
    target=uid:snapshot.10 button "two button"`);
 assert.deepEqual([result.nodeCount, result.semanticNodeCount, result.returnedNodeCount, result.outlineTruncated], [8, 11, 11, false]);
 assert.deepEqual(refs.map(ref => ref.frameId || 'main'), ['main','main','main','main','main','main','one','one','main','two','two']);
-// The sequential baseline uses nine descriptions (three identical ancestor walks).
-assert.equal(describes, 9);
-assert.equal(peak, 1);
+// The locked sequential baseline used nine descriptions; shared parents now cost two total.
+assert.equal(describes, 5);
+assert.ok(peak > 1 && peak <= 4, `bounded concurrent CDP work: ${peak}`);
