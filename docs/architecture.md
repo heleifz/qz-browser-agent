@@ -250,8 +250,11 @@ immediately into the main frame. The initial presence ping has a short probe bud
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait
 for that document event before extracting, so a heavy head cannot produce a successful empty body.
-Screenshots use an immediate main-frame document gate before capturing. Both gates share the tool's
-hard deadline and cancellation, exclude subresource/child-frame load, and do no late extraction or
+Screenshots use an immediate main-frame document gate before capturing. Both paths use the
+[self-contained readiness function](../src/shared/document-readiness.ts): Content calls it directly
+for presence probes and its cached event wait; screenshots serialize it through `executeScript`,
+without installing the Content bundle or adding a probe. Both gates share the tool's hard deadline
+and cancellation, exclude subresource/child-frame load, and do no late extraction or
 capture after cancellation. Readiness has its own phase counter. Explicit UID bridge recovery
 initializes frames immediately and validates the selected document again. Dynamic page content can
 require an explicit element or network wait.

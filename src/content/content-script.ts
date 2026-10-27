@@ -1,4 +1,5 @@
 import { refreshContentLanguage, t } from "./i18n.js";
+import { documentReadiness } from "../shared/document-readiness.js";
 import { normalizeImage } from "../shared/images/normalize.js";
 import { assertImageDimensions, IMAGE_MAX_EDGE } from "../shared/images/policy.js";
 import { Readability } from "@mozilla/readability";
@@ -64,7 +65,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[msg.action];
     if (!handler) {
       if (msg.action === "ping") {
-        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: isDocumentReady() });
+        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness() });
         return;
       }
       sendResponse(toolError("UNKNOWN_ACTION", `Unknown content action: ${msg.action}`, { action: msg.action }));
@@ -86,19 +87,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   chrome.runtime.onMessage.addListener(onMessage);
   host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
 
-  // Parsing and deferred scripts finish at DOMContentLoaded; subresource load is independent.
-  function isDocumentReady() {
-    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
-    return document.readyState === "complete" || (document.readyState === "interactive"
-      && (!navigation || navigation.domContentLoadedEventStart > 0));
-  }
+  // One event-only wait per document, even when a caller stops waiting.
   let documentReady: Promise<{ ok: true }> | undefined;
   function awaitDocument() {
-    if (isDocumentReady()) return { ok: true };
-    // One listener per document, even when a caller stops waiting. This performs no extraction.
-    return documentReady ||= new Promise(resolve => {
-      document.addEventListener("DOMContentLoaded", () => resolve({ ok: true }), { once: true });
-    });
+    if (documentReady) return documentReady;
+    const ready = documentReadiness("wait");
+    if (ready === true) return { ok: true };
+    return documentReady = ready.then(() => ({ ok: true }));
   }
 
   // Handlers
