@@ -10,7 +10,7 @@ import { setCurrentRuntimeConfig } from "../runtime-config.js";
 import { listSkills, loadSkill, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
-import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy } from "../../shared/contracts/tool.js";
+import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
 import type { SkillTool, SkillManifest } from "../../shared/skills/skill-manifest.js";
 import type { SkillRenderer } from "../../shared/skills/skill-renderers.js";
@@ -252,6 +252,7 @@ export function createToolRuntime({
     getIdentity: getToolIdentity,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
     getParallelReadTab,
+    getBatchTabPolicy,
     consumeEffects: consumeToolEffects,
     resolveDefinition: resolveToolDefinition,
     execute(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
@@ -335,6 +336,16 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
   return (typeof policy === "function" ? policy(input) : policy) === true ? tab : null;
 }
 
+export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
+  const definition = resolveToolDefinition(name, options);
+  if (definition?.source !== "core") return null;
+  if (definition.workingTab === "created") return { kind: "create" };
+  const input = record(args);
+  if (!definition.parameters.properties.tabId || !resolvePageAccess(definition, input)) return null;
+  return { kind: "target", implicit: input.tabId == null && ![input.target, input.selector, input.root].some(isUidElementTarget),
+    observation: getParallelReadTab(name, { ...input, tabId: 1 }, options) !== null };
+}
+
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
   const definition = resolveToolDefinition(name, options);
   return definition
@@ -400,6 +411,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       throw new ToolExecutionError("UNKNOWN_TOOL", `Unknown tool: ${name}`, { name });
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
+    // Only the Agent's call-local dependency planner can resolve a symbolic tab. Never fall back.
+    if (record(args).tabRef != null) throw new ToolExecutionError("BATCH_TAB_REFERENCE_ERROR",
+      withLanguage(language, () => toolT("batchTabReferenceError")), { tabRef: record(args).tabRef, reason: "outside_batch" });
     parameters = definition.parameters || parameters;
     effectiveArgs = withWorkingTabDefault(definition, args, parameters, context);
     effectiveArgs = withTimeoutAliases(effectiveArgs, definition);

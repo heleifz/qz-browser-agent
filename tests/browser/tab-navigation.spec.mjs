@@ -30,7 +30,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     }
     if (path.startsWith('/late-body-')) {
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(`<!doctype html><html><head><script src="/head-block-${path.slice('/late-body-'.length)}"></script></head><body style="background:rgb(20,120,60)"><article><h1>Late complete article</h1><p>The parser reached the complete document.</p></article><button>Late action</button><img src="/late-image"></body></html>`);
+      res.end(`<!doctype html><html><head><script src="/head-block-${path.slice('/late-body-'.length)}"></script></head><body style="background:rgb(20,120,60)"><article><h1>Late complete article</h1><p>The parser reached the complete document.</p><p>${escapeHtml(path)}</p></article><button>Late action</button><img src="/late-image"></body></html>`);
       return;
     }
     const finish = () => {
@@ -59,6 +59,8 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     manifest.content_scripts = manifest.content_scripts.filter(entry => !entry.js?.some(path => path.endsWith('/content-script.js')));
     await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
       import { createToolRuntime } from "./background/tools/runtime.js";
+      import { Agent } from "./background/agent/agent.js";
+      globalThis.navigationTestAgent = Agent;
       globalThis.navigationTestRuntime = createToolRuntime;`);
     manifest.background.service_worker = "navigation-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
@@ -175,6 +177,35 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         }
         release('/late-image'); await call('close_tab', { tabId: opened.id });
       }
+      // Exercise the production Agent dependency planner against two independently blocked heads.
+      held.set('/head-block-batch-a', []); held.set('/head-block-batch-b', []); held.set('/late-image', []);
+      const batchRun = worker.evaluate(async origin => {
+        const agent = new navigationTestAgent('navigation', { tools: navigationRuntime });
+        agent._currentRunId = 'run';
+        const events = []; agent.subscribe(event => { events.push(event); });
+        const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
+        const messages = await agent._executeToolCalls([
+          tc('read-a', 'read_article', { tabRef: 'a', limit: 3000 }),
+          tc('open-a', 'open_tab', { url: `${origin}/late-body-batch-a`, tabAlias: 'a' }),
+          tc('read-b', 'read_article', { tabRef: 'b', limit: 3000 }),
+          tc('open-b', 'open_tab', { url: `${origin}/late-body-batch-b`, tabAlias: 'b' }),
+        ], new AbortController().signal);
+        return { ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
+          ends: events.filter(event => event.type === 'tool_execution_end') };
+      }, origin);
+      await expect.poll(() => held.get('/head-block-batch-b').length).toBeGreaterThan(0);
+      expect(held.get('/head-block-batch-a').length).toBeGreaterThan(0);
+      release('/head-block-batch-a'); release('/head-block-batch-b');
+      const batchResult = await batchRun;
+      expect(batchResult.ids).toEqual(['read-a', 'open-a', 'read-b', 'open-b']);
+      expect(batchResult.ends.every(event => !event.isError)).toBe(true);
+      const left = batchResult.ends.find(event => event.toolCallId === 'read-a').result;
+      const right = batchResult.ends.find(event => event.toolCallId === 'read-b').result;
+      expect(left.text).toContain('/late-body-batch-a'); expect(right.text).toContain('/late-body-batch-b');
+      expect(left._tabId).not.toBe(right._tabId);
+      release('/late-image');
+      for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabId: event.result.id });
+
       const observations = [];
       for (let index = 0; index < 3; index++) observations.push((await call('open_tab', { url: `${origin}/observation-${index}` })).id);
       const observed = await worker.evaluate(async tabIds => {

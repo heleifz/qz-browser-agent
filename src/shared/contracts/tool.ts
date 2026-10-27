@@ -57,6 +57,9 @@ export interface ToolModelPolicy {
   projectResult?(result: unknown): unknown;
 }
 
+/** Derived from a trusted registration for one model response's tab dependency plan. */
+export type ToolBatchTabPolicy = { kind: "create" } | { kind: "target"; implicit: boolean; observation: boolean };
+
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */

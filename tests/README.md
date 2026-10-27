@@ -315,6 +315,14 @@ navigation_readiness_plain,navigation_readiness_watched` for immediate article r
 opens, navigation, same-URL reloads and redirects. These cases require every first read immediately
 after navigation to return the new document.
 
+To check model-generated opening and reading in one tool batch, run
+`QINGZHOU_LIVE_CASES=pageBatch npm test -- live deepseek`. Three isolated Sessions read two local
+pages with distinct product codes. Each trial verifies both answers and a single `tool_calls` array
+containing two `open_tab` aliases and their two `read_article` references. The report records actual
+model/tool turns and elapsed time, including any additional verification calls. Set
+`QZ_PAGE_BATCH_EXPECT_BINDINGS=0` when measuring an older extension without this contract; answer
+checks remain enabled. This case is selected explicitly and uses the normal live credential rules.
+
 For the extended session-management checks, run `live deepseek` with
 `QINGZHOU_LIVE_SESSION_MANAGEMENT=1 QINGZHOU_LIVE_SESSION_MANAGEMENT_EXTENDED=1`. The ordinary
 lifecycle run and this management run use separate temporary profiles. Set `QINGZHOU_LIVE_REPORT` to

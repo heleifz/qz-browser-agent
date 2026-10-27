@@ -395,14 +395,26 @@ safety, and rate limits before execution. It normalizes results and applies auth
 Argument validation precedes target resolution. A model response can contain multiple tool calls.
 The Agent batches up to three statically declared read-only observations on distinct explicit tab IDs.
 Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
-retain the working tab; effects, final tool events and model results commit in call order. In-flight
-progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
+retain the working tab. Effects settle in execution order; final tool events and model results retain
+the original call order. In-flight progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
 Stopping settles every started call in the current batch, including cancellation errors, before ending
 scheduling. Completed observations remain in the ledger while revoked effects stay unapplied.
 Parallel `read_article`, `find_elements` and `get_ax_tree` do not scroll, focus or activate tabs.
 They observe the current mode and skip
 mobile-preference restoration that could reload a disconnected page. Sequential preparation keeps
 its existing restoration behavior.
+For known URLs, the model can include `open_tab({url,tabAlias:"a"})` and
+`read_article({tabRef:"a",limit:4000})` in the same assistant message's `tool_calls` array.
+The [tab batch planner](../src/background/tools/tab-batch.ts) moves aliased opens ahead of their
+observations within explicit observation regions, settles creation effects, and supplies numeric tab
+IDs before the ordinary scheduler runs readers. Actions and implicit targets retain their barriers;
+forward references across a barrier fail. Only trusted core registrations declare creators and targets.
+References expire at the array boundary; subsequent messages use returned numeric IDs. Multiple opens
+require explicit page targets. Invalid references and ambiguous implicit targets return
+`BATCH_TAB_REFERENCE_ERROR`; failed, incomplete, or effect-failed producers yield
+`BATCH_TAB_DEPENDENCY_FAILED` for their consumers. Independent pages can continue. Cancellation
+settles started calls without launching dependents, and the ledger preserves original call identity.
+
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,

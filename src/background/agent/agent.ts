@@ -1,4 +1,5 @@
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
+import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, whenLanguageReady, withLanguage } from "../../shared/i18n/index.js";
@@ -69,7 +70,7 @@ import type { ModelMessage, ModelToolCall } from '../../shared/contracts/model-m
 import type { ModelOptions, ModelEvent } from '../llm/protocol-registry.js';
 import type { StreamedTool } from '../llm/stream-attempt.js';
 import type { TabReference } from '../../shared/tab-utils.js';
-import type { ToolEffect, ToolModelPolicy } from '../../shared/contracts/tool.js';
+import type { ToolEffect, ToolModelPolicy, ToolBatchTabPolicy } from '../../shared/contracts/tool.js';
 import type { MessageDocument } from '../../shared/documents/document-attachments.js';
 
 import type { AgentEvent, AgentRetryDetails, ContextUsageSnapshot, ContextUsageDetails } from '../../shared/contracts/agent-event.js';
@@ -83,6 +84,7 @@ interface AgentMessage extends ModelMessage {
 interface AgentToolPort {
   snapshot?(language?: string): unknown;
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
+  getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
   getSchemas(context: Facts): object[];
   getIdentity(name: string, context: Facts): object;
   getModelPolicy?(name: string, context: Facts): Readonly<ToolModelPolicy> | undefined;
@@ -2675,11 +2677,39 @@ export class Agent {
         ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
         ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
       };
-      return { id: tc.id, toolName: normalizeToolCallName(tc), toolIdentity, args, result: result as unknown, isError: true };
+      return { call: tc, id: tc.id, toolName: normalizeToolCallName(tc), toolIdentity, args, result: result as unknown, isError: true };
     };
-    await scheduleToolCalls(toolCalls, {
+    const batch = planTabBatch(toolCalls, tc => {
+      const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
+      return { args, policy: this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup) };
+    }, this._runLanguage);
+    const settled = new Map<ModelToolCall, ReturnType<typeof failure>>();
+    let ledgerIndex = 0;
+    const flushLedger = (skipUnstarted = false) => {
+      while (ledgerIndex < toolCalls.length) {
+        const call = toolCalls[ledgerIndex]!;
+        const outcome = settled.get(call);
+        if (!outcome && !skipUnstarted) break;
+        ledgerIndex++;
+        if (!outcome) continue;
+        settled.delete(call);
+        const { id, toolName, toolIdentity, args, result, isError } = outcome;
+        this._emit({
+          type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
+          ...toolIdentityEventFields(toolIdentity), args, result, isError,
+        });
+        for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
+          if (msg?.role === "tool") toolMessages.push(msg);
+          else followUpMessages.push(msg);
+        }
+      }
+    };
+    await scheduleToolCalls(batch.ordered, {
       signal,
-      tab: tc => this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), parseToolCallArguments(getToolCallArgumentsValue(tc)), lookup) ?? null,
+      tab: tc => {
+        try { return this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), batch.args(tc), lookup) ?? null; }
+        catch { return null; } // Invalid references become per-call errors in execute, not scheduler failures.
+      },
       reject: (tc, error) => failure(tc, error),
       execute: async (tc, callSignal, parallel) => {
         const { id } = tc;
@@ -2698,7 +2728,7 @@ export class Agent {
           if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
         };
         try {
-          args = this._normalizeToolCallArgs(toolName, args);
+          args = this._normalizeToolCallArgs(toolName, batch.args(tc));
           toolIdentity = this._toolRuntime.getIdentity(toolName, {
             skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
             toolRegistrySnapshot: this._toolRegistrySnapshot,
@@ -2725,30 +2755,26 @@ export class Agent {
             language: this._runLanguage,
           });
           assertActive();
-          return { id, toolName, toolIdentity, args, result, isError: Boolean(record(result).error) };
+          return { call: tc, id, toolName, toolIdentity, args, result, isError: Boolean(record(result).error) };
         } catch (error) {
           if (!started) start();
           return failure(tc, error, args, toolIdentity);
         }
       },
-      commit: async ({ id, toolName, toolIdentity, args, result, isError }) => {
+      commit: async outcome => {
+        let { result, isError } = outcome;
         try {
-          if (!signal.aborted) followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
+          if (!signal.aborted) followUpMessages.push(...await this._applyToolResultEffects(outcome.toolName, result, isError));
         } catch (error) {
           result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
           isError = true;
         }
-        this._emit({
-          type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
-          ...toolIdentityEventFields(toolIdentity), args, result, isError,
-        });
-        // Effects and ledger entries commit in model call order.
-        for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
-          if (msg?.role === "tool") toolMessages.push(msg);
-          else followUpMessages.push(msg);
-        }
+        // Effects and bindings follow dependency order; final events and messages retain model order.
+        batch.settle(outcome.call, result, isError);
+        settled.set(outcome.call, { ...outcome, result, isError });
+        flushLedger();
       },
-    });
+    }).finally(() => flushLedger(true));
     return [...toolMessages, ...followUpMessages];
   }
 

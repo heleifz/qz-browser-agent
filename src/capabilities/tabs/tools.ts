@@ -157,6 +157,7 @@ registerTool({
     type: "object",
     properties: {
       url: { type: "string", description: toolT("openTabUrl") },
+      tabAlias: { type: "string", description: toolT("openTabAlias") },
       mode: { type: "string", enum: ["desktop", "mobile"], description: toolT("pageMode") },
       watchNetwork: { type: "boolean", description: toolT("openTabWatchNetwork") },
       resetNetwork: { type: "boolean", description: toolT("openTabResetNetwork") },

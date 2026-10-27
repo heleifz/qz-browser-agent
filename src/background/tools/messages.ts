@@ -3,6 +3,18 @@ import { createTranslator } from "../../shared/i18n/index.js";
 
 /** Shared model-facing documentation stays out of the panel's UI catalog. */
 const messages = defineMessages("tool-runtime", {
+  tabRef: {
+    "zh-CN": "当前 assistant 消息的 tool_calls 数组中对应 open_tab 的 tabAlias。将 open_tab 和此调用一起发出，系统按依赖执行；后续消息使用数字 tabId。每次选择 tabRef 或 tabId。",
+    en: "The tabAlias of an open_tab in the current assistant message's tool_calls array. Send the opening and this call together; the system orders their execution. Later messages use numeric tabId. Choose tabRef or tabId.",
+  },
+  batchTabReferenceError: {
+    "zh-CN": "本批标签页引用无法解析。请为 open_tab 设置唯一 tabAlias，并在页面调用中提供对应 tabRef 或明确的 tabId；将依赖的打开调用放在页面操作之前。",
+    en: "The batch tab reference could not be resolved. Give each open_tab a unique tabAlias and provide the matching tabRef or an explicit tabId in page calls. Place the required opening call before page actions.",
+  },
+  batchTabDependencyFailed: {
+    "zh-CN": "对应的打开调用尚未成功完成，本次页面调用已跳过。请检查打开结果，确认可用的 tabId 后继续。",
+    en: "The required opening call did not complete successfully, so this page call was skipped. Check the opening result and continue with a confirmed tabId.",
+  },
   actionTimeout: {
     "zh-CN": "操作可能已生效，最终状态尚待确认。系统保留本次尝试，请读取页面状态确认结果。",
     en: "The action may have taken effect; its final state is unconfirmed. The system preserves this attempt. Read the page state to confirm the outcome.",

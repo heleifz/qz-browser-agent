@@ -92,6 +92,12 @@ payloads cannot grant scheduling authority; the selected definition must come fr
 snapshot. Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 
+Core page-tool schemas with `tabId` also expose `tabRef`. The Agent resolves it from an
+`open_tab.tabAlias` in the same assistant `tool_calls` array before invoking the tool runtime.
+Handlers receive an owned numeric tab ID through the usual targeting and safety checks. The host
+rejects unresolved references at direct-runtime boundaries. See [batch ordering and failure
+semantics](../../docs/architecture.md#tool-and-skill-execution).
+
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies
 that result into a call-local slot, reads it only at the existing hard timeout, and revokes late
 updates. Use concise `pending` text naming the unfinished work. `behavior.timeoutResult` selects the
