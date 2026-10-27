@@ -396,7 +396,7 @@ path, including the retry delay. Coordinate actions require a valid screenshot. 
 The [tool runtime](../src/background/tools/runtime.ts) checks the catalog, arguments, ownership,
 safety, and rate limits before execution. It normalizes results and applies authorized effects.
 Argument validation precedes target resolution. A model response can contain multiple tool calls.
-The Agent batches up to three statically declared read-only observations on distinct explicit tab IDs.
+The Agent batches up to ten statically declared read-only observations on distinct explicit tab IDs.
 Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
 retain the working tab. Effects settle in execution order; final tool events and model results retain
 the original call order. In-flight progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
@@ -410,7 +410,10 @@ For known URLs, the model can include `open_tab({url,tabAlias:"a"})` and
 `read_article({tabRef:"a",limit:4000})` in the same assistant message's `tool_calls` array.
 The [tab batch planner](../src/background/tools/tab-batch.ts) moves aliased opens ahead of their
 observations within explicit observation regions, settles creation effects, and supplies numeric tab
-IDs before the ordinary scheduler runs readers. Actions and implicit targets retain their barriers;
+IDs before the ordinary scheduler runs readers. Opens remain serial in their original order: claiming
+a created tab and finishing its navigation both update the Session's working tab inside the runtime,
+before Agent effects commit. Serial creation keeps those writes and subsequent window targeting
+deterministic while the opened pages continue loading. Actions and implicit targets retain their barriers;
 forward references across a barrier fail. Only trusted core registrations declare creators and targets.
 References expire at the array boundary; subsequent messages use returned numeric IDs. Multiple opens
 require explicit page targets. Invalid references and ambiguous implicit targets return

@@ -100,6 +100,39 @@ test('normal reads never wait for or start a page-state probe', async () => {
   } finally { chrome.tabs.sendMessage = sendMessage; chrome.scripting.executeScript = executeScript; }
 });
 
+test('ten concurrent page readers isolate targets and cancellation without updating the working tab', async () => {
+  reset();
+  for (let id = 1; id <= 10; id++) tabs.set(id, { id, windowId: 2, url: `https://example.test/${id}`, title: `Page ${id}`, status: 'complete' });
+  const sendMessage = chrome.tabs.sendMessage, releases = new Map();
+  chrome.tabs.sendMessage = async (id, message) => message.action === 'ping' ? { ok: true, documentReady: true }
+    : new Promise(resolve => releases.set(id, () => resolve({ text: `article ${id}` })));
+  const controllers = Array.from({ length: 10 }, () => new AbortController());
+  const pending = controllers.map((controller, index) => runtime.execute('read_article', { tabId: index + 1, limit: 100 }, controller.signal,
+    { ...context, toolCallId: `read-${index + 1}`, preserveWorkingTab: true }).then(value => ({ value }), error => ({ error })));
+  try {
+    for (let i = 0; releases.size < 10 && i < 100; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(releases.size, 10);
+    controllers[4].abort();
+    assert.equal((await pending[4]).error.code, 'OPERATION_ABORTED');
+    for (let id = 10; id >= 1; id--) releases.get(id)();
+    const results = await Promise.all(pending);
+    for (let i = 0; i < 10; i++) if (i !== 4) {
+      assert.equal(results[i].error, undefined);
+      assert.equal(results[i].value.text, `article ${i + 1}`);
+      assert.equal(results[i].value._tabId, i + 1);
+      assert.equal(results[i].value._pageUrl, `https://example.test/${i + 1}`);
+    }
+    assert.equal(updates.length, 0, 'completed and late cancelled observations keep working-tab authority unchanged');
+    await assert.rejects(runtime.execute('read_article', { tabId: 99, limit: 100 }, undefined,
+      { ...context, preserveWorkingTab: true }), { code: 'SESSION_TAB_UNAVAILABLE' });
+    assert.equal(releases.has(99), false, 'parallel eligibility never grants access to an unowned page');
+  } finally {
+    controllers.forEach(controller => controller.abort());
+    releases.forEach(release => release()); await Promise.all(pending);
+    chrome.tabs.sendMessage = sendMessage; reset();
+  }
+});
+
 test('read_article and find_elements retain actual page state when synchronous extraction stalls', async () => {
   for (const name of ['read_article', 'find_elements']) {
     reset();

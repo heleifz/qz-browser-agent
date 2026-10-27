@@ -1,3 +1,5 @@
+const MAX_PARALLEL_READS = 10;
+
 /** Only explicitly addressed observations share a batch. Everything else is a barrier. */
 export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
   tab(item: T): number | null;
@@ -13,7 +15,7 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
     const tabs = new Set([firstTab]);
     let repeatedTab = false;
     if (firstTab !== null) {
-      while (index < items.length && batch.length < 3) {
+      while (index < items.length && batch.length < MAX_PARALLEL_READS) {
         const tab = options.tab(items[index]!);
         if (tab === null) break;
         if (tabs.has(tab)) { repeatedTab = true; break; }

@@ -83,7 +83,7 @@ static named re-exports. The build imports each declared module directly into it
 | `translations`, `locales` | Messages and language packs | Shared / build |
 
 Build-time tools can declare `behavior.parallelRead` for pure observations. The Agent applies it only
-to distinct explicit tab IDs, with a concurrency limit of three; other calls form ordered barriers.
+to distinct explicit tab IDs, with a concurrency limit of ten; other calls form ordered barriers.
 Keep this declaration off operations that write resources or modify a page. Article, element and AX
 readers must not scroll, focus or activate tabs. Native screenshot fallback serializes its activation,
 capture and restoration transaction per window. Installed Skill manifests, trusted Skill host aliases,

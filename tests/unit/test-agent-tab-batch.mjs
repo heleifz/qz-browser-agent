@@ -53,6 +53,47 @@ test('new-tab observations preload their producers and retain original ledger or
   assert.deepEqual(f.events.filter(e => e.type === 'tool_execution_start' && e.toolName === 'read_article').map(e => e.args.tabId), [101, 102]);
 });
 
+test('eleven aliases keep creation and effects ordered while reads split into ten plus one', async () => {
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const until = async predicate => { for (let i = 0; !predicate() && i < 100; i++) await tick(); assert.ok(predicate()); };
+  const owned = new Set(), releases = new Map(), effects = [];
+  let activeOpens = 0, peakOpens = 0, workingTab = 100;
+  const f = fixture(async (name, args, _signal, context) => {
+    if (name === 'open_tab') {
+      const tabId = 100 + Number(args.tabAlias.slice(1));
+      assert.equal(workingTab, tabId - 1, 'previous creation and working-tab writes have settled');
+      assert.equal(effects.length, tabId - 101, 'previous creation effects committed before the next open');
+      peakOpens = Math.max(peakOpens, ++activeOpens);
+      owned.add(tabId); workingTab = tabId;
+      await tick(); activeOpens--;
+      assert.equal(workingTab, tabId);
+      return { id: tabId };
+    }
+    assert.equal(owned.has(args.tabId), true);
+    assert.equal(workingTab, 111, 'parallel readers preserve the last created working tab');
+    await new Promise(resolve => releases.set(args.tabId, resolve));
+    if (!context.preserveWorkingTab) workingTab = args.tabId;
+    return { tabId: args.tabId, text: `page ${args.tabId}` };
+  });
+  f.agent._applyToolResultEffects = async (name, result) => { effects.push([name, result.id ?? result.tabId]); return []; };
+  const input = Array.from({ length: 11 }, (_, i) => [read(`r${i + 1}`, `p${i + 1}`), open(`o${i + 1}`, `p${i + 1}`)]).flat();
+  const pending = f.run(input);
+  await until(() => releases.size === 10);
+  assert.equal(peakOpens, 1); assert.equal(workingTab, 111); assert.equal(owned.size, 11);
+  assert.deepEqual(f.calls.slice(0, 11).map(c => c.context.toolCallId), Array.from({ length: 11 }, (_, i) => `o${i + 1}`));
+  for (let id = 110; id >= 102; id--) releases.get(id)();
+  await tick(); assert.equal(releases.has(111), false);
+  releases.get(101)(); await until(() => releases.has(111));
+  releases.get(111)();
+  const messages = await pending;
+  assert.deepEqual(f.calls.slice(11).map(c => c.args.tabId), Array.from({ length: 11 }, (_, i) => i + 101));
+  assert.deepEqual(f.calls.slice(11).map(c => c.context.preserveWorkingTab), [...Array(10).fill(true), false]);
+  assert.deepEqual(effects, ['open_tab', 'read_article'].flatMap(name => Array.from({ length: 11 }, (_, i) => [name, i + 101])));
+  assert.deepEqual(messages.map(m => m.tool_call_id), input.map(c => c.id));
+  assert.deepEqual(f.ends().map(e => e.toolCallId), input.map(c => c.id));
+  assert.equal(workingTab, 111);
+});
+
 test('multiple new pages require an explicit target instead of silently using the last working tab', async () => {
   const f = fixture();
   await f.run([open('oa'), open('ob'), read('ra'), read('rb')]);

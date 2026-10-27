@@ -20,11 +20,36 @@ test('trusted registrations select only explicit cross-tab observations', () => 
   assert.equal(getParallelReadTab('spoofed', { tabId: 12 }, { toolRegistrySnapshot: {
     get: () => ({ source: 'core', behavior: { parallelRead: true } }),
   } }), null, 'a runtime object cannot impersonate a trusted build-time snapshot');
+  assert.equal(getParallelReadTab('open_tab', { tabId: 12, tabAlias: 'a', url: 'https://example.test/' }), null);
   assert.equal(getParallelReadTab('run_script', { tabId: 12, parallelRead: true }), null);
   assert.equal(getParallelReadTab('unknown', { tabId: 12, parallelRead: true }), null);
 });
 
-test('Agent batches three reads, commits in call order, and treats same-tab and mutations as barriers', async () => {
+test('scheduler runs ten distinct reads and starts the eleventh after the first group commits', async () => {
+  const started = [], committed = [], parallelCalls = [], releases = new Map();
+  let active = 0, peak = 0;
+  const run = scheduleToolCalls(Array.from({ length: 11 }, (_, i) => i + 1), {
+    tab: id => id, signal: new AbortController().signal,
+    execute: async (id, _signal, parallel) => {
+      started.push(id); parallelCalls.push(parallel); peak = Math.max(peak, ++active);
+      await new Promise(resolve => releases.set(id, resolve));
+      active--; return id;
+    },
+    commit: async id => { committed.push(id); },
+  });
+  await tick();
+  assert.deepEqual(started, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  for (let id = 10; id >= 2; id--) releases.get(id)();
+  await tick(); assert.deepEqual(committed, []); assert.equal(started.length, 10);
+  releases.get(1)(); await tick();
+  assert.deepEqual(committed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.equal(started.at(-1), 11); releases.get(11)(); await run;
+  assert.equal(peak, 10); assert.equal(active, 0);
+  assert.deepEqual(committed, started);
+  assert.deepEqual(parallelCalls, [...Array(10).fill(true), false]);
+});
+
+test('Agent batches distinct reads, commits in call order, and treats same-tab and mutations as barriers', async () => {
   const started = [], finished = [], committed = [], signals = [], releases = new Map();
   const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
     getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
@@ -40,7 +65,7 @@ test('Agent batches three reads, commits in call order, and treats same-tab and 
   agent._applyToolResultEffects = async (_name, result) => { committed.push(result.value || 'error'); return []; };
   const run = agent._executeToolCalls([
     call('1', 'read_article', 1), call('2', 'read_article', 2), call('3', 'read_article', 3),
-    call('4', 'read_article', 4), call('5', 'read_article', 4), call('6', 'navigate', 5),
+    call('4', 'read_article', 3), call('5', 'read_article', 4), call('6', 'navigate', 5),
     call('7', 'read_article', 6), call('8', 'read_article', 7),
   ], new AbortController().signal);
   await tick(); assert.deepEqual(started, ['1', '2', '3']);
@@ -84,11 +109,14 @@ test('stop cancels each running call and revokes pending effects and later barri
     },
   } }));
   agent._applyToolResultEffects = async () => { commits++; return []; };
-  const run = agent._executeToolCalls([call('1','read_article',1),call('2','read_article',2),call('3','navigate',3)], controller.signal);
+  const run = agent._executeToolCalls([
+    ...Array.from({ length: 11 }, (_, i) => call(String(i + 1), 'read_article', i + 1)), call('mutation', 'navigate', 12),
+  ], controller.signal);
   await tick(); controller.abort();
   const messages = await run;
-  assert.equal(signals.length, 2); assert.ok(signals.every(signal => signal.aborted)); assert.equal(commits, 0);
-  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2']);
+  assert.equal(signals.length, 10); assert.ok(signals.every(signal => signal.aborted)); assert.equal(commits, 0);
+  assert.equal(new Set(signals).size, 10);
+  assert.deepEqual(messages.map(message => message.tool_call_id), Array.from({ length: 10 }, (_, i) => String(i + 1)));
   assert.ok(messages.every(message => JSON.stringify(message).includes('OPERATION_ABORTED')));
 });
 
