@@ -381,17 +381,17 @@ function assertAgentDataStoreContract(tools) {
 
 function assertAgentPromptContract() {
   const promptsSource = getAgentPrompts("zh-CN").SYSTEM_PROMPT;
-  assert.match(promptsSource, /list\/get 返回 \{rowId, order, data, createdAt, updatedAt, revision\}/, "system prompt should describe rowId wrappers");
-  assert.match(promptsSource, /编辑前读取当前行/, "system prompt should route existing-row edits through read-before-write");
-  assert.match(promptsSource, /update 传 rowId\/field\/value 及 expectedValue/, "system prompt should require expectedValue for field edits");
-  assert.match(promptsSource, /replace 传 rowId\/revision=row\.revision\/data/, "system prompt should route whole-row replacements through replace");
-  assert.match(promptsSource, /空表用 create_table 的 table \+ columns/, "system prompt should route schema-only table creation through create_table");
-  assert.match(promptsSource, /业务字段从 row\.data 读取/, "system prompt should explain the data_store row wrapper");
-  assert.match(promptsSource, /row\/rows\/data 仅写业务字段/, "system prompt should keep wrapper fields out of writes");
-  assert.match(promptsSource, /run_script 内调用 tools\.data_store 分批读取、计算、写入；与页面无关时用 target:"inner"/, "system prompt should route page-independent table crunching through inner run_script");
-  assert.match(promptsSource, /与页面无关的 JS[^\n]*用 run_script\(\{target:"inner"/, "system prompt should route page-independent computation directly to inner mode");
-  assert.match(promptsSource, /仅返回结论、统计、产物位置、恢复点和少量样例/, "system prompt should keep table crunching summaries small");
-  assert.match(promptsSource, /dedupField 使用代表聚合维度或业务主键的稳定唯一值/, "system prompt should require stable unique dedup fields for aggregated outputs");
+  assert.match(promptsSource, /list\/get 返回的是行包装对象：\{rowId, order, data, createdAt, updatedAt, revision\}/, "system prompt should describe rowId wrappers");
+  assert.match(promptsSource, /编辑已有 Data 行必须先用 list\/get 读取当前行/, "system prompt should route existing-row edits through read-before-write");
+  assert.match(promptsSource, /data_store update：传 rowId、field、value、expectedValue/, "system prompt should require expectedValue for field edits");
+  assert.match(promptsSource, /data_store replace：传 rowId、revision=row\.revision、data/, "system prompt should route whole-row replacements through replace");
+  assert.match(promptsSource, /data_store create_table 传 table \+ columns/, "system prompt should route schema-only table creation through create_table");
+  assert.match(promptsSource, /业务字段都在 row\.data 内/, "system prompt should explain the data_store row wrapper");
+  assert.match(promptsSource, /不要用 row\["标题"\] 取业务字段/, "system prompt should prevent top-level row field access");
+  assert.match(promptsSource, /run_script\(\{target:"inner"[\s\S]*tools\.data_store 读取、计算和分批写回/, "system prompt should route page-independent table crunching through inner run_script");
+  assert.match(promptsSource, /与页面无关的纯 JS 计算[^\n]*直接使用 run_script\(\{target:"inner"/, "system prompt should route page-independent computation directly to inner mode");
+  assert.match(promptsSource, /最后只返回表名、行数、聚合口径、少量样例和异常统计/, "system prompt should keep table crunching summaries small");
+  assert.match(promptsSource, /聚合结果或派生表使用稳定唯一 dedupField/, "system prompt should require stable unique dedup fields for aggregated outputs");
 }
 
 async function assertRejectsWithCode(promise, code, message) {

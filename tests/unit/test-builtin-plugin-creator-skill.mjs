@@ -238,11 +238,11 @@ assert.match(siteSkillAuthorBuiltin.content, /runtime tool 的正式 smoke 必�
 assert.deepEqual(siteSkillAuthorBuiltin.resources, []);
 
 assert.match(SYSTEM_PROMPT, /Durable 产物协议/);
-assert.match(SYSTEM_PROMPT, /创建\/更新\/删除\/导入 Skill[^\n]*先加载可用技能管理能力/);
-assert.match(SYSTEM_PROMPT, /用 JavaScript 或现有工具改写 Python\/Shell Skill 逻辑，说明不兼容的原生依赖；转换前加载可用技能管理指南/);
-assert.match(SYSTEM_PROMPT, /create_skill[^\n]*edit_skill_resource[^\n]*每次一个资源、一个 action/);
-assert.match(SYSTEM_PROMPT, /创建站点特定的 Skill、工具、采集或交互能力前，加载可用站点技能编写指南/);
-assert.match(SYSTEM_PROMPT, /MCP 探测、搜索、试调用或接入前，加载可用 MCP 指南/);
+assert.match(SYSTEM_PROMPT, /涉及创建、更新、删除 skill[\s\S]*先从当前可用技能中选择技能管理能力[\s\S]*load_skill/);
+assert.match(SYSTEM_PROMPT, /只能直接执行 JavaScript[\s\S]*依据当前可用的技能管理指南[\s\S]*不得承诺完整兼容/);
+assert.match(SYSTEM_PROMPT, /create_skill[\s\S]*edit_skill_resource[\s\S]*每次调用只编辑一个资源、执行一个 action/);
+assert.match(SYSTEM_PROMPT, /为具体网站、网页或域名生成站点 skill、Skill 工具、采集工具或网页操作能力[\s\S]*先从当前可用技能中选择站点技能生成能力[\s\S]*load_skill/);
+assert.match(SYSTEM_PROMPT, /探测、搜索、试调用或接入 MCP[\s\S]*先加载当前可用的 MCP 接入技能/);
 assert.doesNotMatch(SYSTEM_PROMPT, /mcp_inspect_server|mcp_list_tools|mcp_search_tools|mcp_call_tool/);
 assert.doesNotMatch(SYSTEM_PROMPT, /Skill 是浏览器操作 SOP|脚本运行在页面上下文/, "kernel prompt must not describe every Skill as page-only");
 assert.match(SYSTEM_PROMPT, /runtime:"page"[\s\S]*runtime:"inner"[\s\S]*\$plugin\.config[\s\S]*network\.allowedOrigins/, "kernel prompt should distinguish page and inner Plugin runtimes");

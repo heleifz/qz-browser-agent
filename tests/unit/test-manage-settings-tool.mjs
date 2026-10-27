@@ -727,11 +727,11 @@ assert.equal(Object.hasOwn(deletePresetResult, "applied"), false);
 assert.equal(deletePresetResult.config.presets.some(preset => preset.id === zhipuPresetId), false);
 assert.equal(runtimeConfig.getCurrentRuntimeConfigSnapshot().presets.some(preset => preset.id === zhipuPresetId), false);
 
-assert.match(prompts.SYSTEM_PROMPT, /用户明确要求时修改模型、预设、设置/, "kernel prompt should preserve Qingzhou self-management");
-assert.match(prompts.SYSTEM_PROMPT, /先加载可用配置管理技能/, "kernel prompt should route settings requests through the management skill");
+assert.match(prompts.SYSTEM_PROMPT, /用户可以通过对话管理轻舟自身/, "kernel prompt should preserve Qingzhou self-management");
+assert.match(prompts.SYSTEM_PROMPT, /先加载当前可用的配置管理技能/, "kernel prompt should route settings requests through the management skill");
 assert.match(prompts.SYSTEM_PROMPT, /模型接口 429\/频率限制/, "kernel prompt should route model rate-limit recovery through the management skill");
 assert.match(prompts.SYSTEM_PROMPT, /Skill 配置/, "kernel prompt should route Skill configuration requests through the management skill");
-assert.match(prompts.SYSTEM_PROMPT, /仅在用户明确要求时修改模型、预设、设置、Skill 配置或访问护栏/, "kernel prompt should require an explicit user request");
+assert.match(prompts.SYSTEM_PROMPT, /轻舟不自行更换模型、修改设置或放宽安全护栏/, "kernel prompt should require an explicit user request");
 assert.doesNotMatch(prompts.SYSTEM_PROMPT, /AK\/API Key 只接受本轮明确提供的新值|不得读取、回显、复述/, "kernel prompt should not retain the removed credential policy");
 assert.doesNotMatch(prompts.SYSTEM_PROMPT, /manage_settings\.apply_preset/, "preset SOP should move out of the kernel");
 assert.match(loadedSkill.content, /只传本次要改变的字段/, "management skill should explain patch-style model updates");

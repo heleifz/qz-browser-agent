@@ -129,14 +129,14 @@ assert.match(agent, /await this\._persistIfToolLedgerRepaired\(t\("agent\.toolIn
 assert.match(agent, /await this\._persistIfToolLedgerRepaired\(t\("agent\.toolStopped"\)\);\s*await this\._flushPendingContextEvents\(\);/, "pending context events should flush before run teardown");
 assert.doesNotMatch(agent, /_buildGoalContextSendMessage/, "goal context should no longer be injected as a mutable system-prefix-adjacent message");
 
-assert.match(prompts.SYSTEM_PROMPT, /多轮任务使用 manage_goal。开始时 create/, "system prompt should tell agents when to create a goal");
-assert.match(prompts.SYSTEM_PROMPT, /完整性\/去重\/覆盖要求的多轮任务/, "system prompt should define goal tracking as a method for long, complete tasks");
-assert.match(prompts.SYSTEM_PROMPT, /有规模目标/, "system prompt should mention obvious scale signals");
-assert.match(prompts.SYSTEM_PROMPT, /穷尽遍历/, "system prompt should cover exhaustive traversal tasks");
-assert.match(prompts.SYSTEM_PROMPT, /单次问答、一次页面读取和少量指定动作无需 goal/, "system prompt should prevent overusing goal tracking");
-assert.match(prompts.SYSTEM_PROMPT, /block，在 progress 写原因、next 写所需输入/, "system prompt should define blocker updates without status fields");
-assert.match(prompts.SYSTEM_PROMPT, /验证标准后 complete/, "system prompt should define completion verification");
-assert.match(prompts.RESTRICTED_GOAL_RULE, /不使用目标追踪，manage_goal 不可用/, "restricted prompt should say goal tracking is absent");
+assert.match(prompts.SYSTEM_PROMPT, /开始前用 manage_goal create/, "system prompt should tell agents when to create a goal");
+assert.match(prompts.SYSTEM_PROMPT, /明显需要跨多轮保持目标和完备性/, "system prompt should define goal tracking as a method for long, complete tasks");
+assert.match(prompts.SYSTEM_PROMPT, /明确规模目标（如 N 页、N 个、多个关键词\/站点\/文件）/, "system prompt should mention obvious scale signals");
+assert.match(prompts.SYSTEM_PROMPT, /穷尽遍历某类对象/, "system prompt should cover exhaustive traversal tasks");
+assert.match(prompts.SYSTEM_PROMPT, /不要为单步问答、一次性页面读取、少量明确操作创建 goal/, "system prompt should prevent overusing goal tracking");
+assert.match(prompts.SYSTEM_PROMPT, /用 manage_goal block 在 progress 写明原因/, "system prompt should define blocker updates without status fields");
+assert.match(prompts.SYSTEM_PROMPT, /验证完成标准，再 manage_goal complete/, "system prompt should define completion verification");
+assert.match(prompts.RESTRICTED_GOAL_RULE, /不使用目标追踪机制/, "restricted prompt should say goal tracking is absent");
 assert.match(runProfile, /disabledTools\.push\("manage_sessions", "manage_goal"\)/, "restricted run profiles should hide manage_goal");
 assert.match(runProfile, /goalTracking:\s*!!canManageSessions/, "run profile should expose goal tracking capability");
 // test-goal-tools exercises real schema visibility and runtime root-session

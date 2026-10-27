@@ -131,7 +131,7 @@ for (const [coreName, input] of Object.entries(forwardingCases)) {
   assert.equal(Object.prototype.hasOwnProperty.call(result, "trace"), false, `${coreName} should not duplicate its result into host trace`);
 }
 
-assert.match(prompts.SYSTEM_PROMPT, /MCP 探测、搜索、试调用或接入前，加载可用 MCP 指南/, "kernel should route MCP workflows through the on-demand skill");
+assert.match(prompts.SYSTEM_PROMPT, /先加载当前可用的 MCP 接入技能/, "kernel should route MCP workflows through the on-demand skill");
 assert.doesNotMatch(prompts.SYSTEM_PROMPT, /mcp_inspect_server|mcp_list_tools|mcp_search_tools|mcp_call_tool/, "kernel should not duplicate the MCP tool SOP");
 const agentSource = readFileSync(new URL("../../src/background/agent/agent.ts", import.meta.url), "utf8");
 assert.doesNotMatch(

@@ -283,10 +283,10 @@ await assert.rejects(
   "retry context should not preserve an unsupported format",
 );
 
-assert.match(prompts.SYSTEM_PROMPT, /拉取、解析、分块读取、转换或生成 PDF\/Word\/Excel\/CSV 时，先加载可用文档处理技能/, "kernel should route document workflows through the on-demand skill");
+assert.match(prompts.SYSTEM_PROMPT, /从当前可用技能中选择文档处理能力[\s\S]*先 load_skill/, "kernel should route document workflows through the on-demand skill");
 assert.doesNotMatch(prompts.SYSTEM_PROMPT, /document_fetch|document_parse|document_read_chunk|document_create|document_download|document_list_artifacts/, "kernel should not duplicate document tool SOPs");
-assert.match(prompts.SYSTEM_PROMPT, /原样下载远程文件用 download_url/);
-assert.match(prompts.SYSTEM_PROMPT, /少量生成文本用 save_file/);
+assert.match(prompts.SYSTEM_PROMPT, /原样下载远程文件使用 download_url/);
+assert.match(prompts.SYSTEM_PROMPT, /保存少量已生成文本使用 save_file/);
 
 for (const coreName of contract.DOCUMENT_TOOL_CORE_NAMES) {
   const pluginName = contract.getDocumentSkillToolName(coreName);
