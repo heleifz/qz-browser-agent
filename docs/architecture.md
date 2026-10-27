@@ -397,9 +397,10 @@ and recovery behavior.
 
 Tools can publish completed stages into a call-local partial-result slot. Only the existing hard
 deadline reads that slot: it aborts the call and returns the saved content with
-`incomplete: { reason: "timeout", pending }`. Page-read fallback includes a bounded sample of actual
-`pageState.readyState`, URL and title. A busy renderer retains the last observation and its timestamp;
-an unavailable observation reports `unknown`. Changed documents discard obsolete partial content.
+`incomplete: { reason: "timeout", pending }`. Only the hard-timeout fallback samples
+`pageState.readyState`, URL and title; successful reads perform no extra readiness probe. A busy
+renderer can retain an observation supplied by the partial result and its timestamp; an unavailable
+observation reports `unknown`. Changed documents discard obsolete partial content.
 Safety rejection, a closed tab and user cancellation remain errors. Tools without a partial retain
 `TOOL_TIMEOUT`.
 

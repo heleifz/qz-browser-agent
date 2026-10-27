@@ -437,9 +437,6 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             && ![args.target, args.selector, args.root].some(isUidElementTarget)) {
             const tabId = Number(args.tabId);
             reportPartial({ tabId }, policy.pending);
-            const pageState = await readPartialPageState(tabId);
-            if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before observation");
-            reportPartial({ tabId, pageState }, policy.pending);
           }
           if (pageAccess === "readOnly" && Number(args.tabId) > 0
             && await waitForInitialPage(Number(args.tabId), signal)) {

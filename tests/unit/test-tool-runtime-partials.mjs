@@ -73,6 +73,22 @@ const runtime = createToolRuntime({
   },
 });
 
+test('normal reads never wait for or start a page-state probe', async () => {
+  reset();
+  const sendMessage = chrome.tabs.sendMessage, executeScript = chrome.scripting.executeScript;
+  let probes = 0;
+  chrome.tabs.sendMessage = async (_id, message) => message.action === 'ping' ? { ok: true } : { text: 'Ready', elements: [] };
+  chrome.scripting.executeScript = () => { probes++; return never(); };
+  try {
+    for (const name of ['read_article', 'find_elements']) {
+      const result = await runtime.execute(name, { tabId: 1, limit: 100 }, undefined, context);
+      assert.equal(result.incomplete, undefined);
+      assert.equal(result.error, undefined);
+    }
+    assert.equal(probes, 0, 'page-state sampling belongs only to the hard-timeout fallback');
+  } finally { chrome.tabs.sendMessage = sendMessage; chrome.scripting.executeScript = executeScript; }
+});
+
 test('read_article and find_elements retain actual page state when synchronous extraction stalls', async () => {
   for (const name of ['read_article', 'find_elements']) {
     reset();
