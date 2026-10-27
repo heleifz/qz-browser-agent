@@ -16,7 +16,7 @@ interface ElementRuntimeHost {
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
-  initializeContentScript(tabId: number): Promise<void>;
+  initializeContentScript(tabId: number, context?: ToolContext): Promise<void>;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "./isolated-page-calls.js";
@@ -530,7 +530,7 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
       loaderId = String(frame.loaderId || "");
       if (binding.ref?.loaderId && loaderId && binding.ref.loaderId !== loaderId) throw staleElement(binding.uid || binding.target || "");
     }
-    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId);
+    const contextId = await contentContextId(id, nodeSend, cdpFrameId, sessionId, context);
     if (requestedFrameId) {
       if ((await frameLoaderId(nodeSend, cdpFrameId)) !== loaderId) throw staleElement(binding.uid || binding.target || "");
     } else {
@@ -584,7 +584,7 @@ async function frameLoaderId(send: CdpCommand, frameId: string) {
   return "";
 }
 
-async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "") {
+async function contentContextId(tabId: number, send: CdpCommand, frameId: string, sessionId = "", context: ToolContext = {}) {
   const select = async () => {
     const candidates = isolatedContexts(tabId, sessionId)?.get(frameId);
     if (!candidates?.size) return 0;
@@ -623,7 +623,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   if (id) return id;
   // The reported worlds have no bridge. Initialize Content once, then validate
   // again; no action has been dispatched on this path.
-  await initializeContentScript(tabId);
+  await initializeContentScript(tabId, context);
   await discover();
   id = await select();
   if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });

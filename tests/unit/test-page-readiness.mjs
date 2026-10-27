@@ -4,6 +4,7 @@ import { test } from "node:test";
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
 let contentReady = true;
+let ackDelay = 0;
 let completeInjection;
 const injections = [];
 globalThis.chrome = {
@@ -12,7 +13,10 @@ globalThis.chrome = {
   tabs: {
     async get() { polls++; if (closed) throw new Error("No tab with id: 1"); return { ...tab }; },
     async sendMessage(_tabId, message) {
-      if (message.action === "ping") return { ok: contentReady };
+      if (message.action === "ping") {
+        if (contentReady && ackDelay) await pause(ackDelay);
+        return { ok: contentReady };
+      }
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
@@ -115,6 +119,26 @@ test("ordinary Content initialization immediately targets the main frame and reu
     completeInjection?.();
     await pending;
   }
+});
+
+test("slow Content installation and acknowledgement can finish within the tool deadline", async () => {
+  closed = denied = false;
+  reads = 0; contentReady = false; completeInjection = undefined; ackDelay = 200;
+  load();
+  let settled = false;
+  const pending = runtime.execute("read_article", { tabId: 1, limit: 1200, timeout: 5 }, undefined, context)
+    .then(value => ({ value }), error => ({ error })).then(result => { settled = true; return result; });
+  try {
+    for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeInjection, "function");
+    await pause(1600);
+    assert.equal(settled, false, "installation has no independent 1500ms cutoff");
+    completeInjection();
+    const result = await pending;
+    assert.equal(result.error, undefined);
+    assert.equal(result.value.text, "Loaded article");
+    assert.equal(reads, 1, "a slow post-install ack still permits the read");
+  } finally { ackDelay = 0; completeInjection?.(); await pending; }
 });
 
 test("cancelled Content installation cannot dispatch a late page read", async () => {

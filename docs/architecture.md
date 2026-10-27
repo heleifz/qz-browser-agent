@@ -246,7 +246,8 @@ gate.
 
 Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
 their timeout and cancellation signal. They recheck access after waiting. Content reads inject
-immediately into the main frame with bounded ping and installation attempts; the installed bridge
+immediately into the main frame. The initial presence ping has a short probe budget; installation
+and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. Explicit UID bridge recovery initializes frames immediately and validates the selected
 document again. Dynamic page content can require an explicit element or network
 wait.

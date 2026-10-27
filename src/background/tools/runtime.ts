@@ -93,6 +93,18 @@ async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: numb
   } finally { clearTimeout(timer); }
 }
 
+async function withContentSignal<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return operation;
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason || new ToolExecutionError("OPERATION_ABORTED", "Content initialization was cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try { return await Promise.race([operation, aborted]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+}
+
 async function ensureContentScript(tabId: number, force = false, signal?: AbortSignal) {
   const started = Date.now();
   try {
@@ -105,14 +117,14 @@ async function ensureContentScript(tabId: number, force = false, signal?: AbortS
       }
     }
     signal?.throwIfAborted();
-    await contentDeadline(chrome.scripting.executeScript({
+    await withContentSignal(chrome.scripting.executeScript({
       target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
       world: "ISOLATED",
       files: ["content/article-extractor.js", "content/content-script.js"],
       injectImmediately: true,
-    }), tabId, 1500);
+    }), signal);
     signal?.throwIfAborted();
-    const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
+    const response = record(await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), signal));
     if (response?.ok !== true) {
       throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
     }
@@ -1381,9 +1393,9 @@ const elementRuntime = createElementRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   withDebugger,
   sendToContent,
-  initializeContentScript: async tabId => {
+  initializeContentScript: async (tabId, context) => {
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action: "initialize" });
-    await ensureContentScript(tabId, true);
+    await ensureContentScript(tabId, true, context?.signal);
   },
 });
 const { isUidElementTarget } = elementRuntime;
