@@ -24,6 +24,9 @@ for (const language of ['zh-CN', 'en']) test(`AX markers state facts and read op
   assert.doesNotMatch(toolT('getAxTreeScope'), /depth|limit|仍受|still/);
   assert.match(toolT('getAxTreeDepth'), /16[\s\S]*1–40/);
   assert.match(toolT('getAxTreeLimit'), /120[\s\S]*20–300/);
+  assert.match(toolT('getAxTreeLimit'), /优先保留|Reserved/);
+  assert.match(toolT('getAxTreeActionsLimit'), /优先保留|reserved/);
+  assert.match(toolT('getAxTreeActionsLimit'), /40[\s\S]*5–80/);
   assert.match(toolT('getAxTreeDescription'), /items[\s\S]*\(truncated, N more\)/);
   assert.doesNotMatch(getAgentPrompts(language).SYSTEM_PROMPT, /depth\/limit|Global ↑|Local folds|全局 ↑|局部折叠|\(truncated, N more\)/);
   for (const code of ['STALE_ELEMENT_UID', 'STALE_ELEMENT_UID_PAGE_CHANGED', 'ELEMENT_UID_SESSION_MISMATCH', 'ELEMENT_UID_TAB_MISMATCH']) {

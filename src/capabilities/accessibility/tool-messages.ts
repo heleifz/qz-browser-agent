@@ -24,12 +24,12 @@ const messages = defineMessages("accessibility-tools", {
     en: "Maximum tree depth: default 16, range 1–40.",
   },
   getAxTreeLimit: {
-    "zh-CN": "广度优先选取的可选节点上限，默认 120，范围 20–300；可操作节点及其祖先另计。",
-    en: "Maximum optional nodes selected breadth-first: default 120, range 20–300. Action nodes and their ancestors are counted separately.",
+    "zh-CN": "广度优先选取的可选节点上限，默认 120，范围 20–300；优先保留的可操作节点及其祖先另计。",
+    en: "Maximum optional nodes selected breadth-first: default 120, range 20–300. Reserved action nodes and their ancestors are counted separately.",
   },
   getAxTreeActionsLimit: {
-    "zh-CN": "可操作元素最多返回数量，默认 40，范围 5-80",
-    en: "Maximum number of actionable elements. Default: 40; range: 5–80.",
+    "zh-CN": "优先保留的可操作节点上限，默认 40，范围 5–80。",
+    en: "Maximum reserved action nodes: default 40, range 5–80.",
   },
   aboveViewport: {
     "zh-CN": "↑ 视口上方省略 {count} 个 AX 节点；用 scope:\"full\" 或树中 target 作 root 读取",
