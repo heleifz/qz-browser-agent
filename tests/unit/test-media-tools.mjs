@@ -8,8 +8,9 @@ let browserZoomError = null;
 globalThis.chrome = {
   scripting: {
     async executeScript({ func, args }) {
-      if (measurementUnavailable) throw new Error("Cannot inject into this page");
+      if (measurementUnavailable && typeof args?.[0] === 'boolean') throw new Error("Cannot measure this page");
       return [{ documentId: mainDocumentId, result: runInNewContext(`(${func})(...(args || []))`, { args: args || [],
+        document: { readyState: 'complete' },
         innerWidth: viewportState.clientWidth, innerHeight: viewportState.clientHeight,
         outerWidth: 412, outerHeight: 915, visualViewport: { scale: viewportState.scale },
       }) }];
@@ -260,7 +261,7 @@ const phasesStarted = [], phasesFinished = [];
 const cdpShot = await runtime.captureTabScreenshot(3, { format: "jpeg", quality: 70 }, {
   measurePhase(phase) { phasesStarted.push(phase); return () => phasesFinished.push(phase); },
 });
-assert.deepEqual(phasesStarted.sort(), ['measurement', 'normalization']);
+assert.deepEqual(phasesStarted.sort(), ['measurement', 'normalization', 'readiness']);
 assert.deepEqual(phasesFinished.sort(), phasesStarted);
 assert.equal(cdpShot.method, "cdp");
 assert.equal(cdpShot.dataUrl, "data:image/jpeg;base64,Y2Rw");

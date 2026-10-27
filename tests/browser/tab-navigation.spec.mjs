@@ -28,7 +28,13 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       res.end("<title>Busy renderer</title><script>fetch('/started'+location.pathname);const until=Date.now()+8000;while(Date.now()<until){}</script>");
       return;
     }
+    if (path.startsWith('/late-body-')) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`<!doctype html><html><head><script src="/head-block-${path.slice('/late-body-'.length)}"></script></head><body style="background:rgb(20,120,60)"><article><h1>Late complete article</h1><p>The parser reached the complete document.</p></article><button>Late action</button><img src="/late-image"></body></html>`);
+      return;
+    }
     const finish = () => {
+      if (path.startsWith('/head-block-')) { res.writeHead(200, { 'Content-Type': 'text/javascript' }); res.end('// parser released'); return; }
       res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
       res.end(`<title>Navigation fixture</title><article>Document ${escapeHtml(path)} generation ${counts.get(path)}</article>`);
     };
@@ -133,6 +139,42 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     release("/slow-child");
 
     if (!watchNetwork) {
+      for (const name of ['read_article', 'get_ax_tree', 'screenshot']) for (const outcome of ['ready', 'timeout']) {
+        const suffix = `${name}-${outcome}`, head = `/head-block-${suffix}`;
+        held.set(head, []); held.set('/late-image', []);
+        const opened = await call('open_tab', { url: `${origin}/late-body-${suffix}` });
+        expect(opened).not.toHaveProperty('error');
+        await expect.poll(() => held.get(head).length).toBeGreaterThan(0);
+        const before = await worker.evaluate(async tabId => (await chrome.scripting.executeScript({ target: { tabId }, injectImmediately: true,
+          func: () => ({ body: !!document.body, state: document.readyState }) }))[0].result, opened.id);
+        expect(before).toEqual({ body: false, state: 'loading' });
+        let done = false;
+        const pending = call(name, { tabId: opened.id, timeout: outcome === 'timeout' ? 1 : 5,
+          ...(name === 'read_article' ? { limit: 3000 } : name === 'screenshot' ? { format: 'png' } : {}) }).then(result => { done = true; return result; });
+        await new Promise(resolve => setTimeout(resolve, 150));
+        expect(done, `${name} must wait for the late body`).toBe(false);
+        if (outcome === 'ready') release(head);
+        const result = await pending;
+        if (outcome === 'timeout') {
+          expect(result.incomplete?.reason).toBe('timeout');
+          expect(result).not.toHaveProperty('_image'); expect(result).not.toHaveProperty('snapshot'); expect(result).not.toHaveProperty('text');
+          release(head);
+        } else {
+          expect(result).not.toHaveProperty('error'); expect(result).not.toHaveProperty('incomplete');
+          if (name === 'read_article') expect(result.text).toContain('complete document');
+          if (name === 'get_ax_tree') { expect(result.snapshot).toContain('Late action'); expect(result.returnedNodeCount).toBeGreaterThan(1); }
+          if (name === 'screenshot') {
+            const pixel = await worker.evaluate(async image => {
+              const bitmap = await createImageBitmap(await (await fetch(image)).blob());
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height), ctx = canvas.getContext('2d');
+              ctx.drawImage(bitmap, 0, 0); bitmap.close(); return Array.from(ctx.getImageData(5, 5, 1, 1).data);
+            }, result._image);
+            expect(pixel).toEqual([20, 120, 60, 255]);
+          }
+          expect((await worker.evaluate(id => chrome.tabs.get(id), opened.id)).status).toBe('loading');
+        }
+        release('/late-image'); await call('close_tab', { tabId: opened.id });
+      }
       const observations = [];
       for (let index = 0; index < 3; index++) observations.push((await call('open_tab', { url: `${origin}/observation-${index}` })).id);
       const observed = await worker.evaluate(async tabIds => {

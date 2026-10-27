@@ -43,6 +43,7 @@ export interface ElementAccess {
   ) => Promise<T>): Promise<T>;
   readMainDocumentId(tabId: number): Promise<string>;
 }
+export { waitForParsedDocument } from "../../background/tools/document-readiness.js";
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";
 export { createCdpTouch } from "../../background/tools/cdp-touch.js";

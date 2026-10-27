@@ -248,9 +248,13 @@ Read-only page tools also wait for an initial pending navigation to leave `about
 their timeout and cancellation signal. They recheck access after waiting. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
-is idempotent. Explicit UID bridge recovery initializes frames immediately and validates the selected
-document again. Dynamic page content can require an explicit element or network
-wait.
+is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait
+for that document event before extracting, so a heavy head cannot produce a successful empty body.
+Screenshots use an immediate main-frame document gate before capturing. Both gates share the tool's
+hard deadline and cancellation, exclude subresource/child-frame load, and do no late extraction or
+capture after cancellation. Readiness has its own phase counter. Explicit UID bridge recovery
+initializes frames immediately and validates the selected document again. Dynamic page content can
+require an explicit element or network wait.
 
 Element clicks and form submission capture a navigation baseline immediately before input. They
 allow 180 ms for navigation to start, then wait up to 10 seconds while new navigation evidence
@@ -408,7 +412,8 @@ and recovery behavior.
 Tools can publish completed stages into a call-local partial-result slot. Only the existing hard
 deadline reads that slot: it aborts the call and returns the saved content with
 `incomplete: { reason: "timeout", pending }`. Only the hard-timeout fallback samples
-`pageState.readyState`, URL and title; successful reads perform no extra readiness probe. A busy
+`pageState.readyState`, URL and title. Successful Content reads reuse the presence acknowledgement's
+readiness flag; their document-event gate is separate from timeout state sampling. A busy
 renderer can retain an observation supplied by the partial result and its timestamp; an unavailable
 observation reports `unknown`. Changed documents discard obsolete partial content.
 Safety rejection, a closed tab and user cancellation remain errors. Tools without a partial retain

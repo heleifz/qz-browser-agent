@@ -113,7 +113,7 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
     if (!force) {
       try {
         const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
-        if (response?.ok === true) return;
+        if (response?.ok === true) return response;
       } catch(_e) {
         // Inject the content script when it is missing.
       }
@@ -130,6 +130,7 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
     if (response?.ok !== true) {
       throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
     }
+    return response;
   } finally {
     finishPhase?.();
   }
@@ -153,7 +154,13 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
-  await ensureContentScript(tabId, false, context);
+  const presence = await ensureContentScript(tabId, false, context);
+  if (presence.documentReady === false) {
+    const finishReadiness = context.measurePhase?.("readiness");
+    try {
+      await withContentSignal(chrome.tabs.sendMessage(tabId, { action: "awaitDocument" }, { frameId: 0 }), context.signal);
+    } finally { finishReadiness?.(); }
+  }
   context.signal?.throwIfAborted();
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   context.signal?.throwIfAborted();

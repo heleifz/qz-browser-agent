@@ -4,6 +4,7 @@ import { test } from "node:test";
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
 let contentReady = true;
+let documentReady = true, completeDocument;
 let ackDelay = 0;
 let completeInjection;
 const injections = [];
@@ -15,8 +16,9 @@ globalThis.chrome = {
     async sendMessage(_tabId, message) {
       if (message.action === "ping") {
         if (contentReady && ackDelay) await pause(ackDelay);
-        return { ok: contentReady };
+        return { ok: contentReady, documentReady };
       }
+      if (message.action === 'awaitDocument') return new Promise(resolve => { completeDocument = () => { documentReady = true; resolve({ ok: true }); }; });
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
@@ -95,6 +97,29 @@ for (const name of ["read_article", "list_images"]) {
     });
   }
 }
+
+for (const outcome of ['ready', 'cancelled', 'timeout']) test(`a parsed-document gate protects late-body reads: ${outcome}`, async () => {
+  load(); closed = denied = false; reads = 0; contentReady = true; documentReady = false; completeDocument = undefined;
+  const controller = new AbortController();
+  let done = false;
+  const pending = runtime.execute('read_article', { tabId: 1, limit: 1200, timeout: 1 }, controller.signal, context)
+    .then(value => ({ value }), error => ({ error })).finally(() => { done = true; });
+  try {
+    for (let attempt = 0; !completeDocument && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeDocument, 'function');
+    assert.equal(done, false); assert.equal(reads, 0);
+    if (outcome === 'ready') completeDocument();
+    if (outcome === 'cancelled') controller.abort();
+    const result = await pending;
+    if (outcome === 'ready') { assert.equal(result.value.text, 'Loaded article'); assert.equal(reads, 1); }
+    else {
+      if (outcome === 'cancelled') assert.equal(result.error.code, 'OPERATION_ABORTED');
+      else assert.equal(result.value.incomplete.reason, 'timeout');
+      completeDocument(); await pause(20);
+      assert.equal(reads, 0, 'late DOM readiness never revives cancelled extraction');
+    }
+  } finally { controller.abort(); completeDocument?.(); documentReady = true; await pending; }
+});
 
 test("ordinary Content initialization immediately targets the main frame and reuses its bridge", async () => {
   closed = denied = false;

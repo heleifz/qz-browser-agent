@@ -1,7 +1,7 @@
 import type { ToolContext, ToolExecutionPhase } from "../../sdk/background.js";
 import { diagnosticTrace, formatTraceFields } from "../trace.js";
 
-const phases: readonly ToolExecutionPhase[] = ["injection", "extraction", "cdp", "measurement", "normalization", "postprocess"];
+const phases: readonly ToolExecutionPhase[] = ["injection", "extraction", "cdp", "measurement", "normalization", "postprocess", "readiness"];
 
 /** Sum phase work per call, including in-flight work at settlement, in one bounded trace row. */
 export function createToolPhaseTiming(name: string, context: ToolContext) {

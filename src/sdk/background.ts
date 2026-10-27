@@ -3,7 +3,7 @@ import type { SkillActivationContext } from "../shared/skills/skill-manifest.js"
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
 export type { ToolSchema, ToolArguments, ToolParameter } from "../shared/contracts/tool.js";
 
-export type ToolExecutionPhase = "injection" | "extraction" | "cdp" | "measurement" | "normalization" | "postprocess";
+export type ToolExecutionPhase = "injection" | "readiness" | "extraction" | "cdp" | "measurement" | "normalization" | "postprocess";
 
 export interface ToolContext extends SkillActivationContext {
   dynamicContext?: SkillActivationContext | null;
