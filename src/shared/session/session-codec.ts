@@ -366,6 +366,13 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
         entry.phase = "done";
         entry.statusText = "";
         entry.result = hasImage ? stripInlineImageFromToolResult(event.result) : event.result ?? null;
+        // A host timeout/Stop can replace the final result before the tool returns its
+        // display envelope. Retain the last accepted progress presentation, not its data.
+        if (event.isError && entry.result && typeof entry.result === "object" && !Array.isArray(entry.result) && !record(entry.result)._display) {
+          const previous = history[findToolTranscriptIndex(history, { toolCallId, runId: eventRunId(event) })];
+          const display = record(previous?.result)._display;
+          if (display && typeof display === "object") entry.result = { ...record(entry.result), _display: cloneJsonValue(display) };
+        }
         entry.isError = !!event.isError;
         entry.isRunning = false;
         entry.image = hasImage ? image : null;

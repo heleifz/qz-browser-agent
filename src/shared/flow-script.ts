@@ -4,6 +4,25 @@ export const FLOW_STEP_CHARS = 256 * 1024;
 export const FLOW_PROGRESS_CHARS = 2048;
 export const FLOW_MAX_PENDING = 64;
 
+/** Display-only protocol, persisted with the tool result and excluded from model context. */
+export const FLOW_DISPLAY_STEPS = 128;
+export interface FlowStepDisplay {
+  id: number;
+  tool: string;
+  target: string;
+  tabId?: number;
+  state: "queued" | "running" | "completed" | "error" | "aborted";
+  elapsedMs?: number;
+  code?: string;
+  outcome?: "navigated" | "loaded" | "already_complete" | "condition_met";
+}
+export interface FlowDisplay {
+  version: 1;
+  total: number;
+  omitted: number;
+  steps: FlowStepDisplay[];
+}
+
 export function flowValueSize(value: unknown): number {
   return JSON.stringify(value)?.length || 0;
 }

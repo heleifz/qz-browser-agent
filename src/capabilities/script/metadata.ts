@@ -4,7 +4,7 @@ import { defineToolMetadata as toolMeta } from "#sdk/shared/metadata";
 import type { CapabilityMetadata } from "#sdk/shared/metadata";
 
 const tools = () => Object.freeze({
-  run_flow: toolMeta(toolT("runFlowTitle"), ["script"], { profileFamily: "script", resultFamily: "script", familyId: "process", pageContext: true }),
+  run_flow: toolMeta(toolT("runFlowTitle"), ["script"], { profileFamily: "script.flow", resultFamily: "script", familyId: "process", pageContext: true }),
   run_script: toolMeta(t("executeScript"), ["script"], { profileFamily: "script", resultFamily: "script", familyId: "process", pageContext: true }),
 });
 

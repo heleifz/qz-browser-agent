@@ -5,6 +5,7 @@ import * as presentation from "#sdk/sidepanel/presentation";
 import { isToolResultErrorLike } from "#sdk/sidepanel/presentation";
 import { createScriptProfile } from "./profile.js";
 import { presentations } from "./presentation.js";
+import { createFlowRenderer } from "./flow-renderer.js";
 
 export default (host => {
   const script = createScriptProfile(host.generic);
@@ -29,5 +30,12 @@ export default (host => {
     ],
   };
   for (const definition of contribution.presentations) host.registerPresentation(definition);
-  for (const renderer of contribution.renderers) host.registerRenderer(renderer);
+  const flow = createFlowRenderer();
+  host.registerRenderer(flow);
+  for (const renderer of contribution.renderers) host.registerRenderer(renderer.id === "script" ? {
+    ...renderer,
+    // Older transcripts explicitly stored the shared script renderer/profile.
+    mount: (parent, view, context) => view.name === "run_flow" ? flow.mount(parent, view, context) : renderer.mount(parent, view, context),
+    renderStatic: (view, context) => view.name === "run_flow" ? flow.renderStatic(view, context) : renderer.renderStatic(view, context),
+  } : renderer);
 }) satisfies RendererExtension;

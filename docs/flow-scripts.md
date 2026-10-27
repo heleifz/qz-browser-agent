@@ -116,6 +116,27 @@ TTL expiry and missing registry entries still reject stale references. `uid:12` 
 Full UIDs continue through the existing Session/tab/document/loader/node checks; a new snapshot
 alone does not change those full-UID checks.
 
+## Flow result control
+
+The conversation shows `run_flow` as a compact flow control. Expand it to see nested tool calls in
+invocation order, with target, queued/running/settled state, duration and navigation/wait outcomes.
+Source, returned values and the final AX observation have independent native disclosures. Long
+lists and code scroll within the control. Updates retain disclosure state, row identity, keyboard
+focus and manual scroll position. Stop marks unfinished steps as stopped; delivered effects remain.
+
+The controller publishes a versioned `_display.flow` projection, retained with the transcript but
+excluded from model messages. It keeps at most 128 steps and reports omitted earlier entries;
+active calls remain eligible. Targets use bounded action/selector/URL/condition fields, excluding
+fill values, script source and file bodies. Progress updates coalesce within 200 ms; failures
+publish immediately. Final host errors retain the last accepted display projection.
+
+The script capability owns the parser, renderer, translations and token-based styles. Historical
+script-profile flows route to the same control; records without step data retain a readable result
+view. HTML export embeds the compiled skin and static renderer, including native disclosures and
+code presentation, with no extension or network dependency. Portable import retains display data.
+See [unit coverage](../tests/unit/test-flow-display.mjs) and
+[browser coverage](../tests/browser/flow-display.spec.mjs).
+
 ## Limits and lifecycle
 
 | Boundary | Limit / behavior |

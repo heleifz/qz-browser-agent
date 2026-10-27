@@ -345,6 +345,7 @@ registerTool({
 
 registerTool({
   name: "run_flow",
+  rendererId: "script.flow",
   requires: { tools: ["run_script", "get_ax_tree"] },
   get description() { return toolT("runFlowDescription"); },
   get parameters() { return {
@@ -566,8 +567,8 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
     getToolRuntimeDependencies(context).emit?.({
       type: "tool_execution_update", sessionId, runId,
       toolName: "run_flow", toolCallId: context.toolCallId, spanId: context.spanId,
-      phase: "running", statusText: JSON.stringify(progress.checkpoint || { tool: progress.tool, phase: progress.phase }),
-      partialResult: { checkpoints: progress.checkpoints },
+      phase: "running",
+      partialResult: { checkpoints: progress.checkpoints, _display: { flow: progress.flow } },
     });
   }) : null;
   if (flow) flow.execution.observe = async (tabId, observationSignal, options) => {
@@ -606,7 +607,8 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       securityGuardrails,
       fetchBridge,
     }, signal);
-    if (flow) response = { ...record(response), execution_world: "flow", finalObservation: await flow.execution.finish(observation), checkpoints: [...flow.execution.checkpoints] };
+    if (flow) response = { ...record(response), execution_world: "flow", finalObservation: await flow.execution.finish(observation),
+      checkpoints: [...flow.execution.checkpoints], _display: { flow: flow.execution.display() } };
     const envelope = record(response);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
@@ -634,6 +636,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       result: null,
       error: errorMessage(err) || "inner_runner_unavailable",
       code: errorCode(err) || "INNER_RUNNER_UNAVAILABLE",
+      ...(flow ? { _display: { flow: flow.execution.display() } } : {}),
       engine: "offscreen_inner",
       execution_world: "inner",
       details: {

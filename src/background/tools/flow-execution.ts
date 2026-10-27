@@ -1,7 +1,7 @@
 import type { ToolContext } from "../../sdk/background.js";
 import type { PageSnapshotOptions } from "../../sdk/background/browser.js";
 import type { ToolBehavior, ToolPageAccess } from "../../shared/contracts/tool.js";
-import { compactFlowValue, FLOW_MAX_PENDING, FLOW_PROGRESS_CHARS, FLOW_STEP_CHARS, flowValueSize } from "../../shared/flow-script.js";
+import { compactFlowValue, FLOW_MAX_PENDING, FLOW_PROGRESS_CHARS, FLOW_STEP_CHARS, FLOW_DISPLAY_STEPS, type FlowDisplay, type FlowStepDisplay, flowValueSize } from "../../shared/flow-script.js";
 import { ToolExecutionError } from "./arguments.js";
 
 type Fields = Record<string, unknown>;
@@ -34,6 +34,13 @@ export class FlowExecution {
   readonly checkpoints: unknown[] = [];
   private sequence = 0;
   private lastPublished = 0;
+  private stepSequence = 0;
+  private readonly steps: FlowStepDisplay[] = [];
+  private progressTimer?: ReturnType<typeof setTimeout>;
+  display(): FlowDisplay {
+    return { version: 1, total: this.stepSequence, omitted: this.stepSequence - this.steps.length,
+      steps: this.steps.map(step => ({ ...step })) };
+  }
   observe?: (tabId: number, signal: AbortSignal, options: PageSnapshotOptions) => Promise<unknown>;
   constructor(readonly context: ToolContext, parent?: AbortSignal, private readonly publish?: (progress: Fields) => void) {
     this.signal = parent ? AbortSignal.any([parent, this.controller.signal]) : this.controller.signal;
@@ -52,9 +59,18 @@ export class FlowExecution {
     return checkpoint;
   }
   private progress(value: Fields, explicit = false) {
-    if (this.signal.aborted || (!explicit && Date.now() - this.lastPublished < 200)) return;
+    if (this.signal.aborted || !this.publish) return;
+    if (!explicit && Date.now() - this.lastPublished < 200) {
+      this.progressTimer ??= setTimeout(() => {
+        this.progressTimer = undefined;
+        this.progress({}, true);
+      }, 200);
+      return;
+    }
+    clearTimeout(this.progressTimer);
+    this.progressTimer = undefined;
     this.lastPublished = Date.now();
-    this.publish?.({ ...value, checkpoints: [...this.checkpoints] });
+    this.publish?.({ ...value, checkpoints: [...this.checkpoints], flow: this.display() });
   }
   async call<T>(name: string, args: Fields, execute: () => Promise<T>, policy: FlowToolPolicy = { page: ["open_tab", "data_store"].includes(name) ? false : "owned" }, signal = this.signal): Promise<T> {
     if (signal.aborted) throw aborted();
@@ -69,11 +85,27 @@ export class FlowExecution {
     }
     const waiter = policy.behavior?.flowWait === true;
     const previous = page && !waiter ? tabTails.get(tabId) : undefined;
+    // Allocate identity in invocation order, including queued and concurrent waits.
+    const step: FlowStepDisplay | undefined = name.startsWith("__") ? undefined : {
+      id: ++this.stepSequence, tool: name.slice(0, 100), state: "queued",
+      target: [args.action, args.target ?? args.selector ?? args.url ?? args.table, args.text]
+        .filter(value => typeof value === "string").map(value => String(value).slice(0, 160)).join(" · ").slice(0, 320),
+      ...(page ? { tabId } : {}),
+    };
+    if (step) {
+      if (this.steps.length >= FLOW_DISPLAY_STEPS) {
+        const index = this.steps.findIndex(item => !["queued", "running"].includes(item.state));
+        this.steps.splice(Math.max(0, index), 1);
+      }
+      this.steps.push(step);
+      this.progress({});
+    }
     const operation = (async () => {
       if (previous) await waitForFlow(previous.catch(() => {}), signal);
       if (signal.aborted) throw aborted();
       if (page) { this.tabs.delete(tabId); this.tabs.add(tabId); }
-      this.progress({ tool: name, phase: "start", tabId: page ? tabId : undefined });
+      const startedAt = Date.now();
+      if (step) { step.state = "running"; this.progress({}); }
       try {
         const result = await execute();
         if (signal.aborted) throw aborted();
@@ -92,9 +124,22 @@ export class FlowExecution {
           const touched = page ? tabId : name === "open_tab" ? Number(output.id) : 0;
           if (touched > 0) { this.tabs.delete(touched); this.tabs.add(touched); }
         }
-        this.progress({ tool: name, phase: "complete", tabId: page ? tabId : undefined });
+        if (step) {
+          step.state = "completed";
+          step.elapsedMs = Date.now() - startedAt;
+          if (output.urlChanged === true) step.outcome = "navigated";
+          else if (name === "wait_for_navigation") step.outcome = output.status === "already_complete" ? "already_complete" : "loaded";
+          else if (waiter) step.outcome = "condition_met";
+          this.progress({});
+        }
         return result;
       } catch (error) {
+        if (step) {
+          step.state = signal.aborted ? "aborted" : "error";
+          step.elapsedMs = Date.now() - startedAt;
+          step.code = String(record(error).code || "FLOW_STEP_FAILED").slice(0, 100);
+          this.progress({}, true);
+        }
         if (signal.aborted) throw aborted();
         // Observe before releasing an action's tab lock. Waiters acquire a separate
         // observation turn so they cannot take a snapshot in the middle of an action.
@@ -160,6 +205,8 @@ export class FlowExecution {
     return { purpose: "next_turn_start", ...await this.snapshot(tabId, { scope, root }) };
   }
   dispose() {
+    clearTimeout(this.progressTimer);
+    this.progressTimer = undefined;
     this.controller.abort();
     for (const watch of this.watches.values()) watch.controller.abort();
     this.watches.clear();

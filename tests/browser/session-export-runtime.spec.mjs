@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { flowFixture } from "../fixtures/flow-display.mjs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { compileEmbeddedScript } from "../../scripts/build-extension.mjs";
@@ -17,7 +18,8 @@ test.beforeAll(async () => {
   const result = await build({
     stdin: { contents: `
       import { buildSessionExportHtml, buildStaticSessionChatHtml } from "./src/sidepanel/features/export/session-export-feature.ts";
-      import { createSessionExchangePayload } from "./src/shared/session/session-exchange.js";
+      import { createSessionExchangePayload, normalizeSessionExchangePayload, extractSessionExchangePayload } from "./src/shared/session/session-exchange.js";
+      window.readExport = html => normalizeSessionExchangePayload(extractSessionExchangePayload(html));
       window.createExport = (title, transcript, extraHtml) => {
         const session = { id: "exported", title };
         const payload = createSessionExchangePayload({ session, transcript });
@@ -42,6 +44,35 @@ async function createDocument(page, transcript = [], extra = "") {
   await page.evaluate(styles => { window.exportStyles = styles; }, compiledStyles);
   return page.evaluate(({ transcript, extra }) => window.createExport('</script><script>window.pwned=true</script>', transcript, extra), { transcript, extra });
 }
+
+test("flow control exports offline and round-trips its steps, source and final observation", async ({ page, context }) => {
+  const entry = flowFixture();
+  const html = await createDocument(page, [entry]);
+  const imported = await page.evaluate(html => window.readExport(html), html);
+  expect(imported.session.transcript[0].result._display).toEqual(entry.result._display);
+  expect(imported.session.transcript[0].args.code).toEqual(entry.args.code);
+  const roundTrip = await page.evaluate(transcript => window.createExport("Flow imported", transcript, ""), imported.session.transcript);
+  const offline = await context.newPage(), errors = [], requests = [];
+  offline.on("pageerror", error => errors.push(error.message));
+  offline.on("request", request => requests.push(request.url()));
+  await context.setOffline(true);
+  for (const content of [html, roundTrip]) {
+    await offline.setContent(content);
+    await offline.locator(".tool-summary").click();
+    await expect(offline.locator(".qz-flow-step")).toHaveCount(4);
+    await offline.locator('[data-flow-detail="observation"] > summary').click();
+    await expect(offline.locator('[data-flow-detail="observation"] pre')).toContainText("alias=@abc123.2");
+    await offline.locator('[data-flow-detail="source"] > summary').click();
+    await expect(offline.locator('[data-flow-detail="source"] pre')).toContainText("tools.wait_for_element");
+    await expect(offline.locator('script[src], link[rel="stylesheet"]')).toHaveCount(0);
+    for (const colorScheme of ["light", "dark"]) {
+      await offline.emulateMedia({ colorScheme });
+      expect(await offline.locator('.qz-flow').evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    }
+  }
+  expect(errors).toEqual([]); expect(requests).toEqual([]);
+  await offline.close();
+});
 
 const tableTool = (id, label) => ({ type: "tool", id, name: "example_table", toolCallId: id, rendererId: "table", args: {}, result: { rows: [{ label, value: 1 }] }, hasResult: true });
 
