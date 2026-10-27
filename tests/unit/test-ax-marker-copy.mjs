@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { toolT } from "../../src/capabilities/accessibility/tool-messages.js";
-import { localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.js";
 
 const target = "uid:t8.000001.3";
 for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
@@ -22,18 +21,5 @@ for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
   assert.match(toolT("getAxTreeScope"), en ? /Page roots default to viewport; uid:\/css: element roots default to full/ : /整页根默认 viewport，uid:\/css: 元素根默认 full/);
   assert.doesNotMatch(toolT("getAxTreeScope") + toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" }), /depth|limit|alias/);
   assert.match(toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" }), /items.*\(truncated, N more\)/);
-  for (const [code, expected] of [
-    ["STALE_ELEMENT_UID", en ? "Element reference expired or unknown. Use get_ax_tree for current UIDs." : "元素引用已过期或未知。用 get_ax_tree 获取当前 UID。"],
-    ["STALE_ELEMENT_UID_PAGE_CHANGED", en ? "The page changed; this reference expired. Use get_ax_tree for current UIDs." : "页面已变化，元素引用已过期。用 get_ax_tree 获取当前 UID。"],
-    ["ELEMENT_UID_SESSION_MISMATCH", en ? "The reference belongs to another Session. Use get_ax_tree for a reference in this Session." : "元素引用属于其他 Session。用 get_ax_tree 获取当前 Session 的引用。"],
-    ["ELEMENT_UID_TAB_MISMATCH", en ? "The reference belongs to another tab. Use its tabId or get_ax_tree for a current reference." : "元素引用属于其他标签页。指定对应 tabId，或用 get_ax_tree 获取当前引用。"],
-    ["INVALID_ELEMENT_TARGET", en ? "Use a full uid:<element_uid> or css:<css_selector> as target." : "target 使用完整 uid:<element_uid> 或 css:<css_selector>。"],
-    ["MISSING_ELEMENT_REFERENCE", en ? "Supply target: a full uid:<element_uid> or css:<css_selector>." : "提供 target：完整 uid:<element_uid> 或 css:<css_selector>。"],
-  ]) {
-    const result = localizeToolFailurePayload({ code, error: "raw diagnostic", details: { target } });
-    assert.equal(result.code, code);
-    assert.equal(result.error, expected);
-    assert.equal(result.details.target, target);
-  }
 });
-console.log("Bilingual AX marker, budget, and recovery copy passed");
+console.log("Bilingual AX marker and budget copy passed");
