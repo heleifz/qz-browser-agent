@@ -59,6 +59,8 @@ export interface ToolModelPolicy {
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
+  /** Pure observations eligible for bounded execution on distinct explicit tabs. */
+  parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Reject actions that may unload the page hosting a nested script. */
   mayUnloadPage?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Promote the tool's image into the enclosing script's latest observation. */

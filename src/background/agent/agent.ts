@@ -1,3 +1,4 @@
+import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { t as promptT } from "./prompts/messages.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, whenLanguageReady, withLanguage } from "../../shared/i18n/index.js";
@@ -81,6 +82,7 @@ interface AgentMessage extends ModelMessage {
 }
 interface AgentToolPort {
   snapshot?(language?: string): unknown;
+  getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
   getSchemas(context: Facts): object[];
   getIdentity(name: string, context: Facts): object;
   getModelPolicy?(name: string, context: Facts): Readonly<ToolModelPolicy> | undefined;
@@ -2654,18 +2656,21 @@ export class Agent {
   // so the model can inspect the screenshot.
 
   async _executeToolCalls(toolCalls: ModelToolCall[], signal: AbortSignal) {
-    const toolMessages = [];
-    const followUpMessages = [];
-
-    for (const tc of toolCalls) {
-      if (signal.aborted) break;
-
+    const toolMessages: ModelMessage[] = [];
+    const followUpMessages: ModelMessage[] = [];
+    const lookup = {
+      skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
+      toolRegistrySnapshot: this._toolRegistrySnapshot,
+      language: this._runLanguage,
+    };
+    await scheduleToolCalls(toolCalls, {
+      signal,
+      tab: tc => this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), parseToolCallArguments(getToolCallArgumentsValue(tc)), lookup) ?? null,
+      execute: async (tc, callSignal, parallel) => {
       const { id } = tc;
       const toolName = normalizeToolCallName(tc);
       let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
       args = this._normalizeToolCallArgs(toolName, args);
-      const toolRuntimeContext = await this._collectToolRuntimeContext();
-      args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
       const toolIdentity = this._toolRuntime.getIdentity(toolName, {
         skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
         toolRegistrySnapshot: this._toolRegistrySnapshot,
@@ -2684,7 +2689,11 @@ export class Agent {
       let result;
       let isError = false;
       try {
-        result = await this._toolRuntime.execute(toolName, args, signal, {
+        const toolRuntimeContext = await this._collectToolRuntimeContext();
+        args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
+        callSignal.throwIfAborted();
+        result = await this._toolRuntime.execute(toolName, args, callSignal, {
+          preserveWorkingTab: parallel,
           sessionId: this.sessionId,
           runId: this._currentRunId,
           spanId: this._makeToolSpanId(id),
@@ -2702,7 +2711,6 @@ export class Agent {
         if (result && typeof result === "object" && record(result).error) {
           isError = true;
         }
-        followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
       } catch (err) {
         const details = record(record(err).details);
         const code = record(err).code || "TOOL_EXECUTION_FAILED";
@@ -2729,8 +2737,11 @@ export class Agent {
         isError,
       });
 
-      // Build tool result messages.
-      // An _image produces a text tool result and a user message containing the image.
+      return { id, toolName, result, isError };
+      },
+      commit: async ({ id, toolName, result, isError }) => {
+      followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
+      // Commit effects and ledger entries in model call order, independently of UI completion order.
       const toolMsgs = this._buildToolResultMessages(id, result, isError, toolName);
       for (const msg of toolMsgs) {
         if (msg?.role === "tool") toolMessages.push(msg);
@@ -2738,6 +2749,7 @@ export class Agent {
       }
     }
 
+    });
     return [...toolMessages, ...followUpMessages];
   }
 

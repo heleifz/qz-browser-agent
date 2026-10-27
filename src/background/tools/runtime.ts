@@ -207,6 +207,7 @@ export function createToolRuntime({
     getSchemas: getToolSchemas,
     getIdentity: getToolIdentity,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
+    getParallelReadTab,
     consumeEffects: consumeToolEffects,
     resolveDefinition: resolveToolDefinition,
     execute(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
@@ -276,6 +277,18 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
       { skillSettings: getToolRuntimeDependencies(context).skillSettings },
     ),
   };
+}
+
+export function getParallelReadTab(name: string, args: unknown, options: ToolOptions = {}): number | null {
+  const definition = resolveToolDefinition(name, options);
+  if (definition?.source !== "core") return null;
+  const input = record(args);
+  const tab = input.tabId;
+  if (typeof tab !== "number" || !Number.isInteger(tab) || tab <= 0) return null;
+  // UIDs can select a different document/tab than the supplied default.
+  if ([input.target, input.selector, input.root].some(isUidElementTarget)) return null;
+  const policy = definition.behavior?.parallelRead;
+  return (typeof policy === "function" ? policy(input) : policy) === true ? tab : null;
 }
 
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
@@ -657,7 +670,7 @@ async function runToolWithTimeout(name: string, execute: RuntimeTool["execute"],
     throw new ToolExecutionError("OPERATION_ABORTED", `Operation aborted before running ${name}`, { name });
   }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return execute(args, parentSignal, context);
+    return execute(args, parentSignal, withToolRuntimeContext({ ...context, signal: parentSignal }, getToolRuntimeDependencies(context)));
   }
 
   const controller = new AbortController();
@@ -698,7 +711,7 @@ async function runToolWithTimeout(name: string, execute: RuntimeTool["execute"],
 
   try {
     return await Promise.race([
-      Promise.resolve(execute(args, controller.signal, context)),
+      Promise.resolve(execute(args, controller.signal, withToolRuntimeContext({ ...context, signal: controller.signal }, getToolRuntimeDependencies(context)))),
       timeoutPromise,
       abortPromise,
     ]);
@@ -834,7 +847,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (!sessionId || !sessions) return;
-  if (args?._readOnlyTabAccess === true) return;
+  if (args?._readOnlyTabAccess === true || context.preserveWorkingTab === true) return;
 
   if (role === "clear" && Number.isFinite(Number(args.tabId))) {
     await sessions.clearWorkingTab?.({

@@ -2193,3 +2193,22 @@ await assert.rejects(
   "a list_images uid dies after the same url loads a new document",
 );
 mainDocumentId = "";
+
+// Native fallback owns activation, capture and restoration as one window transaction.
+{
+  const originalCapture = chrome.tabs.captureVisibleTab;
+  let activeCaptures = 0, peakCaptures = 0;
+  cdpFailure = true;
+  chrome.tabs.captureVisibleTab = async () => {
+    peakCaptures = Math.max(peakCaptures, ++activeCaptures);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    activeCaptures--;
+    return "data:image/jpeg;base64,dmlzaWJsZQ==";
+  };
+  const start = updates.length;
+  try {
+    await Promise.all([runtime.captureTabScreenshot(5), runtime.captureTabScreenshot(6)]);
+    assert.equal(peakCaptures, 1);
+    assert.deepEqual(updates.slice(start).map(([id]) => id), [5, 9, 6, 9]);
+  } finally { chrome.tabs.captureVisibleTab = originalCapture; cdpFailure = false; }
+}

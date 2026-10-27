@@ -100,6 +100,7 @@ const touch = createCdpTouch({ ToolExecutionError });
 
 registerTool({
   name: "read_article",
+  behavior: { parallelRead: true },
   get description() { return toolT("readArticleDescription"); },
   get parameters() { return {
     type: "object",
@@ -151,6 +152,7 @@ registerTool({
 
 registerTool({
   name: "find_elements",
+  behavior: { parallelRead: true },
   get description() { return toolT("findElementsDescription"); },
   get parameters() { return {
     type: "object",

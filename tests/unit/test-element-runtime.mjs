@@ -240,6 +240,14 @@ ownedTabs = [955493525, 1855493525];
 assert.match(runtime.makeSnapshotId(955493525, context), /^t955493525\./, "a suffix shared through the last 8 digits keeps the whole shorter id");
 assert.match(runtime.makeSnapshotId(1855493525, context), /^t855493525\./);
 ownedTabs = [5];
+{
+const realNow = Date.now;
+try {
+  Date.now = () => 1700000000000;
+  const concurrentIds = await Promise.all(Array.from({ length: 100 }, () => Promise.resolve().then(() => runtime.makeSnapshotId(5, context))));
+  assert.equal(new Set(concurrentIds).size, 100, "same-millisecond snapshots remain unique");
+} finally { Date.now = realNow; }
+}
 const snapshotId = runtime.makeSnapshotId(5, context);
 assert.match(snapshotId, /^t5\.[0-9a-z]{6}$/);
 const imageUid = runtime.makeElementUid(snapshotId, 1, "i");

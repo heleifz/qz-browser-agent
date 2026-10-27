@@ -8,6 +8,10 @@ export interface ToolContext extends SkillActivationContext {
   skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
   sessionId?: string;
   runId?: string | null;
+  /** Call-scoped cancellation, including the tool deadline. */
+  signal?: AbortSignal;
+  /** Scheduler-owned observation batches retain the default working tab. */
+  preserveWorkingTab?: boolean;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */
   language?: string;
   toolRegistrySnapshot?: unknown;

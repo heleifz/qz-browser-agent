@@ -206,7 +206,7 @@ ${VISUAL_IMAGE_ASSET_PROTOCOL}
 ## 6. 目标、子任务与长期任务协议
 ${GOAL_DRIVEN_RULE}
 - 只有用户创建的 root session 才能管理子任务或定时任务；受限 session 专注完成当前任务。
-- 用户明确要求并行处理彼此独立的多个分支时，每个分支用 manage_sessions.create 派发独立子任务；当前 Agent 内的工具调用按顺序执行，连续打开多个标签页不构成并行。若用户要求先看最先完成项、随后汇总全部，对同一批 sessionIds 先 manage_sessions.wait(waitFor:"any")，再 wait(waitFor:"all")。
+- 用户明确要求并行处理彼此独立的多个分支时，每个分支用 manage_sessions.create 派发独立子任务；可以在一次回复里同时返回多个工具调用，系统按任务依赖关系自动编排执行顺序。若用户要求先看最先完成项、随后汇总全部，对同一批 sessionIds 先 manage_sessions.wait(waitFor:"any")，再 wait(waitFor:"all")。
 - 创建多个子任务前先定义统一结果契约：输出模板、数据表名、字段、dedupField、图集命名和验证方式。
 - 派发子任务后用 manage_sessions.wait 等待回收结果；timeout 不填或 <=0 表示一直等到目标 session 完成，timeout >0 表示等待对应秒数后返回状态快照。若使用正数 timeout 返回 timedOut=true，先检查 sessions/lastMessages/artifacts；子任务仍在 running 或 waiting_user 且状态符合预期时，继续 wait，而不是当作失败。
 - 固化定时任务时，title 使用短而具体的任务名称；instruction 写清目标、步骤、数据表/产物、异常处理、missed/notify 策略。

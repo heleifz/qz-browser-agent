@@ -163,13 +163,15 @@ function uniqueTabSuffix(tabId: number, peerTabIds: readonly number[]) {
   return self;
 }
 
+let lastSnapshotSerial = 0;
 function makeSnapshotId(tabId: number, context: ToolContext = {}) {
   const id = Number(tabId);
   const peers = taskTabIds(context);
   const ids = peers.includes(id) ? peers : [...peers, id];
   const suffix = uniqueTabSuffix(id, ids);
-  // Milliseconds modulo 36^6. The id comes from the clock, so a worker restart does not reuse a recent snapshot.
-  const serial = (Date.now() % (36 ** 6)).toString(36).padStart(6, "0");
+  // A monotonic clock serial keeps the established six-character format within a worker.
+  lastSnapshotSerial = Math.max(Date.now(), lastSnapshotSerial + 1);
+  const serial = (lastSnapshotSerial % (36 ** 6)).toString(36).padStart(6, "0");
   return `t${suffix}.${serial}`;
 }
 

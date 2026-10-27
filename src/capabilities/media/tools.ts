@@ -175,7 +175,7 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 
 registerTool({
   name: "screenshot",
-  behavior: { nestedObservation: true },
+  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -1965,6 +1965,22 @@ async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Sc
   }
 }
 
+const visibleCaptureQueues = new Map<number, Promise<void>>();
+
+async function withVisibleCapture<T>(windowId: number, fn: () => Promise<T>): Promise<T> {
+  const previous = visibleCaptureQueues.get(windowId) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.then(() => gate);
+  visibleCaptureQueues.set(windowId, tail);
+  await previous;
+  try { return await fn(); }
+  finally {
+    release();
+    if (visibleCaptureQueues.get(windowId) === tail) visibleCaptureQueues.delete(windowId);
+  }
+}
+
 async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg", quality = 70, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions = {}, context: ToolContext = {}) {
   if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("screenshotRequiresTabid"));
   let phaseStartedAt = Date.now();
@@ -2030,6 +2046,8 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
   }
 
   const targetTab = await chrome.tabs.get(tabId);
+  return withVisibleCapture(targetTab.windowId, async () => {
+  context.signal?.throwIfAborted();
   const previousTabs = await chrome.tabs.query({ windowId: targetTab.windowId, active: true });
   const previousActiveTabId = previousTabs[0]?.id;
 
@@ -2044,6 +2062,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("visible_tab.started", tabId, context, { format });
     const cssSize = await screenshotCssSize(tabId, true);
+    context.signal?.throwIfAborted();
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
       format,
       quality: format === "jpeg" ? quality : undefined,
@@ -2083,6 +2102,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       try { await chrome.tabs.update(previousActiveTabId, { active: true }); } catch(_e) {}
     }
   }
+  });
 }
 
 function recordScreenCaptureTrace(phase: string, tabId: number, context: ToolContext = {}, fields: Fields = {}) {
