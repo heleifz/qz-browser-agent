@@ -2726,29 +2726,25 @@ export class Agent {
         isError = true;
       }
 
-      this._emit({
-        type: "tool_execution_end",
-        spanId: this._makeToolSpanId(id),
-        toolCallId: id,
-        toolName,
-        ...toolIdentityEventFields(toolIdentity),
-        args,
-        result,
-        isError,
-      });
-
-      return { id, toolName, result, isError };
+      return { id, toolName, toolIdentity, args, result, isError };
       },
-      commit: async ({ id, toolName, result, isError }) => {
-      followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
-      // Commit effects and ledger entries in model call order, independently of UI completion order.
-      const toolMsgs = this._buildToolResultMessages(id, result, isError, toolName);
-      for (const msg of toolMsgs) {
-        if (msg?.role === "tool") toolMessages.push(msg);
-        else followUpMessages.push(msg);
-      }
-    }
-
+      commit: async ({ id, toolName, toolIdentity, args, result, isError }) => {
+        try {
+          followUpMessages.push(...await this._applyToolResultEffects(toolName, result, isError));
+        } catch (error) {
+          result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
+          isError = true;
+        }
+        this._emit({
+          type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
+          ...toolIdentityEventFields(toolIdentity), args, result, isError,
+        });
+        // Effects and ledger entries commit in model call order.
+        for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
+          if (msg?.role === "tool") toolMessages.push(msg);
+          else followUpMessages.push(msg);
+        }
+      },
     });
     return [...toolMessages, ...followUpMessages];
   }

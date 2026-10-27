@@ -3,6 +3,10 @@ import { createTranslator } from "../../shared/i18n/index.js";
 
 /** Shared model-facing documentation stays out of the panel's UI catalog. */
 const messages = defineMessages("tool-runtime", {
+  actionTimeout: {
+    "zh-CN": "操作可能已生效，最终状态尚待确认。系统保留本次尝试，请读取页面状态确认结果。",
+    en: "The action may have taken effect; its final state is unconfirmed. The system preserves this attempt. Read the page state to confirm the outcome.",
+  },
   timeout: {
     "zh-CN": "工具硬超时，单位秒。不填时系统按工具类型给出默认值。",
     en: "Hard timeout in seconds. If omitted, the runtime uses the default for this tool type.",

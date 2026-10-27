@@ -15,6 +15,10 @@ test('trusted registrations select only explicit cross-tab observations', () => 
     assert.equal(getParallelReadTab(name, { tabId: 12, selector: 'uid:t12.abcdef.1' }), null);
   }
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, actionable: true }), null);
+  assert.equal(getParallelReadTab('screenshot', { tabId: 12, destination: 'saved-images' }), null);
+  assert.equal(getParallelReadTab('spoofed', { tabId: 12 }, { toolRegistrySnapshot: {
+    get: () => ({ source: 'core', behavior: { parallelRead: true } }),
+  } }), null, 'a runtime object cannot impersonate a trusted build-time snapshot');
   assert.equal(getParallelReadTab('run_script', { tabId: 12, parallelRead: true }), null);
   assert.equal(getParallelReadTab('unknown', { tabId: 12, parallelRead: true }), null);
 });
@@ -50,6 +54,21 @@ test('Agent batches three reads, commits in call order, and treats same-tab and 
   assert.deepEqual(messages.filter(m => m.role === 'tool').map(m => m.tool_call_id), ['1','2','3','4','5','6','7','8']);
   assert.deepEqual(finished.slice(0, 3), ['3', '2', '1']);
   assert.equal(new Set(signals).size, 8);
+});
+
+test('an effect failure preserves sibling results and later barriers', async () => {
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, _args, _signal, context) { return { value: context.toolCallId }; },
+  } }));
+  agent._applyToolResultEffects = async (_name, result) => {
+    if (result.value === '2') throw new Error('effect failed');
+    return [];
+  };
+  const result = await agent._executeToolCalls([call('1','read_article',1),call('2','read_article',2),call('3','navigate',3)], new AbortController().signal);
+  assert.deepEqual(result.map(message => message.tool_call_id), ['1','2','3']);
+  assert.match(JSON.stringify(result[1]), /effect failed/);
+  assert.match(JSON.stringify(result[2]), /value/);
 });
 
 test('stop cancels each running call and revokes pending effects and later barriers', async () => {

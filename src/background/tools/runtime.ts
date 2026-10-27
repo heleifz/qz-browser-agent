@@ -1,4 +1,7 @@
 import { t } from "../../shared/i18n/backend.js";
+import { t as toolT } from "./messages.js";
+import { runToolWithTimeout, type ToolPartialResult } from "./tool-timeout.js";
+import { readPartialPageState } from "./partial-page-state.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { chat, getConfig, saveConfig, applyModelPreset, deleteModelPreset, listModels, listProviderSummaries } from "../llm/index.js";
 import { createCapabilityChat } from "../llm/capability-chat.js";
@@ -90,30 +93,29 @@ async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: numb
   } finally { clearTimeout(timer); }
 }
 
-async function ensureContentScript(tabId: number, force = false) {
+async function ensureContentScript(tabId: number, force = false, signal?: AbortSignal) {
   const started = Date.now();
   try {
-  if (!force) {
-    try {
-      const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
-      if (response?.ok === true) return;
-    } catch(_e) {
-      // Inject the content script when it is missing.
+    if (!force) {
+      try {
+        const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
+        if (response?.ok === true) return;
+      } catch(_e) {
+        // Inject the content script when it is missing.
+      }
     }
-  }
-  await contentDeadline(chrome.scripting.executeScript({
-    target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
-    world: "ISOLATED",
-    files: ["content/article-extractor.js", "content/content-script.js"],
-    injectImmediately: true,
-  }), tabId, 1500);
-  const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
-  if (response?.ok !== true) {
-    throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", {
-      tabId,
-      response,
-    });
-  }
+    signal?.throwIfAborted();
+    await contentDeadline(chrome.scripting.executeScript({
+      target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
+      world: "ISOLATED",
+      files: ["content/article-extractor.js", "content/content-script.js"],
+      injectImmediately: true,
+    }), tabId, 1500);
+    signal?.throwIfAborted();
+    const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
+    if (response?.ok !== true) {
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
+    }
   } finally {
     diagnosticTrace(`tool_phase${formatTraceFields({ phase: "injection", tab: tabId, elapsedMs: Date.now() - started })}`);
   }
@@ -132,15 +134,19 @@ async function waitForInitialPage(tabId: number, signal?: AbortSignal) {
   }
 }
 
-export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}): Promise<unknown> {
+export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}, context: ToolContext = {}): Promise<unknown> {
   if (!tabId) {
     throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
-  await ensureContentScript(tabId);
+  await ensureContentScript(tabId, false, context.signal);
+  context.signal?.throwIfAborted();
+  await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
+  context.signal?.throwIfAborted();
   const started = Date.now();
   try {
     const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
+    context.signal?.throwIfAborted();
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,
@@ -405,23 +411,44 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     try {
       result = await runToolWithTimeout(
         name,
-        async (args, signal, context) => {
+        async (signal, reportPartial) => {
+          const args = executionArgs;
+          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial }, getToolRuntimeDependencies(context));
           const pageAccess = resolvePageAccess(selectedDefinition, args);
           if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
-            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, context);
+            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
+          }
+          if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+          const policy = selectedDefinition.behavior?.timeoutResult;
+          if (policy?.kind === "action") reportPartial({ tabId: args.tabId, status: "unconfirmed" }, policy.pending);
+          if (policy?.kind === "read" && Number(args.tabId) > 0
+            && ![args.target, args.selector, args.root].some(isUidElementTarget)) {
+            const tabId = Number(args.tabId);
+            reportPartial({ tabId }, policy.pending);
+            const pageState = await readPartialPageState(tabId);
+            if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before observation");
+            reportPartial({ tabId, pageState }, policy.pending);
           }
           if (pageAccess === "readOnly" && Number(args.tabId) > 0
             && await waitForInitialPage(Number(args.tabId), signal)) {
             await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal);
             await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
           }
-          if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-          return selectedDefinition.execute(args, signal, context);
+          if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+          return selectedDefinition.execute(args, signal, callContext);
         },
-        executionArgs,
         signal,
-        context,
         timeoutMs,
+        async partial => {
+          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language); }
+          catch (error) {
+            if (selectedDefinition.workingTab === "created" && Number(partial.result.tabId) > 0) {
+              try { await chrome.tabs.remove(Number(partial.result.tabId)); } catch { /* Already closed. */ }
+            }
+            throw error;
+          }
+        },
+        context,
         definition.behavior?.timeoutTrace,
       );
     } catch (err) {
@@ -684,60 +711,35 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function runToolWithTimeout(name: string, execute: RuntimeTool["execute"], args: Fields, parentSignal: AbortSignal | undefined, context: ToolContext, timeoutMs: number, timeoutTrace?: string): Promise<unknown> {
-  if (parentSignal?.aborted) {
-    throw new ToolExecutionError("OPERATION_ABORTED", `Operation aborted before running ${name}`, { name });
+async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string) {
+  let result = partial.result;
+  let pending = partial.pending;
+  const kind = definition.behavior?.timeoutResult?.kind;
+  const tabId = Number(result.tabId || result.id);
+  if (tabId > 0) {
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    const before = record(result.pageState);
+    const pageState = await readPartialPageState(tabId, before);
+    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    const oldDocument = result.documentId || before.documentId;
+    const changed = (oldDocument && pageState.documentId && oldDocument !== pageState.documentId)
+      || (before.url && before.url !== pageState.url);
+    if (changed && kind === "read") {
+      result = { tabId };
+      pending = "current document content";
+    }
+    result = { ...result, pageState };
+    if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return execute(args, parentSignal, withToolRuntimeContext({ ...context, signal: parentSignal }, getToolRuntimeDependencies(context)));
+  if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
+  if (kind === "action") result = { ...result, status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
+    note: withLanguage(language, () => toolT("actionTimeout")) };
+  // Only a fully validated successful screenshot can grant coordinates.
+  if (result._image) {
+    const { screenshotId: _id, coordinateSpace: _coordinates, ...observation } = result;
+    result = { ...observation, actionable: false };
   }
-
-  const controller = new AbortController();
-  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-  let abortHandler: (() => void) | null = null;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutTimer = setTimeout(() => {
-      controller.abort();
-      if (timeoutTrace) {
-        diagnosticTrace(`${timeoutTrace}${formatTraceFields({
-          phase: "tool.timeout",
-          session: context?.sessionId || "",
-          run: context?.runId || "",
-          call: context?.toolCallId || context?.callId || "",
-          tab: Number(args?.tabId) || 0,
-          action: args?.action || "",
-          timeoutMs,
-        })}`);
-      }
-      if (shouldTraceDiagnosticTool(name)) {
-        toolTrace(`[tool] timeout name=${name} timeoutMs=${timeoutMs} source=${context?.source || "agent"} args=${summarizeToolArgsForTrace(args)}`);
-      }
-      reject(new ToolExecutionError(
-        "TOOL_TIMEOUT",
-        `${name} timed out after ${timeoutMs}ms`,
-        { name, timeout: timeoutMs },
-      ));
-    }, timeoutMs);
-  });
-  const abortPromise = new Promise((_, reject) => {
-    if (!parentSignal) return;
-    abortHandler = () => {
-      controller.abort();
-      reject(new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while running ${name}`, { name }));
-    };
-    parentSignal.addEventListener("abort", abortHandler, { once: true });
-  });
-
-  try {
-    return await Promise.race([
-      Promise.resolve(execute(args, controller.signal, withToolRuntimeContext({ ...context, signal: controller.signal }, getToolRuntimeDependencies(context)))),
-      timeoutPromise,
-      abortPromise,
-    ]);
-  } finally {
-    clearTimeout(timeoutTimer);
-    if (parentSignal && abortHandler) parentSignal.removeEventListener("abort", abortHandler);
-  }
+  return { ...result, incomplete: { reason: "timeout", pending } };
 }
 
 function resolveToolTimeoutMs(definition: RuntimeTool, args: Fields = {}) {

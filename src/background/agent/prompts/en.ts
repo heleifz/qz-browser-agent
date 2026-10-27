@@ -128,6 +128,8 @@ ${TOOL_CALLING_CONTRACT}
 3. If the target is unclear, use find_elements or inspect_element. You can pass sourceSelector from read_article as the selector to read_dom to inspect the corresponding DOM structure.
 4. Use read_dom only to verify raw HTML/DOM line excerpts, hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
 
+- Content already returned in a tool result with incomplete is ready to use; for more, call again for the pending part or increase timeout.
+
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector>.
 - element_uid comes from the uid or target returned by get_ax_tree/find_elements/list_images. css_selector must match through querySelector/querySelectorAll on the current page.

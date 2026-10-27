@@ -175,7 +175,8 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 
 registerTool({
   name: "screenshot",
-  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true },
+  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
+    timeoutResult: { kind: "read", pending: "screenshot capture" } },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -222,9 +223,11 @@ registerTool({
       shot = await captureTabScreenshot(tabId, { format, quality, maxWidth, maxHeight }, context);
     }
 
+    signal?.throwIfAborted();
     const effectiveTabId = ref?.tabId || tabId;
     let collection = null;
     if (String(destination || "").trim()) {
+      context.reportPartial?.({ tabId: effectiveTabId, _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
       collection = await saveScreenshotToImageCollection({
         shot,
         destination,
@@ -282,7 +285,8 @@ registerTool({
 
 registerTool({
   name: "act_on_screen",
-  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace" },
+  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
+    timeoutResult: { kind: "action", pending: "screen action outcome confirmation" } },
   requires: { images: true },
   effects: (_args, result) => record(result).urlChanged === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("actOnScreenDescription"); },
@@ -2006,7 +2010,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
   await ensurePageSurface(tabId, (method, params) => sendCdp(tabId, method, params || {}, context));
 
   try {
-    const cssSize = await screenshotCssSize(tabId);
+    const cssSizePending = screenshotCssSize(tabId);
     const params: Fields = {
       format,
       fromSurface: true,
@@ -2038,6 +2042,9 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
         width: normalized.width,
         height: normalized.height,
       });
+      context.signal?.throwIfAborted();
+      context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "cdp", actionable: false }, "screenshot dimensions and coordinate validation");
+      const cssSize = await cssSizePending;
       return {
         ...cssSize,
         dataUrl: normalized.dataUrl,
@@ -2056,7 +2063,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       code: errorCode(error) || "",
       error: record(error).message || String(error),
     });
-    if (error instanceof ImageLimitError || isCdpFallbackForbiddenError(error)) throw error;
+    if (context.signal?.aborted || error instanceof ImageLimitError || isCdpFallbackForbiddenError(error)) throw error;
     // captureVisibleTab fallback below handles pages/CDP states that cannot be captured.
   }
 
@@ -2076,7 +2083,7 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
     }
     phaseStartedAt = Date.now();
     recordScreenCaptureTrace("visible_tab.started", tabId, context, { format });
-    const cssSize = await screenshotCssSize(tabId, true);
+    const cssSizePending = screenshotCssSize(tabId, true);
     context.signal?.throwIfAborted();
     const dataUrl = await chrome.tabs.captureVisibleTab(targetTab.windowId, {
       format,
@@ -2101,6 +2108,9 @@ async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg"
       width: normalized.width,
       height: normalized.height,
     });
+    context.signal?.throwIfAborted();
+    context.reportPartial?.({ tabId, _image: normalized.dataUrl, method: "visible_tab", actionable: false }, "screenshot dimensions and coordinate validation");
+    const cssSize = await cssSizePending;
     return {
       ...cssSize,
       dataUrl: normalized.dataUrl,

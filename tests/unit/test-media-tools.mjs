@@ -26,6 +26,7 @@ globalThis.chrome = {
 
 const { registerMediaTools } = await import("../../src/capabilities/media/tools.js");
 const { createScreenActionRuntime } = await import("../../src/capabilities/media/screen-action-runtime.js");
+const { runToolWithTimeout } = await import("../../src/background/tools/tool-timeout.js");
 const { clearTraceLog, getTraceLog } = await import("../../src/background/trace.js");
 await clearTraceLog();
 
@@ -2209,6 +2210,15 @@ mainDocumentId = "";
     assert.ok(shot.dataUrl);
     assert.equal(shot.cssWidth, undefined);
     assert.equal(shot.cssHeight, undefined);
+    const start = updates.length;
+    const partial = await runToolWithTimeout('screenshot', (signal, reportPartial) => runtime.captureTabScreenshot(5, {}, { signal, reportPartial }),
+      undefined, 60, async stage => ({ ...stage.result, incomplete: { reason: 'timeout', pending: stage.pending } }), {});
+    assert.ok(partial._image);
+    assert.equal(partial.actionable, false);
+    assert.equal(partial.coordinateSpace, undefined);
+    assert.equal(partial.incomplete.reason, 'timeout');
+    await new Promise(resolve => setTimeout(resolve, 160));
+    assert.equal(updates.length, start, 'timeout cannot trigger a late native fallback');
   } finally { chrome.scripting.executeScript = originalExecute; }
 }
 

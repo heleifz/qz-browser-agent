@@ -12,6 +12,8 @@ export interface ToolContext extends SkillActivationContext {
   signal?: AbortSignal;
   /** Scheduler-owned observation batches retain the default working tab. */
   preserveWorkingTab?: boolean;
+  /** Publish an immutable completed stage for this call's existing hard deadline. */
+  reportPartial?(result: Record<string, unknown>, pending: string): void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */
   language?: string;
   toolRegistrySnapshot?: unknown;
@@ -86,7 +88,7 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   assertTabAllowed(tabId: number, details: Fields): Promise<unknown>;
   assertPageUrlAccessible(url: string): Promise<void>;
   assertUrlAllowed(url: string, guardrails: SecurityGuardrails, details: Fields): void;
-  sendToContent(tabId: number | undefined, action: string, args: Fields): Promise<unknown>;
+  sendToContent(tabId: number | undefined, action: string, args: Fields, context?: ToolContext): Promise<unknown>;
   getTabPageState(tabId: unknown): Promise<{ url: string; title: string }>;
   commitObservedPageNavigation(input: { pageBefore?: PageState; pageAfter?: PageState; prepared?: PreparedNavigation | null;
     guardrails?: Partial<SecurityGuardrails>; toolName?: string; tabId?: unknown }): object | null;

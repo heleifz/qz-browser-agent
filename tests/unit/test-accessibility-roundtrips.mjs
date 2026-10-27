@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { registerAccessibilityTools } from '../../src/capabilities/accessibility/tools.js';
 import { ToolExecutionError } from '../../src/background/tools/arguments.js';
+import { runToolWithTimeout } from '../../src/background/tools/tool-timeout.js';
 
 const node = (id, backend, role, name, parent, children = []) => ({ nodeId: id, backendDOMNodeId: backend, role: { value: role }, name: { value: name }, parentId: parent, childIds: children });
 const main = [node('root', 1, 'RootWebArea', 'Page', undefined, ['group', 'f1', 'f2']),
@@ -9,7 +10,11 @@ const actions = ['Alpha', 'Beta', 'Gamma'].map((text, index) => ({ selector: `#a
 let definition;
 let describes = 0, active = 0, peak = 0;
 const refs = [];
+let hangChild = false, releaseChild;
 const send = async (method, params = {}) => {
+  if (hangChild && method === 'Accessibility.getFullAXTree' && params.frameId === 'two') {
+    await new Promise(resolve => { releaseChild = resolve; });
+  }
   active++; peak = Math.max(peak, active);
   await new Promise(resolve => setTimeout(resolve, params.frameId === 'one' ? 4 : 1));
   active--;
@@ -52,3 +57,16 @@ assert.deepEqual(refs.map(ref => ref.frameId || 'main'), ['main','main','main','
 // The locked sequential baseline used nine descriptions; shared parents now cost two total.
 assert.equal(describes, 5);
 assert.ok(peak > 1 && peak <= 4, `bounded concurrent CDP work: ${peak}`);
+
+hangChild = true;
+const partial = await runToolWithTimeout('get_ax_tree', (signal, reportPartial) => definition.execute(
+  { tabId: 8, scope: 'full' }, signal, { sessionId: 'owner', signal, reportPartial }),
+undefined, 50, async stage => ({ ...stage.result, incomplete: { reason: 'timeout', pending: stage.pending } }), {});
+assert.match(partial.snapshot, /button "Alpha"/);
+assert.doesNotMatch(partial.snapshot, /two button/);
+assert.match(partial.snapshot, /one button/, 'completed child frames remain available too');
+assert.match(partial.incomplete.pending, /child frames: two/);
+const beforeRelease = refs.length;
+releaseChild();
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(refs.length, beforeRelease, 'an expired read cannot replace the returned partial UID bindings');

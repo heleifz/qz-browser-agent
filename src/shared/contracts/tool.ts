@@ -61,6 +61,8 @@ export interface ToolModelPolicy {
 export interface ToolBehavior {
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */
+  timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
   /** Reject actions that may unload the page hosting a nested script. */
   mayUnloadPage?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Promote the tool's image into the enclosing script's latest observation. */

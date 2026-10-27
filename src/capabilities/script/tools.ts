@@ -14,7 +14,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; de
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { scriptTimeout } from "#sdk/background/tools";
+import { scriptTimeout, diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -304,6 +304,7 @@ function makeRunScriptTargetRequiredError({ code, skill, script, context = {} }:
 
 registerTool({
   name: "run_skill_script",
+  behavior: { timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   requires: { tools: ["run_script"] },
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("runSkillScriptDescription"); },
@@ -343,6 +344,7 @@ registerTool({
 
 registerTool({
   name: "run_script",
+  behavior: { timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   workingTab: args => args.mutatesPage === true ? "claim" : "update",
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return getRunScriptDescription(); },
@@ -735,12 +737,17 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
 }
 
 async function ensureRunScriptToolBridge(tabId: number) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "ISOLATED",
-    files: ["content/run-script-tool-bridge.js"],
-    injectImmediately: true,
-  });
+  const started = Date.now();
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "ISOLATED",
+      files: ["content/run-script-tool-bridge.js"],
+      injectImmediately: true,
+    });
+  } finally {
+    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "injection", bridge: "run_script", tab: tabId, elapsedMs: Date.now() - started })}`);
+  }
 }
 
 function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {

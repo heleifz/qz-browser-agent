@@ -30,7 +30,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     if (held.has(path)) held.get(path).push({ res, finish });
     else if (path === "/stream") {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.write('<!doctype html><title>Streaming</title><article>New document</article><img src="/image">');
+      res.write('<!doctype html><title>Streaming</title><article>New document</article><button>Continue</button><img src="/image"><iframe src="/slow-child"></iframe>');
       res.end();
     } else finish();
   });
@@ -44,6 +44,8 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     const manifestPath = join(extension, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     expect(manifest.permissions).not.toContain("webNavigation");
+    // Exercise explicit reader installation before document_idle, independently of manifest injection.
+    manifest.content_scripts = manifest.content_scripts.filter(entry => !entry.js?.some(path => path.endsWith('/content-script.js')));
     await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
       import { createToolRuntime } from "./background/tools/runtime.js";
       globalThis.navigationTestRuntime = createToolRuntime;`);
@@ -111,10 +113,18 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
 
     // A held image must not prevent the navigation tool from returning at commit.
     held.set("/image", []);
+    held.set("/slow-child", []);
     expect(await call("navigate", { tabId, url: `${origin}/stream` })).not.toHaveProperty("error");
     expect((await worker.evaluate(tabId => chrome.tabs.get(tabId), tabId)).status).toBe("loading");
     await expect.poll(() => held.get("/image").length).toBeGreaterThan(0);
+    await expect.poll(() => held.get("/slow-child").length).toBeGreaterThan(0);
+    expect((await call("read_article", { tabId, limit: 1200, timeout: 1 })).text).toContain("New document");
+    const found = await call("find_elements", { tabId, pattern: "Continue", timeout: 1 });
+    expect(found).not.toHaveProperty("incomplete");
+    expect(JSON.stringify(found)).toContain("Continue");
+    expect((await worker.evaluate(tabId => chrome.tabs.get(tabId), tabId)).status).toBe("loading");
     release("/image");
+    release("/slow-child");
 
     expect((await call("navigate", { tabId, url: `${origin}/fail` })).code).toBe("NAVIGATION_FAILED");
     expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
@@ -129,23 +139,31 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       await expect.poll(() => held.get(path).length).toBeGreaterThan(0);
       if (outcome === "cancel") await worker.evaluate(() => navigationAbort.abort());
       if (outcome === "close") await worker.evaluate(tabId => chrome.tabs.remove(tabId), tabId);
-      expect((await pending).code).toBe({ cancel: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", close: "SESSION_TAB_UNAVAILABLE" }[outcome]);
+      const result = await pending;
+      if (outcome === "timeout") expect(result).toMatchObject({ tabId, loading: true, incomplete: { reason: "timeout" } });
+      else expect(result.code).toBe({ cancel: "OPERATION_ABORTED", close: "SESSION_TAB_UNAVAILABLE" }[outcome]);
       release(path);
       if (outcome !== "close") expect(await call("navigate", { tabId, url: `${origin}/recovered` })).not.toHaveProperty("error");
     }
     const before = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
     held.set("/open-timeout", []);
-    expect((await call("open_tab", { url: `${origin}/open-timeout`, watchNetwork, timeout: 1 })).code).toBe("TOOL_TIMEOUT");
-    await expect.poll(() => worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before);
+    const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, watchNetwork, timeout: 1 });
+    expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
     release("/open-timeout");
+    expect(await call("close_tab", { tabId: incompleteOpen.tabId })).not.toHaveProperty("error");
 
-    // A pending Chrome script cannot hold open_tab cleanup hostage after timeout/stop.
+    // Busy renderers retain a timeout handle; cancellation still cleans up the created tab.
     for (const outcome of ["timeout", "cancel"]) {
       const path = `/busy-open-${outcome}`;
       const pending = call("open_tab", { url: `${origin}${path}`, watchNetwork, timeout: outcome === "timeout" ? 1 : 5 });
       await expect.poll(() => counts.get(`/started${path}`) || 0).toBe(1);
       if (outcome === "cancel") await worker.evaluate(() => navigationAbort.abort());
-      expect((await pending).code).toBe(outcome === "timeout" ? "TOOL_TIMEOUT" : "OPERATION_ABORTED");
+      const result = await pending;
+      if (outcome === "timeout") {
+        expect(result).toMatchObject({ incomplete: { reason: "timeout" } });
+        expect(await call("close_tab", { tabId: result.tabId })).not.toHaveProperty("error");
+      } else expect(result.code).toBe("OPERATION_ABORTED");
       await expect.poll(() => worker.evaluate(async () => (await chrome.tabs.query({})).length), { timeout: 1500 }).toBe(before);
     }
 

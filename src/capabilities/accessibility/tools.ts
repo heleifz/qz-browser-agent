@@ -3,7 +3,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { directChildFrames, openChildFrame, type CdpCommand } from "#sdk/background/browser";
+import { directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
@@ -670,7 +670,8 @@ async function actionAnchors(send: CdpCommand, actions: Action[], ids: number[])
 async function describeNode(send: CdpCommand, params: Record<string, unknown>) {
   try {
     return record(await send("DOM.describeNode", params));
-  } catch {
+  } catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
     return {};
   }
 }
@@ -680,13 +681,26 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /** Graft one direct child document under its iframe. A frame that echoes the main tree, or has no owner, is left out. */
-async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: number): Promise<AxNode[]> {
+async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: number,
+  progress?: (nodes: AxNode[], pending: string[]) => void): Promise<AxNode[]> {
   try {
     const frames = await directChildFrames(send);
     if (!frames.length) return nodes;
     const combined = nodes.map(node => ({ ...node, childIds: node.childIds ? [...node.childIds] : undefined }));
     const mainIds = new Set(combined.map(node => node.nodeId).filter(Boolean));
-    const additions = await mapConcurrent(frames, async frame => {
+    type Addition = { ownerNode: AxNode; rootIds: string[]; prefixed: AxNode[] };
+    const completed: (Addition | null | undefined)[] = new Array(frames.length);
+    const merge = () => {
+      const merged: AxNode[] = nodes.map(node => ({ ...node, childIds: node.childIds ? [...node.childIds] : undefined }));
+      for (const addition of completed) {
+        if (!addition) continue;
+        const owner = merged.find(node => node.nodeId === addition.ownerNode.nodeId)!;
+        owner.childIds = [...(owner.childIds || []), ...addition.rootIds];
+        merged.push(...addition.prefixed);
+      }
+      return merged;
+    };
+    const read = async (frame: typeof frames[number]): Promise<Addition | null> => {
       try {
         const params = { ...(!frame.sessionId ? { frameId: frame.id } : {}), ...(depth == null ? {} : { depth }) };
         const result = await frame.send("Accessibility.getFullAXTree", params);
@@ -714,26 +728,26 @@ async function embedChildFrameNodes(send: CdpCommand, nodes: AxNode[], depth?: n
         });
         const rootIds = prefixed.filter(node => node.parentId === ownerNode.nodeId).map(node => node.nodeId);
         return { ownerNode, rootIds, prefixed };
-      } catch {
+      } catch (error) {
+        if (isCdpFallbackForbiddenError(error)) throw error;
         // One child frame must not drop the rest of the snapshot.
         return null;
       }
+    };
+    await mapConcurrent(frames, async (frame, index) => {
+      completed[index] = await read(frame);
+      progress?.(merge(), frames.filter((_, i) => completed[i] === undefined).map(frame => frame.id));
     });
-    for (const addition of additions) {
-      if (!addition) continue;
-      const { ownerNode, rootIds, prefixed } = addition;
-      ownerNode.childIds = [...(ownerNode.childIds || []), ...rootIds];
-      combined.push(...prefixed);
-    }
-    return combined;
-  } catch {
+    return merge();
+  } catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
     return nodes;
   }
 }
 
 registerTool({
   name: "get_ax_tree",
-  behavior: { parallelRead: true },
+  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "main document accessibility tree" } },
   model: { projectResult: projectAxResultForModel },
   get description() { return toolT("getAxTreeDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -793,11 +807,11 @@ registerTool({
     try {
       const result = rootRef?.uid
         ? await callElement(targetTabId, rootRef, "pageOverview", { limit: actionMax }, context)
-        : await sendToContent(targetTabId, "pageOverview", { limit: actionMax, selector: overviewSelector || "body" });
+        : await sendToContent(targetTabId, "pageOverview", { limit: actionMax, selector: overviewSelector || "body" }, context);
       if (!isPageOverview(result)) throw new ToolExecutionError("PAGE_OVERVIEW_FAILED", t("pageOverviewResponseIsInvalid"));
       overview = result;
     } catch (err) {
-      if (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID")) throw err;
+      if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
       overview = {
         error: err instanceof Error ? err.message : String(err),
         code: err instanceof ToolExecutionError ? err.code : "PAGE_OVERVIEW_FAILED",
@@ -807,6 +821,25 @@ registerTool({
     // UID pageUrl guards the owning tab, while a child overview reports its own URL.
     const pageUrl = String(rootRef?.ref?.frameId ? rootRef.ref.pageUrl || "" : overview?.url || "").trim();
     const documentId = await readMainDocumentId(targetTabId);
+    const resultFor = (ax: ReturnType<typeof buildAccessibilitySnapshot>, scope = snapshotScope) => ({
+      tabId: targetTabId,
+      title: overview?.title,
+      url: overview?.url,
+      viewport: overview?.viewport,
+      snapshotId,
+      root: resolvedRoot,
+      scope,
+      viewportOmitted: ax.viewportOmitted,
+      rootFound: ax.rootFound,
+      depth: axDepth,
+      nodeCount: ax.nodeCount,
+      semanticNodeCount: ax.semanticNodeCount,
+      returnedNodeCount: ax.returnedNodeCount,
+      outlineTruncated: ax.outlineTruncated,
+      snapshot: ax.snapshot,
+      canvases: compactAxCanvasesForModel(overview?.canvases || []),
+      pageOverviewError: overview?.error ? { error: overview.error, code: overview.code } : undefined,
+    });
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];
       const rootFrameId = String(rootRef?.ref?.frameId || "");
@@ -820,38 +853,28 @@ registerTool({
       const fetchDepth = snapshotScope === "viewport" ? undefined : rootBackendNodeId ? 40 : axDepth;
       const result = await send("Accessibility.getFullAXTree", fetchDepth == null ? {} : { depth: fetchDepth });
       const nodes = result && typeof result === "object" && "nodes" in result && Array.isArray(result.nodes) ? result.nodes as AxNode[] : [];
-      const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth);
+      _signal?.throwIfAborted();
+      const snapshotOptions = {
+        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
+        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
+      };
+      if (context.reportPartial && !rootFrameId) {
+        context.reportPartial({ ...resultFor(buildAccessibilitySnapshot(nodes, snapshotOptions), "full"), documentId },
+          snapshotScope === "viewport" ? "child frames and viewport filtering" : "child frames");
+      }
+      const withFrames = await embedChildFrameNodes(send, nodes, fetchDepth, context.reportPartial && !rootFrameId ? (available, pendingFrames) => {
+        if (_signal?.aborted) return;
+        const pending = [pendingFrames.length ? `child frames: ${pendingFrames.join(", ")}` : "",
+          snapshotScope === "viewport" ? "viewport filtering" : "snapshot finalization"].filter(Boolean).join("; ");
+        context.reportPartial?.({ ...resultFor(buildAccessibilitySnapshot(available, snapshotOptions), "full"), documentId }, pending);
+      } : undefined);
       const viewportHeight = rootFrameId ? 0 : Number(record(overview?.viewport).height);
       const viewportBands = snapshotScope === "viewport"
         ? await readViewportBands(send, withFrames, viewportHeight) : undefined;
-      return buildAccessibilitySnapshot(withFrames, {
-        tabId: targetTabId!, snapshotId, limit: snapshotLimit, sessionId, pageUrl, documentId,
-        rootBackendNodeId, rootFrameId, maxDepth: axDepth, loaderId: bound.loaderId, actions: anchors,
-        viewportBands, viewportHeight,
-      });
+      _signal?.throwIfAborted();
+      return buildAccessibilitySnapshot(withFrames, { ...snapshotOptions, viewportBands, viewportHeight });
     }, context);
-    return {
-      tabId: targetTabId,
-      title: overview?.title,
-      url: overview?.url,
-      viewport: overview?.viewport,
-      snapshotId,
-      root: resolvedRoot,
-      scope: snapshotScope,
-      viewportOmitted: ax.viewportOmitted,
-      rootFound: ax.rootFound,
-      depth: axDepth,
-      nodeCount: ax.nodeCount,
-      semanticNodeCount: ax.semanticNodeCount,
-      returnedNodeCount: ax.returnedNodeCount,
-      outlineTruncated: ax.outlineTruncated,
-      snapshot: ax.snapshot,
-      canvases: compactAxCanvasesForModel(overview?.canvases || []),
-      pageOverviewError: overview?.error ? {
-        error: overview.error,
-        code: overview.code,
-      } : undefined,
-    };
+    return resultFor(ax);
   },
 });
 

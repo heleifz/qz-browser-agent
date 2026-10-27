@@ -148,6 +148,7 @@ registerTool({
 
 registerTool({
   name: "open_tab",
+  behavior: { timeoutResult: { kind: "navigation", pending: "navigation commit" } },
   workingTab: "created",
   model: { pageContext: false, omitArguments: ["active"] },
   effects: () => [{ type: "context.siteChanged" }],
@@ -173,9 +174,12 @@ registerTool({
 
     const windowId = await resolveNewTabWindowId(context);
     let tab: chrome.tabs.Tab | null = null;
+    let claimed = false;
     try {
       tab = await chrome.tabs.create({ windowId, url: "about:blank", active: false });
       const tabId = await claimCreatedTab(tab, url, context, signal);
+      claimed = true;
+      context.reportPartial?.({ id: tabId, tabId, requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
       // Preserve the host's private runtime bindings when allowing setup on the new blank tab.
       if (mode === "mobile") await modes.change(tabId, mode, signal,
         Object.assign(Object.create(context), { allowPreNavigationBlank: true }), false);
@@ -192,7 +196,8 @@ registerTool({
       return { id: tabId, url,
         ...modes.describePage(tabId), ...(watchNetwork ? { networkWatch } : {}) };
     } catch (error) {
-      if (tab?.id != null) {
+      const timedOut = signal?.aborted && signal.reason?.code === "TOOL_TIMEOUT";
+      if (tab?.id != null && !(claimed && timedOut)) {
         try { await chrome.tabs.remove(tab.id); } catch (_error) {}
       }
       throw error;
@@ -290,7 +295,7 @@ registerTool({
 
 registerTool({
   name: "navigate",
-  behavior: { mayUnloadPage: true },
+  behavior: { mayUnloadPage: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
   model: { pageUrlArgument: "url" },
   effects: () => [{ type: "context.siteChanged" }],
   get description() { return toolT("navigateDescription"); },
@@ -311,6 +316,7 @@ registerTool({
     await assertPageUrlAccessible(url);
     assertUrlAllowedBySecurityGuardrails(url, await getSecurityGuardrails(), { tool: "navigate", source: "url" });
     if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "navigate" });
+    context.reportPartial?.({ tabId, requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
     await modes.preparePage(tabId, "navigate", signal, context);
     const networkWatch = watchNetwork
       ? await enablePreNavigationNetworkWatch(tabId, { resetNetwork, networkMaxRecords }, context)

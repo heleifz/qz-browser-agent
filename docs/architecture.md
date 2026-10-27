@@ -239,7 +239,8 @@ Fragment navigation can keep the same document.
 
 The old-document probe has a 100 ms deadline. If it expires or fails, the fallback also requires a
 `tabs.onUpdated` completion event. Polls run 50 ms apart; every awaited Chrome operation races
-against cancellation. Timeout and stop release the gate and permit new-tab cleanup. New tabs are
+against cancellation. Timeout releases the gate and retains a claimed tab with its current URL,
+loading state and `incomplete` marker. Stop and navigation failures retain new-tab cleanup. New tabs are
 claimed while blank, configured for mobile mode or network capture, then navigated through this
 gate.
 
@@ -385,13 +386,28 @@ safety, and rate limits before execution. It normalizes results and applies auth
 Argument validation precedes target resolution. A model response can contain multiple tool calls.
 The Agent batches up to three statically declared read-only observations on distinct explicit tab IDs.
 Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
-retain the working tab; effects and model results commit in call order, while tool cards can finish
-in completion order. Each call has its own cancellation signal derived from the run.
+retain the working tab; effects, final tool events and model results commit in call order. In-flight
+progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,
 and MCP; user grants apply to the named target. See [permissions](permissions.md) for browser access
 and recovery behavior.
+
+Tools can publish completed stages into a call-local partial-result slot. Only the existing hard
+deadline reads that slot: it aborts the call and returns the saved content with
+`incomplete: { reason: "timeout", pending }`. Page-read fallback includes a bounded sample of actual
+`pageState.readyState`, URL and title. A busy renderer retains the last observation and its timestamp;
+an unavailable observation reports `unknown`. Changed documents discard obsolete partial content.
+Safety rejection, a closed tab and user cancellation remain errors. Tools without a partial retain
+`TOOL_TIMEOUT`.
+
+AX snapshots cache ancestor descriptions within one read and fetch up to four child frames at once,
+merging in frame order. A timed-out AX read retains the main document and completed children. Until
+viewport geometry completes, this partial explicitly uses `scope:"full"` and lists filtering in
+`pending`; successful output retains the requested scope. Screenshot partials use normalized images
+without coordinates. Action timeouts report an unconfirmed outcome that may already have taken effect;
+the runtime preserves the attempt without replaying it.
 
 [Skill tools](../src/background/skills/skill-tool-runtime.ts) use the same execution and identity
 protocols. Embedded content and trusted `skillHosts` have separate contributions and validated

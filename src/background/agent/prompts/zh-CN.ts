@@ -130,6 +130,8 @@ ${TOOL_CALLING_CONTRACT}
 3. 目标不明确时用 find_elements 或 inspect_element。read_article 返回的 sourceSelector 可作为 read_dom 的 selector 读取对应 DOM 结构。
 4. read_dom 只用于验证原始 HTML/DOM 行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
 
+- 带 incomplete 的工具结果中，已返回的内容可直接使用；需要更多时针对 pending 的部分再次调用，或加大 timeout。
+
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>。
 - element_uid 来自 get_ax_tree/find_elements/list_images 返回的 uid 或 target；css_selector 必须能被当前页面 querySelector/querySelectorAll 匹配。

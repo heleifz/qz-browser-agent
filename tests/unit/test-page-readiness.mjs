@@ -65,11 +65,19 @@ for (const name of ["read_article", "list_images"]) {
           assert.equal(reads, 1);
           assert.ok(resolves >= 2, "access must be checked again after waiting");
         } else {
-          assert.ok(settled.error, `${outcome} must fail`);
-          if (outcome !== "closed") assert.equal(settled.error.code, {
-            cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
-            "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
-          }[outcome]);
+          if (outcome === "timeout" && name === "read_article") {
+            assert.equal(settled.error, undefined);
+            assert.equal(settled.value.incomplete.reason, "timeout");
+            assert.equal(settled.value.pageState.url, "about:blank");
+            assert.equal(settled.value.pageState.pendingUrl, targetUrl);
+            assert.equal(settled.value.pageState.readyState, "unknown", "tab loading does not imply document readiness");
+          } else {
+            assert.ok(settled.error, `${outcome} must fail`);
+            if (outcome !== "closed") assert.equal(settled.error.code, {
+              cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
+              "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
+            }[outcome]);
+          }
           closed = false;
           load();
           await pause(70);
@@ -107,4 +115,22 @@ test("ordinary Content initialization immediately targets the main frame and reu
     completeInjection?.();
     await pending;
   }
+});
+
+test("cancelled Content installation cannot dispatch a late page read", async () => {
+  closed = denied = false;
+  reads = 0; contentReady = false; completeInjection = undefined;
+  load();
+  const controller = new AbortController();
+  const pending = runtime.execute("read_article", { tabId: 1, limit: 1200 }, controller.signal, context);
+  const rejected = assert.rejects(pending, { code: "OPERATION_ABORTED" });
+  try {
+    for (let attempt = 0; !completeInjection && attempt < 100; attempt++) await pause(2);
+    assert.equal(typeof completeInjection, "function");
+    controller.abort();
+    await rejected;
+    completeInjection();
+    await pause(20);
+    assert.equal(reads, 0);
+  } finally { controller.abort(); completeInjection?.(); await rejected; }
 });

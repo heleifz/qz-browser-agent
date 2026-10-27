@@ -82,6 +82,17 @@ static named re-exports. The build imports each declared module directly into it
 | `artifacts`, `codecs` | Artifact adapter map keyed by tool name; document codec array | Shared |
 | `translations`, `locales` | Messages and language packs | Shared / build |
 
+Build-time tools can declare `behavior.parallelRead` for pure observations. The Agent applies it only
+to distinct explicit tab IDs, with a concurrency limit of three; other calls form ordered barriers.
+Keep this declaration off operations that write resources or modify a page. Installed Skill manifests
+and result payloads cannot grant scheduling authority.
+
+A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies
+that result into a call-local slot, reads it only at the existing hard timeout, and revokes late
+updates. Use concise `pending` text naming the unfinished work. `behavior.timeoutResult` selects the
+host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
+apply; an image partial is an observation without coordinates.
+
 Tools pass serializable results to renderers. Package imports are limited to their own files, pinned
 npm dependencies, and `#sdk/*`. Type checking applies each runtime's constraints to its dependency
 graph and requires every TypeScript file to be reachable from a contribution declaration.
