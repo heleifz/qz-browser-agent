@@ -84,13 +84,12 @@ function assertSelectorFieldsAcceptTargetSyntax() {
 
 async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /target = "uid:" <element_uid> \| "css:" <css_selector>/, "system prompt should teach the target grammar");
-  assert.match(prompt, /target 不是自然语言/, "system prompt should warn against natural-language targets");
-  assert.match(prompt, /\[css: <css_selector>\] 是用户通过鼠标点选页面元素生成的显式页面区域引用/, "system prompt should recognize user-picked page regions");
-  assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
-  assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
-  assert.match(prompt, /selector 时表示 CSS 范围(?:\/|或)过滤条件，可传原始 CSS，也可传 target 格式/, "system prompt should define selector compatibility");
-  assert.match(prompt, /点击后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click results");
-  assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
+  assert.match(prompt, /UID 使用 get_ax_tree\/find_elements\/list_images 的返回值；CSS 应能被当前页 querySelector\/querySelectorAll 匹配/, "system prompt should define valid references positively");
+  assert.match(prompt, /\[css: <css_selector>\] 表示鼠标选中的页面区域/, "system prompt should recognize user-picked page regions");
+  assert.match(prompt, /先用 inspect_element 或 get_ax_tree 观察该元素及周边，再回答或操作.*read_article\/read_dom/, "system prompt should focus on the selected region before answering or acting");
+  assert.match(prompt, /selector 字段接受原始 CSS 或 css:\.\.\. \/ uid:\.\.\. target，作为范围或过滤条件/, "system prompt should define selector compatibility");
+  assert.match(prompt, /点击后用 pageAfter\/urlChanged\/titleChanged 或页面读取验证结果/, "system prompt should require page evidence to confirm click results");
+  assert.match(prompt, /already_complete 表示调用时已加载；上一动作的结果需另行验证/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
   registerAccessibilityTools({ registerTool: registry.defineTool, elementTargetGrammar: "target" });
@@ -126,7 +125,7 @@ async function assertPromptAndUiUseTarget() {
     "Agent applies the registered projection and strips chat-only display and diagnostic fields");
   assert.deepEqual(result, original, "Agent sanitization must not modify the UI result");
   assert.match(browserOperationsRenderer, /data\.target \|\| args\.target/, "tool renderer should display target first");
-  assert.match(localization, /缺少元素引用：请提供 target/, "localized errors should tell users to provide target");
+  assert.match(localization, /提供 target：完整 uid:<element_uid> 或 css:<css_selector>。/, "localized errors should tell users to provide target");
 }
 
 function assertElementActionClickContract() {
@@ -153,21 +152,21 @@ function assertElementActionRoutingContract() {
 
 function assertAxTreeCompactContract() {
   const block = toolBlock("get_ax_tree");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /target（形如 uid:\.\.\.）原样传给 act_on_element/, "get_ax_tree should say that uid targets go to act_on_element unchanged");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /其下还有 N 行未展开/, "get_ax_tree should explain that N is unexpanded lines");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /target = "uid:" <element_uid> \| "css:" <css_selector>/, "get_ax_tree should preserve the target grammar");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\) 为省略节点数/, "get_ax_tree should explain omitted node counts");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /canvases 返回 name\/rect\/inViewport\/bitmapSize/, "get_ax_tree should advertise large Canvas discovery");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /rect 使用 CSS 像素；视觉操作使用 screenshot\(\{actionable:true\}\) 的坐标/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
   assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
+  assert.match(resolveToolDefinition("get_ax_tree").parameters.properties.root.description, /默认 root/, "root parameter documents the page root");
+  assert.match(resolveToolDefinition("get_ax_tree").parameters.properties.limit.description, /广度优先.*优先保留的可操作节点及其祖先另计/, "limit parameter owns the BFS budget definition");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
-  assert.match(block, /const fetchDepth = rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
+  assert.match(block, /const fetchDepth = snapshotScope === "viewport" \? (?:undefined|void 0) : rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
   assert.match(block, /maxDepth: axDepth/, "get_ax_tree subtree output should still respect the requested depth");
   assert.match(block, /selector: overviewSelector \|\| "body"/, "get_ax_tree actions/headings should be scoped to the requested root");
   assert.doesNotMatch(block, /actions: compactAxActionsForModel\(actions\)/, "get_ax_tree should not return a separate actions list");
@@ -217,7 +216,7 @@ function assertOrderedSubstrings(value, expected, message) {
 
 function assertFileInputHandoffContract() {
   const actBlock = toolBlock("act_on_element");
-  assert.match(prompt, /任务需要上传本地文件时.*调用 wait_for_user/, "file handoff should be conditioned on the current task requiring a local file");
+  assert.match(prompt, /本地上传用 wait_for_user 让用户在页面选文件/, "file handoff should be conditioned on the current task requiring a local file");
   assert.match(prompt, /检查 selectedFileCount 或页面反馈/, "the model should verify file selection after the user resumes");
   assert.match(resolveToolDefinition("wait_for_user").description, /本地文件选择等必须亲自操作的步骤/, "wait_for_user should cover user-owned local file selection");
   assert.match(resolveToolDefinition("act_on_element").description, /本地文件选择通过 wait_for_user 交给用户完成/, "act_on_element should route local file selection to wait_for_user");
@@ -234,7 +233,7 @@ function assertFindElementsFilterContract() {
   const block = toolBlock("find_elements");
   assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when selector/tags/roles can list candidates");
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
-  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 selector\/tags\/roles\/types 命中的候选/, "find_elements should explain selector-first candidate discovery");
+  assert.match(resolveToolDefinition("find_elements").description, /省略 pattern 时列出 selector\/tags\/roles\/types 命中项/, "find_elements should explain selector-first candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
   assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");
@@ -272,8 +271,8 @@ function assertScreenshotDestinationContract() {
   assert.match(collectBlock, /dedupField: \{ type: "string"/, "collect_images should expose dedupField for image collection upserts");
   assert.doesNotMatch(collectBlock, /keyField/, "collect_images should not expose the old keyField name");
   assert.doesNotMatch(tools, /captureImageCollectionScreenshot/, "collect_images should not keep screenshot-specific runtime");
-  assert.match(prompt, /完成首次页面结构观察后，screenshot 可用于视觉确认并为 act_on_screen 提供坐标依据，传 destination 时会额外把截图保存为图集资产/, "system prompt should teach screenshot destination after structural observation");
-  assert.match(prompt, /直接调用 screenshot 并传 destination=图集表名/, "system prompt should route screenshot saving to screenshot");
+  assert.match(VISUAL_SCREEN_ACTION_RULE, /首先观察目标页面[\s\S]*screenshot\(\{actionable:true\}\)[\s\S]*act_on_screen/, "system prompt should put structural observation before visual coordinates");
+  assert.match(prompt, /screenshot\(\{destination: 图集表名\}\) 保存区域\/视口截图/, "system prompt should route screenshot saving to screenshot");
 }
 
 function assertScreenActionContract() {
@@ -324,10 +323,10 @@ function assertScreenActionContract() {
   assert.match(screenActionRuntime, /viewportChange: describeViewportChange\(current, actionStateAfter\)/, "screen actions should report observed viewport movement on every result path");
   assert.match(actionBlock, /"long_press"[^\n]*requireToolFields\("act_on_screen", args, \["x",\s*"y"\]/, "long press should require coordinates before reaching the runtime");
   assert.match(prompt, /没有可靠 target.*screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
-  assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
+  assert.match(prompt, /视觉动作先验证一个代表性动作，再用 run_script 串行批量执行/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");
-  assert.match(prompt, /run_script 返回按执行顺序最后产生的观察图/, "the prompt should explain ordered last-observation feedback");
+  assert.match(prompt, /run_script 返回最后一张观察图/, "the prompt should explain ordered last-observation feedback");
 }
 
 function assertImageCandidateTargetContract() {

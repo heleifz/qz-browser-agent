@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("page-tools", {
   readArticleDescription: {
-    "zh-CN": "读取目标页面经过整理的正文 Markdown。正文抽取会组合规则清噪、Readability 对照与失败恢复，并保留标题、列表、链接、代码和表格结构；适合文章、文档、搜索结果摘要、长文本页面。每次只返回 offset/limit 指定的正文片段，并返回 totalChars/hasMore/nextOffset/sourceSelector/linkCount；outline 是可定位目录，条目带 offset/endOffset/charCount，需要读取某章节时用对应 offset 和 limit 继续调用 read_article；需要 DOM 结构证据时，用 sourceSelector 继续调用 read_dom。limit 必填，建议 4000-8000，最大 20000。读正文优先使用本工具。",
-    en: "Read cleaned main content from the target page as Markdown. Extraction combines rule-based cleanup, Readability comparison, and failure recovery while preserving headings, lists, links, code, and tables. Suitable for articles, documents, search-result summaries, and long text pages. Each call returns only the segment specified by offset/limit, along with totalChars/hasMore/nextOffset/sourceSelector/linkCount. outline is a navigable table of contents whose entries include offset/endOffset/charCount; use the corresponding offset and limit in another read_article call to read a section. For DOM evidence, pass sourceSelector to read_dom. limit is required; 4000–8000 is recommended, with a maximum of 20000. Prefer this tool for reading text.",
+    "zh-CN": "读取整理后的正文 Markdown，保留标题、列表、链接、代码和表格，适用于文章、文档、搜索摘要和长文本。返回 offset/limit 指定片段及 totalChars/hasMore/nextOffset/sourceSelector/linkCount。outline 条目含 offset/endOffset/charCount，可据此设置 offset/limit 读取章节；sourceSelector 可交给 read_dom 验证 DOM。",
+    en: "Read cleaned main content as Markdown, preserving headings, lists, links, code, and tables for articles, documents, search summaries, and long text. Returns the offset/limit segment and totalChars/hasMore/nextOffset/sourceSelector/linkCount. outline entries provide offset/endOffset/charCount for section reads via offset/limit; pass sourceSelector to read_dom for DOM evidence.",
   },
   readArticleTabId: {
     "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页。",
@@ -44,8 +44,8 @@ const messages = defineMessages("page-tools", {
     en: "Scope to read. Default: body. Accepts a raw CSS selector or a css:... / uid:... target.",
   },
   findElementsDescription: {
-    "zh-CN": "按范围、语义和可选文本正则查找页面元素候选，并优先排序可操作、可见、匹配更明确的元素。默认用于定位按钮、链接、输入框、列表项，也可查找普通文本/容器；pattern 是可选过滤条件：不传 pattern 时会列出 selector/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 stable selector、role/name/text/rect/actionable/inViewport/lineRange 等摘要。需要原始 DOM 时用 read_dom 读取对应行号。",
-    en: "Find candidate page elements by scope, semantics, and an optional text regular expression. Prioritizes actionable, visible, and more specific matches. Commonly used for buttons, links, inputs, and list items; also supports plain text and containers. pattern is an optional filter: without it, lists candidates matching selector/tags/roles/types. Returns a target usable directly with inspect_element/act_on_element, plus summaries including a stable selector, role/name/text/rect/actionable/inViewport/lineRange. For raw DOM, pass the corresponding line numbers to read_dom.",
+    "zh-CN": "按范围、语义和可选正则查找元素，包括按钮、链接、输入框、列表项、文本和容器；优先返回可操作、可见、匹配明确的候选。省略 pattern 时列出 selector/tags/roles/types 命中项。返回供 inspect_element/act_on_element 使用的 target、stable selector 和 role/name/text/rect/actionable/inViewport/lineRange 摘要；用 read_dom 读取对应行号的原始 DOM。",
+    en: "Find elements by scope, semantics, and optional regex, including buttons, links, inputs, list items, text, and containers. Prioritize actionable, visible, specific matches. Without pattern, list selector/tags/roles/types matches. Returns target for inspect_element/act_on_element, stable selector, and role/name/text/rect/actionable/inViewport/lineRange summaries; read_dom reads the corresponding raw DOM lines.",
   },
   findElementsPattern: {
     "zh-CN": "可选 JavaScript RegExp pattern，用于匹配文本、aria、placeholder、class、id、href 等；不传则列出范围内候选元素。",
@@ -80,8 +80,8 @@ const messages = defineMessages("page-tools", {
     en: "Whether to include hidden elements. Default: false.",
   },
   inspectElementDescription: {
-    "zh-CN": "检查一个元素的完整可操作画像：target 匹配数、文本/aria/attrs、可见性、disabled、rect、clickablePoint、表单和附近文本。先从 get_ax_tree/find_elements 获取 target，再传入本工具。{targetGrammar}。",
-    en: "Inspect an element’s full interaction details: target match count, text/aria/attrs, visibility, disabled state, rect, clickablePoint, form, and nearby text. Obtain a target from get_ax_tree/find_elements first, then pass it to this tool. {targetGrammar}.",
+    "zh-CN": "检查 get_ax_tree/find_elements 返回的 target：匹配数、文本/aria/attrs、可见性、disabled、rect、clickablePoint、表单和附近文本。{targetGrammar}。",
+    en: "Inspect a target from get_ax_tree/find_elements: match count, text/aria/attrs, visibility, disabled state, rect, clickablePoint, form, and nearby text. {targetGrammar}.",
   },
   inspectElementIndex: {
     "zh-CN": "匹配多个时的 index，默认 0",

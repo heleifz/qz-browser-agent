@@ -178,12 +178,12 @@ test("a disabled task list stays on ordinary tasks and an enabled list can show 
 
 test("the firefox prompt says scheduled tasks are unavailable and the chrome prompt does not gain that sentence", () => {
   assert.equal(sessionAutomationPromptSuffix("en"), "");
-  assert.equal(getAgentPrompts("en").SYSTEM_PROMPT.includes("Session automations are unavailable"), false);
+  assert.equal(getAgentPrompts("en").SYSTEM_PROMPT.includes("This Firefox package has no scheduled-task operations"), false);
   assert.equal(getAgentPrompts("zh-CN").SYSTEM_PROMPT.includes("本 Firefox 包不提供定时任务"), false);
   const previous = globalThis.chrome;
   globalThis.chrome = { qzSessionAutomationsEnabled: false };
   try {
-    assert.match(sessionAutomationPromptSuffix("en"), /Session automations are unavailable/);
+    assert.match(sessionAutomationPromptSuffix("en"), /This Firefox package has no scheduled-task operations/);
     assert.match(sessionAutomationPromptSuffix("zh-CN"), /定时任务/);
   } finally {
     globalThis.chrome = previous;
