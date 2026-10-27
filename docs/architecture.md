@@ -419,6 +419,10 @@ observation reports `unknown`. Changed documents discard obsolete partial conten
 Safety rejection, a closed tab and user cancellation remain errors. Tools without a partial retain
 `TOOL_TIMEOUT`.
 
+The Content overview ranks every action candidate using semantic eligibility and geometry, then
+computes labels and unique selectors for retained actions. Unnamed-role candidates still use their
+labels when determining eligibility. This preserves selection and snapshot output while avoiding
+whole-document selector/label queries for thousands of discarded links.
 AX snapshots cache ancestor descriptions within one read and fetch up to four child frames at once,
 merging in frame order. A timed-out AX read retains the main document and completed children. Until
 viewport geometry completes, this partial explicitly uses `scope:"full"` and lists filtering in
