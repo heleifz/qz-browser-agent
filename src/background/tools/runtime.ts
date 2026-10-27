@@ -77,36 +77,50 @@ import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
 // ---------------------------------------------------------------------------
 // Content script messaging
-// One injection covers every frame. Messages stay on the main frame; without
-// a frame id, Chrome accepts whichever frame answers first.
+// Ordinary reads install only the main frame. UID recovery retains all-frame
+// initialization and validates its selected document again in element-runtime.
 // ---------------------------------------------------------------------------
 
+async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out", { tabId })), ms);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 async function ensureContentScript(tabId: number, force = false) {
+  const started = Date.now();
+  try {
   if (!force) {
     try {
-      const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
+      const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
       if (response?.ok === true) return;
     } catch(_e) {
       // Inject the content script when it is missing.
     }
   }
-  await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
+  await contentDeadline(chrome.scripting.executeScript({
+    target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
     world: "ISOLATED",
     files: ["content/article-extractor.js", "content/content-script.js"],
-    injectImmediately: force,
-  });
-  const response = record(await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }));
+    injectImmediately: true,
+  }), tabId, 1500);
+  const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
   if (response?.ok !== true) {
     throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", {
       tabId,
       response,
     });
   }
+  } finally {
+    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "injection", tab: tabId, elapsedMs: Date.now() - started })}`);
+  }
 }
 
-// Script injection already waits for document_idle, but cannot target the initial
-// about:blank document. This wait runs inside the caller's deadline and signal.
+// Initial about:blank is not the pending target document.
+// This wait runs inside the caller's deadline and signal.
 async function waitForInitialPage(tabId: number, signal?: AbortSignal) {
   let waited = false;
   while (true) {
@@ -124,6 +138,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   await ensureContentScript(tabId);
+  const started = Date.now();
   try {
     const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
     if (response == null) {
@@ -139,6 +154,8 @@ export async function sendToContent(tabId: number | undefined, action: string, p
       action,
       tabId,
     });
+  } finally {
+    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "extraction", action, tab: tabId, elapsedMs: Date.now() - started })}`);
   }
 }
 
@@ -416,12 +433,14 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         (nestedName, nestedArgs, nestedSignal, nestedContext) => executeTool(nestedName, nestedArgs, nestedSignal,
           withToolRuntimeContext(nestedContext, getToolRuntimeDependencies(context))));
     }
+    const postprocessStarted = Date.now();
     const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
     const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
     if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
       issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
     }
     await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
+    diagnosticTrace(`tool_phase${formatTraceFields({ phase: "postprocess", name, call: context.toolCallId, elapsedMs: Date.now() - postprocessStarted })}`);
     if (traceTool) {
       const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
       toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);

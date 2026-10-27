@@ -739,6 +739,7 @@ async function ensureRunScriptToolBridge(tabId: number) {
     target: { tabId },
     world: "ISOLATED",
     files: ["content/run-script-tool-bridge.js"],
+    injectImmediately: true,
   });
 }
 

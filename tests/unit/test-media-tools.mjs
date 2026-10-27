@@ -2194,6 +2194,24 @@ await assert.rejects(
 );
 mainDocumentId = "";
 
+// A busy renderer cannot hold an ordinary screenshot behind CSS measurement.
+{
+  const originalExecute = chrome.scripting.executeScript;
+  let immediate = false;
+  chrome.scripting.executeScript = options => {
+    if (typeof options.args?.[0] !== "boolean") return originalExecute(options);
+    immediate = options.injectImmediately === true;
+    return new Promise(() => {});
+  };
+  try {
+    const shot = await settleWithin(runtime.captureTabScreenshot(5), 500, "measurement must be bounded");
+    assert.equal(immediate, true);
+    assert.ok(shot.dataUrl);
+    assert.equal(shot.cssWidth, undefined);
+    assert.equal(shot.cssHeight, undefined);
+  } finally { chrome.scripting.executeScript = originalExecute; }
+}
+
 // Native fallback owns activation, capture and restoration as one window transaction.
 {
   const originalCapture = chrome.tabs.captureVisibleTab;

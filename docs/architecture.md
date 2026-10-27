@@ -244,8 +244,9 @@ claimed while blank, configured for mobile mode or network capture, then navigat
 gate.
 
 Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
-their timeout and cancellation signal. They recheck access after waiting. Content injection uses
-Chrome's `document_idle` timing; explicit UID bridge recovery injects immediately and validates the
+their timeout and cancellation signal. They recheck access after waiting. Content reads inject
+immediately into the main frame with bounded ping and installation attempts; the installed bridge
+is idempotent. Explicit UID bridge recovery initializes frames immediately and validates the selected
 document again. Dynamic page content can require an explicit element or network
 wait.
 
@@ -366,6 +367,11 @@ while public reads and exports resolve the original inline data. Gallery GC cann
 images. Session deletion sweeps unreferenced history assets behind a repository write barrier,
 including prepared but not yet committed conversations in the live reference set.
 
+Ordinary screenshot CSS measurement injects immediately with a 150 ms probe budget. An unavailable
+measurement leaves an observation image without coordinates. Native capture fallback serializes
+activation, capture and focus restoration per window. Debug logs record injection, extraction, CDP,
+measurement, normalization and result postprocessing durations.
+
 Actionable screenshots register coordinates from the final encoded dimensions. Capture reads page
 identity and viewport geometry, takes the image, waits 200 ms, then compares the current state. A
 changed frame triggers one retry. Requested screenshots and post-action observations use the same
@@ -376,7 +382,12 @@ path, including the retry delay. Coordinate actions require a valid screenshot. 
 
 The [tool runtime](../src/background/tools/runtime.ts) checks the catalog, arguments, ownership,
 safety, and rate limits before execution. It normalizes results and applies authorized effects.
-Argument validation precedes target resolution. [Effect tickets](../src/background/tools/effects.ts)
+Argument validation precedes target resolution. A model response can contain multiple tool calls.
+The Agent batches up to three statically declared read-only observations on distinct explicit tab IDs.
+Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
+retain the working tab; effects and model results commit in call order, while tool cards can finish
+in completion order. Each call has its own cancellation signal derived from the run.
+[Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,
 and MCP; user grants apply to the named target. See [permissions](permissions.md) for browser access

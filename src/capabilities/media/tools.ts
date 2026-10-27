@@ -1932,9 +1932,24 @@ function toFiniteNumber(value: unknown, fallback = 0) {
 }
 
 async function screenshotCssSize(tabId: number, native = false): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      measureScreenshotCssSize(tabId, native),
+      new Promise<Pick<Screenshot, "cssWidth" | "cssHeight">>(resolve => { timer = setTimeout(() => resolve({}), 150); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    recordScreenCaptureTrace("measurement.done", tabId, {}, { elapsedMs: Date.now() - started });
+  }
+}
+
+async function measureScreenshotCssSize(tabId: number, native: boolean): Promise<Pick<Screenshot, "cssWidth" | "cssHeight">> {
   try {
     const [frame] = await chrome.scripting.executeScript({
       target: { tabId },
+      injectImmediately: true,
       args: [getPageContext(tabId).pageMode === "mobile"],
       func: (mobile: boolean) => {
         const view = globalThis as unknown as {

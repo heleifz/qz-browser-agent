@@ -1,3 +1,4 @@
+import { diagnosticTrace, formatTraceFields } from "../trace.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import { forgetIsolatedContexts } from './isolated-contexts.js';
@@ -483,6 +484,7 @@ export function createCdpRuntime({
   }
 
   function assertRunCurrent(owner: CdpOwner, tabId: number, context: ToolContext = {}) {
+    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", { tabId });
     if (owner?.kind !== "run") return;
     if (typeof isRunCurrent === "function" && isRunCurrent({
       sessionId: owner.sessionId,
@@ -518,6 +520,7 @@ export function createCdpRuntime({
   async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "") {
     assertStateActive(state);
     check();
+    const started = Date.now();
     try {
       const target = sessionId ? { ...state.target, sessionId } : state.target;
       const result = await debuggerApi.sendCommand(target, method, params);
@@ -528,6 +531,8 @@ export function createCdpRuntime({
       assertStateActive(state);
       check();
       throw error;
+    } finally {
+      diagnosticTrace(`tool_phase${formatTraceFields({ phase: "cdp", method, tab: state.tabId, session: state.sessionId, run: state.runId, elapsedMs: Date.now() - started })}`);
     }
   }
 
