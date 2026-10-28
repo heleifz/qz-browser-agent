@@ -1,3 +1,4 @@
+import { elementAriaRole } from "./implicit-aria-role.js";
 import { refreshContentLanguage, t } from "./i18n.js";
 import { normalizeImage } from "../shared/images/normalize.js";
 import { assertImageDimensions, IMAGE_MAX_EDGE } from "../shared/images/policy.js";
@@ -2710,31 +2711,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getElementRole(el: Element) {
-    const explicit = el.getAttribute("role");
-    if (explicit) return explicit.toLowerCase();
-    const tag = el.tagName.toLowerCase();
-    if (tag === "a" && el.hasAttribute("href")) return "link";
-    if (tag === "button") return "button";
-    if (tag === "summary") return "button";
-    if (tag === "details") return "group";
-    if (tag === "option") return "option";
-    if (tag === "label") return "label";
-    if (tag === "img") return "img";
-    if (tag === "progress") return "progressbar";
-    if (tag === "meter") return "meter";
-    if (tag === "input") {
-      const type = (el.getAttribute("type") || "text").toLowerCase();
-      if (["button", "submit", "reset"].includes(type)) return "button";
-      if (type === "file") return "button";
-      if (["checkbox", "radio"].includes(type)) return type;
-      if (type === "search") return "searchbox";
-      if (type === "range") return "slider";
-      return "textbox";
-    }
-    if (tag === "textarea") return "textbox";
-    if (el instanceof HTMLSelectElement) return el.multiple || Number(el.size || 0) > 1 ? "listbox" : "combobox";
-    if (el instanceof HTMLElement && el.isContentEditable) return "textbox";
-    return "";
+    return elementAriaRole(el);
   }
 
   function getAccessibleName(el: Element) {
