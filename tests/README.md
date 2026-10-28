@@ -489,8 +489,26 @@ Markdown streaming, Provider timing replay, production loading, CSS comparisons 
 extraction. Run the relevant synthetic benchmark for stream, motion, timeline or virtualized-grid
 changes.
 
-The browser viewport fuzz uses 60 fixed-seed cases across three windows and six font sizes. To
-replay private samples, place a JSON array of paths in the ignored `tests/results/corpus.json`:
+The browser tool-anchor viewport fuzz uses 60 fixed-seed cases across three windows and six font
+sizes. Its streaming stage updates thinking text. The assistant viewport fuzz separately covers
+six seeded streams with Markdown tables, long links and footnotes across three windows, light/dark
+themes, tail following and history reading. Native clicks and wheels overlap randomized content
+chunks and delivery delays. It records every frame through stream completion, rejects backward tail
+motion even when the tail gap stays zero, and checks history anchors and final table/link semantics.
+Coverage assertions require real inputs and changing content during the observed idle periods.
+
+```bash
+npm test -- playwright tests/browser/assistant-viewport-stability-fuzz.spec.mjs
+QINGZHOU_ASSISTANT_FUZZ_SEED_OFFSET=100000 npm test -- playwright \
+  tests/browser/assistant-viewport-stability-fuzz.spec.mjs --repeat-each=3
+```
+
+Failure attachments contain the seed, chunk plan, native inputs and frame geometry. The optional
+`QINGZHOU_FUZZ_MARKDOWN_MODULE` points to a local compiled ESM renderer for negative-control runs;
+normal verification always loads the current renderer. Keep baseline modules in ignored output.
+
+To replay private samples in the tool-anchor matrix, place a JSON array of paths in the ignored
+`tests/results/corpus.json`:
 
 ```bash
 QINGZHOU_FUZZ_CORPUS=tests/results/corpus.json npm test -- playwright \
