@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { analyzeAssistantStreamFrames } from '../support/assistant-stream-fuzz.mjs';
 
 /** Real model + production tools/UI; only the task inputs and observation are fixtures. */
-export async function runStreamUiJourneys({ page, createSession, deleteSession, runPrompt, historyMessages, output, recordEvidence }) {
+export async function runStreamUiJourneys({ page, createSession, deleteSession, runPrompt, historyMessages, output, recordEvidence, scenarios }) {
   await mkdir(output, { recursive: true });
   const codes = Array.from({ length: 4 }, () => randomBytes(5).toString('hex'));
   const products = ['青松杯', '白云杯', '山岚杯'];
@@ -25,6 +25,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
   const product = index => html(products[index], `<p>商品校验码：${codes[index]}</p><p>价格：${[79,99,129][index]} 元；容量：${[350,420,500][index]} ml。</p><p>材质：陶瓷；适合日常办公和旅行；手工釉面，建议手洗。</p>`);
   const server = createServer((req, res) => {
     requests.push({ path: req.url, at: Date.now() });
+    if(req.url==='/favicon.ico'){res.writeHead(204);res.end();return;}
     if (req.url === '/slow') { slowResponse = res; return; }
     const image = /^\/image-(\d)\.png$/.exec(req.url);
     if (image) { res.writeHead(200, { 'content-type':'image/png' }); res.end(Buffer.from(images[Number(image[1])], 'base64')); return; }
@@ -36,7 +37,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const longAnswer = '最终回答先给结论，再给 Markdown 对比表格，再给分成至少 10 段的详细说明（总计约 1800 字），最后列出真实页面链接的脚注来源。不要输出完成前的长说明。';
-  const cases = [
+  const cases = (scenarios || [
     { id:'product-comparison', width:430, theme:'dark', required:codes.slice(0,3), tools:['open_tab','read_article','data_store'], table:true,
       prompt:`比较 ${origin}/product-0、${origin}/product-1、${origin}/product-2 三款杯子。第一次 open_tab 必须设置 watchNetwork=true，且至少一个页面使用 mode=mobile。请用 tabAlias/tabRef 开页后读取，按每100ml价格排序，将名称、校验码、价格、容量和单位价格保存到名为 live_product_comparison 的数据表，并读回确认三行。${longAnswer}` },
     { id:'image-collection', width:360, theme:'light', required:products, tools:['open_tab','collect_images','data_store'], table:true, images:true,
@@ -45,7 +46,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
       prompt:`阅读 https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API、https://developer.mozilla.org/en-US/docs/Web/API/AbortController 和 https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream 的官方资料，比较它们如何配合实现可取消的流式请求。首次打开页面启用 watchNetwork=true。${longAnswer} 请另附一段实际可用的 JavaScript 示例，以及吞吐率公式 $r=\\frac{B}{t}$ 和块级公式 $$T=\\frac{B}{r}$$。` },
     { id:'timeout-recovery', width:430, theme:'light', required:[codes[3]], tools:['open_tab','read_article'], timeout:true,
       prompt:`先用 open_tab 打开 ${origin}/slow，设置 timeout=1、watchNetwork=true。若工具提示仍加载中，用 read_article 读取同一个 tabId，不要重新开页，读到页面的校验码后原样输出，并解释此次加载经历。` },
-  ].filter(item => !process.env.QINGZHOU_LIVE_UI_CASES || process.env.QINGZHOU_LIVE_UI_CASES.split(',').includes(item.id));
+  ]).filter(item => !process.env.QINGZHOU_LIVE_UI_CASES || process.env.QINGZHOU_LIVE_UI_CASES.split(',').includes(item.id));
   try {
     for (const scenario of cases) {
       const sessionId = await createSession(page, `Live UI · ${scenario.id}`);
@@ -57,8 +58,10 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         await page.locator('.tab-btn[data-tab="sessions"]').click();
         await page.locator(`.session-card[data-id="${sessionId}"]`).click();
         await page.locator('#input').waitFor({state:'visible'});
-        await page.evaluate(installViewportProbe);
         const after = await page.evaluate(() => window.__qzLiveHarness.count());
+        record.preparations=[];
+        for (const prompt of scenario.prepare || []) record.preparations.push(await runPrompt(page, sessionId, prompt, {timeoutMs:180000}));
+        await page.evaluate(installViewportProbe);
         const start = Date.now();
         pending = runPrompt(page, sessionId, scenario.prompt, {timeoutMs:240000});
         pending.then(() => { finished = true; }, () => { finished = true; });
@@ -103,8 +106,16 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
           });
           await page.waitForTimeout(800);
           await page.evaluate(()=>{window.__liveViewport.phase='interaction';});
-          await page.mouse.wheel(0,100000);
-          await page.waitForFunction(()=>{const m=document.querySelector('#messages');return m.scrollHeight-m.clientHeight-m.scrollTop<2;});
+          record.wheelTarget=await page.evaluate(({x,y})=>{const m=document.querySelector('#messages'),el=document.elementFromPoint(x,y);return {tag:el?.tagName,classes:el?.className,id:el?.id,inside:m.contains(el),top:m.scrollTop,height:m.scrollHeight,client:m.clientHeight};},{x:box.x+3,y:box.y+box.height/2});
+          // Streaming can grow the document while a wheel gesture is in flight. Reach the
+          // actual tail with native wheel events before measuring passive follow behavior.
+          record.tailApproach=[];
+          for(let i=0;i<8;i++) {
+            await page.mouse.wheel(0,100000); await page.waitForTimeout(100);
+            const gap=await page.locator('#messages').evaluate(m=>m.scrollHeight-m.clientHeight-m.scrollTop);
+            record.tailApproach.push(gap); if(gap<2)break;
+          }
+          await page.waitForFunction(()=>{const m=document.querySelector('#messages');return m.scrollHeight-m.clientHeight-m.scrollTop<2;},null,{timeout:5000});
           await page.evaluate(()=>{window.__liveViewport.phase='tail';});
           await page.screenshot({path:join(output,`${scenario.id}-streaming.png`)});
         }
@@ -129,7 +140,8 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         await page.screenshot({path:join(output,`${scenario.id}-completed.png`)});
         for(const term of scenario.required) assert.ok(result.assistantText.toLowerCase().includes(term.toLowerCase()),`Missing ${term}`);
         for(const tool of scenario.tools) assert.ok(record.toolNames.includes(tool),`Required tool ${tool} was not used`);
-        assert.equal(record.toolErrors.length,0,JSON.stringify(record.toolErrors));
+        assert.equal(record.toolErrors.length,scenario.expectedErrors?.length||0,JSON.stringify(record.toolErrors));
+        for(const [i,reason] of (scenario.expectedErrors||[]).entries()) assert.equal(record.toolErrors[i].result.details?.reason,reason);
         assert.equal(toolStarts.length,toolEnds.length,'every tool start has one completion');
         for(const end of toolEnds) assert.equal(toolStarts.filter(start=>start.toolCallId===end.toolCallId).length,1);
         assert.deepEqual(messages.filter(m=>m.role==='tool').map(m=>m.tool_call_id),toolEnds.map(e=>e.toolCallId),'model tool results retain completion publication order');
@@ -139,11 +151,14 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         assert.equal(record.dom.pendingTables,0,'no table placeholder remains');
         if(scenario.table) assert.ok(record.dom.tables>0,'answer rendered a completed table');
         if(scenario.timeout) assert.equal(toolEnds.filter(e=>e.toolName==='open_tab').length,1,'recovery uses the original tab');
+        if(scenario.check) await scenario.check({events,messages,record,page,sessionId});
         assert.equal(stability.failures.length,0,JSON.stringify(stability.failures.slice(0,3)));
         if(!scenario.timeout) assert.ok(stability.coverage.tailContentChanges>0,'tail was observed during real content updates');
         record.ok=true; console.log(`PASS live UI ${scenario.id}: ${record.toolCount} tools, ${frames.length} frames`);
       } catch(error) {
         record.error=String(error.stack||error);
+        const probe=await page.evaluate(()=>{const p=window.__liveViewport,m=document.querySelector('#messages');return {frames:p?.frames||[],wheels:p?.wheels||[],scroll:{top:m?.scrollTop,height:m?.scrollHeight,client:m?.clientHeight,rect:m?.getBoundingClientRect().toJSON()}};});
+        await writeFile(join(output,`${scenario.id}-failure-frames.json`),JSON.stringify(probe));
         const observed=await page.evaluate(()=>window.__qzLiveHarness.eventsSince(0));
         await writeFile(join(output,`${scenario.id}-failure-events.json`),JSON.stringify(observed.filter(e=>e.sessionId===sessionId),null,2));
         await page.screenshot({path:join(output,`${scenario.id}-failure.png`)}).catch(()=>{});
@@ -163,8 +178,9 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
 }
 
 function installViewportProbe() {
-  const p=window.__liveViewport={phase:'interaction',frames:[],stop:false,anchor:null,baseline:null};
+  const p=window.__liveViewport={phase:'interaction',frames:[],wheels:[],stop:false,anchor:null,baseline:null};
   const m=document.querySelector('#messages');
+  m.addEventListener('wheel',e=>p.wheels.push({time:performance.now(),delta:e.deltaY,target:e.target?.className,top:m.scrollTop,height:m.scrollHeight,client:m.clientHeight}),{passive:true});
   let previous=performance.now();
   const sample=()=>{
     const now=performance.now(), answer=[...m.querySelectorAll('.msg-assistant')].at(-1);

@@ -1,3 +1,5 @@
+import { runDiverseTabReferenceJourneys } from "./tab-reference-diverse-journeys.mjs";
+import { runTabReferenceJourneys } from "./tab-reference-journeys.mjs";
 import { runSessionManagementCases } from "./session-management-cases.mjs";
 import { runPageBatchCase } from "./page-batch-case.mjs";
 import { runStreamUiJourneys } from "./stream-ui-journeys.mjs";
@@ -31,6 +33,7 @@ if (!executablePath) throw new Error("Chrome executable not found");
 const profile = mkdtempSync(join(tmpdir(), "qingzhou-deepseek-live-"));
 let context, page;
 const diagnostics = [];
+const externalDiagnostics = [];
 const report = { ok: false, provider: "deepseek", model, scenarios: {} };
 let currentCase = "setup";
 
@@ -62,7 +65,18 @@ try {
   context.on("page", current => {
     current.on("pageerror", error => diagnostics.push(redact(String(error), apiKey)));
     current.on("console", message => {
-      if (message.type() === "error") diagnostics.push(redact(message.text(), apiKey));
+      if (message.type() !== "error") return;
+      const text = redact(message.text(), apiKey), resource = redact(message.location().url || "", apiKey);
+      let missingSiteIcon = false;
+      try {
+        const url = new URL(resource), owner = new URL(current.url());
+        missingSiteIcon = /^https?:$/.test(url.protocol) && url.origin === owner.origin && url.pathname === "/favicon.ico"
+          && /^Failed to load resource: the server responded with a status of 404\b/.test(text);
+      } catch { /* Unknown locations remain unexpected diagnostics. */ }
+      if (missingSiteIcon) {
+        externalDiagnostics.push({ page: current.url(), resource, message: text, reason: "missing_site_icon" });
+        report.externalDiagnostics = externalDiagnostics;
+      } else diagnostics.push(`${text}${resource ? ` (${resource})` : ""}`);
     });
   });
   page = await context.newPage();
@@ -118,6 +132,16 @@ try {
         output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-ui/report.json")),
         recordEvidence: evidence => { report.scenarios.streamUi = evidence; } })) : { skipped: true };
 
+    const tabReferences = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("tabReferences")
+      ? await runSelected("tabReferences", () => runTabReferenceJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,
+        output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-tabref/report.json")),
+        recordEvidence: evidence => { report.scenarios.tabReferences = evidence; } })) : { skipped: true };
+
+    const tabReferencesDiverse = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("tabReferencesDiverse")
+      ? await runSelected("tabReferencesDiverse", () => runDiverseTabReferenceJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,
+        output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-tabref-diverse/report.json")),
+        recordEvidence: evidence => { report.scenarios.tabReferencesDiverse = evidence; } })) : { skipped: true };
+
 
     const unexpected = diagnostics.filter(message => !isExpectedDiagnostic(message));
     assert.deepEqual(unexpected, [], `extension emitted errors:\n${unexpected.join("\n")}`);
@@ -141,6 +165,8 @@ try {
         editRerun,
         pageBatch,
         streamUi,
+        tabReferences,
+        tabReferencesDiverse,
       },
     }, null, 2));
   }

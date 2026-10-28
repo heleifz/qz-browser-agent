@@ -107,7 +107,7 @@ try {
 
   const slowGate = pauseModel(body => body.messages?.some(message => message.role === "tool" && String(message.content).includes('"incomplete"')));
   try {
-    const task = await call("start", `先只用 open_tab 打开 ${origin}/slow，设置 timeout=1。即使超时也继续，下一轮用 read_article 读取同一个标签页，输出商品校验码。不要重复新开标签。`);
+    const task = await call("start", `先只用 open_tab 打开 ${origin}/slow，设置 timeout=1、tabAlias=slow。即使超时也继续，下一轮用 read_article 的 tabRef=slow 读取同一个标签页，输出商品校验码。不要重复新开标签。`);
     await Promise.race([slowArrival, finish(task).then(() => { throw new Error("Slow page was never requested"); })]);
     const loadingEvents = await call("events", task.after);
     assert.ok(loadingEvents.some(event => event.type === "tool_execution_start" && event.toolName === "open_tab"));
@@ -129,6 +129,11 @@ try {
     const done = await finish(task);
     assert.ok(done.answer.includes(codes[0]), done.answer);
     assert.equal(done.events.filter(event => event.type === "tool_execution_start" && event.toolName === "open_tab").length, 1);
+    const reads = done.events.filter(event => event.type === "tool_execution_start" && event.toolName === "read_article");
+    assert.ok(reads.length > 0);
+    const opened = done.events.find(event => event.type === "tool_execution_end" && event.toolName === "open_tab");
+    assert.equal(opened.result.tabAlias, "slow");
+    assert.equal(done.events.some(event => event.type === "tool_execution_end" && event.isError), false);
     report.scenarios.timeoutRecovery = { sessionId: task.sessionId, startBeforeCompletion: true, indicator, ...done };
     await save(); console.log("PASS Firefox live timeout result, indicator, and same-tab recovery");
   } finally { slowGate.release(); }

@@ -87,6 +87,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
           runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent },
         tabsApi: chrome.tabs, storage: chrome.storage.local, setRuntime, persistRuntime: async () => {},
       });
+      chrome.tabs.onRemoved.addListener(tabId => { void sessions.handleTabRemoved(tabId); });
       const runtime = navigationTestRuntime({
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: { ...sessions, isRunCurrent },
@@ -95,7 +96,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       globalThis.navigationCall = async (name, args) => {
         globalThis.navigationAbort = new AbortController();
         try { return await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" }); }
-        catch (error) { return { code: error.code, error: error.message }; }
+        catch (error) { return { code: error.code, error: error.message, details: error.details }; }
       };
     });
     const call = (name, args) => worker.evaluate(({ name, args }) => navigationCall(name, args), { name, args });
@@ -126,6 +127,13 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       expect(first.ends[0].result.networkWatch.startedBeforeNavigation).toBe(true);
       expect(JSON.stringify(await call('network_recent', { tabId: first.ends[0].result.id }))).toContain('/first-open');
     }
+    expect(first.state.tabAliases).toEqual({ first: first.ends[0].result.id });
+    expect((await call('read_article', { tabRef: 'first', limit: 1200 })).text).toContain('Document /first-open');
+    expect((await call('read_article', { tabRef: String(first.ends[0].result.id), limit: 1200 })).text).toContain('Document /first-open');
+    const countBeforeDuplicate = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
+    expect(await call('open_tab', { url: `${origin}/duplicate`, tabAlias: 'first' })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
+    expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(countBeforeDuplicate);
+    expect(counts.has('/duplicate')).toBe(false);
     const release = path => { for (const entry of held.get(path) || []) entry.finish(); held.delete(path); };
     const slow = async (name, args, path) => {
       held.set(path, []);
@@ -358,11 +366,20 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     }
     const before = await worker.evaluate(async () => (await chrome.tabs.query({})).length);
     held.set("/open-timeout", []);
-    const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, watchNetwork, timeout: 1 });
+    const incompleteOpen = await call("open_tab", { url: `${origin}/open-timeout`, tabAlias: "loading", watchNetwork, timeout: 1 });
     expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
     release("/open-timeout");
-    expect(await call("close_tab", { tabId: incompleteOpen.tabId })).not.toHaveProperty("error");
+    expect(incompleteOpen.tabAlias).toBe('loading');
+    const loadingRead = await call('read_article', { tabRef: 'loading', limit: 1200 });
+    expect(loadingRead, JSON.stringify(loadingRead)).not.toHaveProperty('error');
+    expect(loadingRead.text, JSON.stringify(loadingRead)).toContain('Document /open-timeout');
+    expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
+    expect(await call('read_article', { tabRef: 'loading', limit: 1200 })).toHaveProperty('code', 'BATCH_TAB_REFERENCE_ERROR');
+    const reopened = await call('open_tab', { url: `${origin}/alias-reused`, tabAlias: 'loading' });
+    expect(reopened).not.toHaveProperty('error'); expect(reopened.id).not.toBe(incompleteOpen.tabId);
+    expect((await call('read_article', { tabRef: 'loading', limit: 1200 })).text).toContain('Document /alias-reused');
+    expect(await call('close_tab', { tabRef: 'loading' })).not.toHaveProperty('error');
 
     // Busy renderers retain a timeout handle; cancellation still cleans up the created tab.
     for (const outcome of ["timeout", "cancel"]) {

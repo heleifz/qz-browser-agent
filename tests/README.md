@@ -358,9 +358,26 @@ tool errors and result order, completed Markdown, reading position and backward 
 Product/image fixtures are local; the documentation case visits public MDN pages. Use
 `QINGZHOU_TEST_EXTENSION_DIR` to exercise an unpacked production ZIP without rebuilding it.
 
+`QINGZHOU_LIVE_CASES=tabReferences npm test -- live deepseek` runs five additional tasks: a
+conference train plan, warehouse replenishment, an interactive shipping quote, Python JSON/CSV
+documentation research, and a lecture schedule update. Preparatory messages create real follow-up
+runs in the same Session. The cases verify alias reuse across turns, one deliberate duplicate-name
+rejection, UID/alias agreement, numeric `tabRef`, and alias reuse after closure. The form case checks
+the actual page quote; the warehouse case reads back persisted rows. Other tool errors fail the
+test. These cases share the streaming viewport probes, native wheel interactions, Markdown checks,
+screenshots and trajectory evidence above. `QINGZHOU_LIVE_UI_CASES` can select their case IDs from
+[the task definitions](live/tab-reference-journeys.mjs).
+
+`QINGZHOU_LIVE_CASES=tabReferencesDiverse npm test -- live deepseek` adds public weather JSON,
+network-backed invoice pagination, mobile accessibility inspection, poster image collection, and
+redirected return-policy research. The same output and case selectors apply. Assertions check live
+forecast dates, requested invoice pages, mode changes on one alias, three persisted image assets,
+and repeated navigation without opening another tab. Local fixtures use random codes, real browser
+requests and real extension tools; the weather task visits the public Open-Meteo API.
+
 `npm test -- live firefox-ui` runs real DeepSeek tasks in an isolated Firefox sidebar. It holds a
 local navigation until the tool returns a partial timeout, checks the incomplete indicator, and
-verifies a later read returns the page's random code without opening it again. A multi-page task
+verifies a later read by its persistent alias returns the page's random code without opening it again. A multi-page task
 tests repeated header/footer collapse while the next model request is paused, then checks the
 final answer. It also pairs the current CLI bridge and lists both tasks through the real CLI/MCP
 path. Set `QINGZHOU_FIREFOX_EXTENSION_DIR` to a built Firefox extension, `FIREFOX_EXECUTABLE` to
