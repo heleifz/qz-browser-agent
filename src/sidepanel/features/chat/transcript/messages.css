@@ -597,6 +597,13 @@ textarea.msg-user-edit-input::placeholder {
   color: var(--text-secondary);
 }
 
+:is(.msg-assistant .msg-content, .qz-markdown) .markdown-table-pending {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: var(--markdown-table-font-size, calc(12px * var(--chat-text-scale, 1)));
+  font-variant-numeric: tabular-nums;
+}
+
 :is(.msg-assistant .msg-content, .qz-markdown) table {
   border-collapse: collapse;
   width: 100%;
