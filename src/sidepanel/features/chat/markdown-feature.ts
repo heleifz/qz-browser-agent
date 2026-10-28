@@ -192,6 +192,28 @@ function createMarkdownParser(streamingSource?: string) {
   });
   if (streamingSource !== undefined) parser.use({
     extensions: [{
+      name: "pendingBlockPrefix",
+      level: "block",
+      tokenizer(source) {
+        // A leading '*' may become emphasis or a list. Avoid an empty list row
+        // while the stream is still delivering the opening delimiter.
+        if (/^ {0,3}(?:\*{1,3}|_{1,3})$/.test(source)) return { type: "pendingBlockPrefix", raw: source };
+      },
+      renderer() { return ""; },
+    }, {
+      name: "pendingCodeSpan",
+      level: "inline",
+      start: source => source.indexOf("`"),
+      tokenizer(source) {
+        if (this.lexer.state.inRawBlock || !source.startsWith("`") ||
+            !streamingSource.endsWith(source) || parser.defaults.tokenizer!.codespan(source)) return;
+        const opening = /^`+/.exec(source)!;
+        // Render HTML-looking code as text from its first chunk, instead of
+        // briefly interpreting tags until the closing backtick arrives.
+        return { type: "pendingCodeSpan", raw: source, text: source.slice(opening[0].length).replace(/\n/g, " ") };
+      },
+      renderer(token) { return `<code>${escapeHtml(token.text || "")}</code>`; },
+    }, {
       name: "pendingTable",
       level: "block",
       tokenizer(source) {

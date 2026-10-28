@@ -1,5 +1,6 @@
 import { runSessionManagementCases } from "./session-management-cases.mjs";
 import { runPageBatchCase } from "./page-batch-case.mjs";
+import { runStreamUiJourneys } from "./stream-ui-journeys.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -112,6 +113,11 @@ try {
       ? await runSelected("pageBatch", () => runPageBatchCase({ page, createSession, deleteSession, runPrompt, historyMessages,
         recordEvidence: evidence => { report.scenarios.pageBatch = evidence; } })) : { skipped: true };
 
+    const streamUi = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("streamUi")
+      ? await runSelected("streamUi", () => runStreamUiJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,
+        output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-ui/report.json")),
+        recordEvidence: evidence => { report.scenarios.streamUi = evidence; } })) : { skipped: true };
+
 
     const unexpected = diagnostics.filter(message => !isExpectedDiagnostic(message));
     assert.deepEqual(unexpected, [], `extension emitted errors:\n${unexpected.join("\n")}`);
@@ -134,6 +140,7 @@ try {
         skillSelection,
         editRerun,
         pageBatch,
+        streamUi,
       },
     }, null, 2));
   }

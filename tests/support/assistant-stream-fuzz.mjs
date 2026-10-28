@@ -12,7 +12,7 @@ export function assistantStreamPlan(seed) {
   const answer = transcript.at(-1);
   // Give concurrent clicks and history reading time to run before the table arrives.
   answer.content = Array.from({ length: 8 }, (_, index) => (
-    `第 ${index + 1} 项核对：正在整理图片及页面来源。请保留各景点的说明、尺寸和原始链接，随后给出汇总表格。`
+    `**第 ${index + 1} 项核对**：正在整理图片及页面来源。图片对应 DOM 中的 \`<figure>/<img>\`，请保留各景点的说明、尺寸和原始链接，随后给出汇总表格。`
   )).join("\n\n") + "\n\n" + answer.content;
   const chunks = [];
   for (let length = 0; length < answer.content.length;) {

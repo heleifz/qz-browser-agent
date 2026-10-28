@@ -217,3 +217,36 @@ test("tables show an increasing character count, then keep their compact automat
   expect(results.released.widths).toEqual(results.final.widths);
   expect(results.released.widths[0]).toBeLessThan(results.released.widths[2] / 2);
 });
+
+
+test("streamed HTML-looking code and emphasis prefixes do not create transient block layout", async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { renderMarkdown } = await import("/extension/sidepanel/features/chat/markdown-feature.js");
+    const host = document.createElement("div"); host.className = "msg-assistant";
+    host.style.width = "330px"; host.innerHTML = '<div class="msg-content"></div>'; document.body.append(host);
+    const body = host.firstElementChild;
+    const measure = source => {
+      body.innerHTML = renderMarkdown(source, { math: "stream" });
+      return { height: host.getBoundingClientRect().height, html: body.innerHTML, text: body.textContent,
+        code: body.querySelector("code")?.textContent, figures: body.querySelectorAll("figure, img").length,
+        lists: body.querySelectorAll("ul, ol").length };
+    };
+    const prefix = "图片已经核对。与页面 DOM 中三个 ";
+    const code = ["`<", "`<figure>", "`<figure>/<i", "`<figure>/<img>", "`<figure>/<img>`"].map(suffix => measure(prefix + suffix));
+    const baseline = measure("已完成正文。\n\n");
+    const markers = ["*", "**", "***", "_", "__"].map(suffix => measure("已完成正文。\n\n" + suffix));
+    const complete = ["* 列表项", "**粗体段落**", "***", "未闭合的 `<figure>", "``含 ` 的代码``"].map(source => ({
+      source, final: renderMarkdown(source), streamed: renderMarkdown(source, { math: "stream" }),
+    }));
+    host.remove(); return { code, baseline, markers, complete };
+  });
+  for (const sample of result.code) { expect(sample.figures).toBe(0); expect(sample.code).toBeDefined(); }
+  expect(result.code.at(-1).code).toBe("<figure>/<img>");
+  for (let i=1;i<result.code.length;i++) expect(result.code[i].height).toBeGreaterThanOrEqual(result.code[i-1].height);
+  for (const sample of result.markers) { expect(sample.height).toBe(result.baseline.height); expect(sample.lists).toBe(0); }
+  expect(result.complete[0].streamed).toBe(result.complete[0].final);
+  expect(result.complete[1].streamed).toBe(result.complete[1].final);
+  expect(result.complete[2].final).toContain("<hr>");
+  expect(result.complete[3].final).toContain("`");
+  expect(result.complete[4].streamed).toBe(result.complete[4].final);
+});

@@ -347,6 +347,17 @@ model/tool turns and elapsed time, including any additional verification calls. 
 `QZ_PAGE_BATCH_EXPECT_BINDINGS=0` when measuring an older extension without this contract; answer
 checks remain enabled. This case is selected explicitly and uses the normal live credential rules.
 
+`QINGZHOU_LIVE_CASES=streamUi npm test -- live deepseek` runs product comparison, image collection,
+public MDN research and timeout recovery through the real model, tools and Side Panel. Set
+`QINGZHOU_LIVE_REPORT` to a JSON path in an existing output directory to retain each task's prompt,
+model/tool transcript, UI frames and screenshots. `QINGZHOU_LIVE_UI_CASES` accepts comma-separated
+case IDs: `product-comparison`, `image-collection`, `public-documentation`, `timeout-recovery`.
+The cases use 360/430/560px viewports and both themes, expand actual tool results, read earlier
+content while output arrives and return to the live tail. Assertions cover persisted records,
+tool errors and result order, completed Markdown, reading position and backward scroll movement.
+Product/image fixtures are local; the documentation case visits public MDN pages. Use
+`QINGZHOU_TEST_EXTENSION_DIR` to exercise an unpacked production ZIP without rebuilding it.
+
 `npm test -- live firefox-ui` runs real DeepSeek tasks in an isolated Firefox sidebar. It holds a
 local navigation until the tool returns a partial timeout, checks the incomplete indicator, and
 verifies a later read returns the page's random code without opening it again. A multi-page task
