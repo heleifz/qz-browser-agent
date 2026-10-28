@@ -14,6 +14,7 @@
     "test": "node --import tsx tests/run.mjs",
     "verify": "npm run typecheck && npm test -- unit contracts services",
     "verify:chrome": "npm test -- browser e2e release visual",
+    "verify:store": "npm run build && node scripts/check-chrome.mjs dist/extension",
     "verify:firefox": "npm run typecheck && npm test -- firefox",
     "verify:coverage": "npm run typecheck && npm test -- --all --coverage",
     "benchmark": "node --import tsx tests/benchmarks/run.mjs",
