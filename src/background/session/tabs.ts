@@ -109,6 +109,15 @@ export function createSessionTabs({
   async function reserveTabAlias({ sessionId, alias, runId, signal }: RunAuthority & { sessionId: string; alias: string }) {
     const id = normalizeSessionId(sessionId);
     if (!isTabAlias(alias)) throw tabReferenceError("invalid_alias", alias);
+    await ready();
+    if (!supervisor.getRuntime(id)) {
+      // An empty CLI/MCP Session has metadata before its first runtime checkpoint.
+      const sessions = await getSessions();
+      if (!Object.hasOwn(sessions, id) || signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) {
+        throw Object.assign(new Error("Operation aborted during tab alias binding"), { code: "OPERATION_ABORTED" });
+      }
+      setRuntime(id, {});
+    }
     assertAliasRun(id, { runId, signal });
     const existing = getTabAliases(id)[alias];
     if (Object.hasOwn(getTabAliases(id), alias)) {

@@ -15,8 +15,9 @@ const call = (id, name, args) => ({ id, function: { name, arguments: JSON.string
 const open = (alias, extra = {}) => call(`open-${alias}`, 'open_tab', { tabAlias: alias, ...extra });
 const read = (ref, extra = {}) => call(`read-${ref}`, 'read_ref', { tabRef: ref, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
-function fixture() {
+function fixture({ metadataReady = async () => {} } = {}) {
   const states = { one: { ownedTabIds: [] }, two: { ownedTabIds: [] } }, tabs = new Map(), events = [], executed = [];
+  const metadata = { one: { id: 'one' }, two: { id: 'two' } };
   const abort = new AbortController(); let runId = 'run1', next = 100, gate, fail = false, partial = false;
   let sessions;
   const supervisor = { getRuntime: id => states[id], runtimeEntries: () => Object.entries(states),
@@ -24,8 +25,8 @@ function fixture() {
   const tabsApi = { async get(id) { if (!tabs.has(id)) throw new Error('closed'); return { ...tabs.get(id) }; },
     async remove(id) { tabs.delete(id); await sessions.handleTabRemoved(id); }, async query() { return [...tabs.values()]; } };
   chrome.tabs = tabsApi;
-  const options = { supervisor, tabsApi, storage: chrome.storage.local, getSessions: async () => ({}),
-    setRuntime(id, patch) { Object.assign(states[id], patch); return states[id]; }, persistRuntime: async () => {},
+  const options = { supervisor, tabsApi, storage: chrome.storage.local, getSessions: async () => { await metadataReady(); return metadata; },
+    setRuntime(id, patch) { Object.assign(states[id] ||= {}, patch); return states[id]; }, persistRuntime: async () => {},
     ensureTabGroupForWindow: async () => null, loadSecurityGuardrails: async () => ({}), logger: {warn(){}, debug(){}}, };
   sessions = createSessionTabs(options);
   const registry = createToolRegistry(), register = registry.forCapability('ref-fixture');
@@ -51,7 +52,7 @@ function fixture() {
   const agent = new Agent('one', createTestAgentOptions({tools:runtime}));
   agent._toolRegistrySnapshot=registry.snapshot(); agent._currentRunId=runId; agent._emit=e=>events.push(e);
   const context = () => ({sessionId:'one',runId,toolRegistrySnapshot:registry.snapshot()});
-  return {states,tabs,sessions,options,events,executed,runtime,abort,agent,context,
+  return {states,metadata,tabs,sessions,options,events,executed,runtime,abort,agent,context,
     execute:(name,args)=>runtime.execute(name,args,abort.signal,context()),
     run:items=>agent._executeToolCalls(items,abort.signal),
     setGate(value){gate=value;},setFail(value){fail=value;},setPartial(value){partial=value;},
@@ -79,6 +80,28 @@ test('aliases persist across batches, follow-up runs, serialized runtime and hos
   assert.equal((await f.execute('read_ref',{tabRef:'101'})).tabId,101);
   assert.equal((await f.execute('read_ref',{tabId:101})).tabId,101);
   await assert.rejects(f.execute('read_ref',{tabRef:'docs',tabId:102}),e=>e.details.reason==='conflicting_target');
+});
+
+test('an idle metadata-only Session opens its first alias and reuses it across direct MCP calls',async()=>{
+  const f=fixture(); delete f.states.one;
+  const context={...f.context(),runId:'',source:'mcp_bridge'};
+  const opened=await f.runtime.execute('open_tab',{tabAlias:'first'},f.abort.signal,context);
+  assert.equal(opened.tabAlias,'first');
+  assert.deepEqual(f.sessions.getTabAliases('one'),{first:101});
+  assert.equal((await f.runtime.execute('read_ref',{tabRef:'first'},f.abort.signal,context)).tabId,101);
+  await assert.rejects(f.runtime.execute('open_tab',{tabAlias:'first'},f.abort.signal,context),e=>e.details.reason==='duplicate_alias');
+  assert.equal(f.tabs.size,1);
+});
+
+for (const invalid of ['missing Session','cancelled metadata read','stale run']) test(`alias initialization rejects ${invalid}`,async()=>{
+  const f=fixture({metadataReady:async()=>{if(invalid==='cancelled metadata read')f.abort.abort();}});
+  delete f.states.one;
+  if(invalid==='missing Session')delete f.metadata.one;
+  const context={...f.context(),runId:invalid==='stale run'?'old-run':'',source:'mcp_bridge'};
+  await assert.rejects(f.runtime.execute('open_tab',{tabAlias:'first'},f.abort.signal,context),{code:'OPERATION_ABORTED'});
+  assert.equal(f.states.one,undefined);
+  assert.equal(f.tabs.size,0);
+  assert.equal(f.executed.length,0);
 });
 
 test('duplicate live alias fails before opening and does not redirect its consumers',async()=>{
