@@ -82,7 +82,8 @@ window for debugging.
 Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and
 `npm test -- unit --match agent-tool-scheduler` for the shared ten-call budget. The fixtures hold
 individual opens and actions, prove that ready readers advance before unrelated openings finish,
-and compare serial/parallel ownership, working tab, effects, ordered events and model messages.
+and compare serial/parallel ownership, working tab, effects, ordered final events and model messages. Start/progress tests assert live publication and
+per-call isolation while execution is still blocked.
 Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
 The data-flow fixture retains production script declarations while controlling their execution:
 no-tools page scripts overlap across tabs and serialize within a tab; tool-using, inner and hidden

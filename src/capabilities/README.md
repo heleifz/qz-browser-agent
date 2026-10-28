@@ -92,8 +92,9 @@ Same-tab work follows execution dependencies. UID-targeted calls use their regis
 all targets are known UIDs on one tab and the definition grants a parallel role. Declare additional
 target fields through `behavior.uidTargets`; the extractor extends `target`, `selector`, and `root`.
 Return every target, including non-UID values, so mixed or cross-tab calls retain commit barriers.
-Implicit targets and undeclared/global tools also retain commit barriers. Runtime-owned Session writes, effects, events and results publish in
-original call order, independently of execution completion order. A `parallelOpen` handler obtains
+Implicit targets and undeclared/global tools also retain commit barriers. Runtime-owned Session writes, effects, final events and results publish in
+original call order, independently of execution completion order. Start and progress events publish
+during execution, including flow-control waits. A `parallelOpen` handler obtains
 its new tab's execution context from `context.prepareCreatedTab` before page preparation. Declared
 parallel handlers leave Session ownership and selection writes to the runtime's ordered commit.
 Use `parallelRead` only for operations without resource or page writes. Article, element and AX

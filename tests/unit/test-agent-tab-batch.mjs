@@ -46,14 +46,16 @@ test('direct runtime calls reject unresolved references and publish paired schem
   assert.equal(getBatchTabPolicy('plugin_open', { tabAlias: 'a' }), null);
 });
 
-test('resolved targets, events and messages retain original call order', async () => {
+test('resolved targets, final events and messages retain original call order', async () => {
   const f = fixture(), input = [open('oa', 'a'), open('ob', 'b'), read('ra', 'a'), read('rb', 'b')];
   const messages = await f.run(input);
   assert.deepEqual(f.calls.map(c => c.context.toolCallId), input.map(c => c.id));
   assert.deepEqual(f.calls.slice(2).map(c => c.args.tabId), [101, 102]);
   assert.ok(f.calls.slice(2).every(c => !('tabRef' in c.args)));
   assert.deepEqual(messages.map(m => m.tool_call_id), input.map(c => c.id));
-  assert.deepEqual(f.events.map(e => [e.type, e.toolCallId]), input.flatMap(c => [['tool_execution_start', c.id], ['tool_execution_end', c.id]]));
+  assert.deepEqual(f.ends().map(e => e.toolCallId), input.map(c => c.id));
+  for (const call of input) assert.deepEqual(f.events.filter(e => e.toolCallId === call.id).map(e => e.type),
+    ['tool_execution_start', 'tool_execution_end']);
 });
 
 test('multiple new pages require an explicit target', async () => {

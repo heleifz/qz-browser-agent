@@ -114,14 +114,14 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     run: inputs => agent._executeToolCalls(inputs, controller.signal),
     snapshot(messages) {
       return { state: structuredClone(state), owned: state.ownedTabIds, working: state.workingTabId, writes, effects, siteChanges,
-        // Event timestamps and Chrome identities are fixed by this fixture; compare every observable payload.
-        events, messages, live: [...tabs.keys()].sort() };
+        // Live starts/progress follow execution; committed payloads must match serial execution.
+        events: events.filter(event => event.type === 'tool_execution_end'), messages, live: [...tabs.keys()].sort() };
     },
   };
   return f;
 }
 
-test('read a and an unpublished read c execute before open b completes; all publication remains ordered', async () => {
+test('read a and an unpublished read c execute before open b completes; result publication remains ordered', async () => {
   const f = setup({ hold: ['open-b'] });
   const input = [open('a'), open('b'), open('c'), read('a'), read('b'), read('c')];
   const run = f.run(input);

@@ -423,10 +423,12 @@ Only a native return-shape syntax error without an execution stack can use the e
 shape recovery; runtime error envelopes never trigger it. Tool-using page scripts retain their existing nested-tool scope and are barriers.
 `run_skill_script`, inner execution, and all Skill/plugin tools remain barriers; plugin resolution
 overrides host predicates with literal true. Permission, ownership, deadlines and run checks still apply.
-A separate cursor publishes tool-owned Session state, effects, alias bindings, progress, final tool
-events and model messages in the original call order. Completed execution frees a slot immediately,
-even while its result awaits publication. Tool event publication is buffered until settlement;
-diagnostic phase timings still measure actual execution.
+Tool start and progress events publish during execution, including flow-control waits. A separate
+cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
+messages in the original call order. Completed execution frees a slot immediately, even while its
+result awaits publication. Progress stops when execution settles or cancellation revokes the call.
+The Background runtime tracks overlapping calls and projects the most recently active tool; ending
+one call preserves other active tools.
 
 Execution-time permission checks are read-only, including nested CDP checks and browser-context
 collection. Working-tab selection occurs at commit, following the same order as serial execution.

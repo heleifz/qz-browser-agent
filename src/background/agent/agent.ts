@@ -2695,8 +2695,13 @@ export class Agent {
       return { args, policy };
     }, this._runLanguage);
     const identity = { sessionId: this.sessionId, runId: this._currentRunId };
-    const updates = new Map<ModelToolCall, AgentEvent[]>();
-    const ended = new Set<ModelToolCall>();
+    const started = new Set<ModelToolCall>();
+    const emitStart = (call: ModelToolCall, toolName: string, toolIdentity: object, args: unknown) => {
+      if (started.has(call)) return;
+      started.add(call);
+      this._emit({ type: "tool_execution_start", spanId: this._makeToolSpanId(call.id), toolCallId: call.id, toolName,
+        ...toolIdentityEventFields(toolIdentity), args });
+    };
     const settled = new Map<ModelToolCall, ReturnType<typeof failure>>();
     let ledgerIndex = 0;
     const flushLedger = (skipUnstarted = false) => {
@@ -2706,12 +2711,10 @@ export class Agent {
         if (!outcome && !skipUnstarted) break;
         ledgerIndex++;
         if (!outcome) continue;
-        settled.delete(call); ended.add(call);
+        settled.delete(call);
         const { id, toolName, toolIdentity, args, result, isError } = outcome;
-        this._emit({ type: "tool_execution_start", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
-          ...toolIdentityEventFields(toolIdentity), args });
-        for (const update of updates.get(call) || []) this._emit(update);
-        updates.delete(call);
+        // Preparation failures and skipped calls still receive a paired ledger entry.
+        emitStart(call, toolName, toolIdentity, args);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
           ...toolIdentityEventFields(toolIdentity), args, result, isError,
@@ -2740,6 +2743,7 @@ export class Agent {
         let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
         let toolIdentity: object = {};
         let executionResult: unknown;
+        let acceptingUpdates = true;
         const assertActive = () => {
           if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
         };
@@ -2753,14 +2757,15 @@ export class Agent {
           const toolRuntimeContext = await this._collectToolRuntimeContext();
           args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
           assertActive();
+          emitStart(tc, toolName, toolIdentity, args);
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
             preserveWorkingTab: batch.observation(tc),
             deferToolCommit: parallel,
             deferCreatedTabSelection: batch.parallelCreate(tc),
             createdTabResult: batch.executionParent(tc),
             onToolUpdate: (event: Facts) => {
-              if (signal.aborted || ended.has(tc)) return;
-              updates.set(tc, [...(updates.get(tc) || []), event as AgentEvent]); flushLedger();
+              if (signal.aborted || callSignal.aborted || !acceptingUpdates || this._currentRunId !== identity.runId) return;
+              this._emit(event as AgentEvent);
             },
             sessionId: this.sessionId,
             runId: identity.runId,
@@ -2776,10 +2781,12 @@ export class Agent {
             toolRegistrySnapshot: this._toolRegistrySnapshot,
             language: this._runLanguage,
           });
+          acceptingUpdates = false;
           assertActive();
           return { call: tc, id, toolName, toolIdentity, args, result,
             isError: Boolean(record(result).error || record(result).ok === false || record(result).isError === true) };
         } catch (error) {
+          acceptingUpdates = false;
           await this._toolRuntime.discardToolResult?.(executionResult, identity);
           return failure(tc, error, args, toolIdentity);
         }
@@ -2807,10 +2814,9 @@ export class Agent {
           isError = true;
         }
         if (!signal.aborted) followUpMessages.push(...pendingMessages);
-        // Only this cursor publishes state, effects, bindings, events and model messages.
+        // Only this cursor publishes state, effects, bindings, final events and model messages.
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
-          updates.delete(outcome.call);
           const normalized = failure(outcome.call, { ...record(result), message: record(result).error }, undefined, outcome.toolIdentity);
           settled.set(outcome.call, normalized);
         } else settled.set(outcome.call, { ...outcome, result, isError });

@@ -9,6 +9,92 @@ import { createTestAgentOptions } from '../support/agent-services.mjs';
 const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.stringify({ tabId, limit: 10 }) } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('a blocked tool publishes its start and flow-control progress before completing', async () => {
+  const events = [];
+  let release, update, effects = 0;
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, _args, _signal, context) {
+      update = context.onToolUpdate;
+      update({ type: 'tool_execution_update', toolCallId: '1', phase: 'queued',
+        statusText: 'Waiting for rate limit', rateLimit: { waitMs: 1000 } });
+      await new Promise(resolve => { release = resolve; });
+      return { value: 'done' };
+    },
+  } }));
+  agent._emit = event => events.push(event);
+  agent._applyToolResultEffects = async () => { effects++; return []; };
+  const run = agent._executeToolCalls([call('1', 'read_article', 1)], new AbortController().signal);
+  await tick();
+  assert.deepEqual(events.map(event => event.type), ['tool_execution_start', 'tool_execution_update']);
+  assert.equal(events[1].phase, 'queued');
+  assert.equal(effects, 0);
+  release();
+  const messages = await run;
+  assert.equal(effects, 1);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1']);
+  assert.equal(events.at(-1).type, 'tool_execution_end');
+  update({ type: 'tool_execution_update', toolCallId: '1', statusText: 'late' });
+  assert.equal(events.length, 3, 'settled calls must reject late progress');
+});
+
+test('parallel progress is live while final events, effects and messages retain call order', async () => {
+  const events = [], effects = [], releases = new Map(), updates = new Map();
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, _args, _signal, context) {
+      const id = context.toolCallId;
+      updates.set(id, context.onToolUpdate);
+      context.onToolUpdate({ type: 'tool_execution_update', toolCallId: id, statusText: `reading ${id}` });
+      await new Promise(resolve => releases.set(id, resolve));
+      return { id };
+    },
+  } }));
+  agent._emit = event => events.push(event);
+  agent._applyToolResultEffects = async (_name, result) => { effects.push(result.id); return []; };
+  const run = agent._executeToolCalls([call('1', 'read_article', 1), call('2', 'read_article', 2)], new AbortController().signal);
+  await tick();
+  for (const id of ['1', '2']) assert.deepEqual(events.filter(event => event.toolCallId === id).map(event => event.type),
+    ['tool_execution_start', 'tool_execution_update']);
+  releases.get('2')(); await tick();
+  assert.deepEqual(effects, []);
+  assert.equal(events.filter(event => event.type === 'tool_execution_end').length, 0);
+  updates.get('2')({ type: 'tool_execution_update', toolCallId: '2', statusText: 'late before commit' });
+  assert.equal(events.length, 4, 'completed execution cannot publish more progress while awaiting commit');
+  releases.get('1')();
+  const messages = await run;
+  assert.deepEqual(effects, ['1', '2']);
+  assert.deepEqual(events.filter(event => event.type === 'tool_execution_end').map(event => event.toolCallId), ['1', '2']);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2']);
+});
+
+test('stop revokes progress immediately and preserves a paired ledger for skipped calls', async () => {
+  const events = [], executed = [], controller = new AbortController();
+  let update;
+  const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
+    getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
+    async execute(_name, _args, signal, context) {
+      executed.push(context.toolCallId);
+      update = context.onToolUpdate;
+      await new Promise(resolve => signal.addEventListener('abort', () => {
+        update({ type: 'tool_execution_update', toolCallId: '1', statusText: 'late abort' });
+        resolve();
+      }, { once: true }));
+      return { late: true };
+    },
+  } }));
+  agent._emit = event => events.push(event);
+  const input = [call('1', 'read_article', 1), call('2', 'navigate', 2)];
+  const run = agent._executeToolCalls(input, controller.signal);
+  await tick();
+  assert.deepEqual(events.map(event => event.toolCallId), ['1']);
+  controller.abort(); await run;
+  assert.deepEqual(executed, ['1']);
+  for (const call of input) assert.deepEqual(events.filter(event => event.toolCallId === call.id).map(event => event.type),
+    ['tool_execution_start', 'tool_execution_end']);
+  assert.ok(events.filter(event => event.type === 'tool_execution_end').every(event => event.result.code === 'OPERATION_ABORTED'));
+});
+
 test('trusted registrations select only explicit cross-tab observations', () => {
   for (const [name, field] of [
     ['read_article', 'selector'], ['find_elements', 'selector'], ['get_ax_tree', 'root'], ['screenshot', 'target'],

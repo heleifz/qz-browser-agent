@@ -451,8 +451,8 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     await moved.goto(`${moved.url()}?moved=1`);
 
     // Hold a's first document probe. b must reach its probe while a is held,
-    // but a's second call must not enter the same tab lane yet. Ordered UI events
-    // cannot prove execution overlap because the Agent publishes them at commit.
+    // but a's second call must not enter the same tab lane yet. Observe the probe
+    // itself to verify overlap inside tool execution after its live start event.
     await worker.evaluate(tabId => {
       const original = chrome.scripting.executeScript;
       let release;
