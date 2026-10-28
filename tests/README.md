@@ -77,6 +77,16 @@ other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed
 Session exchange runs headless by default; set `SESSION_EXCHANGE_HEADLESS=0` to open a browser
 window for debugging.
 
+## Tool data-flow scheduling
+
+Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and
+`npm test -- unit --match agent-tool-scheduler` for the shared ten-call budget. The fixtures hold
+individual opens and actions, prove that ready readers advance before unrelated openings finish,
+and compare serial/parallel ownership, working tab, effects, ordered events and model messages.
+Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
+`npm test -- playwright tests/browser/tab-navigation.spec.mjs` repeats the independent-read check
+with a withheld HTTP response, real Content readiness and Network watching both enabled and disabled.
+
 ## Add a test at the right boundary
 
 | Behavior being changed | Where to put the evidence |

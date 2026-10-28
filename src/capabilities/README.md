@@ -83,8 +83,14 @@ static named re-exports. The build imports each declared module directly into it
 | `translations`, `locales` | Messages and language packs | Shared / build |
 
 Build-time tools can declare `behavior.parallelRead` for pure observations. The Agent applies it only
-to distinct explicit tab IDs, with a concurrency limit of ten; other calls form ordered barriers.
-Keep this declaration off operations that write resources or modify a page. Article, element and AX
+to explicit tab lanes. `parallelOpen` permits provisional creation; `parallelTab` permits tab-local
+mutations such as navigation and element actions. All ready calls share one execution limit of ten.
+Same-tab work follows execution dependencies; implicit targets, UID operations and undeclared/global
+tools retain commit barriers. Runtime-owned Session writes, effects, events and results publish in
+original call order, independently of execution completion order. A `parallelOpen` handler obtains
+its new tab's execution context from `context.prepareCreatedTab` before page preparation. Declared
+parallel handlers leave Session ownership and selection writes to the runtime's ordered commit.
+Use `parallelRead` only for operations without resource or page writes. Article, element and AX
 readers must not scroll, focus or activate tabs. Native screenshot fallback serializes its activation,
 capture and restoration transaction per window. Installed Skill manifests, trusted Skill host aliases,
 model arguments and result
@@ -94,8 +100,11 @@ mobile preference, because restoration may reload the document.
 
 Core page-tool schemas with `tabId` also expose `tabRef`. The Agent resolves it from an
 `open_tab.tabAlias` in the same assistant `tool_calls` array before invoking the tool runtime.
-Handlers receive an owned numeric tab ID through the usual targeting and safety checks. The host
-rejects unresolved references at direct-runtime boundaries. See [batch ordering and failure
+Place each creator before its consumers. Readers can use a completed creator's private execution
+permit before its ownership is published; actions await the creator's commit. The runtime carries
+numeric targets and opaque authority through normal safety checks. Session ownership and working-tab
+selection publish only at ordered commit. Cancellation closes uncommitted creations. The host rejects
+unresolved references at direct-runtime boundaries. See [batch ordering and failure
 semantics](../../docs/architecture.md#tool-and-skill-execution).
 
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies

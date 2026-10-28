@@ -12,8 +12,17 @@ export interface ToolContext extends SkillActivationContext {
   runId?: string | null;
   /** Call-scoped cancellation, including the tool deadline. */
   signal?: AbortSignal;
-  /** Scheduler-owned observation batches retain the default working tab. */
+  /** Observation execution preserves the working tab; ordered commit may select the observed tab. */
   preserveWorkingTab?: boolean;
+  /** Trusted batch creators publish ownership and working-tab state only at ordered settlement. */
+  deferCreatedTabSelection?: boolean;
+  /** Stage tool-owned Session changes for the Agent's ordered commit cursor. */
+  deferToolCommit?: boolean;
+  /** Private parent result identity; a JSON copy carries no execution authority. */
+  createdTabResult?: unknown;
+  onToolUpdate?(event: Record<string, unknown>): void;
+  /** Host-only execution permit for a new tab; never serialized into a tool result. */
+  prepareCreatedTab?(tab: import("../shared/tab-utils.js").TabReference): Promise<ToolContext>;
   /** Publish an immutable completed stage for this call's existing hard deadline. */
   reportPartial?(result: Record<string, unknown>, pending: string): void;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */

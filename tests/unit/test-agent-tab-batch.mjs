@@ -7,11 +7,13 @@ const { getParallelReadTab, getBatchTabPolicy, createToolRuntime } = await impor
 const call = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
 const open = (id, tabAlias) => call(id, 'open_tab', { url: `https://${id}.test/`, ...(tabAlias == null ? {} : { tabAlias }) });
 const read = (id, tabRef, extra = {}) => call(id, 'read_article', { limit: 3000, ...(tabRef == null ? {} : { tabRef }), ...extra });
+const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(execute = null) {
   const calls = [], events = [];
   let nextTab = 100;
   const agent = new Agent('batch', createTestAgentOptions({ tools: {
     getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab, getBatchTabPolicy,
+    async commitToolResult() {}, async discardToolResult() {},
     async execute(name, args, signal, context) {
       calls.push({ name, args, signal, context });
       if (execute) return execute(name, args, signal, context);
@@ -35,142 +37,92 @@ test('direct runtime calls reject unresolved references and publish paired schem
     assert.match(open.description, /tabAlias/); assert.match(open.description, /tabRef/);
     assert.match(read.parameters.properties.tabRef.description, /tool_calls/);
     const close = schemas.find(schema => schema.function.name === 'close_tab').function;
-    assert.equal(close.parameters.required.includes('tabId'), false, 'the model can choose tabRef for a required target');
-    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true, 'runtime still requires a resolved numeric target');
+    assert.equal(close.parameters.required.includes('tabId'), false);
+    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true);
   }
   assert.equal(getBatchTabPolicy('plugin_open', { tabAlias: 'a' }), null);
 });
 
-test('new-tab observations preload their producers and retain original ledger order', async () => {
-  const f = fixture();
-  const input = [read('ra', 'a'), open('oa', 'a'), read('rb', 'b'), open('ob', 'b')];
+test('resolved targets, events and messages retain original call order', async () => {
+  const f = fixture(), input = [open('oa', 'a'), open('ob', 'b'), read('ra', 'a'), read('rb', 'b')];
   const messages = await f.run(input);
-  assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['oa', 'ob', 'ra', 'rb']);
+  assert.deepEqual(f.calls.map(c => c.context.toolCallId), input.map(c => c.id));
   assert.deepEqual(f.calls.slice(2).map(c => c.args.tabId), [101, 102]);
-  assert.ok(f.calls.slice(2).every(c => c.context.preserveWorkingTab && !('tabRef' in c.args)));
-  assert.deepEqual(f.ends().map(e => e.toolCallId), ['ra', 'oa', 'rb', 'ob']);
-  assert.deepEqual(messages.map(m => m.tool_call_id), ['ra', 'oa', 'rb', 'ob']);
-  assert.deepEqual(f.events.filter(e => e.type === 'tool_execution_start' && e.toolName === 'read_article').map(e => e.args.tabId), [101, 102]);
-});
-
-test('eleven aliases keep creation and effects ordered while reads split into ten plus one', async () => {
-  const tick = () => new Promise(resolve => setImmediate(resolve));
-  const until = async predicate => { for (let i = 0; !predicate() && i < 100; i++) await tick(); assert.ok(predicate()); };
-  const owned = new Set(), releases = new Map(), effects = [];
-  let activeOpens = 0, peakOpens = 0, workingTab = 100;
-  const f = fixture(async (name, args, _signal, context) => {
-    if (name === 'open_tab') {
-      const tabId = 100 + Number(args.tabAlias.slice(1));
-      assert.equal(workingTab, tabId - 1, 'previous creation and working-tab writes have settled');
-      assert.equal(effects.length, tabId - 101, 'previous creation effects committed before the next open');
-      peakOpens = Math.max(peakOpens, ++activeOpens);
-      owned.add(tabId); workingTab = tabId;
-      await tick(); activeOpens--;
-      assert.equal(workingTab, tabId);
-      return { id: tabId };
-    }
-    assert.equal(owned.has(args.tabId), true);
-    assert.equal(workingTab, 111, 'parallel readers preserve the last created working tab');
-    await new Promise(resolve => releases.set(args.tabId, resolve));
-    if (!context.preserveWorkingTab) workingTab = args.tabId;
-    return { tabId: args.tabId, text: `page ${args.tabId}` };
-  });
-  f.agent._applyToolResultEffects = async (name, result) => { effects.push([name, result.id ?? result.tabId]); return []; };
-  const input = Array.from({ length: 11 }, (_, i) => [read(`r${i + 1}`, `p${i + 1}`), open(`o${i + 1}`, `p${i + 1}`)]).flat();
-  const pending = f.run(input);
-  await until(() => releases.size === 10);
-  assert.equal(peakOpens, 1); assert.equal(workingTab, 111); assert.equal(owned.size, 11);
-  assert.deepEqual(f.calls.slice(0, 11).map(c => c.context.toolCallId), Array.from({ length: 11 }, (_, i) => `o${i + 1}`));
-  for (let id = 110; id >= 102; id--) releases.get(id)();
-  await tick(); assert.equal(releases.has(111), false);
-  releases.get(101)(); await until(() => releases.has(111));
-  releases.get(111)();
-  const messages = await pending;
-  assert.deepEqual(f.calls.slice(11).map(c => c.args.tabId), Array.from({ length: 11 }, (_, i) => i + 101));
-  assert.deepEqual(f.calls.slice(11).map(c => c.context.preserveWorkingTab), [...Array(10).fill(true), false]);
-  assert.deepEqual(effects, ['open_tab', 'read_article'].flatMap(name => Array.from({ length: 11 }, (_, i) => [name, i + 101])));
+  assert.ok(f.calls.slice(2).every(c => !('tabRef' in c.args)));
   assert.deepEqual(messages.map(m => m.tool_call_id), input.map(c => c.id));
-  assert.deepEqual(f.ends().map(e => e.toolCallId), input.map(c => c.id));
-  assert.equal(workingTab, 111);
+  assert.deepEqual(f.events.map(e => [e.type, e.toolCallId]), input.flatMap(c => [['tool_execution_start', c.id], ['tool_execution_end', c.id]]));
 });
 
-test('multiple new pages require an explicit target instead of silently using the last working tab', async () => {
-  const f = fixture();
-  await f.run([open('oa'), open('ob'), read('ra'), read('rb')]);
+test('multiple new pages require an explicit target', async () => {
+  const f = fixture(); await f.run([open('oa'), open('ob'), read('ra'), read('rb')]);
   assert.deepEqual(f.calls.map(c => c.name), ['open_tab', 'open_tab']);
-  assert.ok(f.ends().slice(2).every(e => e.isError && e.result.code === 'BATCH_TAB_REFERENCE_ERROR' && e.result.details.reason === 'ambiguous_target'));
+  assert.ok(f.ends().slice(2).every(e => e.isError && e.result.details.reason === 'ambiguous_target'));
 });
 
 for (const [name, input, reason] of [
   ['duplicate aliases', [open('oa', 'same'), open('ob', 'same'), read('r', 'same')], 'duplicate_alias'],
   ['unknown reference', [read('r', 'missing')], 'unknown_reference'],
+  ['forward reference', [read('r', 'a'), open('o', 'a')], 'forward_reference'],
   ['conflicting tabId', [open('o', 'a'), read('r', 'a', { tabId: 99 })], 'invalid_reference'],
   ['conflicting UID', [open('o', 'a'), read('r', 'a', { selector: 'uid:t99.abcdef.1' })], 'invalid_reference'],
   ['invalid alias', [open('o', 'has spaces')], 'invalid_alias'],
   ['untrusted creator', [call('o', 'plugin_open', { tabAlias: 'a' })], 'invalid_alias'],
 ]) test(`${name} becomes a per-call error`, async () => {
   const f = fixture(); await f.run(input);
-  assert.equal(f.ends().at(-1).isError, true);
-  assert.equal(f.ends().at(-1).result.details.reason, reason);
+  const failed = f.ends().find(e => e.isError);
+  assert.equal(failed.result.details.reason, reason);
   assert.equal(f.calls.filter(c => c.name === 'read_article').length, 0);
 });
 
-for (const outcome of ['failed', 'incomplete', 'effects']) test(`a ${outcome} producer skips its dependent while independent pages proceed`, async () => {
+for (const outcome of ['failed', 'incomplete', 'effects', 'error-flag', 'not-ok']) test(`a ${outcome} producer fails its dependent while independent pages proceed`, async () => {
   const f = fixture(async (name, args) => {
     if (name !== 'open_tab') return { tabId: args.tabId };
     if (args.tabAlias === 'good') return { id: 2 };
     if (outcome === 'failed') throw Object.assign(new Error('Navigation failed'), { code: 'NAVIGATION_FAILED' });
-    return { id: 1, ...(outcome === 'incomplete' ? { incomplete: { reason: 'timeout' } } : {}) };
+    return { id: 1, ...(outcome === 'incomplete' ? { incomplete: { reason: 'timeout' } } : {}),
+      ...(outcome === 'error-flag' ? { isError: true } : {}), ...(outcome === 'not-ok' ? { ok: false } : {}) };
   });
   if (outcome === 'effects') f.agent._applyToolResultEffects = async (_name, result) => { if (result.id === 1) throw new Error('effects failed'); return []; };
   await f.run([open('bad', 'bad'), open('good', 'good'), read('rb', 'bad'), read('rg', 'good')]);
-  assert.deepEqual(f.calls.filter(c => c.name === 'read_article').map(c => c.args.tabId), [2]);
+  if (outcome !== 'effects') assert.deepEqual(f.calls.filter(c => c.name === 'read_article').map(c => c.args.tabId), [2]);
   assert.equal(f.ends().find(e => e.toolCallId === 'rb').result.code, 'BATCH_TAB_DEPENDENCY_FAILED');
   assert.equal(f.ends().find(e => e.toolCallId === 'rg').isError, false);
 });
 
+test('creators wait for an earlier numeric target to publish their window anchor', async () => {
+  let release, workingTabId = 1;
+  const f = fixture(async (name, args) => {
+    if (name === 'read_article') { await new Promise(resolve => { release = resolve; }); return { tabId: args.tabId }; }
+    return { id: args.tabAlias === 'a' ? 101 : 102 };
+  });
+  f.agent._collectToolRuntimeContext = async () => ({ workingTabId });
+  f.agent._tools.commitToolResult = async result => { workingTabId = result.tabId || result.id; };
+  const pending = f.run([read('existing', undefined, { tabId: 9 }), open('oa', 'a'), open('ob', 'b')]);
+  await tick(); assert.deepEqual(f.calls.map(c => c.name), ['read_article']);
+  release(); await pending;
+  assert.deepEqual(f.calls.slice(1).map(c => c.context.workingTabId), [9, 9]);
+});
+
 test('bindings expire at the response boundary', async () => {
   const f = fixture(); await f.run([open('o', 'a')]); await f.run([read('r', 'a')]);
-  assert.equal(f.ends().at(-1).result.details.reason, 'unknown_reference');
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.ends().at(-1).result.details.reason, 'unknown_reference'); assert.equal(f.calls.length, 1);
 });
 
-test('forward references do not move creation across a mutation barrier', async () => {
-  const f = fixture();
-  await f.run([read('r', 'a'), call('n', 'navigate', { tabId: 99, url: 'https://next.test/' }), open('o', 'a')]);
-  assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['n', 'o']);
-  assert.equal(f.ends()[0].result.details.reason, 'forward_reference_across_barrier');
-});
-
-test('a known dependency can target a later ordered page action', async () => {
-  const f = fixture(); await f.run([open('o', 'a'), call('n', 'navigate', { tabRef: 'a', url: 'https://next.test/' }), read('r', 'a')]);
+for (const name of ['navigate', 'close_tab']) test(`a known dependency supplies a numeric target to ${name}`, async () => {
+  const f = fixture(); await f.run([open('o', 'a'), call('n', name, { tabRef: 'a', url: 'https://next.test/' }), read('r', 'a')]);
   assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['o', 'n', 'r']);
   assert.deepEqual(f.calls.slice(1).map(c => c.args.tabId), [101, 101]);
 });
 
-test('a required numeric target is supplied before invoking a page action', async () => {
-  const f = fixture(); await f.run([open('o', 'a'), call('c', 'close_tab', { tabRef: 'a' })]);
-  assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['o', 'c']);
-  assert.equal(f.calls[1].args.tabId, 101);
-});
-
-test('same-tab dependent reads remain serial', async () => {
-  const f = fixture(); await f.run([open('o', 'a'), read('r1', 'a'), read('r2', 'a')]);
-  assert.ok(f.calls.every(c => c.context.preserveWorkingTab === false));
-});
-
-test('stop during a reordered producer retains its cancelled result without starting a reader', async () => {
+test('stop settles started producers without launching dependent reads', async () => {
   const controller = new AbortController();
-  let started;
-  const entering = new Promise(resolve => { started = resolve; });
   const f = fixture(async (_name, _args, signal) => {
-    started(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
     throw Object.assign(new Error('stopped'), { code: 'OPERATION_ABORTED' });
   });
-  const run = f.run([read('r', 'a'), open('o', 'a'), open('next', 'b')], controller.signal);
-  await entering; controller.abort();
-  const messages = await run;
-  assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['o']);
-  assert.deepEqual(messages.map(m => m.tool_call_id), ['o']);
-  assert.equal(f.ends()[0].result.code, 'OPERATION_ABORTED');
+  const run = f.run([open('o', 'a'), open('next', 'b'), read('r', 'a')], controller.signal);
+  await tick(); controller.abort(); const messages = await run;
+  assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['o', 'next']);
+  assert.deepEqual(messages.map(m => m.tool_call_id), ['o', 'next', 'r']);
+  assert.ok(f.ends().every(e => e.result.code === 'OPERATION_ABORTED'));
 });

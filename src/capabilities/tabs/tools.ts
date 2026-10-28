@@ -148,7 +148,7 @@ registerTool({
 
 registerTool({
   name: "open_tab",
-  behavior: { timeoutResult: { kind: "navigation", pending: "navigation commit" } },
+  behavior: { parallelOpen: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
   workingTab: "created",
   model: { pageContext: false, omitArguments: ["active"] },
   effects: () => [{ type: "context.siteChanged" }],
@@ -178,6 +178,10 @@ registerTool({
     let claimed = false;
     try {
       tab = await chrome.tabs.create({ windowId, url: "about:blank", active: false });
+      if (context.deferCreatedTabSelection) {
+        if (!context.prepareCreatedTab) throw makeSessionTabTargetError("CDP_SESSION_RUNTIME_UNAVAILABLE", { toolName: "open_tab" });
+        context = await context.prepareCreatedTab({ ...tab, url, pendingUrl: url });
+      }
       const tabId = await claimCreatedTab(tab, url, context, signal);
       claimed = true;
       context.reportPartial?.({ id: tabId, tabId, requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
@@ -296,7 +300,7 @@ registerTool({
 
 registerTool({
   name: "navigate",
-  behavior: { mayUnloadPage: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
+  behavior: { parallelTab: true, mayUnloadPage: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
   model: { pageUrlArgument: "url" },
   effects: () => [{ type: "context.siteChanged" }],
   get description() { return toolT("navigateDescription"); },
@@ -344,6 +348,7 @@ async function claimCreatedTab(tab: chrome.tabs.Tab, intendedUrl: string, contex
     throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before claiming created tab", { sessionId, tabId });
   }
   if (!sessionId) return tabId;
+  if (context.deferCreatedTabSelection) return tabId; // Authorized by the host's private execution permit.
   if (typeof sessions?.updateWorkingTab !== "function") {
     throw new ToolExecutionError(
       "CDP_SESSION_RUNTIME_UNAVAILABLE",

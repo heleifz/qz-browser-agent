@@ -4,8 +4,8 @@ import { createTranslator } from "../../shared/i18n/index.js";
 /** Shared model-facing documentation stays out of the panel's UI catalog. */
 const messages = defineMessages("tool-runtime", {
   tabRef: {
-    "zh-CN": "当前 assistant 消息的 tool_calls 数组中对应 open_tab 的 tabAlias。将 open_tab 和此调用一起发出，系统按依赖执行；后续消息使用数字 tabId。每次选择 tabRef 或 tabId。",
-    en: "The tabAlias of an open_tab in the current assistant message's tool_calls array. Send the opening and this call together; the system orders their execution. Later messages use numeric tabId. Choose tabRef or tabId.",
+    "zh-CN": "当前 assistant 消息的 tool_calls 数组中对应 open_tab 的 tabAlias。将 open_tab 和此调用一起发出，open_tab 放在前面，系统按依赖执行并按数组原序提交；后续消息使用数字 tabId。每次选择 tabRef 或 tabId。",
+    en: "The tabAlias of an open_tab in the current assistant message's tool_calls array. Send the opening before this call in the same array; execution follows dependencies and commits follow array order. Later messages use numeric tabId. Choose tabRef or tabId.",
   },
   batchTabReferenceError: {
     "zh-CN": "本批标签页引用无法解析。请为 open_tab 设置唯一 tabAlias，并在页面调用中提供对应 tabRef 或明确的 tabId；将依赖的打开调用放在页面操作之前。",

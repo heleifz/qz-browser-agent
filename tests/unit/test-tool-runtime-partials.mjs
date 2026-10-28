@@ -37,10 +37,10 @@ test('cancellation and security failures retain their original errors despite a 
 });
 
 let tabs = new Map(), created = 1, removed = [], updates = [], contentCalls = 0, redirectBlocked = false, probeBusy = false;
-const listeners = new Set();
+const listeners = new Set(), reservations = new Map();
 function reset() {
   tabs = new Map([[1, { id: 1, windowId: 2, url: 'https://example.test/old', title: 'Article', status: 'loading' }]]);
-  removed = []; updates = []; contentCalls = 0; redirectBlocked = false; probeBusy = false;
+  removed = []; updates = []; contentCalls = 0; redirectBlocked = false; probeBusy = false; reservations.clear();
 }
 reset();
 globalThis.chrome = {
@@ -75,6 +75,12 @@ const runtime = createToolRuntime({
     async resolveTargetTab({ tabId }) { return tabs.has(tabId) ? { ok: true, tabId, ownedByCurrentTask: true } : { ok: false, code: 'SESSION_TAB_UNAVAILABLE' }; },
     async updateWorkingTab(value) { updates.push(value); return { ok: true }; },
     listOwnedTabIds: () => [...tabs.keys()],
+    async reserveCreatedTab({ tab }) { const reservation = {}; reservations.set(reservation, tab.id); return { ok: true, reservation }; },
+    async commitCreatedTab({ reservation }) {
+      const id = reservations.get(reservation); if (!id || !tabs.has(id)) return { ok: false, code: 'SESSION_TAB_UNAVAILABLE' };
+      updates.push({ tab: tabs.get(id) }); reservations.delete(reservation); return { ok: true };
+    },
+    async discardCreatedTab(reservation) { const id = reservations.get(reservation); if (id) { await chrome.tabs.remove(id); reservations.delete(reservation); } },
   },
 });
 
@@ -153,6 +159,24 @@ test('open_tab and navigate retain a loading tab and its current URL on the exis
     assert.equal(result.url, name === 'open_tab' ? 'about:blank' : 'https://example.test/old');
     assert.equal(result.pageState.pendingUrl, 'https://example.test/new');
     assert.ok(tabs.has(result.tabId)); assert.deepEqual(removed, []); assert.equal(listeners.size, 0);
+  }
+});
+
+test('a deferred navigation timeout retains the tab only when its original-order commit is authorized', async () => {
+  for (const cancelled of [false, true]) {
+    reset();
+    const result = await runtime.execute('open_tab', { url: 'https://example.test/new', timeout: 0.01 }, undefined,
+      { ...context, deferToolCommit: true, deferCreatedTabSelection: true });
+    assert.equal(result.incomplete.reason, 'timeout'); assert.equal(updates.length, 0); assert.ok(tabs.has(result.tabId));
+    const controller = new AbortController();
+    if (cancelled) {
+      controller.abort(); await assert.rejects(runtime.commitToolResult(result, controller.signal, context), { code: 'OPERATION_ABORTED' });
+      assert.equal(tabs.has(result.tabId), false); assert.equal(updates.length, 0);
+    } else {
+      await runtime.commitToolResult(result, controller.signal, context);
+      assert.equal(updates.length, 1); assert.ok(tabs.has(result.tabId));
+    }
+    assert.equal(reservations.size, 0);
   }
 });
 

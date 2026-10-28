@@ -396,30 +396,48 @@ path, including the retry delay. Coordinate actions require a valid screenshot. 
 The [tool runtime](../src/background/tools/runtime.ts) checks the catalog, arguments, ownership,
 safety, and rate limits before execution. It normalizes results and applies authorized effects.
 Argument validation precedes target resolution. A model response can contain multiple tool calls.
-The Agent batches up to ten statically declared read-only observations on distinct explicit tab IDs.
-Same-tab calls, mutations, implicit targets and undeclared tools form ordered barriers. Parallel reads
-retain the working tab. Effects settle in execution order; final tool events and model results retain
-the original call order. In-flight progress retains each tool-call identity. Each call has its own cancellation signal derived from the run.
-Stopping settles every started call in the current batch, including cancellation errors, before ending
-scheduling. Completed observations remain in the ledger while revoked effects stay unapplied.
+The Agent executes ready data-flow nodes with one shared limit of ten in-flight calls. Creators,
+explicit observations, and declared tab-local actions share that budget. Each tab has an execution
+lane: a navigation or element action waits for earlier work on its tab while independent tabs advance.
+Implicit targets, UID-dependent operations and undeclared/global operations remain commit barriers.
+A separate cursor publishes tool-owned Session state, effects, alias bindings, progress, final tool
+events and model messages in the original call order. Completed execution frees a slot immediately,
+even while its result awaits publication. Tool event publication is buffered until settlement;
+diagnostic phase timings still measure actual execution.
+
+Execution-time permission checks are read-only, including nested CDP checks and browser-context
+collection. Working-tab selection occurs at commit, following the same order as serial execution.
+An earlier numeric page target forms a window-anchor dependency for subsequent creators. Each
+call has its own cancellation signal derived from the run. Stop launches no further work, revokes
+uncommitted state/effects and closes uncommitted creations. The ledger retains the committed prefix
+and returns ordered cancellation records for the remainder, including calls that were never started.
 Parallel `read_article`, `find_elements` and `get_ax_tree` do not scroll, focus or activate tabs.
 They observe the current mode and skip
 mobile-preference restoration that could reload a disconnected page. Sequential preparation keeps
 its existing restoration behavior.
 For known URLs, the model can include `open_tab({url,tabAlias:"a"})` and
 `read_article({tabRef:"a",limit:4000})` in the same assistant message's `tool_calls` array.
-The [tab batch planner](../src/background/tools/tab-batch.ts) moves aliased opens ahead of their
-observations within explicit observation regions, settles creation effects, and supplies numeric tab
-IDs before the ordinary scheduler runs readers. Opens remain serial in their original order: claiming
-a created tab and finishing its navigation both update the Session's working tab inside the runtime,
-before Agent effects commit. Serial creation keeps those writes and subsequent window targeting
-deterministic while the opened pages continue loading. Actions and implicit targets retain their barriers;
-forward references across a barrier fail. Only trusted core registrations declare creators and targets.
-References expire at the array boundary; subsequent messages use returned numeric IDs. Multiple opens
-require explicit page targets. Invalid references and ambiguous implicit targets return
-`BATCH_TAB_REFERENCE_ERROR`; failed, incomplete, or effect-failed producers yield
-`BATCH_TAB_DEPENDENCY_FAILED` for their consumers. Independent pages can continue. Cancellation
-settles started calls without launching dependents, and the ledger preserves original call identity.
+Place each creator before its consumers. The [tab batch planner](../src/background/tools/tab-batch.ts)
+builds execution edges without reordering publication. Independent `open_tab` calls execute concurrently,
+including creation, page-mode/network preparation and navigation to commit. Each finished creator
+makes its private numeric target available to its own readers immediately; a slow sibling opening
+creates no read barrier. Document readiness stays inside the reading tool's existing deadline.
+
+New tabs receive opaque execution-only permits in `SessionTabs`. They stay outside Session ownership,
+working-tab state and visited sites until ordered commit. Only the originating runtime/session/run
+can use the original result identity to authorize a dependent observation. A JSON copy grants no
+permission. Actions await published ownership. Commit checks run authority, live tab availability and
+security again, then publishes ownership and selection together. Failed or cancelled uncommitted
+creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
+its loading tab only if its ordered commit is still authorized, and supplies no alias binding.
+
+Only trusted core registrations declare scheduling authority. References expire at the array boundary;
+subsequent messages use returned numeric IDs. Multiple opens require explicit page targets. Duplicate,
+invalid, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed, incomplete or
+effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers, including observations
+that executed speculatively before the producer's commit failed. Independent pages continue. Browser
+operations already issued may still finish after cancellation; closed provisional tabs and revoked
+run authority prevent their late publication.
 
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security

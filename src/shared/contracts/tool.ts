@@ -58,12 +58,16 @@ export interface ToolModelPolicy {
 }
 
 /** Derived from a trusted registration for one model response's tab dependency plan. */
-export type ToolBatchTabPolicy = { kind: "create" } | { kind: "target"; implicit: boolean; observation: boolean };
+export type ToolBatchTabPolicy = { kind: "create"; parallel?: boolean } | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Provisional creation; Session state is published at ordered Agent settlement. */
+  parallelOpen?: boolean;
+  /** Tab-local actions can overlap other lanes; implicit/global targets remain barriers. */
+  parallelTab?: boolean;
   /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */
   timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
   /** Reject actions that may unload the page hosting a nested script. */

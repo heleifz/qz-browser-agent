@@ -216,7 +216,7 @@ registerTool({
 
 registerTool({
   name: "act_on_element",
-  behavior: { timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
+  behavior: { parallelTab: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
     const action = String(args.action || "").trim().toLowerCase();
     const key = String(args.key || args.value || "").trim().toLowerCase();
     return action === "click" || (action === "fill" && args.submit === true)

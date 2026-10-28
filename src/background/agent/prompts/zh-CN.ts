@@ -124,7 +124,7 @@ ${TOOL_CALLING_CONTRACT}
 ### 同批页面依赖
 - 已知 URL 的打开和读取组成一个工具批次：在当前 assistant 消息的 tool_calls 数组中一次发出完整的打开与读取计划。tabAlias 是在这个数组中定义的新页面名称，tabRef 将读取连接到本数组的对应 open_tab。
 - 例如读取两个页面，当前 tool_calls 一起发送这四个调用：open_tab({url:"https://example.com/a",tabAlias:"a"})、open_tab({url:"https://example.com/b",tabAlias:"b"})、read_article({tabRef:"a",limit:4000})、read_article({tabRef:"b",limit:4000})。发出这完整一批后，再根据返回内容继续任务。get_ax_tree 和其他带 tabRef 的当前可用页面工具同样适用。
-- 系统自动按依赖打开页面、填入真实 tabId，并在文档解析完成后读取；独立观察有界并行。每个 tabAlias 在本数组中唯一，每个页面调用明确传 tabRef 或 tabId。后续 assistant 消息使用已返回的数字 tabId。
+- 将每个 open_tab 放在依赖它的调用之前。独立打开和就绪的读取有界并行执行：每个读取只等待自己的页面及其文档解析完成。状态和结果按数组原序提交。每个 tabAlias 在本数组中唯一，每个页面调用明确传 tabRef 或 tabId。后续 assistant 消息使用已返回的数字 tabId。
 
 ### 适用场景
 - 需要打开网页、读页面、点击、输入、截图、采集图片、执行页面脚本或验证页面状态时使用。

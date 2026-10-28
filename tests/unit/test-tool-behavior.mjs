@@ -121,7 +121,7 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
   assert.equal(runtime.getParallelReadTab('manage_settings', { tabId: 12 }, { toolRegistrySnapshot }), 12);
   assert.deepEqual(runtime.getBatchTabPolicy('manage_settings', { tabAlias: 'a' }, { toolRegistrySnapshot }), { kind: 'create' });
   for (const candidate of [plugin, structuredClone(plugin)]) {
-    const claimedTool = { ...tool, source: 'core', behavior: { parallelRead: true } };
+    const claimedTool = { ...tool, source: 'core', behavior: { parallelRead: true, parallelOpen: true, parallelTab: true } };
     const options = { toolRegistrySnapshot, skillToolRegistrySnapshot: {
       plugins: [candidate], toolIndex: new Map([[tool.name, { plugin: candidate, tool: claimedTool }]]),
     } };

@@ -82,9 +82,12 @@ interface AgentMessage extends ModelMessage {
   _compact?: Facts; _contextCapsule?: Facts; _contextEvent?: Facts;
 }
 interface AgentToolPort {
+  maxInFlight?: number;
   snapshot?(language?: string): unknown;
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
   getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
+  commitToolResult?(result: unknown, signal: AbortSignal, context: Facts): Promise<void>;
+  discardToolResult?(result: unknown, context: Facts): Promise<void>;
   getSchemas(context: Facts): object[];
   getIdentity(name: string, context: Facts): object;
   getModelPolicy?(name: string, context: Facts): Readonly<ToolModelPolicy> | undefined;
@@ -2681,8 +2684,15 @@ export class Agent {
     };
     const batch = planTabBatch(toolCalls, tc => {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
-      return { args, policy: this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup) };
+      let policy = this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup);
+      if (policy?.kind === "create" && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
+      if (!policy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
+        policy = { kind: "target", implicit: false, observation: true };
+      return { args, policy };
     }, this._runLanguage);
+    const identity = { sessionId: this.sessionId, runId: this._currentRunId };
+    const updates = new Map<ModelToolCall, AgentEvent[]>();
+    const ended = new Set<ModelToolCall>();
     const settled = new Map<ModelToolCall, ReturnType<typeof failure>>();
     let ledgerIndex = 0;
     const flushLedger = (skipUnstarted = false) => {
@@ -2692,8 +2702,12 @@ export class Agent {
         if (!outcome && !skipUnstarted) break;
         ledgerIndex++;
         if (!outcome) continue;
-        settled.delete(call);
+        settled.delete(call); ended.add(call);
         const { id, toolName, toolIdentity, args, result, isError } = outcome;
+        this._emit({ type: "tool_execution_start", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
+          ...toolIdentityEventFields(toolIdentity), args });
+        for (const update of updates.get(call) || []) this._emit(update);
+        updates.delete(call);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
           ...toolIdentityEventFields(toolIdentity), args, result, isError,
@@ -2704,8 +2718,13 @@ export class Agent {
         }
       }
     };
-    await scheduleToolCalls(batch.ordered, {
+    await scheduleToolCalls<ModelToolCall, ReturnType<typeof failure>>(batch.ordered, {
       signal,
+      maxInFlight: this._toolRuntime.maxInFlight,
+      dependencies: batch.dependencies,
+      independent: batch.independent,
+      completed: (tc, outcome) => batch.complete(tc, outcome.result, outcome.isError),
+      cancelled: tc => failure(tc, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
       tab: tc => {
         try { return this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), batch.args(tc), lookup) ?? null; }
         catch { return null; } // Invalid references become per-call errors in execute, not scheduler failures.
@@ -2716,14 +2735,7 @@ export class Agent {
         const toolName = normalizeToolCallName(tc);
         let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
         let toolIdentity: object = {};
-        let started = false;
-        const start = () => {
-          started = true;
-          this._emit({
-            type: "tool_execution_start", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
-            ...toolIdentityEventFields(toolIdentity), args,
-          });
-        };
+        let executionResult: unknown;
         const assertActive = () => {
           if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
         };
@@ -2736,12 +2748,18 @@ export class Agent {
           });
           const toolRuntimeContext = await this._collectToolRuntimeContext();
           args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
-          start();
           assertActive();
-          const result = await this._toolRuntime.execute(toolName, args, callSignal, {
-            preserveWorkingTab: parallel,
+          const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
+            preserveWorkingTab: this._toolRuntime.getParallelReadTab?.(toolName, args, lookup) != null,
+            deferToolCommit: parallel,
+            deferCreatedTabSelection: batch.parallelCreate(tc),
+            createdTabResult: batch.executionParent(tc),
+            onToolUpdate: (event: Facts) => {
+              if (signal.aborted || ended.has(tc)) return;
+              updates.set(tc, [...(updates.get(tc) || []), event as AgentEvent]); flushLedger();
+            },
             sessionId: this.sessionId,
-            runId: this._currentRunId,
+            runId: identity.runId,
             spanId: this._makeToolSpanId(id),
             toolCallId: id,
             workingTabId: toolRuntimeContext.workingTabId || null,
@@ -2755,23 +2773,43 @@ export class Agent {
             language: this._runLanguage,
           });
           assertActive();
-          return { call: tc, id, toolName, toolIdentity, args, result, isError: Boolean(record(result).error) };
+          return { call: tc, id, toolName, toolIdentity, args, result,
+            isError: Boolean(record(result).error || record(result).ok === false || record(result).isError === true) };
         } catch (error) {
-          if (!started) start();
+          await this._toolRuntime.discardToolResult?.(executionResult, identity);
           return failure(tc, error, args, toolIdentity);
         }
       },
       commit: async outcome => {
         let { result, isError } = outcome;
+        let pendingMessages: ModelMessage[] = [];
+        const assertActive = () => {
+          if (signal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
+        };
         try {
-          if (!signal.aborted) followUpMessages.push(...await this._applyToolResultEffects(outcome.toolName, result, isError));
+          assertActive();
+          batch.assertDependenciesCommitted(outcome.call);
+          if (!isError) await this._toolRuntime.commitToolResult?.(result, signal, identity);
+          assertActive();
+          pendingMessages = await this._applyToolResultEffects(outcome.toolName, result, isError);
+          assertActive();
         } catch (error) {
           result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
           isError = true;
         }
-        // Effects and bindings follow dependency order; final events and messages retain model order.
+        await this._toolRuntime.discardToolResult?.(outcome.result, identity);
+        if (signal.aborted) {
+          result = failure(outcome.call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }).result;
+          isError = true;
+        }
+        if (!signal.aborted) followUpMessages.push(...pendingMessages);
+        // Only this cursor publishes state, effects, bindings, events and model messages.
         batch.settle(outcome.call, result, isError);
-        settled.set(outcome.call, { ...outcome, result, isError });
+        if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
+          updates.delete(outcome.call);
+          const normalized = failure(outcome.call, { ...record(result), message: record(result).error });
+          settled.set(outcome.call, normalized);
+        } else settled.set(outcome.call, { ...outcome, result, isError });
         flushLedger();
       },
     }).finally(() => flushLedger(true));

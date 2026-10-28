@@ -25,7 +25,7 @@ test('trusted registrations select only explicit cross-tab observations', () => 
   assert.equal(getParallelReadTab('unknown', { tabId: 12, parallelRead: true }), null);
 });
 
-test('scheduler runs ten distinct reads and starts the eleventh after the first group commits', async () => {
+test('scheduler bounds execution at ten and refills slots before earlier calls commit', async () => {
   const started = [], committed = [], parallelCalls = [], releases = new Map();
   let active = 0, peak = 0;
   const run = scheduleToolCalls(Array.from({ length: 11 }, (_, i) => i + 1), {
@@ -40,22 +40,22 @@ test('scheduler runs ten distinct reads and starts the eleventh after the first 
   await tick();
   assert.deepEqual(started, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   for (let id = 10; id >= 2; id--) releases.get(id)();
-  await tick(); assert.deepEqual(committed, []); assert.equal(started.length, 10);
+  await tick(); assert.deepEqual(committed, []); assert.equal(started.length, 11);
   releases.get(1)(); await tick();
   assert.deepEqual(committed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(started.at(-1), 11); releases.get(11)(); await run;
   assert.equal(peak, 10); assert.equal(active, 0);
   assert.deepEqual(committed, started);
-  assert.deepEqual(parallelCalls, [...Array(10).fill(true), false]);
+  assert.deepEqual(parallelCalls, Array(11).fill(true));
 });
 
-test('Agent batches distinct reads, commits in call order, and treats same-tab and mutations as barriers', async () => {
+test('Agent serializes same-tab lanes without blocking independent reads and retains global barriers', async () => {
   const started = [], finished = [], committed = [], signals = [], releases = new Map();
   const agent = new Agent('scheduler', createTestAgentOptions({ tools: {
     getIdentity: () => ({}), getSchemas: () => [], getParallelReadTab,
     async execute(name, args, signal, context) {
       started.push(context.toolCallId); signals.push(signal);
-      assert.equal(context.preserveWorkingTab, ['1', '2', '3', '7', '8'].includes(context.toolCallId));
+      assert.equal(context.preserveWorkingTab, ['1', '2', '3', '4', '5', '7', '8'].includes(context.toolCallId));
       await new Promise(resolve => releases.set(context.toolCallId, resolve));
       finished.push(context.toolCallId);
       if (context.toolCallId === '2') throw new Error('one failed read');
@@ -68,18 +68,36 @@ test('Agent batches distinct reads, commits in call order, and treats same-tab a
     call('4', 'read_article', 3), call('5', 'read_article', 4), call('6', 'navigate', 5),
     call('7', 'read_article', 6), call('8', 'read_article', 7),
   ], new AbortController().signal);
-  await tick(); assert.deepEqual(started, ['1', '2', '3']);
+  await tick(); assert.deepEqual(started, ['1', '2', '3', '5']);
   releases.get('3')(); releases.get('2')(); await tick(); assert.deepEqual(committed, []);
-  releases.get('1')(); await tick(); assert.deepEqual(committed, ['1', 'error', '3']);
-  for (const id of ['4', '5', '6']) {
-    assert.equal(started.at(-1), id); releases.get(id)(); await tick();
-  }
+  assert.equal(started.at(-1), '4'); releases.get('4')(); releases.get('5')();
+  releases.get('1')(); await tick(); assert.deepEqual(committed, ['1', 'error', '3', '4', '5']);
+  assert.equal(started.at(-1), '6'); releases.get('6')(); await tick();
   assert.deepEqual(started.slice(-2), ['7', '8']);
   releases.get('8')(); releases.get('7')();
   const messages = await run;
   assert.deepEqual(messages.filter(m => m.role === 'tool').map(m => m.tool_call_id), ['1','2','3','4','5','6','7','8']);
-  assert.deepEqual(finished.slice(0, 3), ['3', '2', '1']);
+  assert.deepEqual(finished.slice(0, 2), ['3', '2']);
   assert.equal(new Set(signals).size, 8);
+});
+
+test('one shared budget bounds mixed opens and ready readers at ten', async () => {
+  const opens = Array.from({ length: 10 }, (_, i) => `o${i}`), reads = opens.map((_, i) => `r${i}`);
+  const releases = new Map(), started = [], commits = [];
+  let active = 0, peak = 0;
+  const run = scheduleToolCalls([...opens, ...reads], {
+    tab: () => null, signal: new AbortController().signal,
+    dependencies: id => ({ execution: id[0] === 'r' ? [`o${id.slice(1)}`] : [], commit: [] }),
+    execute: async id => { started.push(id); peak = Math.max(peak, ++active);
+      await new Promise(resolve => releases.set(id, resolve)); active--; return id; },
+    commit: async id => { commits.push(id); },
+  });
+  await tick(); assert.deepEqual(started, opens);
+  releases.get('o0')(); await tick(); assert.equal(started.at(-1), 'r0');
+  assert.equal(active, 10); assert.deepEqual(commits, ['o0']);
+  for (const id of opens.slice(1)) releases.get(id)();
+  await tick(); for (const id of reads) releases.get(id)();
+  await run; assert.equal(peak, 10); assert.deepEqual(commits, [...opens, ...reads]);
 });
 
 test('an effect failure preserves sibling results and later barriers', async () => {
@@ -116,7 +134,7 @@ test('stop cancels each running call and revokes pending effects and later barri
   const messages = await run;
   assert.equal(signals.length, 10); assert.ok(signals.every(signal => signal.aborted)); assert.equal(commits, 0);
   assert.equal(new Set(signals).size, 10);
-  assert.deepEqual(messages.map(message => message.tool_call_id), Array.from({ length: 10 }, (_, i) => String(i + 1)));
+  assert.deepEqual(messages.map(message => message.tool_call_id), [...Array.from({ length: 11 }, (_, i) => String(i + 1)), 'mutation']);
   assert.ok(messages.every(message => JSON.stringify(message).includes('OPERATION_ABORTED')));
 });
 
@@ -135,7 +153,7 @@ test('stop retains an already completed result and the interrupted call in ledge
   await tick(); controller.abort();
   const messages = await run;
   assert.deepEqual(executed, [1, 2]);
-  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2']);
+  assert.deepEqual(messages.map(message => message.tool_call_id), ['1', '2', '3']);
   assert.match(JSON.stringify(messages[0]), /completed/);
   assert.match(JSON.stringify(messages[1]), /OPERATION_ABORTED/);
 });

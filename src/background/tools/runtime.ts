@@ -228,6 +228,45 @@ export async function captureTabScreenshot(tabId: number, options: ScreenshotOpt
   return await capabilityBridges.captureTabScreenshot(tabId, options, context);
 }
 
+interface DeferredToolState {
+  toolName: string;
+  context: ToolContext;
+  authority: ToolRuntimeDependencies;
+  tabId?: number;
+  reservation?: object;
+  settling?: boolean;
+  commit(signal: AbortSignal): Promise<void>;
+  discard(): Promise<void>;
+}
+const deferredToolStates = new WeakMap<object, DeferredToolState>();
+function deferredState(result: unknown, context: ToolContext) {
+  const ticket = isRecord(result) ? deferredToolStates.get(result) : undefined;
+  return ticket && ticket.context.sessionId === context.sessionId && ticket.context.runId === context.runId
+    && ticket.authority === getToolRuntimeDependencies(context) ? ticket : undefined;
+}
+async function settleToolState(result: unknown, context: ToolContext, signal?: AbortSignal) {
+  const ticket = deferredState(result, context);
+  if (!ticket || ticket.settling || !isRecord(result)) return;
+  ticket.settling = true;
+  try {
+    if (signal) {
+      if (signal.aborted || ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", context.runId || "") === false)
+        throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before ordered commit");
+      await ticket.commit(signal);
+    }
+  } catch (error) {
+    throw withLanguage(ticket.context.language || getLanguage(), () => localizeToolFailureError(error, { toolName: ticket.toolName }));
+  } finally { deferredToolStates.delete(result); await ticket.discard(); }
+}
+function withExecutionAuthority(context: ToolContext, authority: ToolRuntimeDependencies, reservation?: object, tabId?: number) {
+  if (!authority.sessions?.resolveTargetTab) return withToolRuntimeContext(context, authority);
+  return withToolRuntimeContext(context, { ...authority, sessions: { ...authority.sessions,
+    resolveTargetTab: input => authority.sessions!.resolveTargetTab!({ ...input,
+      ...(context.deferToolCommit ? { checkOnly: true } : {}),
+      ...(reservation && Number(input.tabId) === tabId ? { createdTabReservation: reservation } : {}) }),
+  } });
+}
+
 export function createToolRuntime({
   sessions = null,
   skills = null,
@@ -252,7 +291,15 @@ export function createToolRuntime({
     getIdentity: getToolIdentity,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
     getParallelReadTab,
-    getBatchTabPolicy,
+    getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}) {
+      const policy = getBatchTabPolicy(name, args, options);
+      return policy?.kind === "create" && policy.parallel && (!sessions?.reserveCreatedTab || !sessions.commitCreatedTab || !sessions.discardCreatedTab || !sessions.resolveTargetTab)
+        ? { ...policy, parallel: false } : policy;
+    },
+    commitToolResult: (result: unknown, signal: AbortSignal, context: ToolContext) =>
+      settleToolState(result, withToolRuntimeContext(context, dependencies), signal),
+    discardToolResult: (result: unknown, context: ToolContext) =>
+      settleToolState(result, withToolRuntimeContext(context, dependencies)),
     consumeEffects: consumeToolEffects,
     resolveDefinition: resolveToolDefinition,
     execute(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
@@ -339,11 +386,12 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
 export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
   const definition = resolveToolDefinition(name, options);
   if (definition?.source !== "core") return null;
-  if (definition.workingTab === "created") return { kind: "create" };
+  if (definition.workingTab === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: true } : {}) };
   const input = record(args);
   if (!definition.parameters.properties.tabId || !resolvePageAccess(definition, input)) return null;
   return { kind: "target", implicit: input.tabId == null && ![input.target, input.selector, input.root].some(isUidElementTarget),
-    observation: getParallelReadTab(name, { ...input, tabId: 1 }, options) !== null };
+    observation: getParallelReadTab(name, { ...input, tabId: 1 }, options) !== null,
+    ...(definition.behavior?.parallelTab && ![input.target, input.selector, input.root].some(isUidElementTarget) ? { parallel: true } : {}) };
 }
 
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
@@ -385,6 +433,12 @@ function getLocalizedToolSchemas(options: ToolOptions, snapshot: ReturnType<type
  */
 export async function executeTool(name: string, args: unknown, signal?: AbortSignal, context: ToolContext = {}) {
   const startedAtMs = Date.now();
+  const authority = getToolRuntimeDependencies(context);
+  const parent = deferredState(context.createdTabResult, context);
+  if (context.deferToolCommit || parent?.reservation) context = withExecutionAuthority(context, authority, parent?.reservation, parent?.tabId);
+  let pending: { tabId: number; reservation: object } | undefined;
+  let transferred = false;
+  const discard = async () => { if (pending) await authority.sessions?.discardCreatedTab?.(pending.reservation); };
   const timing = createToolPhaseTiming(name, context);
   context = withToolRuntimeContext({ ...context, measurePhase: timing.start }, getToolRuntimeDependencies(context));
   const language = isCoreToolSnapshot(context.toolRegistrySnapshot) ? context.toolRegistrySnapshot.language : context.language || getLanguage();
@@ -451,6 +505,15 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         async (signal, reportPartial) => {
           const args = executionArgs;
           const callContext = withToolRuntimeContext({ ...context, signal, reportPartial }, getToolRuntimeDependencies(context));
+          if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
+            callContext.prepareCreatedTab = async tab => {
+              const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
+              if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", { tabId: tab.id });
+              pending = { tabId: Number(tab.id), reservation: reserved.reservation };
+              if (signal.aborted) { await discard(); throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted during tab creation"); }
+              return withExecutionAuthority(callContext, authority, reserved.reservation, Number(tab.id));
+            };
+          }
           const pageAccess = resolvePageAccess(selectedDefinition, args);
           if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
             await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
@@ -500,7 +563,21 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
       if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
         issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
-        await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
+        if (context.deferToolCommit && definition.source === "core" && isRecord(localizedResult)) {
+          const selected = definition;
+          deferredToolStates.set(localizedResult, { toolName: name, context, authority, ...pending, discard,
+            async commit(commitSignal) {
+              if (pending) {
+                await assertTabAllowedBySecurityGuardrails(pending.tabId, { tool: name, source: "batch_commit" });
+                const committed = await authority.sessions?.commitCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId,
+                  signal: commitSignal, reservation: pending.reservation });
+                if (!committed?.ok) throw makeSessionTabTargetError(committed?.code || "SESSION_TAB_UNAVAILABLE", { toolName: name, tabId: pending.tabId });
+              } else await recordWorkingTabFromTool(selected, executionArgs, localizedResult,
+                withToolRuntimeContext({ ...context, preserveWorkingTab: false }, authority), commitSignal);
+            },
+          });
+          transferred = true;
+        } else await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
       }
       if (traceTool) {
         const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
@@ -515,11 +592,13 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       toolTrace(`[tool] error name=${name} code=${record(localized).code || record(err).code || ""} label=${record(localized).codeLabel || ""} message=${record(localized).message || record(err).message || err} durationMs=${Date.now() - startedAtMs} details=${summarizeToolArgsForTrace(record(localized).details || record(err).details || {})}`);
     }
     throw localized;
-  } finally { timing.finish(); }
+  } finally {
+    try { if (!transferred) await discard(); } finally { timing.finish(); }
+  }
 }
 
 function emitToolExecutionUpdate(name: string, args: unknown = {}, update: Fields = {}, context: ToolContext = {}) {
-  const sink = getToolRuntimeDependencies(context).emit;
+  const sink = typeof context.onToolUpdate === "function" ? context.onToolUpdate as (event: Fields) => void : getToolRuntimeDependencies(context).emit;
   if (typeof sink !== "function") return false;
   const toolCallId = String(context?.toolCallId || "").trim();
   const spanId = String(context?.spanId || "").trim();
@@ -852,6 +931,7 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
     signal,
     tabId: targetTabId,
     source: `tool:${toolName}:preflight`,
+    checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
     readOnly: resolvePageAccess(definition, input) === "readOnly",
     tabOnly: resolvePageAccess(definition, input) === "tab",
   });
@@ -864,6 +944,9 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
       reason: resolved?.reason || "",
       message: resolved?.error || "",
     });
+  }
+  if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
+    throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", { toolName, sessionId, tabId: targetTabId });
   }
   input.tabId = Number(resolved.tabId || targetTabId);
   if (resolved.readOnlyAccess === true && resolved.ownedByCurrentTask === false) {

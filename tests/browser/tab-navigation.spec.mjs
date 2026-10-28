@@ -71,7 +71,10 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     });
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
     await worker.evaluate(() => {
-      const owned = new Set();
+      const owned = new Set(), pending = new Map();
+      globalThis.navigationWorking = null;
+      globalThis.navigationExecuted = [];
+      globalThis.navigationCompleted = [];
       globalThis.navigationAttachCount = 0;
       const attach = chrome.debugger.attach.bind(chrome.debugger);
       chrome.debugger.attach = (...args) => { navigationAttachCount++; return attach(...args); };
@@ -79,10 +82,20 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: {
           isRunCurrent: () => true,
-          resolveTargetTab: async ({ tabId }) => owned.has(tabId)
+          resolveTargetTab: async ({ tabId, createdTabReservation }) => owned.has(tabId) || (pending.has(tabId) && pending.get(tabId) === createdTabReservation)
             ? { ok: true, tabId, tab: await chrome.tabs.get(tabId), ownedByCurrentTask: true }
             : { ok: false, code: "SESSION_TAB_FOREIGN" },
-          updateWorkingTab: async ({ tab }) => { owned.add(tab.id); },
+          reserveCreatedTab: async ({ tab }) => { const reservation = {}; pending.set(tab.id, reservation); return { ok: true, reservation }; },
+          commitCreatedTab: async ({ reservation }) => {
+            const id = [...pending].find(([, token]) => token === reservation)?.[0];
+            if (!id) return { ok: false, code: 'SESSION_TAB_UNAVAILABLE' };
+            await chrome.tabs.get(id); pending.delete(id); owned.add(id); navigationWorking = id; return { ok: true };
+          },
+          discardCreatedTab: async reservation => {
+            const id = [...pending].find(([, token]) => token === reservation)?.[0];
+            if (id) { await chrome.tabs.remove(id).catch(() => {}); pending.delete(id); }
+          },
+          updateWorkingTab: async ({ tab }) => { owned.add(tab.id); navigationWorking = tab.id; },
         },
       });
       globalThis.navigationRuntime = runtime;
@@ -178,30 +191,39 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         release('/late-image'); await call('close_tab', { tabId: opened.id });
       }
       // Exercise the production Agent dependency planner against two independently blocked heads.
-      held.set('/head-block-batch-a', []); held.set('/head-block-batch-b', []); held.set('/late-image', []);
-      const batchRun = worker.evaluate(async origin => {
-        const agent = new navigationTestAgent('navigation', { tools: navigationRuntime });
+      held.set('/head-block-batch-a', []); held.set('/batch-open-b', []); held.set('/late-image', []);
+      const batchRun = worker.evaluate(async ({ origin, watchNetwork }) => {
+        const agent = new navigationTestAgent('navigation', { tools: { ...navigationRuntime,
+          async execute(name, args, signal, context) {
+            navigationExecuted.push(context.toolCallId);
+            const result = await navigationRuntime.execute(name, args, signal, context);
+            navigationCompleted.push(context.toolCallId); return result;
+          },
+        } });
         agent._currentRunId = 'run';
         const events = []; agent.subscribe(event => { events.push(event); });
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
+          tc('open-a', 'open_tab', { url: `${origin}/late-body-batch-a`, tabAlias: 'a', watchNetwork }),
+          tc('open-b', 'open_tab', { url: `${origin}/batch-open-b`, tabAlias: 'b', watchNetwork }),
           tc('read-a', 'read_article', { tabRef: 'a', limit: 3000 }),
-          tc('open-a', 'open_tab', { url: `${origin}/late-body-batch-a`, tabAlias: 'a' }),
           tc('read-b', 'read_article', { tabRef: 'b', limit: 3000 }),
-          tc('open-b', 'open_tab', { url: `${origin}/late-body-batch-b`, tabAlias: 'b' }),
         ], new AbortController().signal);
         return { ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
           ends: events.filter(event => event.type === 'tool_execution_end') };
-      }, origin);
-      await expect.poll(() => held.get('/head-block-batch-b').length).toBeGreaterThan(0);
-      expect(held.get('/head-block-batch-a').length).toBeGreaterThan(0);
-      release('/head-block-batch-a'); release('/head-block-batch-b');
+      }, { origin, watchNetwork });
+      await expect.poll(() => held.get('/batch-open-b').length).toBeGreaterThan(0);
+      await expect.poll(() => held.get('/head-block-batch-a').length).toBeGreaterThan(0);
+      release('/head-block-batch-a');
+      await expect.poll(() => worker.evaluate(() => navigationCompleted.includes('read-a'))).toBe(true);
+      expect(await worker.evaluate(() => navigationCompleted.includes('open-b'))).toBe(false);
+      release('/batch-open-b');
       const batchResult = await batchRun;
-      expect(batchResult.ids).toEqual(['read-a', 'open-a', 'read-b', 'open-b']);
+      expect(batchResult.ids).toEqual(['open-a', 'open-b', 'read-a', 'read-b']);
       expect(batchResult.ends.every(event => !event.isError)).toBe(true);
       const left = batchResult.ends.find(event => event.toolCallId === 'read-a').result;
       const right = batchResult.ends.find(event => event.toolCallId === 'read-b').result;
-      expect(left.text).toContain('/late-body-batch-a'); expect(right.text).toContain('/late-body-batch-b');
+      expect(left.text).toContain('/late-body-batch-a'); expect(right.text).toContain('/batch-open-b');
       expect(left._tabId).not.toBe(right._tabId);
       release('/late-image');
       for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabId: event.result.id });
