@@ -97,6 +97,9 @@ checks same-tab serialization, real nested `tools.read_article` barriers and one
 a DOM side effect. No public sites or model providers are involved.
 `npm test -- playwright tests/browser/tab-navigation.spec.mjs` repeats the independent-read check
 with a withheld HTTP response, real Content readiness and Network watching both enabled and disabled.
+It uses the production Session tab manager and checks a fresh Session's first open, pre-navigation
+Network capture and a same-batch alias read. `--match session-tab-targeting` also covers provisional
+desktop/mobile setup, reservation isolation and cancellation during CDP authorization.
 
 ## Add a test at the right boundary
 

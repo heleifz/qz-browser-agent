@@ -1492,6 +1492,8 @@ async function authorizeRunCdpTab({ tabId, sessionId, context = {} }: { tabId: n
   }
   const resolved = await sessions.resolveTargetTab({
     sessionId,
+    runId,
+    signal: context.signal,
     tabId,
     source: "cdp:run",
     checkOnly: true,
