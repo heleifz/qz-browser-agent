@@ -224,7 +224,8 @@ function assertFileInputHandoffContract() {
 
   assert.match(contentScript, /type: item\.type/, "pageOverview actions should retain the input type");
   assert.match(contentScript, /selectedFileCount: item\.selectedFileCount/, "pageOverview actions should retain selected file count");
-  assert.match(contentScript, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
+  const implicitRoles = read("src/content/implicit-aria-role.ts");
+  assert.match(`${contentScript}\n${implicitRoles}`, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
   assert.match(contentScript, /String\(el\.type \|\| ""\)\.toLowerCase\(\) !== "file"/, "file inputs should not be presented as editable text fields");
   assert.match(tools, /inputType && inputType !== String\(compact\.role \|\| ""\)/, "AX snapshot should keep a useful input type");
   assert.match(tools, /Number\.isFinite\(Number\(action\?\.selectedFileCount\)\)/, "AX snapshot should keep file selection state");
