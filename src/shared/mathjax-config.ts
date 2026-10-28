@@ -1,7 +1,4 @@
 const mathJaxConfig = {
-  loader: {
-    load: ["input/tex-full", "output/svg", "a11y/assistive-mml"],
-  },
   tex: {
     inlineMath: [["$", "$"], ["\\(", "\\)"]],
     displayMath: [["$$", "$$"], ["\\[", "\\]"]],
@@ -14,7 +11,7 @@ const mathJaxConfig = {
     },
   },
   options: {
-    // ui/menu is not loaded: it fetches Speech Rule Engine from a CDN.
+    // All TeX/SVG/assistive-MathML code is statically packaged; no component loader or menu.
     skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
     ignoreHtmlClass: "tex2jax_ignore",
     processHtmlClass: "math-formula",

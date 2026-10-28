@@ -176,7 +176,7 @@ async function buildEmbeddedScript({ sourceDir = resolve(ROOT, "src"), entry, mo
   if (!entry || !isInside(sourceDir, resolve(sourceDir, entry))) throw new Error("embedded script must be inside the extension");
   const result = await build({
     absWorkingDir: sourceDir, entryPoints: [entry], bundle: true, write: false, metafile: true,
-    platform: "browser", format: "iife", globalName, target: "chrome114", minify: mode === "production",
+    platform: "browser", format: "iife", globalName, target: "chrome114", minify: false, keepNames: true,
     sourcemap: debugMaps ? "external" : debugMap && mode === "development" ? "inline" : false,
     ...(debugMaps ? { outfile: entry.replace(/\.ts$/, ".js"), sourcesContent: true } : {}),
     logLevel: "silent", tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true } },
