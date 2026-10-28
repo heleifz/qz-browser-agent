@@ -2668,9 +2668,12 @@ export class Agent {
       toolRegistrySnapshot: this._toolRegistrySnapshot,
       language: this._runLanguage,
     };
-    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity: object = {}) => {
+    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity?: object) => {
       const err = record(error);
       const details = record(err.details);
+      const toolName = normalizeToolCallName(tc);
+      // An empty identity renders as a bare "tool" fallback; resolve it when the caller has none.
+      const identity = toolIdentity && Object.keys(toolIdentity).length ? toolIdentity : this._toolRuntime.getIdentity(toolName, lookup);
       const result = {
         error: err.message || String(error),
         code: err.name === "AbortError" ? "OPERATION_ABORTED" : err.code || "TOOL_EXECUTION_FAILED",
@@ -2680,7 +2683,7 @@ export class Agent {
         ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
         ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
       };
-      return { call: tc, id: tc.id, toolName: normalizeToolCallName(tc), toolIdentity, args, result: result as unknown, isError: true };
+      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true };
     };
     const batch = planTabBatch(toolCalls, tc => {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
@@ -2799,7 +2802,7 @@ export class Agent {
         }
         await this._toolRuntime.discardToolResult?.(outcome.result, identity);
         if (signal.aborted) {
-          result = failure(outcome.call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }).result;
+          result = failure(outcome.call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, undefined, outcome.toolIdentity).result;
           isError = true;
         }
         if (!signal.aborted) followUpMessages.push(...pendingMessages);
@@ -2807,7 +2810,7 @@ export class Agent {
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
           updates.delete(outcome.call);
-          const normalized = failure(outcome.call, { ...record(result), message: record(result).error });
+          const normalized = failure(outcome.call, { ...record(result), message: record(result).error }, undefined, outcome.toolIdentity);
           settled.set(outcome.call, normalized);
         } else settled.set(outcome.call, { ...outcome, result, isError });
         flushLedger();

@@ -4,6 +4,9 @@ import { Agent } from '../../src/background/agent/agent.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = {};
 const { getParallelReadTab, getBatchTabPolicy, createToolRuntime } = await import('../../src/background/tools/runtime.js');
+const { t: toolT } = await import('../../src/background/tools/messages.js');
+const { withLanguage } = await import('../../src/shared/i18n/index.js');
+const namedIdentity = name => ({ name, title: { read_article: 'Read article', open_tab: 'Open tab' }[name] || name, familyId: 'tabs', familyTitle: 'Tabs' });
 const call = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
 const open = (id, tabAlias) => call(id, 'open_tab', { url: `https://${id}.test/`, ...(tabAlias == null ? {} : { tabAlias }) });
 const read = (id, tabRef, extra = {}) => call(id, 'read_article', { limit: 3000, ...(tabRef == null ? {} : { tabRef }), ...extra });
@@ -125,4 +128,75 @@ test('stop settles started producers without launching dependent reads', async (
   assert.deepEqual(f.calls.map(c => c.context.toolCallId), ['o', 'next']);
   assert.deepEqual(messages.map(m => m.tool_call_id), ['o', 'next', 'r']);
   assert.ok(f.ends().every(e => e.result.code === 'OPERATION_ABORTED'));
+});
+
+test('a dependency-skipped page call keeps its resolved tool identity in events', async () => {
+  const f = fixture(async name => {
+    if (name === 'open_tab') throw Object.assign(new Error('Navigation failed'), { code: 'NAVIGATION_FAILED' });
+    return { tabId: 1 };
+  });
+  f.agent._tools.getIdentity = namedIdentity;
+  await f.run([open('o', 'a'), read('r', 'a')]);
+  const end = f.ends().find(e => e.toolCallId === 'r');
+  assert.equal(end.result.code, 'BATCH_TAB_DEPENDENCY_FAILED');
+  for (const event of f.events.filter(e => e.toolCallId === 'r')) {
+    assert.equal(event.toolTitle, 'Read article');
+    assert.equal(event.toolFamilyId, 'tabs');
+    assert.equal(event.toolFamilyTitle, 'Tabs');
+  }
+});
+
+test('an unresolved reference keeps its tool identity without executing', async () => {
+  const f = fixture();
+  f.agent._tools.getIdentity = namedIdentity;
+  await f.run([read('r', 'missing')]);
+  const end = f.ends().find(e => e.toolCallId === 'r');
+  assert.equal(end.result.details.reason, 'unknown_reference');
+  assert.equal(end.toolTitle, 'Read article');
+  assert.equal(end.toolFamilyId, 'tabs');
+  assert.equal(f.events.find(e => e.type === 'tool_execution_start' && e.toolCallId === 'r').toolTitle, 'Read article');
+});
+
+test('a call cancelled by stop keeps its tool identity', async () => {
+  const controller = new AbortController();
+  const f = fixture(async (_name, _args, signal) => {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    throw Object.assign(new Error('stopped'), { code: 'OPERATION_ABORTED' });
+  });
+  f.agent._tools.getIdentity = namedIdentity;
+  const run = f.run([open('o', 'a'), read('r', 'a')], controller.signal);
+  await tick(); controller.abort(); await run;
+  const end = f.ends().find(e => e.toolCallId === 'r');
+  assert.equal(end.result.code, 'OPERATION_ABORTED');
+  assert.equal(end.toolTitle, 'Read article');
+  assert.equal(end.toolFamilyId, 'tabs');
+});
+
+test('dependency and reference failure messages name the tabRef', async () => {
+  const f = fixture(async name => {
+    if (name === 'open_tab') throw Object.assign(new Error('Navigation failed'), { code: 'NAVIGATION_FAILED' });
+    return { tabId: 1 };
+  });
+  await f.run([open('o', 'a'), read('r', 'a'), read('u', 'missing')]);
+  const dependency = f.ends().find(e => e.toolCallId === 'r');
+  assert.equal(dependency.result.code, 'BATCH_TAB_DEPENDENCY_FAILED');
+  assert.match(dependency.result.error, /「a」|"a"/);
+  assert.ok(!dependency.result.error.includes('{tabRef}'));
+  const reference = f.ends().find(e => e.toolCallId === 'u');
+  assert.equal(reference.result.code, 'BATCH_TAB_REFERENCE_ERROR');
+  assert.match(reference.result.error, /「missing」|"missing"/);
+});
+
+test('batch tab messages interpolate tabRef and differ by reference reason', () => {
+  for (const language of ['en', 'zh-CN']) {
+    const text = withLanguage(language, () => toolT('batchTabDependencyFailed', { tabRef: 'a' }));
+    assert.ok(text.includes('a') && !text.includes('{tabRef}'), language);
+  }
+  const keys = ['batchTabReferenceUnknownReference', 'batchTabReferenceDuplicateAlias', 'batchTabReferenceForwardReference',
+    'batchTabReferenceInvalidAlias', 'batchTabReferenceInvalidReference', 'batchTabReferenceAmbiguousTarget', 'batchTabReferenceOutsideBatch'];
+  for (const language of ['en', 'zh-CN']) {
+    const texts = keys.map(key => withLanguage(language, () => toolT(key, { tabRef: 'x' })));
+    assert.equal(new Set(texts).size, keys.length, language);
+    for (const text of texts) assert.ok(!text.includes('{tabRef}'), `${language}: ${text}`);
+  }
 });

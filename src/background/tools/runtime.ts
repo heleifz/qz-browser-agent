@@ -478,7 +478,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     // Only the Agent's call-local dependency planner can resolve a symbolic tab. Never fall back.
     if (record(args).tabRef != null) throw new ToolExecutionError("BATCH_TAB_REFERENCE_ERROR",
-      withLanguage(language, () => toolT("batchTabReferenceError")), { tabRef: record(args).tabRef, reason: "outside_batch" });
+      withLanguage(language, () => toolT("batchTabReferenceOutsideBatch", { tabRef: String(record(args).tabRef) })), { tabRef: record(args).tabRef, reason: "outside_batch" });
     parameters = definition.parameters || parameters;
     effectiveArgs = withWorkingTabDefault(definition, args, parameters, context);
     effectiveArgs = withTimeoutAliases(effectiveArgs, definition);

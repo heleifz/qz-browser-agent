@@ -8,15 +8,28 @@ type Fields = Record<string, unknown>;
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const validAlias = (value: unknown): value is string => typeof value === "string" && /^[\p{L}\p{N}_-]{1,64}$/u.test(value);
 
+const REFERENCE_MESSAGE_KEYS: Readonly<Record<string, Parameters<typeof t>[0]>> = {
+  invalid_alias: "batchTabReferenceInvalidAlias",
+  duplicate_alias: "batchTabReferenceDuplicateAlias",
+  invalid_reference: "batchTabReferenceInvalidReference",
+  unknown_reference: "batchTabReferenceUnknownReference",
+  forward_reference: "batchTabReferenceForwardReference",
+  ambiguous_target: "batchTabReferenceAmbiguousTarget",
+};
+
 /** Private execution edges are separate from published bindings. Neither survives this message. */
 export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   args: unknown; policy?: ToolBatchTabPolicy | null;
 }, language = getLanguage()) {
-  const error = (reason: string, reference?: unknown) => new ToolExecutionError(
-    reason === "dependency_failed" ? "BATCH_TAB_DEPENDENCY_FAILED" : "BATCH_TAB_REFERENCE_ERROR",
-    withLanguage(language, () => t(reason === "dependency_failed" ? "batchTabDependencyFailed" : "batchTabReferenceError")),
-    { reason, ...(reference == null ? {} : { tabRef: reference }) },
-  );
+  const error = (reason: string, reference?: unknown) => {
+    const dependency = reason === "dependency_failed";
+    const key = dependency ? "batchTabDependencyFailed" : REFERENCE_MESSAGE_KEYS[reason] || "batchTabReferenceError";
+    return new ToolExecutionError(
+      dependency ? "BATCH_TAB_DEPENDENCY_FAILED" : "BATCH_TAB_REFERENCE_ERROR",
+      withLanguage(language, () => t(key, { tabRef: reference == null ? (language === "zh-CN" ? "（未知）" : "unknown") : String(reference) })),
+      { reason, ...(reference == null ? {} : { tabRef: reference }) },
+    );
+  };
   const entries = items.map((item, index) => {
     const { args, policy } = describe(item);
     return { item, index, originalArgs: args, args: record(args), policy, error: null as ToolExecutionError | null };
