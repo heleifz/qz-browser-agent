@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { expect, test } from "./fixtures.mjs";
 import { stableCapture } from "../design-system/comparison.mjs";
 
@@ -264,7 +264,7 @@ test("local components render fraction, chemistry, and bold math without remote 
   expect(remote).toEqual([]);
 });
 
-test("exported html embeds self-contained formulas and opens offline", async ({ page }) => {
+test("exported html embeds self-contained formulas and opens offline", async ({ page }, testInfo) => {
   const remote = [];
   page.on("request", request => {
     const url = new URL(request.url());
@@ -307,8 +307,7 @@ test("exported html embeds self-contained formulas and opens offline", async ({ 
   expect(html).not.toMatch(/fill="red"/);
   expect(html).toContain("TEX-BI-1D497");
   expect(remote).toEqual([]);
-  await mkdir("/opt/cursor/artifacts", { recursive: true });
-  await writeFile("/opt/cursor/artifacts/export-offline.html", html);
+  await writeFile(testInfo.outputPath("export-offline.html"), html);
   const offline = await page.context().newPage();
   const loads = [];
   const errors = [];
@@ -323,7 +322,7 @@ test("exported html embeds self-contained formulas and opens offline", async ({ 
   expect(loads.filter(url => /^https?:/u.test(url))).toEqual([]);
   expect(boxes).toHaveLength(3);
   expect(boxes.every(box => box.width > 2 && box.height > 2 && box.bytes > 80)).toBe(true);
-  await offline.screenshot({ path: "/opt/cursor/artifacts/export-offline.png", fullPage: true });
+  await offline.screenshot({ path: testInfo.outputPath("export-offline.png"), fullPage: true });
   await offline.close();
 });
 
