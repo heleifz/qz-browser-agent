@@ -290,6 +290,8 @@ export default defineMessages("core", {
   textCharacters: { "zh-CN": "{count} 字符", en: "Characters: {count}" },
   partialArguments: { "zh-CN": "参数片段", en: "Partial arguments" },
   incomplete: { "zh-CN": "没有完成", en: "Incomplete" },
+  toolResultIncomplete: { "zh-CN": "等待超时，结果不完整", en: "Timed out; incomplete result" },
+  toolResultIncompleteShort: { "zh-CN": "未完成", en: "Incomplete" },
   preparingArgs: { "zh-CN": "准备参数", en: "Preparing tool call" },
   running: { "zh-CN": "运行中", en: "Running" },
   currentStep: { "zh-CN": "当前：{index}/{total} · {title}", en: "Current: {index}/{total} · {title}" },
