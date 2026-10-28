@@ -22,8 +22,8 @@ const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const scenarioIndex = process.argv.indexOf("--scenario");
 const scenario = scenarioIndex < 0 ? "" : process.argv[scenarioIndex + 1];
 const workerRestartOnly = scenarioIndex >= 0;
-if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint", "worker_restart_compact", "reset_reopen"].includes(scenario)) {
-  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint, worker_restart_compact, reset_reopen");
+if (workerRestartOnly && !["worker_restart", "worker_restart_images", "worker_restart_errors", "worker_restart_checkpoint", "worker_restart_compact", "reset_reopen", "uid_batch"].includes(scenario)) {
+  throw new Error("Supported scenarios: worker_restart, worker_restart_images, worker_restart_errors, worker_restart_checkpoint, worker_restart_compact, reset_reopen, uid_batch");
 }
 const extensionPath = await ensureTestExtension({
   extensionDir: process.env.QINGZHOU_EXTENSION_PATH || process.env.QINGZHOU_TEST_EXTENSION_DIR,
@@ -100,6 +100,7 @@ try {
     await concurrentSessionsStayIsolated(page);
     await sidepanelReloadKeepsTheBackgroundRun(page);
   }
+  if (!workerRestartOnly || scenario === "uid_batch") await uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, context, provider);
   if (!workerRestartOnly || scenario === "worker_restart") page = await serviceWorkerRestartSettlesInterruptedTurn(page, context, extensionId, provider);
   if (scenario === "worker_restart_checkpoint") page = await serviceWorkerRestartKeepsCompletedCheckpoints(page, context, extensionId, provider);
   if (!workerRestartOnly || ["worker_restart", "worker_restart_images"].includes(scenario)) await serviceWorkerRestartKeepsImagesAndThinking(page, context, extensionId, provider);
@@ -109,7 +110,7 @@ try {
 
   console.log(JSON.stringify({
     ok: true,
-    scenarios: workerRestartOnly ? [scenario] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "worker_restart", "reset_reopen"],
+    scenarios: workerRestartOnly ? [scenario] : ["run_profile_initialization_error_recovery", "data_consent_location", "mcp_output_schema_csp", "automation_alarm_without_sidepanel", "running_automation_delete", "screen_action_feedback", "composer_draft_actual_close_and_resize", "composer_attachment_session_switch", "git_skill_authenticated_archive", "skill_selection_reload_submit_cancel", "ui_composer", "manual_compact_card", "queued_composer_motion", "basic", "retry", "steering", "steering_matrix", "provider_error_recovery", "stream_stop_queue_resume", "concurrent", "sidepanel_reload", "uid_batch_collect_redirect", "worker_restart", "reset_reopen"],
     providerRequests: provider.requests.length,
     providerFaultCases: workerRestartOnly ? 0 : 16,
   }));
@@ -414,6 +415,76 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   const exportedMessages = (exported.session?.entries || []).map(entry => entry.message);
   assert.equal(imageProjectionStats(exportedMessages).totalImageCount, 9, "conversation export retains all nine original tool images");
   assert.equal(imageProjectionStats(exportedMessages).imagePlaceholderCount, 0);
+}
+
+async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserContext, providerServer) {
+  const sessionId = await createSession(page, "uid batch collect across tabs");
+  const after = await eventCount(page);
+  try {
+    await send(page, "prompt", { sessionId, text: "QZ_E2E_TABUIDS", clientMessageId: id("uid-batch") });
+    const started = await waitEvent(page, { type: "agent_start", sessionId }, after, 20_000);
+
+    // The provider gates the third request until the pages change below.
+    const collectRequest = await (async () => {
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        const match = providerServer.requests.find(item => item.marker === "QZ_E2E_TABUIDS" && item.count === 3);
+        if (match) return match;
+        await page.waitForTimeout(50);
+      }
+      return null;
+    })();
+    assert.ok(collectRequest, "the provider must receive the request following the parallel list_images batch");
+    for (const variant of ["a", "b", "c"]) {
+      assert.equal(collectRequest.uidBatch?.[variant]?.targets?.length, 2, `list_images on tab ${variant} must yield two uid targets`);
+    }
+
+    const fixturePage = variant => browserContext.pages().find(candidate => candidate.url().includes(`/uid-batch/${variant}`));
+    const renamed = fixturePage("b");
+    assert.ok(renamed, "fixture tab b must be open");
+    // A MediaWiki-style title redirect: the URL string changes, the document does not.
+    await renamed.evaluate(() => history.replaceState(null, "UID batch fixture b renamed", "/uid-batch/b-renamed"));
+    const moved = fixturePage("c");
+    assert.ok(moved, "fixture tab c must be open");
+    await moved.goto(`${moved.url()}?moved=1`);
+
+    providerServer.release("QZ_E2E_TABUIDS_COLLECT");
+    await waitEvent(page, { type: "agent_end", sessionId, runId: started.runId }, after, 90_000);
+    assert.match(await latestAssistantText(page, sessionId), /QZ_E2E_TABUIDS_OK/);
+
+    const events = await sessionEvents(page, sessionId, after);
+    const collectStart = variant => events.find(event => event.type === "tool_execution_start" && event.toolCallId === `uid_batch_collect_${variant}`);
+    const collectEnd = variant => events.find(event => event.type === "tool_execution_end" && event.toolCallId === `uid_batch_collect_${variant}`);
+    for (const variant of ["a", "b", "c"]) {
+      const start = collectStart(variant);
+      assert.ok(start, `collect_images ${variant} must start`);
+      assert.equal(start.args?.tabId, undefined, `collect_images ${variant} must not inherit the working tab`);
+      assert.equal(start.args?._tabId, undefined, `collect_images ${variant} must not carry the working tab mirror`);
+      assert.equal(start.args?._pageUrl, undefined, `collect_images ${variant} must not carry the working page url`);
+    }
+    const unchanged = collectEnd("a");
+    assert.equal(unchanged?.isError, false, `the unchanged tab must collect: ${JSON.stringify(unchanged?.result || {})}`);
+    assert.equal(unchanged?.result?.collected, 2);
+    assert.equal(unchanged?.result?.failed, 0);
+    const renamedEnd = collectEnd("b");
+    assert.equal(renamedEnd?.isError, false, `a same-document rename must not be judged stale: ${JSON.stringify(renamedEnd?.result || {})}`);
+    assert.equal(renamedEnd?.result?.collected, 2);
+    assert.ok(
+      (renamedEnd?.result?.images || []).every(image => String(image.pageUrl || "").includes("/uid-batch/b-renamed")),
+      "the renamed tab resolves its uids against the live document",
+    );
+    const movedEnd = collectEnd("c");
+    assert.equal(movedEnd?.isError, true, "a real navigation must stay stale");
+    assert.equal(movedEnd?.result?.code, "STALE_ELEMENT_UID_PAGE_CHANGED");
+  } finally {
+    const fixtureTabIds = await page.evaluate(async () => (
+      (await chrome.tabs.query({})).filter(tab => String(tab.url || "").includes("/uid-batch/")).map(tab => tab.id)
+    )).catch(() => []);
+    for (const tabId of fixtureTabIds) {
+      if (Number.isInteger(tabId)) await page.evaluate(id => chrome.tabs.remove(id), tabId).catch(() => undefined);
+    }
+    await deleteSession(page, sessionId).catch(() => undefined);
+  }
 }
 
 async function automationAlarmRunsWithoutSidepanel(currentPage, browserContext, extensionId, providerServer) {
@@ -2224,6 +2295,15 @@ async function createProviderServer() {
       res.end(screenActionResultFixture);
       return;
     }
+    if (req.method === "GET" && requestPath.startsWith("/uid-batch/")) {
+      const variant = requestPath.split("/").pop() || "x";
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(`<!doctype html><html><head><meta charset="utf-8"><title>UID batch fixture ${variant}</title></head><body>`
+        + `<h1>UID batch fixture ${variant}</h1>`
+        + [1, 2].map(n => `<img id="img-${n}" src="/selection-image.svg?variant=${variant}&amp;n=${n}" width="80" height="40" alt="fixture ${variant} ${n}">`).join("")
+        + `</body></html>`);
+      return;
+    }
     const body = await readJsonBody(req);
     const marker = isTitleGenerationRequest(body) ? "title" : detectMarker(body);
     const count = (markerCounts.get(marker) || 0) + 1;
@@ -2244,6 +2324,7 @@ async function createProviderServer() {
         selectionResult: selectionToolResult(body),
         selectionContainsUnselected: JSON.stringify(body.messages).includes("northstar-backend"),
       } : {}),
+      ...(marker === "QZ_E2E_TABUIDS" ? { uidBatch: uidBatchTargets(body) } : {}),
     });
 
     if (marker.startsWith("QZ_E2E_FAULT_")) {
@@ -2317,6 +2398,37 @@ async function createProviderServer() {
         await waitForRelease(marker);
         if (!res.destroyed) res.end();
       }
+      return;
+    }
+
+    if (marker === "QZ_E2E_TABUIDS" && count <= 3) {
+      res.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      const base = `http://127.0.0.1:${server.address().port}`;
+      // Alias bindings only live inside one batch, so later batches address tabs by id.
+      const results = uidBatchToolResults(body);
+      const calls = count === 1
+        ? ["a", "b", "c"].map(variant => [`uid_batch_open_${variant}`, "open_tab", JSON.stringify({ url: `${base}/uid-batch/${variant}`, tabAlias: variant })])
+        : count === 2
+          ? ["a", "b", "c"].map(variant => [`uid_batch_list_${variant}`, "list_images", JSON.stringify({ tabId: results[`open_${variant}`]?.id })])
+          : ["a", "b", "c"].map(variant => [`uid_batch_collect_${variant}`, "collect_images", JSON.stringify({
+            table: "uid_batch_e2e",
+            targets: uidBatchTargets(body)[variant]?.targets || [],
+          })]);
+      if (count === 3) {
+        // The scenario renames one document and navigates another before these calls stream.
+        await waitForRelease("QZ_E2E_TABUIDS_COLLECT");
+        if (res.destroyed) return;
+      }
+      for (const [index, [toolCallId, name, args]] of calls.entries()) {
+        res.write(`data: ${JSON.stringify(streamToolCallAt(index, toolCallId, name, args))}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify(streamToolCallsDone())}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
       return;
     }
 
@@ -2678,6 +2790,7 @@ function outputForMarker(marker) {
     QZ_E2E_WORKER_OLD: "QZ_E2E_WORKER_OLD_STREAM_MUST_BE_INTERRUPTED",
     QZ_E2E_WORKER_NEW: "QZ_E2E_WORKER_NEW_OK",
     QZ_E2E_WORKER_IMAGES: "QZ_E2E_WORKER_IMAGES_OK",
+    QZ_E2E_TABUIDS: "QZ_E2E_TABUIDS_OK",
   }[marker] || "QZ_DEFAULT_OK";
 }
 
@@ -2695,6 +2808,7 @@ function detectMarker(body) {
     "QZ_E2E_STOP", "QZ_E2E_AFTER_ABORT_1", "QZ_E2E_AFTER_ABORT_2", "QZ_QUEUE_ACTIVE", "QZ_QUEUE_NEXT",
     "QZ_E2E_PARALLEL_A", "QZ_E2E_PARALLEL_B", "QZ_E2E_RECONNECT",
     "QZ_E2E_WORKER_OLD", "QZ_E2E_WORKER_NEW", "QZ_E2E_WORKER_CHECKPOINT", "QZ_E2E_WORKER_IMAGES", "QZ_E2E_WORKER_COMPACT",
+    "QZ_E2E_TABUIDS",
   ];
   for (const message of [...messages].reverse()) {
     if (message?.role !== "user") continue;
@@ -2745,6 +2859,10 @@ function streamDone() {
 }
 
 function streamToolCall(toolCallId, name, args) {
+  return streamToolCallAt(0, toolCallId, name, args);
+}
+
+function streamToolCallAt(toolIndex, toolCallId, name, args) {
   return {
     id: id("tool-call"),
     object: "chat.completion.chunk",
@@ -2753,7 +2871,7 @@ function streamToolCall(toolCallId, name, args) {
       delta: {
         role: "assistant",
         tool_calls: [{
-          index: 0,
+          index: toolIndex,
           id: toolCallId,
           type: "function",
           function: { name, arguments: args },
@@ -2762,6 +2880,35 @@ function streamToolCall(toolCallId, name, args) {
       finish_reason: null,
     }],
   };
+}
+
+function uidBatchToolResults(body) {
+  const results = {};
+  for (const message of body?.messages || []) {
+    if (message?.role !== "tool") continue;
+    const match = /^uid_batch_(open|list)_([abc])$/u.exec(String(message.tool_call_id || ""));
+    if (!match || results[`${match[1]}_${match[2]}`]) continue;
+    try {
+      results[`${match[1]}_${match[2]}`] = JSON.parse(messageText(message));
+    } catch { /* a malformed result fails the scenario assertions instead of the server */ }
+  }
+  return results;
+}
+
+function uidBatchTargets(body) {
+  const results = uidBatchToolResults(body);
+  const byVariant = {};
+  for (const variant of ["a", "b", "c"]) {
+    const listed = results[`list_${variant}`];
+    if (!listed) continue;
+    byVariant[variant] = {
+      tabId: listed.tabId,
+      targets: (Array.isArray(listed.images) ? listed.images : [])
+        .map(image => String(image?.target || ""))
+        .filter(target => target.startsWith("uid:")),
+    };
+  }
+  return byVariant;
 }
 
 function streamToolCallsDone() {
