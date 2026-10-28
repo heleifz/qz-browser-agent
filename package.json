@@ -12,6 +12,7 @@
     "test": "node --import tsx tests/run.mjs",
     "verify": "npm run typecheck && npm test -- --all --coverage",
     "verify:quick": "npm run typecheck && npm test -- --all",
+    "verify:chrome": "npm run build && node scripts/check-chrome.mjs dist/extension",
     "benchmark": "node --import tsx tests/benchmarks/run.mjs",
     "docs": "node scripts/docs-api.mjs",
     "doctor": "node --import tsx tests/doctor.mjs",

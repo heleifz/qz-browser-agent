@@ -9,8 +9,6 @@ try {
   await mkdir(join(root, "vendor/mathjax"), { recursive: true });
   await mkdir(join(root, "sidepanel"), { recursive: true });
   await writeFile(join(root, "vendor/mathjax/startup.js"), "/* local MathJax startup */");
-  await writeFile(join(root, "vendor/mcp-sdk.mjs"), 'const schemaId = "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/json-schema-draft-07.json";');
-  await writeFile(join(root, "vendor/mcp-sdk.mjs.map"), '{"sourcesContent":["https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/json-schema-draft-07.json"]}');
   await writeFile(join(root, "vendor/provenance.json"), '{"source":"https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"}\n');
   await assertNoRemoteCode([root]);
 
@@ -27,10 +25,10 @@ try {
   await assert.rejects(assertNoRemoteCode([root]), /registry\.npmmirror\.com/u);
   await assert.rejects(assertNoRemoteCode(["/tmp/qz-remote-code-missing"]), /not a directory/u);
 
+  await writeFile(join(root, "sidepanel/export.html"), '<script src="https://unknown-code-host.example/runtime.js"></script>');
+  await assert.rejects(assertNoRemoteCode([root]), /unknown-code-host/u);
   const guard = await readFile(new URL("../../scripts/check-no-remote-code.mjs", import.meta.url), "utf8");
-  assert.match(guard, /vendor\/mcp-sdk\.mjs/);
   assert.match(guard, /vendor\/provenance\.json/);
-  assert.match(guard, /ajv schema/u);
   assert.match(guard, /SheetJS/u);
   console.log("remote-code guard tests passed");
 } finally {

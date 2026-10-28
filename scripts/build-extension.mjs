@@ -15,6 +15,7 @@ import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
 import { capabilityLocaleAssets } from "./capability-locales.mjs";
 import { assertNoRemoteCode } from "./check-no-remote-code.mjs";
+import { assertReviewableCode } from "./check-reviewable-code.mjs";
 import { copyRuntimeAssets, createDependencyGraph, encodeSourceMapPath, originalInputPath, originalSourceMapPath, packageAssets, recordDependencyBuild, stablePackagePaths, writeDependencyProvenance } from "./vendor/assets.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -153,6 +154,7 @@ async function compileExtension({ sourceDir: source, outputDir: output, mode, bu
     await writeFile(resolve(compiled, BUILD_MANIFEST), `${JSON.stringify(summary, null, 2)}\n`);
     signal?.throwIfAborted();
     await assertNoRemoteCode([compiled]);
+    if (mode === "production") await assertReviewableCode(compiled);
     await publishOutput(compiled, output, resolve(staging, "previous"), signal);
     return { ...summary, outputDir: output };
   } finally {
