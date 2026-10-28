@@ -20,6 +20,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   LOCATION_PANEL_UNAVAILABLE: { label: "locationPanelUnavailableLabel", message: "locationPanelUnavailable" },
   LOCATION_RESPONSE_TIMEOUT: { label: "locationResponseTimeoutLabel", message: "locationResponseTimeout" },
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
+  BATCH_TAB_REFERENCE_ERROR: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.message" },
+  BATCH_TAB_DEPENDENCY_FAILED: { label: "toolError.BATCH_TAB_DEPENDENCY_FAILED.label", message: "toolError.BATCH_TAB_DEPENDENCY_FAILED.message" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
