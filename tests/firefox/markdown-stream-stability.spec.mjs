@@ -46,8 +46,9 @@ test("expanded image tools and streamed Markdown keep a stable tail in the Firef
         let sampling = true;
         const sample = () => {
           const answer = messages.querySelector(".msg-assistant:last-child");
+          const table = answer?.querySelector("table");
           frames.push({ top: messages.scrollTop, height: messages.scrollHeight, client: messages.clientHeight,
-            length: answer?.dataset.content?.length });
+            length: answer?.dataset.content?.length, tableOpacity: table ? Number(content.getComputedStyle(table).opacity) : null });
           if (sampling) content.requestAnimationFrame(sample);
         };
         content.requestAnimationFrame(sample);
@@ -68,6 +69,7 @@ test("expanded image tools and streamed Markdown keep a stable tail in the Firef
         await wait(300);
         sampling = false;
         return { frames, mode: answer?.dataset.markdownMode, content: answer?.dataset.content,
+          reducedMotion: content.matchMedia("(prefers-reduced-motion: reduce)").matches,
           rows: answer?.querySelectorAll("table tbody tr").length, links: answer?.querySelectorAll("table a").length,
           imageGrid: !!card.querySelector(".tool-image-grid-scroll") };
       `);
@@ -77,6 +79,7 @@ test("expanded image tools and streamed Markdown keep a stable tail in the Firef
       expect(result.rows).toBe(5);
       expect(result.links).toBe(5);
       expect(result.imageGrid).toBe(true);
+      if (!result.reducedMotion) expect(result.frames.some(frame => frame.tableOpacity > 0 && frame.tableOpacity < 1)).toBe(true);
       const tail = result.frames.findIndex(s => s.top > 20 && s.height - s.client - s.top < 2);
       expect(tail).toBeGreaterThanOrEqual(0);
       const backwards = result.frames.slice(tail + 1).filter((frame, i) =>
