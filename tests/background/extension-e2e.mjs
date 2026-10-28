@@ -420,6 +420,8 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
 async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserContext, providerServer) {
   const sessionId = await createSession(page, "uid batch collect across tabs");
   const after = await eventCount(page);
+  const worker = browserContext.serviceWorkers().find(worker => worker.url().startsWith("chrome-extension://"));
+  assert.ok(worker);
   try {
     await send(page, "prompt", { sessionId, text: "QZ_E2E_TABUIDS", clientMessageId: id("uid-batch") });
     const started = await waitEvent(page, { type: "agent_start", sessionId }, after, 20_000);
@@ -434,7 +436,7 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
       }
       return null;
     })();
-    assert.ok(collectRequest, "the provider must receive the request following the parallel list_images batch");
+    assert.ok(collectRequest, "the provider must receive the request following the list_images batch");
     for (const variant of ["a", "b", "c"]) {
       assert.equal(collectRequest.uidBatch?.[variant]?.targets?.length, 2, `list_images on tab ${variant} must yield two uid targets`);
     }
@@ -448,14 +450,42 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     assert.ok(moved, "fixture tab c must be open");
     await moved.goto(`${moved.url()}?moved=1`);
 
+    // Hold a's first document probe. b must reach its probe while a is held,
+    // but a's second call must not enter the same tab lane yet. Ordered UI events
+    // cannot prove execution overlap because the Agent publishes them at commit.
+    await worker.evaluate(tabId => {
+      const original = chrome.scripting.executeScript;
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      const state = globalThis.__uidBatchProbe = { seen: [], held: false, release,
+        restore() { release(); chrome.scripting.executeScript = original; delete globalThis.__uidBatchProbe; } };
+      chrome.scripting.executeScript = async options => {
+        if (options.target?.frameIds?.[0] === 0 && typeof options.func === "function") {
+          state.seen.push(options.target.tabId);
+          if (options.target.tabId === tabId && !state.held) { state.held = true; await gate; }
+        }
+        return original.call(chrome.scripting, options);
+      };
+    }, collectRequest.uidBatch.a.tabId);
     providerServer.release("QZ_E2E_TABUIDS_COLLECT");
+    const seen = await worker.evaluate(async tabId => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && (!globalThis.__uidBatchProbe.held || !globalThis.__uidBatchProbe.seen.includes(tabId))) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      return globalThis.__uidBatchProbe.seen;
+    }, collectRequest.uidBatch.b.tabId);
+    assert.ok(seen.includes(collectRequest.uidBatch.b.tabId), "different uid tabs must execute concurrently");
+    assert.equal(seen.filter(tabId => tabId === collectRequest.uidBatch.a.tabId).length, 1,
+      "a second call on the held uid tab must wait for its lane");
+    await worker.evaluate(() => globalThis.__uidBatchProbe.restore());
     await waitEvent(page, { type: "agent_end", sessionId, runId: started.runId }, after, 90_000);
     assert.match(await latestAssistantText(page, sessionId), /QZ_E2E_TABUIDS_OK/);
 
     const events = await sessionEvents(page, sessionId, after);
     const collectStart = variant => events.find(event => event.type === "tool_execution_start" && event.toolCallId === `uid_batch_collect_${variant}`);
     const collectEnd = variant => events.find(event => event.type === "tool_execution_end" && event.toolCallId === `uid_batch_collect_${variant}`);
-    for (const variant of ["a", "b", "c"]) {
+    for (const variant of ["a", "b", "c", "a_again", "mixed", "css"]) {
       const start = collectStart(variant);
       assert.ok(start, `collect_images ${variant} must start`);
       assert.equal(start.args?.tabId, undefined, `collect_images ${variant} must not inherit the working tab`);
@@ -469,6 +499,7 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     const renamedEnd = collectEnd("b");
     assert.equal(renamedEnd?.isError, false, `a same-document rename must not be judged stale: ${JSON.stringify(renamedEnd?.result || {})}`);
     assert.equal(renamedEnd?.result?.collected, 2);
+    assert.equal(renamedEnd?.result?.images?.length, 2);
     assert.ok(
       (renamedEnd?.result?.images || []).every(image => String(image.pageUrl || "").includes("/uid-batch/b-renamed")),
       "the renamed tab resolves its uids against the live document",
@@ -476,7 +507,22 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
     const movedEnd = collectEnd("c");
     assert.equal(movedEnd?.isError, true, "a real navigation must stay stale");
     assert.equal(movedEnd?.result?.code, "STALE_ELEMENT_UID_PAGE_CHANGED");
+    assert.equal(collectEnd("a_again")?.isError, false, "a second same-tab call succeeds after the first");
+    const mixed = collectEnd("mixed");
+    assert.equal(mixed?.isError, false, JSON.stringify(mixed?.result));
+    assert.equal(mixed?.result?.collected, 2, "one cross-tab call resolves each uid on its own tab");
+    assert.deepEqual(mixed?.result?.images?.map(image => new URL(image.pageUrl).pathname),
+      ["/uid-batch/a", "/uid-batch/b-renamed"]);
+    assert.deepEqual(mixed?.result?.images?.map(image => image.target),
+      [collectRequest.uidBatch.a.targets[0], collectRequest.uidBatch.b.targets[0]]);
+    const css = collectEnd("css");
+    assert.equal(css?.isError, false, JSON.stringify(css?.result));
+    assert.equal(css?.result?.collected, 2);
+    assert.deepEqual(css?.result?.images?.map(image => new URL(image.pageUrl).pathname),
+      ["/uid-batch/b-renamed", "/uid-batch/a"], "CSS uses the owned working tab while the uid retains its own tab");
   } finally {
+    await worker.evaluate(() => globalThis.__uidBatchProbe?.restore()).catch(() => undefined);
+    providerServer.release("QZ_E2E_TABUIDS_COLLECT");
     const fixtureTabIds = await page.evaluate(async () => (
       (await chrome.tabs.query({})).filter(tab => String(tab.url || "").includes("/uid-batch/")).map(tab => tab.id)
     )).catch(() => []);
@@ -2419,6 +2465,16 @@ async function createProviderServer() {
             targets: uidBatchTargets(body)[variant]?.targets || [],
           })]);
       if (count === 3) {
+        const targets = uidBatchTargets(body);
+        calls.push(["uid_batch_collect_a_again", "collect_images", JSON.stringify({
+          table: "uid_batch_e2e", targets: targets.a?.targets?.slice(0, 1) || [],
+        })]);
+        calls.push(["uid_batch_collect_mixed", "collect_images", JSON.stringify({
+          table: "uid_batch_e2e", targets: [targets.a?.targets?.[0], targets.b?.targets?.[0]],
+        })]);
+        calls.push(["uid_batch_collect_css", "collect_images", JSON.stringify({
+          table: "uid_batch_e2e", targets: ["css:#img-2", targets.a?.targets?.[0]],
+        })]);
         // The scenario renames one document and navigates another before these calls stream.
         await waitForRelease("QZ_E2E_TABUIDS_COLLECT");
         if (res.destroyed) return;
