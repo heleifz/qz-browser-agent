@@ -400,6 +400,60 @@ await assert.rejects(
 probedDocumentId = "doc-previous";
 const sameDocument = await runtime.resolveElementReference(undefined, { target: "uid:t5.00000b.1" }, context);
 assert.equal(sameDocument.uid, "t5.00000b.1");
+
+// A title redirect rewrites the URL string without replacing the document.
+runtime.registerElementRef({
+  uid: "t5.00000c.1",
+  tabId: 5,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/before-redirect",
+  selector: "img.redirect",
+  backendNodeId: 41,
+  loaderId: "loader-live",
+  documentId: "doc-redirect",
+});
+currentUrl = "https://example.test/after-redirect";
+probedDocumentId = "doc-redirect";
+const redirected = await runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context);
+assert.equal(redirected.uid, "t5.00000c.1", "a same-document redirect keeps the uid valid");
+
+// A real navigation replaces the document, so the changed URL stays stale.
+probedDocumentId = "doc-replaced";
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
+  "a replaced document under a new url is a page change",
+);
+
+// Without a live probe the changed url cannot be disproved, so it stays stale.
+probedDocumentId = "";
+await assert.rejects(
+  runtime.resolveElementReference(undefined, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "STALE_ELEMENT_UID_PAGE_CHANGED",
+  "a missing document probe keeps the strict verdict",
+);
+probedDocumentId = "doc-redirect";
+
+// An explicit conflicting tab is a targeting error even when the url also changed.
+await assert.rejects(
+  runtime.resolveElementReference(9, { target: "uid:t5.00000c.1" }, context),
+  error => error?.code === "ELEMENT_UID_TAB_MISMATCH",
+  "an explicit wrong tab reports a tab mismatch, not a page change",
+);
+currentUrl = "https://example.test/page#one";
+
+runtime.registerElementRef({
+  uid: "t15.000099.1",
+  tabId: 15,
+  sessionId: "session-a",
+  pageUrl: "https://example.test/other-page",
+  selector: "img.other",
+});
+assert.equal(runtime.elementUidTabId(["uid:t5.000001.1", "uid:t5.00000b.1"]), 5, "uids on one tab share its lane");
+assert.equal(runtime.elementUidTabId(["uid:t5.000001.1", "uid:t15.000099.1"]), null, "uids spanning tabs share no lane");
+assert.equal(runtime.elementUidTabId(["uid:t77.000001.1"]), null, "an unknown uid has no lane");
+assert.equal(runtime.elementUidTabId(["css:img"]), null, "a non-uid target has no lane");
+assert.equal(runtime.elementUidTabId([]), null, "no targets means no lane");
 delete chrome.scripting;
 
 ownedTabs = [5];

@@ -353,22 +353,8 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       });
     }
   }
-  if (ref.pageUrl) {
-    let currentUrl = "";
-    try {
-      const tab = await chrome.tabs.get(resolvedTabId);
-      currentUrl = getEffectiveTabUrl(tab);
-    } catch(_e) {
-      currentUrl = "";
-    }
-    if (currentUrl && !samePageUrl(currentUrl, ref.pageUrl)) {
-      throw new ToolExecutionError(
-        "STALE_ELEMENT_UID_PAGE_CHANGED",
-        `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
-        { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
-      );
-    }
-  }
+  // An explicit tab that conflicts with the uid's registered tab is a targeting
+  // error, not evidence that the page changed.
   if (tabId && Number(tabId) !== Number(ref.tabId)) {
     throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
       target: elementTargetForUid(requestedUid),
@@ -376,12 +362,47 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       refTabId: ref.tabId,
     });
   }
+  // Security guardrails gate before any page probe, including the read-only document id.
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });
+  let currentUrl = "";
+  if (ref.pageUrl) {
+    try {
+      const tab = await chrome.tabs.get(resolvedTabId);
+      currentUrl = getEffectiveTabUrl(tab);
+    } catch(_e) {
+      currentUrl = "";
+    }
+  }
+  const urlChanged = Boolean(ref.pageUrl && currentUrl && !samePageUrl(currentUrl, ref.pageUrl));
   const storedDocumentId = String(ref.documentId || "");
   if (storedDocumentId) {
     const currentDocumentId = await readMainDocumentId(resolvedTabId);
-    // A missing probe is not evidence the document changed. A new id on the same URL is.
-    if (currentDocumentId && currentDocumentId !== storedDocumentId) throw staleElement(requestedUid);
+    // A title redirect or history.replaceState keeps the document; a real navigation replaces it.
+    if (currentDocumentId && currentDocumentId !== storedDocumentId) {
+      if (urlChanged) {
+        throw new ToolExecutionError(
+          "STALE_ELEMENT_UID_PAGE_CHANGED",
+          `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+          { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
+        );
+      }
+      throw staleElement(requestedUid);
+    }
+    // A changed URL string is positive evidence the page changed; only a matching live
+    // document disproves it. A missing probe cannot, so the strict verdict stands.
+    if (urlChanged && !currentDocumentId) {
+      throw new ToolExecutionError(
+        "STALE_ELEMENT_UID_PAGE_CHANGED",
+        `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+        { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
+      );
+    }
+  } else if (urlChanged) {
+    throw new ToolExecutionError(
+      "STALE_ELEMENT_UID_PAGE_CHANGED",
+      `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
+      { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
+    );
   }
   const backendNodeId = Number(ref.backendNodeId || 0);
   return {
@@ -400,6 +421,29 @@ function normalizeElementUid(uid: unknown) {
   if (elementRefRegistry.has(value)) return value;
   const match = value.match(/\bt\d+\.[0-9a-z]{6}\.[0-9a-z]*\d+\b/i);
   return match ? match[0] : value;
+}
+
+/**
+ * The one tab every value's uid is registered to, or null when any value is not a
+ * known uid or the set spans tabs. Null tells callers to fall back to conservative
+ * targeting; the registry is the only authority on a uid's tab.
+ */
+function elementUidTabId(values: readonly unknown[]) {
+  let shared = 0;
+  for (const value of values || []) {
+    let uid = "";
+    try {
+      uid = normalizeElementUid(parseElementTarget(typeof value === "string" ? value : "").uid);
+    } catch {
+      return null;
+    }
+    const ref = uid ? elementRefRegistry.get(uid) : undefined;
+    const tabId = Number(ref?.tabId);
+    if (!ref || !Number.isInteger(tabId) || tabId <= 0) return null;
+    if (!shared) shared = tabId;
+    else if (shared !== tabId) return null;
+  }
+  return shared || null;
 }
 
 async function backendNodeIdForSelector(tabId: number, selector: string, context: ToolContext = {}) {
@@ -676,6 +720,7 @@ function samePageUrl(a: unknown, b: unknown) {
     elementTargetForUid,
     elementTargetForSelector,
     elementTargetForRef,
+    elementUidTabId,
     isUidElementTarget,
     resolveSelectorTarget,
     resolveElementReference,

@@ -211,6 +211,100 @@ test('a barrier predicate is evaluated once per planned call; throwing predicate
   assert.deepEqual(contexts.map(c => c.preserveWorkingTab), [true, false, false]);
 });
 
+test('uid targets pin their registered tab for batch planning and working-tab defaults', async () => {
+  const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('uid-fixture') };
+  const parameters = { type: 'object', properties: {
+    target: { type: 'string' }, targets: { type: 'array', items: { type: 'string' } }, tabId: { type: 'number' },
+  } };
+  qz.registerTool({ name: 'uid_single', description: 'Fixture', page: 'owned', parameters,
+    behavior: { parallelTab: true }, execute: () => ({}) });
+  qz.registerTool({ name: 'uid_multi', description: 'Fixture', page: 'owned', parameters,
+    behavior: { parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) }, execute: () => ({}) });
+  const lookup = { toolRegistrySnapshot: registry.snapshot() };
+  for (const [uid, tabId] of [['t41.0000a1.1', 41], ['t41.0000a2.2', 41], ['t42.0000b1.1', 42]]) {
+    runtime.element.registerElementRef({ uid, tabId, sessionId: 'session', pageUrl: `https://example.test/${tabId}` });
+  }
+
+  assert.equal(tools.hasUidElementTargets('uid_multi', { targets: ['uid:t41.0000a1.1'] }, lookup), true);
+  assert.equal(tools.hasUidElementTargets('uid_multi', { targets: ['css:img'] }, lookup), false);
+  assert.equal(tools.hasUidElementTargets('uid_single', { target: 'uid:t41.0000a1.1' }, lookup), true,
+    'the singular target field is covered without a declared extractor');
+
+  assert.deepEqual(tools.getBatchTabPolicy('uid_multi', { targets: ['uid:t41.0000a1.1', 'uid:t41.0000a2.2'] }, lookup),
+    { kind: 'target', implicit: false, observation: false, parallel: true, tabId: 41 },
+    'uids on one tab schedule on that tab, never the working tab');
+  assert.deepEqual(tools.getBatchTabPolicy('uid_single', { target: 'uid:t42.0000b1.1' }, lookup),
+    { kind: 'target', implicit: false, observation: false, parallel: true, tabId: 42 });
+  for (const args of [
+    { targets: ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'] },
+    { targets: ['uid:t99.0000c1.1'] },
+  ]) {
+    assert.deepEqual(tools.getBatchTabPolicy('uid_multi', args, lookup),
+      { kind: 'target', implicit: false, observation: false },
+      'cross-tab or unknown uid sets keep the conservative serialization');
+  }
+
+  const input = [
+    { name: 'uid_multi', targets: ['uid:t41.0000a1.1'] },
+    { name: 'uid_multi', targets: ['uid:t42.0000b1.1'] },
+    { name: 'uid_multi', targets: ['uid:t41.0000a2.2'] },
+  ];
+  const plan = planTabBatch(input, item => ({ args: item, policy: tools.getBatchTabPolicy(item.name, item, lookup) }));
+  const started = [], releases = new Map(), tick = () => new Promise(resolve => setImmediate(resolve));
+  const run = scheduleToolCalls(input, { signal: new AbortController().signal, tab: () => null,
+    dependencies: plan.dependencies, independent: plan.independent,
+    execute: async item => { started.push(item.targets[0]); await new Promise(resolve => releases.set(item.targets[0], resolve)); return item; },
+    commit: async () => {},
+  });
+  await tick();
+  assert.deepEqual(started, ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'], 'different uid tabs run in parallel');
+  releases.get('uid:t42.0000b1.1')(); await tick();
+  assert.deepEqual(started, ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'], 'a same-tab uid call waits for its lane');
+  releases.get('uid:t41.0000a1.1')(); await tick();
+  assert.deepEqual(started, ['uid:t41.0000a1.1', 'uid:t42.0000b1.1', 'uid:t41.0000a2.2']);
+  releases.get('uid:t41.0000a2.2')(); await run;
+
+  let received = null;
+  tools.defineTool({ name: '__uid_working_tab', description: 'Test', page: 'owned', parameters,
+    behavior: { uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
+    execute: args => { received = args; return { ok: true }; } });
+  const resolveCallsBefore = targets.length;
+  await runtime.execute('__uid_working_tab', { targets: ['uid:t41.0000a1.1'] }, undefined, context);
+  assert.equal(received.tabId, undefined, 'a uid call must not inherit the working tab');
+  assert.equal(targets.length, resolveCallsBefore, 'a uid call claims no extra tab ownership upstream');
+  await runtime.execute('__uid_working_tab', { targets: ['css:img'] }, undefined, context);
+  assert.equal(received.tabId, 31, 'non-uid targets keep the working-tab default');
+});
+
+test('page-context enrichment leaves uid-targeted calls on their registered tabs', async () => {
+  const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('uid-enrich-fixture') };
+  qz.registerTool({ name: 'uid_probe', description: 'Fixture', page: 'owned',
+    parameters: { type: 'object', properties: {
+      targets: { type: 'array', items: { type: 'string' } }, tabId: { type: 'number' },
+    } },
+    behavior: { uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) }, execute: () => ({}) });
+  const lookup = { toolRegistrySnapshot: registry.snapshot() };
+  const agent = new Agent('enrich', createTestAgentOptions({
+    tools: {
+      getSchemas: () => [], getIdentity: () => ({}),
+      getModelPolicy: () => ({ pageContext: 'working' }),
+      hasUidElementTargets: (name, args) => tools.hasUidElementTargets(name, args, lookup),
+      execute: async () => ({}),
+    },
+    browserContext: { getTab: async id => ({ id, url: 'https://example.test/working', title: 'Working' }) },
+  }));
+  const toolContext = { workingTabId: 31 };
+  const uidArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['uid:t41.0000a1.1'] }, toolContext);
+  assert.equal(uidArgs.tabId, undefined, 'the working tab must not override a uid target');
+  assert.equal(uidArgs._tabId, undefined);
+  assert.equal(uidArgs._pageUrl, undefined);
+  const cssArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['css:img'] }, toolContext);
+  assert.equal(cssArgs.tabId, 31, 'page-context enrichment still applies without uids');
+  assert.equal(cssArgs._pageUrl, 'https://example.test/working');
+  const explicitArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['uid:t41.0000a1.1'], tabId: 42 }, toolContext);
+  assert.equal(explicitArgs.tabId, 42, 'an explicit tab survives enrichment for the uid mismatch check');
+});
+
 test("custom timeout diagnostic declarations retain the runtime's abort signal and trace fields", async () => {
   let signal;
   await clearTraceLog();

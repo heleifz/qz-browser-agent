@@ -86,6 +86,7 @@ interface AgentToolPort {
   snapshot?(language?: string): unknown;
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
   getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
+  hasUidElementTargets?(name: string, args: unknown, context: Facts): boolean;
   commitToolResult?(result: unknown, signal: AbortSignal, context: Facts): Promise<void>;
   discardToolResult?(result: unknown, context: Facts): Promise<void>;
   getSchemas(context: Facts): object[];
@@ -2909,6 +2910,16 @@ export class Agent {
     const working = toolRuntimeContext?.workingTab || this._dynamicContextSnapshot?.workingTab || null;
     const explicitTabId = Number(input.tabId);
     const workingTabId = Number(toolRuntimeContext?.workingTabId || working?.id);
+    // A uid pins its element's registered tab; substituting the working tab would
+    // target the wrong page. The tool resolves the uid's own tab downstream.
+    if (!(Number.isFinite(explicitTabId) && explicitTabId > 0) && policy.pageContext !== "explicit"
+      && this._toolRuntime.hasUidElementTargets?.(toolName, input, {
+        skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
+        toolRegistrySnapshot: this._toolRegistrySnapshot,
+        language: this._runLanguage,
+      })) {
+      return input;
+    }
     const tabId = Number.isFinite(explicitTabId) && explicitTabId > 0
       ? explicitTabId
       : (Number.isFinite(workingTabId) && workingTabId > 0 && policy.pageContext !== "explicit" ? workingTabId : null);

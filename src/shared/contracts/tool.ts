@@ -60,7 +60,8 @@ export interface ToolModelPolicy {
 /** Derived from a trusted registration for one model response's tab dependency plan. */
 export type ToolBatchTabPolicy =
   | { kind: "create"; parallel?: boolean }
-  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean }
+  /** `tabId` is the resolved lane for uid-targeted calls: the tab the referenced elements belong to. */
+  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number }
   | { kind: "barrier" };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
@@ -73,6 +74,13 @@ export interface ToolBehavior {
   parallelOpen?: boolean;
   /** Tab-local actions can overlap other lanes; implicit/global targets remain barriers. */
   parallelTab?: boolean;
+  /**
+   * Arguments that may carry element uid references beyond the singular `target`/`selector`/`root`
+   * fields. A uid pins its registered tab: the runtime must not substitute the working tab for it,
+   * and the batch planner schedules the call on the uids' shared tab. A throwing extractor falls
+   * back to the singular fields.
+   */
+  uidTargets?: (args: Readonly<Record<string, unknown>>) => readonly unknown[];
   /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */
   timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
   /** Reject actions that may unload the page hosting a nested script. */

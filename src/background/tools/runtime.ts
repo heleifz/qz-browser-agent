@@ -290,6 +290,8 @@ export function createToolRuntime({
     getSchemas: getToolSchemas,
     getIdentity: getToolIdentity,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
+    hasUidElementTargets,
+    element: elementRuntime,
     getParallelReadTab,
     getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}) {
       const policy = getBatchTabPolicy(name, args, options);
@@ -384,13 +386,38 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
   return !definition || isToolBarrier(definition, input) ? null : parallelReadTab(definition, input);
 }
 
+/**
+ * Every argument value that may reference an element uid: the declared extractor's result,
+ * or the singular fields by default. UIDs can select a different document/tab than the
+ * supplied default, so any of them suppresses working-tab substitution and tab claiming.
+ */
+function uidElementTargetsOf(definition: RuntimeTool, input: Fields): unknown[] {
+  let values: readonly unknown[];
+  try {
+    const declared = definition.behavior?.uidTargets;
+    values = typeof declared === "function" ? declared(input) : [input.target, input.selector, input.root];
+  } catch {
+    values = [input.target, input.selector, input.root];
+  }
+  return Array.isArray(values) ? values.filter(isUidElementTarget) : [];
+}
+
+/** Whether a tool call's arguments reference an element uid in any declared target field. */
+export function hasUidElementTargets(name: string, args: unknown, options: ToolOptions = {}): boolean {
+  const definition = resolveToolDefinition(name, options);
+  return Boolean(definition && uidElementTargetsOf(definition, record(args)).length);
+}
+
+function isParallelReadGranted(definition: RuntimeTool, input: Fields): boolean {
+  const policy = definition.behavior?.parallelRead;
+  return (typeof policy === "function" ? policy(input) : policy) === true;
+}
+
 function parallelReadTab(definition: RuntimeTool, input: Fields): number | null {
   const tab = input.tabId;
   if (typeof tab !== "number" || !Number.isInteger(tab) || tab <= 0) return null;
-  // UIDs can select a different document/tab than the supplied default.
-  if ([input.target, input.selector, input.root].some(isUidElementTarget)) return null;
-  const policy = definition.behavior?.parallelRead;
-  return (typeof policy === "function" ? policy(input) : policy) === true ? tab : null;
+  if (uidElementTargetsOf(definition, input).length) return null;
+  return isParallelReadGranted(definition, input) ? tab : null;
 }
 
 export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
@@ -398,11 +425,23 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
   if (!definition) return null;
   const input = record(args), barrier = isToolBarrier(definition, input);
   if (definition.workingTab === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: !barrier } : {}) };
-  if (!definition.parameters.properties.tabId || !resolvePageAccess(definition, input)) return barrier ? { kind: "barrier" } : null;
+  const pageAccess = resolvePageAccess(definition, input);
+  const uidTargets = pageAccess ? uidElementTargetsOf(definition, input) : [];
+  if (uidTargets.length) {
+    // A uid pins its registered tab: schedule the call on that lane, never the working tab.
+    // Unknown or cross-tab uid sets keep the conservative commit barrier.
+    const lane = elementRuntime.elementUidTabId(uidTargets);
+    if (lane == null) return { kind: "target", implicit: false, observation: false };
+    return { kind: "target", implicit: false,
+      observation: !barrier && isParallelReadGranted(definition, input),
+      ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}),
+      tabId: lane };
+  }
+  if (!definition.parameters.properties.tabId || !pageAccess) return barrier ? { kind: "barrier" } : null;
   // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
-  return { kind: "target", implicit: input.tabId == null && ![input.target, input.selector, input.root].some(isUidElementTarget),
+  return { kind: "target", implicit: input.tabId == null,
     observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
-    ...(definition.behavior?.parallelTab && ![input.target, input.selector, input.root].some(isUidElementTarget) ? { parallel: !barrier } : {}) };
+    ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}) };
 }
 
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
@@ -533,7 +572,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
           const policy = selectedDefinition.behavior?.timeoutResult;
           if (policy?.kind === "action") reportPartial({ tabId: args.tabId, status: "unconfirmed" }, policy.pending);
           if (policy?.kind === "read" && Number(args.tabId) > 0
-            && ![args.target, args.selector, args.root].some(isUidElementTarget)) {
+            && !uidElementTargetsOf(selectedDefinition, args).length) {
             const tabId = Number(args.tabId);
             reportPartial({ tabId }, policy.pending);
           }
@@ -747,7 +786,7 @@ async function assertToolTargetAllowedBySecurityGuardrails(definition: RuntimeTo
   }
 
   if (!resolvePageAccess(definition, args) || resolvePageAccess(definition, args) === "tab") return;
-  if (isUidElementTarget(args?.target) || isUidElementTarget(args?.selector)) return;
+  if (uidElementTargetsOf(definition, args).length) return;
 
   const tabIds = Array.isArray(args?.tabIds) ? args.tabIds : [];
   for (const item of tabIds) {
@@ -914,7 +953,7 @@ function resolvePageAccess(definition: RuntimeTool, args: Fields) {
 }
 
 function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {}) {
-  return Boolean(resolvePageAccess(definition, args)) && !isUidElementTarget(args?.target) && !isUidElementTarget(args?.selector);
+  return Boolean(resolvePageAccess(definition, args)) && !uidElementTargetsOf(definition, args).length;
 }
 
 async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _parameters: ToolSchema, context: ToolContext = {}, signal?: AbortSignal): Promise<Fields> {
@@ -984,7 +1023,7 @@ function withWorkingTabDefault(definition: RuntimeTool, args: unknown, parameter
   if (!isRecord(input)) return input;
   if (!resolvePageAccess(definition, input)) return input;
   if (!parameters?.properties?.tabId || input.tabId != null) return input;
-  if (isUidElementTarget(input.target) || isUidElementTarget(input.selector)) return input;
+  if (uidElementTargetsOf(definition, input).length) return input;
   const workingTabId = Number(context.workingTabId);
   if (Number.isFinite(workingTabId) && workingTabId > 0) {
     input.tabId = workingTabId;
@@ -1015,7 +1054,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   if (!tabId) return;
   // A uid has no explicit tabId, so a read-only look at an unclaimed tab never
   // sets _readOnlyTabAccess. That look must not become the working tab.
-  if ((isUidElementTarget(args?.target) || isUidElementTarget(args?.selector))
+  if (uidElementTargetsOf(definition, args).length
     && resolvePageAccess(definition, args) === "readOnly"
     && !elementRuntime.taskTabIds(context).includes(tabId)) return;
 

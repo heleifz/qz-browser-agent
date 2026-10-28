@@ -30,6 +30,8 @@ export interface ElementAccess {
   elementTargetForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;
   elementTargetForRef(ref?: ElementReference): string;
+  /** The one tab every value's uid is registered to; null for unknown uids or a set spanning tabs. */
+  elementUidTabId(values: readonly unknown[]): number | null;
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;

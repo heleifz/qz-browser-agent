@@ -469,6 +469,7 @@ function assertSelectedImageSource(candidate: ImageMetadata = {}, observed: Imag
 
 registerTool({
   name: "collect_images",
+  behavior: { parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
   get description() { return toolT("collectImagesDescription"); },
   get parameters() { return {
     type: "object",

@@ -66,7 +66,9 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   let barrier: T | undefined, windowAnchor: T | undefined;
   for (const entry of entries) {
     const producer = creators.get(String(entry.args.tabRef));
-    const lane = entry.policy?.kind === "create" ? entry : producer || entry.args.tabId;
+    // A uid-targeted policy carries its registered tab; everything else uses the requested tab.
+    const policyTab = entry.policy?.kind === "target" ? entry.policy.tabId : undefined;
+    const lane = entry.policy?.kind === "create" ? entry : producer || policyTab || entry.args.tabId;
     const local = independent(entry);
     edges.set(entry.item, {
       execution: local && lanes.has(lane) ? [lanes.get(lane)!] : [],
