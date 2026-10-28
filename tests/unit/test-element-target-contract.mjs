@@ -224,7 +224,8 @@ function assertFileInputHandoffContract() {
 
   assert.match(contentScript, /type: item\.type/, "pageOverview actions should retain the input type");
   assert.match(contentScript, /selectedFileCount: item\.selectedFileCount/, "pageOverview actions should retain selected file count");
-  assert.match(contentScript, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
+  const implicitRoles = read("src/content/implicit-aria-role.ts");
+  assert.match(`${contentScript}\n${implicitRoles}`, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
   assert.match(contentScript, /String\(el\.type \|\| ""\)\.toLowerCase\(\) !== "file"/, "file inputs should not be presented as editable text fields");
   assert.match(tools, /inputType && inputType !== String\(compact\.role \|\| ""\)/, "AX snapshot should keep a useful input type");
   assert.match(tools, /Number\.isFinite\(Number\(action\?\.selectedFileCount\)\)/, "AX snapshot should keep file selection state");
@@ -240,7 +241,7 @@ function assertFindElementsFilterContract() {
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");
   assert.match(contentScript, /const patternText = String\(pattern \|\| ""\)\.trim\(\)/, "content findElements should normalize optional pattern");
   assert.match(contentScript, /const maxResults = clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp result limit");
-  assert.match(contentScript, /const candidates = \[rootResult\.element, \.\.\.rootResult\.element\.querySelectorAll\("\*"\)\]/, "content findElements should keep a broad DOM candidate set");
+  assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
   assert.match(contentScript, /matchElementSearch\(regex, getElementSearchParts\(el, summary\)\)/, "content findElements should classify field-level matches");
   assert.match(contentScript, /\.sort\(compareElementCandidates\)/, "content findElements should rank candidates before returning");
   assert.match(contentScript, /matchKind/, "content findElements should expose matchKind");

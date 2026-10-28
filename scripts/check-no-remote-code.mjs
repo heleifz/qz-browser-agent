@@ -23,11 +23,8 @@ const REMOTE_HOSTS = [
 ];
 
 // Identifiers and package metadata, not scripts the extension fetches.
-// vendor/mcp-sdk.mjs: ajv schema `$id` values on raw.githubusercontent.com.
 // vendor/provenance.json: SheetJS upstream tarball URL on cdn.sheetjs.com.
 const ALLOWLIST = [
-  { suffix: "vendor/mcp-sdk.mjs", host: "raw.githubusercontent.com" },
-  { suffix: "vendor/mcp-sdk.mjs.map", host: "raw.githubusercontent.com" },
   { suffix: "vendor/provenance.json", host: "cdn.sheetjs.com" },
 ];
 
@@ -66,6 +63,10 @@ export async function findRemoteCode(directories) {
       const text = await readFile(file, "utf8");
       const lower = text.toLowerCase();
       const rel = posix(relative(root, file));
+      // Any remote script host is forbidden, not only the known CDN list.
+      for (const match of text.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']\s*((?:https?:|\/\/|data:)[^"']*)/giu)) {
+        hits.push({ file: rel, host: match[1], line: text.slice(0, match.index).split("\n").length });
+      }
       for (const host of REMOTE_HOSTS) {
         const index = lower.indexOf(host);
         if (index < 0 || allowed(rel, host)) continue;
