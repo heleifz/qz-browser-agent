@@ -27,7 +27,7 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
   }],
-  ["dynamic-code:6322691bd21cdceb1308a299c223e6e77f7e126c6831caa8894ce4a94f7ffcba", {
+  ["dynamic-code:9320e0271a5fb141f43cdc676a62a81b330b57d7b32cd48f5974aeadb62435d2", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",
   }],
@@ -36,25 +36,30 @@ const REVIEWED = new Map([
     reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only.",
   }],
   ...[
-    ["0e4f5581addee3945ecb362f4543a5bc4fa1c1ec485eddf029ff5b996d692ecf", "background/tools/cdp-runtime", "Run-owned CDP evaluator with cancellation and stale-owner checks; existing page-script capability."],
+    ["33445b4d16f8797c82850bf05d48c497e57dc488270f9c4756edb8a2ffe89e28", "background/tools/cdp-runtime", "Run-owned CDP evaluator with cancellation and stale-owner checks; existing page-script capability."],
     ["3e11705ca0c9ddb62d92e242771769301b481d4c3349267a5132318e07e6763a", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element."],
-    ["19ce8f9830a5288c607b531aa29cd6478a4030545e54c09c670f584c281eaea8", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity and arguments to the run-owned evaluator."],
-    ["1872e4f23ebf9d7694d98ef062c5181ce3527df2f85240659e1861b14d3addc4", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
+    ["fd33ba99589746223f976d8fefb913d8fb665001c4f72964dc50b7609f7081a3", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity and arguments to the run-owned evaluator."],
+    ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["f9a65359f6aea4f6091a965b01d938d247fec20ad29ae373ccfe9f3270090877", "capabilities/script/tools", "Entire createScriptTools factory with product-specific offscreen error text. Same explicit user/Agent page-script capability. Policy risk remains."],
-    ["e2d7593b5eac9691cc415573c26dee35d0ebc3cf3d21c5f3af399ebfea22da53", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant from isolated-page-calls; validates live context identity."],
-    ["3a27ad9e893989f89f78881ff0c2ab2e2f2e4235f065d6287923e3216196423e", "background/tools/element-runtime", "Calls the packaged ISOLATED_CONTENT_INVOKE bridge constant; action parameters are passed as CDP values, not code."],
+    ["65929b0848c416804606d4a12b3715bc690342f7fccb678df2249009ec383e36", "capabilities/script/tools", "Entire createScriptTools factory with product-specific offscreen error text. Same explicit user/Agent page-script capability. Policy risk remains."],
+    ["e1026a3accc9f907512ec6d6eeed9728cfbd86b130ad009452f3bee13803b70c", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant from isolated-page-calls; validates live context identity."],
+    ["c56fb6154c392cf8fece033fcc496139904617749a4fb93acae372347b20b1fd", "background/tools/element-runtime", "Calls the packaged ISOLATED_CONTENT_INVOKE bridge constant; action parameters are passed as CDP values, not code."],
   ].map(([digest, module, reason]) => [`cdp-execution:${digest}`, {
     files: new RegExp(`^(?:background/service-worker|${module})\\.js$`, "u"), reason,
   }]),
   // The unbundled forms differ only in esbuild's expansion of shorthand properties after renaming.
-  ["cdp-execution:cb96cda1ae80e46b23e724a9023e1ee5126b3a79f5362a14ee20199561303d3d", {
+  // Bundling now renames inside page-mode apply as well, so its bundled form needs its own entry.
+  ["cdp-execution:a2d915a9cb4666b2a6a1935a8b6597702edbe8a3e04b7f2da4a20a421b0410f8", {
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function.",
   }],
-  ["cdp-execution:4ce92fed6d3a96489f9dec6bda3a8c57616989c426c23f3134d4b9b2ffe27913", {
+  ["cdp-execution:f3b1d7fbbdc9be7986c55c8a3a1989d231c1a3e2fcb18fc8d8ac5415d1d994d0", {
     files: /^capabilities\/script\/tools\.js$/u,
     reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion.",
+  }],
+  ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
+    files: /^background\/service-worker\.js$/u,
+    reason: "Bundled page-mode apply: same literal navigator.userAgent evaluation, with esbuild shorthand expansion after renaming.",
   }],
 ]);
 

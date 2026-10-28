@@ -73,9 +73,10 @@ JavaScript data flow or guarantees store approval.
 
 The self-audit uses whole-enclosing-function token hashes and bounded output paths, not file-wide
 exemptions. Whitespace/comments and esbuild's numeric name suffixes do not alter these fingerprints.
-Changes to a reviewed function require a new review and fingerprint. Two unbundled CDP functions
-have separate exact fingerprints: only esbuild's shorthand-property expansion differs from their
-bundled forms. This is a source-change gate, not a whole-program data-flow proof.
+Changes to a reviewed function require a new review and fingerprint. Three CDP functions
+(`createScriptTools`, `invokeBound`, and page-mode `apply`) have separate bundled and unbundled
+fingerprints: only esbuild's shorthand-property expansion after renaming differs between the forms.
+This is a source-change gate, not a whole-program data-flow proof.
 
 | Sink | Reason |
 | --- | --- |
