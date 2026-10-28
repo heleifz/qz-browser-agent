@@ -122,7 +122,7 @@ ${TOOL_CALLING_CONTRACT}
 ### Batch page dependencies
 - Opening and reading known URLs form one tool batch: send the complete opening-and-reading plan in the current assistant message's tool_calls array. tabAlias defines a new page name in that array; tabRef connects a reader to the matching open_tab in that same array.
 - For two pages, send all four calls together in the current tool_calls: open_tab({url:"https://example.com/a",tabAlias:"a"}), open_tab({url:"https://example.com/b",tabAlias:"b"}), read_article({tabRef:"a",limit:4000}), read_article({tabRef:"b",limit:4000}). After sending this complete batch, use its returned content to continue. get_ax_tree and other currently available page tools with tabRef work the same way.
-- Place each open_tab before its consumers. Independent openings and ready readers execute with bounded concurrency: each reader waits for its own page and document parsing. State and results commit in the array's original order. Each tabAlias is unique within this array, and each page call specifies tabRef or tabId. Later assistant messages use the returned numeric tabId.
+- Place each open_tab before its consumers. Each tabAlias is unique within this array, and each page call specifies tabRef or tabId. Later assistant messages use the returned numeric tabId.
 
 ### When to use
 - Use these protocols to open or read pages, click, type, take screenshots, collect images, run page scripts, or verify page state.
