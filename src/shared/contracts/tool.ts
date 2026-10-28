@@ -77,8 +77,8 @@ export interface ToolBehavior {
   /**
    * Arguments that may carry element uid references beyond the singular `target`/`selector`/`root`
    * fields. A uid pins its registered tab: the runtime must not substitute the working tab for it,
-   * and the batch planner schedules the call on the uids' shared tab. A throwing extractor falls
-   * back to the singular fields.
+   * and the batch planner schedules the call on the uids' shared tab. Return non-uid targets too
+   * so mixed calls remain serialized. A throwing extractor falls back to the singular fields.
    */
   uidTargets?: (args: Readonly<Record<string, unknown>>) => readonly unknown[];
   /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */

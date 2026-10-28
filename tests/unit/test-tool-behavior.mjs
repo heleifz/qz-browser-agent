@@ -235,13 +235,21 @@ test('uid targets pin their registered tab for batch planning and working-tab de
     'uids on one tab schedule on that tab, never the working tab');
   assert.deepEqual(tools.getBatchTabPolicy('uid_single', { target: 'uid:t42.0000b1.1' }, lookup),
     { kind: 'target', implicit: false, observation: false, parallel: true, tabId: 42 });
+  assert.equal(tools.hasUidElementTargets('uid_multi', { target: 'uid:t41.0000a1.1' }, lookup), true,
+    'a declared extractor extends rather than replaces singular fields');
+  assert.equal(tools.hasUidElementTargets('uid_multi', { targets: ['css:img', 'uid:t41.0000a1.1'] }, lookup), true,
+    'a uid later in a mixed array still suppresses working-tab enrichment');
   for (const args of [
     { targets: ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'] },
+    { target: 'uid:t42.0000b1.1', targets: ['uid:t41.0000a1.1'] },
+    { targets: ['uid:t41.0000a1.1', 'css:img'] },
+    { targets: ['css:img', 'uid:t41.0000a1.1'] },
+    { targets: ['uid:t41.0000a1.1', 42, null] },
     { targets: ['uid:t99.0000c1.1'] },
   ]) {
     assert.deepEqual(tools.getBatchTabPolicy('uid_multi', args, lookup),
       { kind: 'target', implicit: false, observation: false },
-      'cross-tab or unknown uid sets keep the conservative serialization');
+      'cross-tab, mixed or unknown target sets keep conservative serialization');
   }
 
   const input = [
@@ -274,12 +282,50 @@ test('uid targets pin their registered tab for batch planning and working-tab de
   assert.equal(targets.length, resolveCallsBefore, 'a uid call claims no extra tab ownership upstream');
   await runtime.execute('__uid_working_tab', { targets: ['css:img'] }, undefined, context);
   assert.equal(received.tabId, 31, 'non-uid targets keep the working-tab default');
+  await runtime.execute('__uid_working_tab', { targets: ['css:img', 'uid:t41.0000a1.1'] }, undefined, context);
+  assert.equal(targets.at(-1).tabId, 31, 'mixed calls still authorize the CSS default tab');
+  assert.equal(received.tabId, undefined, 'that CSS default must not be injected into uid arguments');
+  received = null;
+  for (const args of [
+    { targets: ['css:img', 'uid:t41.0000a1.1'], tabId: 99 },
+    { targets: ['css:img', 'uid:t41.0000a1.1'], _tabId: 31 },
+  ]) {
+    await assert.rejects(runtime.execute('__uid_working_tab', args, undefined, { ...context, workingTabId: 99 }),
+      { code: 'SESSION_TAB_FOREIGN' }, 'a uid cannot smuggle a CSS read onto a foreign tab');
+  }
+  assert.equal(received, null);
+});
+
+test('undeclared uid-looking arguments cannot bypass page ownership', async () => {
+  let calls = 0;
+  tools.defineTool({ name: '__page_without_elements', description: 'Fixture', page: 'owned',
+    parameters: { type: 'object', properties: { tabId: { type: 'number' } } },
+    execute: () => { calls++; return {}; },
+  });
+  for (const key of ['target', 'selector', 'root']) {
+    const args = { tabId: 99, [key]: 'uid:t41.0000a1.1' };
+    assert.equal(tools.hasUidElementTargets('__page_without_elements', args), false);
+    await assert.rejects(runtime.execute('__page_without_elements', args, undefined, context), { code: 'SESSION_TAB_FOREIGN' });
+  }
+  assert.equal(calls, 0, 'unconsumed uid-looking arguments must not skip the page:owned preflight');
+});
+
+test('a uid lane anchors later tab creation to its ordered working-tab selection', async () => {
+  runtime.element.registerElementRef({ uid: 't41.0000a3.1', tabId: 41, sessionId: 'session' });
+  const calls = [
+    { name: 'act_on_element', target: 'uid:t41.0000a3.1', action: 'click' },
+    { name: 'open_tab', url: 'https://example.test/new' },
+  ];
+  const plan = planTabBatch(calls, args => ({ args, policy: tools.getBatchTabPolicy(args.name, args) }));
+  assert.ok(plan.dependencies(calls[1]).commit.includes(calls[0]),
+    'an open must wait for a uid-selected tab in another window just as it waits for a numeric target');
 });
 
 test('page-context enrichment leaves uid-targeted calls on their registered tabs', async () => {
   const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('uid-enrich-fixture') };
   qz.registerTool({ name: 'uid_probe', description: 'Fixture', page: 'owned',
     parameters: { type: 'object', properties: {
+      target: { type: 'string' }, selector: { type: 'string' }, root: { type: 'string' },
       targets: { type: 'array', items: { type: 'string' } }, tabId: { type: 'number' },
     } },
     behavior: { uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) }, execute: () => ({}) });
@@ -298,6 +344,26 @@ test('page-context enrichment leaves uid-targeted calls on their registered tabs
   assert.equal(uidArgs.tabId, undefined, 'the working tab must not override a uid target');
   assert.equal(uidArgs._tabId, undefined);
   assert.equal(uidArgs._pageUrl, undefined);
+  for (const args of [
+    { target: 'uid:t41.0000a1.1' },
+    { selector: 'uid:t41.0000a1.1' },
+    { root: 'uid:t41.0000a1.1' },
+    { targets: ['css:img', null, 'uid:t41.0000a1.1'] },
+  ]) {
+    assert.deepEqual(await agent._enrichToolCallArgsWithPageContext('uid_probe', args, toolContext), args);
+  }
+  for (const [name, args] of [
+    ['read_image', { target: 'uid:t41.0000a1.1' }],
+    ['act_on_element', { target: 'uid:t41.0000a1.1', action: 'click' }],
+    ['act_on_element', { target: 'uid:t41.0000a1.1', action: 'fill', value: 'text' }],
+    ['read_dom', { selector: 'uid:t41.0000a1.1' }],
+    ['get_ax_tree', { root: 'uid:t41.0000a1.1' }],
+    ['collect_images', { targets: ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'] }],
+  ]) {
+    agent._tools.hasUidElementTargets = tools.hasUidElementTargets;
+    assert.deepEqual(await agent._enrichToolCallArgsWithPageContext(name, args, toolContext), args, name);
+  }
+  agent._tools.hasUidElementTargets = (name, args) => tools.hasUidElementTargets(name, args, lookup);
   const cssArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['css:img'] }, toolContext);
   assert.equal(cssArgs.tabId, 31, 'page-context enrichment still applies without uids');
   assert.equal(cssArgs._pageUrl, 'https://example.test/working');

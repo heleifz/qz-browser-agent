@@ -326,7 +326,15 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     );
   }
 
-  const resolvedTabId = Number(tabId || ref.tabId);
+  // Reject an explicit mismatch before resolving ownership can select or claim that tab.
+  if (tabId && Number(tabId) !== Number(ref.tabId)) {
+    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
+      target: elementTargetForUid(requestedUid),
+      tabId,
+      refTabId: ref.tabId,
+    });
+  }
+  const resolvedTabId = Number(ref.tabId);
   if (!Number.isFinite(resolvedTabId) || resolvedTabId <= 0) {
     throw new ToolExecutionError("MISSING_TAB_ID", `Element target has no usable tabId: uid:${requestedUid}`, {
       target: elementTargetForUid(requestedUid),
@@ -337,8 +345,11 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
     const resolved = await sessions.resolveTargetTab({
       sessionId: currentSessionId,
+      runId: context.runId,
+      signal: context.signal,
       tabId: resolvedTabId,
       source: "element_uid_reference",
+      checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
       // Selector fallback is a content-script read. Node-backed uids keep the ownership check.
       readOnly: readOnly === true && selectorFallback,
     });
@@ -352,15 +363,11 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
         message: resolved?.error || "",
       });
     }
-  }
-  // An explicit tab that conflicts with the uid's registered tab is a targeting
-  // error, not evidence that the page changed.
-  if (tabId && Number(tabId) !== Number(ref.tabId)) {
-    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
-      target: elementTargetForUid(requestedUid),
-      tabId,
-      refTabId: ref.tabId,
-    });
+    if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
+      throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", {
+        toolName: "element_uid_reference", sessionId: currentSessionId, tabId: resolvedTabId,
+      });
+    }
   }
   // Security guardrails gate before any page probe, including the read-only document id.
   await assertTabAllowedBySecurityGuardrails(resolvedTabId, { tool: "element_target", source: "uid_target" });

@@ -10,11 +10,15 @@ const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.strin
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 test('trusted registrations select only explicit cross-tab observations', () => {
-  for (const name of ['read_article', 'find_elements', 'get_ax_tree', 'screenshot']) {
+  for (const [name, field] of [
+    ['read_article', 'selector'], ['find_elements', 'selector'], ['get_ax_tree', 'root'], ['screenshot', 'target'],
+  ]) {
     assert.equal(getParallelReadTab(name, { tabId: 12 }), 12);
     assert.equal(getParallelReadTab(name, {}), null);
-    assert.equal(getParallelReadTab(name, { tabId: 12, selector: 'uid:t12.abcdef.1' }), null);
+    assert.equal(getParallelReadTab(name, { tabId: 12, [field]: 'uid:t12.abcdef.1' }), null);
   }
+  assert.equal(getParallelReadTab('screenshot', { tabId: 12, selector: 'uid:t99.abcdef.1' }), 12,
+    'an undeclared selector cannot change screenshot targeting or bypass its page preflight');
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, actionable: true }), null);
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, destination: 'saved-images' }), null);
   assert.equal(getParallelReadTab('spoofed', { tabId: 12 }, { toolRegistrySnapshot: {

@@ -399,6 +399,9 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
     target: selectedTarget,
     index: 0,
   }, context);
+  // Mixed UID/CSS calls keep tabId unset globally. The runtime checks the CSS
+  // default's ownership; apply that default only to the selector target here.
+  if (!ref.uid && !ref.tabId) ref.tabId = Number(context.workingTabId) || undefined;
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
   }

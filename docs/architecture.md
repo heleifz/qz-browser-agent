@@ -399,7 +399,9 @@ Argument validation precedes target resolution. A model response can contain mul
 The Agent executes ready data-flow nodes with one shared limit of ten in-flight calls. Creators,
 explicit observations, and declared tab-local actions share that budget. Each tab has an execution
 lane: a navigation or element action waits for earlier work on its tab while independent tabs advance.
-Implicit targets, UID-dependent operations and undeclared/global operations remain commit barriers.
+UID calls use their registered tab lane when all targets share one known tab and the definition grants
+a parallel role. `behavior.uidTargets` extends the singular target fields; mixed, unknown and cross-tab
+target sets retain commit barriers, as do implicit targets and undeclared/global operations.
 Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
 The runtime evaluates it once per call during planning; true or a thrown predicate overrides
 `parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
@@ -428,7 +430,7 @@ diagnostic phase timings still measure actual execution.
 
 Execution-time permission checks are read-only, including nested CDP checks and browser-context
 collection. Working-tab selection occurs at commit, following the same order as serial execution.
-An earlier numeric page target forms a window-anchor dependency for subsequent creators. Each
+An earlier numeric or UID-resolved page target forms a window-anchor dependency for subsequent creators. Each
 call has its own cancellation signal derived from the run. Stop launches no further work, revokes
 uncommitted state/effects and closes uncommitted creations. The ledger retains the committed prefix
 and returns ordered cancellation records for the remainder, including calls that were never started.

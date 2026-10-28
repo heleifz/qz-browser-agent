@@ -74,7 +74,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       execution: local && lanes.has(lane) ? [lanes.get(lane)!] : [],
       commit: !local ? items.slice(0, entry.index) : [
         ...(barrier === undefined ? [] : [barrier]),
-        // An earlier numeric target can select a different window. New sibling aliases share its anchor.
+        // An earlier numeric or uid target can select a different window. New sibling aliases share its anchor.
         ...(entry.policy?.kind === "create" && windowAnchor !== undefined ? [windowAnchor] : []),
         // Speculative observations can use a private permit; actions need published ownership.
         ...(producer && entry.policy?.kind === "target" && !entry.policy.observation ? [producer.item] : []),
@@ -82,7 +82,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
     });
     if (!local) barrier = entry.item;
     else lanes.set(lane, entry.item);
-    if (entry.policy?.kind === "target" && entry.args.tabId != null) windowAnchor = entry.item;
+    if (entry.policy?.kind === "target" && (policyTab != null || entry.args.tabId != null)) windowAnchor = entry.item;
   }
   const parent = (entry: Entry) => creators.get(String(entry.args.tabRef));
   const validResult = (entry: Entry, result: unknown, isError: boolean) => {

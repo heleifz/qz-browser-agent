@@ -35,16 +35,20 @@ class ToolExecutionError extends Error {
 }
 
 const targetResolutions = [];
+let targetResolution = { ok: true };
+let securityFailure = false;
 const runtime = createElementRuntime({
   ToolExecutionError,
   getToolRuntimeDependencies() {
     return { sessions: {
-      async resolveTargetTab(input) { targetResolutions.push(input); return { ok: true }; },
+      async resolveTargetTab(input) { targetResolutions.push(input); return targetResolution; },
       listOwnedTabIds: () => ownedTabs,
     } };
   },
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
-  async assertTabAllowed() {},
+  async assertTabAllowed() {
+    if (securityFailure) throw new ToolExecutionError('SECURITY_GUARDRAIL_BLOCKED', 'blocked');
+  },
   async initializeContentScript() { contentInitializations += 1; },
   async sendToContent(tabId, action, params = {}) {
     contentCalls.push({ tabId, action, ...params });
@@ -434,12 +438,31 @@ await assert.rejects(
 );
 probedDocumentId = "doc-redirect";
 
-// An explicit conflicting tab is a targeting error even when the url also changed.
+// Reject a conflicting tab before ownership resolution can select or claim it.
+const beforeMismatch = targetResolutions.length;
+targetResolution = { ok: false, code: 'SESSION_TAB_FOREIGN' };
 await assert.rejects(
   runtime.resolveElementReference(9, { target: "uid:t5.00000c.1" }, context),
   error => error?.code === "ELEMENT_UID_TAB_MISMATCH",
-  "an explicit wrong tab reports a tab mismatch, not a page change",
+  "an explicit wrong tab reports a tab mismatch, not a page or ownership error",
 );
+assert.equal(targetResolutions.length, beforeMismatch, 'a mismatched tab must never be selected or claimed');
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, context),
+  { code: 'SESSION_TAB_FOREIGN' }, 'uids still enforce ownership on their own tab');
+targetResolution = { ok: true };
+const uidSignal = new AbortController().signal;
+await runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, { ...context, signal: uidSignal, deferToolCommit: true });
+assert.equal(targetResolutions.at(-1).runId, context.runId);
+assert.equal(targetResolutions.at(-1).signal, uidSignal);
+assert.equal(targetResolutions.at(-1).checkOnly, true, 'parallel uid calls must not select a working tab during execution');
+targetResolution = { ok: true, claimRequired: true };
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, { ...context, deferToolCommit: true }),
+  { code: 'SESSION_TAB_UNOWNED' }, 'a speculative uid call cannot operate on a merely claimable tab');
+targetResolution = { ok: true };
+securityFailure = true;
+await assert.rejects(runtime.resolveElementReference(undefined, { target: 'uid:t5.00000c.1' }, context),
+  { code: 'SECURITY_GUARDRAIL_BLOCKED' }, 'document identity never bypasses URL guardrails');
+securityFailure = false;
 currentUrl = "https://example.test/page#one";
 
 runtime.registerElementRef({
