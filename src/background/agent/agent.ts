@@ -2686,7 +2686,7 @@ export class Agent {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
       let policy = this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup);
       if (policy?.kind === "create" && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
-      if (!policy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
+      if (!this._toolRuntime.getBatchTabPolicy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
         policy = { kind: "target", implicit: false, observation: true };
       return { args, policy };
     }, this._runLanguage);
@@ -2726,7 +2726,7 @@ export class Agent {
       completed: (tc, outcome) => batch.complete(tc, outcome.result, outcome.isError),
       cancelled: tc => failure(tc, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
       tab: tc => {
-        try { return this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), batch.args(tc), lookup) ?? null; }
+        try { return batch.observation(tc) ? Number(record(batch.args(tc)).tabId) || null : null; }
         catch { return null; } // Invalid references become per-call errors in execute, not scheduler failures.
       },
       reject: (tc, error) => failure(tc, error),
@@ -2750,7 +2750,7 @@ export class Agent {
           args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
           assertActive();
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
-            preserveWorkingTab: this._toolRuntime.getParallelReadTab?.(toolName, args, lookup) != null,
+            preserveWorkingTab: batch.observation(tc),
             deferToolCommit: parallel,
             deferCreatedTabSelection: batch.parallelCreate(tc),
             createdTabResult: batch.executionParent(tc),

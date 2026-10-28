@@ -400,16 +400,27 @@ The Agent executes ready data-flow nodes with one shared limit of ten in-flight 
 explicit observations, and declared tab-local actions share that budget. Each tab has an execution
 lane: a navigation or element action waits for earlier work on its tab while independent tabs advance.
 Implicit targets, UID-dependent operations and undeclared/global operations remain commit barriers.
-Capability definitions can explicitly set `behavior.barrier: true`; this overrides `parallelOpen`,
-`parallelTab` and `parallelRead`. Runtime projection preserves target metadata for `tabRef`, and the
-same graph builder adds all preceding-commit and following-execution dependencies. No tool-name
-branch in the scheduler selects this behavior.
+Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
+The runtime evaluates it once per call during planning; true or a thrown predicate overrides
+`parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
+Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
+and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 
-`run_script` and `run_skill_script` declare barriers for page and inner targets: page scripts also
-have access to nested tools that can affect other tabs and global resources. Their nested-call scope
-is unchanged. An omitted `target` still means page, and `mutatesPage` still controls effects rather
-than concurrency. All Skill/plugin tools resolve to barriers regardless of host binding or manifest
-contents. These declarations govern scheduling only; permission, ownership and run checks still apply.
+`run_script` declares `parallelTab: true` with a barrier predicate for inner mode or potential tool
+API use. An omitted target means page. The capability's [classifier](../src/capabilities/script/tool-access.ts)
+uses the pinned JavaScript parser to distinguish comments, quoted strings and ordinary member
+properties from tool references, template expressions and dynamic access. Parse failures, tool
+references and dynamic constructs remain barriers. This is conservative scheduling analysis, not a
+JavaScript sandbox or proof that arbitrary page functions have no external side effects.
+
+No-tools page scripts use tab lanes regardless of `mutatesPage`, which continues to control effects.
+Input/args bindings are injected without a bridge. A tab-local execution cannot install the tool
+bridge, even if a later classification disagrees. Missing tool access returns
+`RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE`, with inspection/recovery guidance and no automatic replay.
+Only a native return-shape syntax error without an execution stack can use the existing no-bridge
+shape recovery; runtime error envelopes never trigger it. Tool-using page scripts retain their existing nested-tool scope and are barriers.
+`run_skill_script`, inner execution, and all Skill/plugin tools remain barriers; plugin resolution
+overrides host predicates with literal true. Permission, ownership, deadlines and run checks still apply.
 A separate cursor publishes tool-owned Session state, effects, alias bindings, progress, final tool
 events and model messages in the original call order. Completed execution frees a slot immediately,
 even while its result awaits publication. Tool event publication is buffered until settlement;

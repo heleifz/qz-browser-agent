@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createToolRegistry } from "../../src/background/tools/registry.js";
+import { Agent } from '../../src/background/agent/agent.js';
+import { createTestAgentOptions } from '../support/agent-services.mjs';
 import { planTabBatch } from "../../src/background/tools/tab-batch.js";
 import { scheduleToolCalls } from "../../src/background/tools/tool-scheduler.js";
 import { findBuiltinSkill } from "../../src/shared/skills/builtin-skills.js";
@@ -106,9 +108,9 @@ test("new observation tools promote images only through trusted definitions and 
 });
 
 test("external plugins cannot declare behavior, while trusted host aliases inherit their core target", () => {
-  const registry = createToolRegistry();
+  const registry = createToolRegistry(); let hostDecisions = 0;
   registry.defineTool({ ...tools.resolveToolDefinition("manage_settings"), workingTab: 'created',
-    behavior: { nestedObservation: true, mayUnloadPage: true, parallelRead: true },
+    behavior: { barrier: () => { hostDecisions++; return false; }, nestedObservation: true, mayUnloadPage: true, parallelRead: true },
   });
   const toolRegistrySnapshot = registry.snapshot();
   const core = toolRegistrySnapshot.get("manage_settings");
@@ -122,6 +124,7 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
   assert.deepEqual(resolve(plugin).behavior, { ...core.behavior, barrier: true });
   assert.equal(runtime.getParallelReadTab('manage_settings', { tabId: 12 }, { toolRegistrySnapshot }), 12);
   assert.deepEqual(runtime.getBatchTabPolicy('manage_settings', { tabAlias: 'a' }, { toolRegistrySnapshot }), { kind: 'create' });
+  const beforePlugin = hostDecisions;
   for (const candidate of [plugin, structuredClone(plugin)]) {
     const claimedTool = { ...tool, source: 'core', behavior: { barrier: false, parallelRead: true, parallelOpen: true, parallelTab: true } };
     const options = { toolRegistrySnapshot, skillToolRegistrySnapshot: {
@@ -133,6 +136,7 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
     assert.deepEqual(runtime.getBatchTabPolicy(tool.name, { tabAlias: 'a', tabRef: 'b' }, options), { kind: 'barrier' },
       'plugin aliases also cannot create or resolve batch tab bindings');
   }
+  assert.equal(hostDecisions, beforePlugin, 'a plugin overrides the host predicate with literal barrier:true');
   for (const untrusted of [structuredClone(plugin), { ...plugin, skillBuiltin: false }, { ...plugin, skillSource: "local" }, { ...plugin, id: "external-plugin" }]) {
     assert.deepEqual(resolve(untrusted).behavior, { barrier: true }, "plugin declarations must not cross the trusted behavior boundary");
   }
@@ -170,16 +174,41 @@ test('capability declarations alone place new tool names into the same graph, wi
   releases.get(4)(); await run; assert.deepEqual(committed, [1, 2, 3, 4]);
 });
 
-test('all script targets declare barriers while page targets retain tabRef resolution', () => {
-  for (const name of ['run_script', 'run_skill_script']) {
-    assert.equal(runtime.resolveDefinition(name).behavior.barrier, true);
-    for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of [false, true]) {
-      const args = { target, mutatesPage, tabRef: 'a' };
-      const policy = runtime.getBatchTabPolicy(name, args);
-      assert.deepEqual(policy, target === 'inner' ? { kind: 'barrier' } : { kind: 'target', implicit: true, observation: false });
+test('script declarations select no-tools page lanes and keep other script forms as barriers', () => {
+  assert.equal(typeof runtime.resolveDefinition('run_script').behavior.barrier, 'function');
+  assert.equal(runtime.resolveDefinition('run_skill_script').behavior.barrier, true);
+  for (const name of ['run_script', 'run_skill_script']) for (const target of [undefined, 'page', 'inner']) {
+    for (const mutatesPage of [false, true]) for (const code of ['42', 'return input.value + args.extra', 'tools.$list()', 'eval(input.code)', 'async () => {', undefined]) {
+      const args = { target, mutatesPage, tabRef: 'a', code, args: { value: 1, extra: 2 } };
+      const safe = name === 'run_script' && (code === '42' || code === 'return input.value + args.extra');
+      assert.deepEqual(runtime.getBatchTabPolicy(name, args), target === 'inner' ? { kind: 'barrier' }
+        : { kind: 'target', implicit: true, observation: false, ...(name === 'run_script' ? { parallel: safe } : {}) });
       assert.equal(runtime.getParallelReadTab(name, { ...args, tabId: 1 }), null);
     }
   }
+});
+
+test('a barrier predicate is evaluated once per planned call; throwing predicates fail closed', async () => {
+  const registry = createToolRegistry(); let decisions = 0;
+  registry.forCapability('predicate-fixture')({ name: 'conditional_scope', description: 'Fixture', page: 'tab',
+    parameters: { type: 'object', properties: { tabId: { type: 'number' } } },
+    behavior: { parallelRead: true, parallelTab: true, barrier: args => {
+      decisions++; if (args.tabId === 3) throw new Error('unknown scope'); return args.tabId === 2;
+    } }, execute: () => ({}),
+  });
+  const lookup = { toolRegistrySnapshot: registry.snapshot() }, contexts = [];
+  const agent = new Agent('predicate', createTestAgentOptions({ tools: {
+    getSchemas: () => [], getIdentity: () => ({}),
+    getBatchTabPolicy: (name, args) => tools.getBatchTabPolicy(name, args, lookup),
+    getParallelReadTab: () => { throw new Error('the planned decision must be reused'); },
+    execute: async (_name, args, _signal, context) => { contexts.push(context); return { tabId: args.tabId }; },
+  } }));
+  await agent._executeToolCalls([1, 2, 3].map(tabId => ({ id: String(tabId), function: {
+    name: 'conditional_scope', arguments: JSON.stringify({ tabId }),
+  } })), new AbortController().signal);
+  assert.equal(decisions, 3);
+  assert.deepEqual(contexts.map(c => c.deferToolCommit), [true, false, false]);
+  assert.deepEqual(contexts.map(c => c.preserveWorkingTab), [true, false, false]);
 });
 
 test("custom timeout diagnostic declarations retain the runtime's abort signal and trace fields", async () => {

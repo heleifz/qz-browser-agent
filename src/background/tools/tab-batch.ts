@@ -78,6 +78,10 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   return {
     ordered: items,
     independent: (item: T) => independent(byItem.get(item)!),
+    observation: (item: T) => {
+      const policy = byItem.get(item)!.policy;
+      return policy?.kind === "target" && policy.observation;
+    },
     dependencies: (item: T) => edges.get(item)!,
     parallelCreate: (item: T) => byItem.get(item)!.policy?.kind === "create" && independent(byItem.get(item)!),
     executionParent: (item: T) => executed.get(parent(byItem.get(item)!)!)?.result,

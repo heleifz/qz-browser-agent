@@ -46,6 +46,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   const state = { sessionId: 'flow', ownedTabIds: [], workingTabId: null };
   const tabs = new Map(), events = [], writes = [], started = [], gates = new Map(), removed = [];
   const controller = new AbortController();
+  const scriptMetrics = { active: 0, peak: 0 }, scriptContexts = [];
   let sessions;
   const tabsApi = {
     async get(id) { if (!tabs.has(id)) throw new Error('missing tab'); return { ...tabs.get(id) }; },
@@ -77,13 +78,16 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     for (const name of ['run_script', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
       // Keep production declarations, schema, permission checks and effects; control only the script body.
       async execute(args, signal, context) {
-        assert.equal(context.deferToolCommit, false, 'scripts execute behind a full commit barrier');
-        const key = args.code || args.script;
-        started.push(key); await fixture.wait(key, signal);
-        if (fail === key) throw Object.assign(new Error('script failed'), { code: 'SCRIPT_EVALUATION_FAILED' });
-        const tab = tabs.get(args.tabId);
-        if (args.mutatesPage) tab.body += '!';
-        return { ok: true, result: { target: args.target || 'page', text: tab?.body || 'inner' } };
+        const key = args.args?.stage || args.code || args.script;
+        scriptContexts.push({ key, deferred: context.deferToolCommit, tabId: args.tabId });
+        scriptMetrics.peak = Math.max(scriptMetrics.peak, ++scriptMetrics.active);
+        try {
+          started.push(key); await fixture.wait(key, signal);
+          if (fail === key) throw Object.assign(new Error('script failed'), { code: 'SCRIPT_EVALUATION_FAILED' });
+          const tab = tabs.get(args.tabId);
+          if (args.mutatesPage) tab.body += '!';
+          return { ok: true, result: { target: args.target || 'page', text: tab?.body || 'inner' } };
+        } finally { scriptMetrics.active--; }
       },
     });
     agent._toolRegistrySnapshot = registry.snapshot();
@@ -101,7 +105,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     return apply(name, result, isError);
   };
   agent._emit = event => { events.push(event); if (event.type === 'tool_execution_end' && event.toolCallId === stopAt) controller.abort(); };
-  const f = fixture = { state, sessions, runtime, tabs, events, writes, started, gates, removed, controller, fail, siteChanges,
+  const f = fixture = { state, sessions, runtime, tabs, events, writes, started, gates, removed, controller, fail, siteChanges, scriptMetrics, scriptContexts,
     async wait(key, signal) {
       if (!hold.includes(key)) return;
       await new Promise(resolve => { gates.set(key, resolve); signal.addEventListener('abort', resolve, { once: true }); });
@@ -189,7 +193,7 @@ test('stop during effects retains published ownership but publishes no late succ
 
 for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of target === 'inner' ? [false] : [false, true]) {
   test(`script barrier waits for prior commits and blocks later tabs: ${target || 'default'} / mutates=${mutatesPage}`, async () => {
-    const script = call('script', 'run_script', { code: 'script-b', timeout: 5, mutatesPage,
+    const script = call('script', 'run_script', { code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, mutatesPage,
       ...(target ? { target } : {}), ...(target === 'inner' ? {} : { tabRef: 'b' }) });
     const input = [open('a'), open('b'), read('a'), script, call('after', '__flow_read', { tabRef: 'a' }), read('b')];
     const scriptEffects = `effects:run_script:${target === 'inner' ? 'undefined' : 98}`;
@@ -212,6 +216,7 @@ for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of tar
     f.gates.get(scriptEffects)();
     const result = f.snapshot(await run);
     assert.equal(f.siteChanges.length, mutatesPage ? 1 : 0);
+    assert.ok(f.scriptContexts.every(context => context.deferred === false));
     const serial = setup({ serial: true, scriptFixtures: true });
     assert.deepEqual(result, serial.snapshot(await serial.run(input)));
   });
@@ -220,7 +225,7 @@ for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of tar
 for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
   test(`script barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${target}`, async () => {
     const snapshots = [], input = [open('a'), open('b'), call('script', 'run_script', {
-      code: 'script-b', timeout: 5, target, ...(target === 'page' ? { tabRef: 'b', mutatesPage: true } : {}),
+      code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, target, ...(target === 'page' ? { tabRef: 'b', mutatesPage: true } : {}),
     }), read('a'), read('b')];
     for (const serial of [false, true]) {
       const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-b'] } : { fail: 'script-b' }) });
@@ -235,6 +240,37 @@ for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
       cancel ? 'OPERATION_ABORTED' : 'SCRIPT_EVALUATION_FAILED');
   });
 }
+
+for (const target of [undefined, 'page']) for (const mutatesPage of [false, true]) {
+  test(`no-tools scripts overlap across tabs, serialize within a tab and commit like serial execution: ${target || 'default'} / ${mutatesPage}`, async () => {
+    const script = (id, ref) => call(id, 'run_script', { code: 'async () => input.stage', args: { stage: id },
+      timeout: 5, mutatesPage, tabRef: ref, ...(target ? { target } : {}) });
+    const input = [open('a'), open('b'), script('script-a', 'a'), script('script-a2', 'a'), script('script-b', 'b')];
+    const f = setup({ scriptFixtures: true, hold: ['script-a', 'script-b'] }), run = f.run(input);
+    await until(() => f.gates.has('script-a') && f.gates.has('script-b'));
+    assert.equal(f.scriptMetrics.peak, 2); assert.equal(f.started.includes('script-a2'), false);
+    f.gates.get('script-b')(); await tick();
+    assert.equal(f.state.workingTabId, 98); assert.equal(f.siteChanges.length, 0);
+    f.gates.get('script-a')(); const result = f.snapshot(await run);
+    assert.ok(f.scriptContexts.every(context => context.deferred === true));
+    const serial = setup({ serial: true, scriptFixtures: true });
+    assert.deepEqual(result, serial.snapshot(await serial.run(input))); assert.equal(serial.scriptMetrics.peak, 1);
+  });
+}
+
+for (const cancel of [false, true]) test(`no-tools script ${cancel ? 'cancellation' : 'failure'} retains serial Session semantics`, async () => {
+  const input = [open('a'), open('b'), ...['a', 'b'].map(key => call(`script-${key}`, 'run_script', {
+    code: 'async () => args.stage', args: { stage: `script-${key}` }, tabRef: key, mutatesPage: true, timeout: 5,
+  })), read('a')], snapshots = [];
+  for (const serial of [false, true]) {
+    const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-a'] } : { fail: 'script-a' }) });
+    const run = f.run(input);
+    if (cancel) { await until(() => f.gates.has('script-a')); f.controller.abort(); }
+    snapshots.push(f.snapshot(await run));
+    assert.equal(f.siteChanges.length, cancel ? 0 : 1);
+  }
+  assert.deepEqual(snapshots[0], snapshots[1]);
+});
 
 test('hidden Skill script shares the barrier and tabRef protocol', async () => {
   const input = [open('a'), open('b'), call('skill', 'run_skill_script', {

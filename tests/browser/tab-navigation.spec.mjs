@@ -229,7 +229,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       expect(batchResult.ends.find(event => event.toolCallId === 'script-ref').result.result).toBe(`${origin}/batch-open-b`);
       release('/late-image');
 
-      // Page scripts remain full barriers even on different tabs and with mutatesPage=false.
+      // A tool-using script blocks later no-tools scripts and reads, including other tabs.
       const scriptRun = worker.evaluate(async ids => {
         globalThis.scriptBatchStarted = [];
         let active = 0, peak = 0;
@@ -246,7 +246,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
           tc('script-a', 'run_script', { target: 'page', tabId: ids[0], mutatesPage: true, timeout: 10,
-            code: 'async () => { globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }' }),
+            code: 'async () => { void tools.$list; globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }' }),
           tc('script-b', 'run_script', { tabId: ids[1], mutatesPage: false, timeout: 10, code: '() => "script b"' }),
           tc('after-script', 'read_article', { tabId: ids[1], limit: 3000 }),
         ], new AbortController().signal);

@@ -372,10 +372,19 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
   };
 }
 
+function isToolBarrier(definition: RuntimeTool, args: Fields): boolean {
+  try {
+    const policy = definition.behavior?.barrier;
+    return typeof policy === "function" ? policy(args) !== false : policy === true;
+  } catch { return true; }
+}
+
 export function getParallelReadTab(name: string, args: unknown, options: ToolOptions = {}): number | null {
-  const definition = resolveToolDefinition(name, options);
-  if (!definition || definition.behavior?.barrier === true) return null;
-  const input = record(args);
+  const definition = resolveToolDefinition(name, options), input = record(args);
+  return !definition || isToolBarrier(definition, input) ? null : parallelReadTab(definition, input);
+}
+
+function parallelReadTab(definition: RuntimeTool, input: Fields): number | null {
   const tab = input.tabId;
   if (typeof tab !== "number" || !Number.isInteger(tab) || tab <= 0) return null;
   // UIDs can select a different document/tab than the supplied default.
@@ -387,13 +396,12 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
 export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
   const definition = resolveToolDefinition(name, options);
   if (!definition) return null;
-  const barrier = definition.behavior?.barrier === true;
+  const input = record(args), barrier = isToolBarrier(definition, input);
   if (definition.workingTab === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: !barrier } : {}) };
-  const input = record(args);
   if (!definition.parameters.properties.tabId || !resolvePageAccess(definition, input)) return barrier ? { kind: "barrier" } : null;
   // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
   return { kind: "target", implicit: input.tabId == null && ![input.target, input.selector, input.root].some(isUidElementTarget),
-    observation: getParallelReadTab(name, { ...input, tabId: 1 }, options) !== null,
+    observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
     ...(definition.behavior?.parallelTab && ![input.target, input.selector, input.root].some(isUidElementTarget) ? { parallel: !barrier } : {}) };
 }
 

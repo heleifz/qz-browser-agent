@@ -84,9 +84,10 @@ static named re-exports. The build imports each declared module directly into it
 
 Build-time tools can declare `behavior.parallelRead` for pure observations. The Agent applies it only
 to explicit tab lanes. `parallelOpen` permits provisional creation; `parallelTab` permits tab-local
-mutations such as navigation and element actions. `barrier: true` waits for every preceding call to
-commit and prevents later execution until its own commit. It overrides all three parallel roles,
-while retaining page targeting and `tabRef` validation. All ready calls share one execution limit of ten.
+mutations such as navigation and element actions. `barrier` accepts a boolean or synchronous argument
+predicate, evaluated once per call during batch planning. True or a thrown predicate waits for every
+preceding commit and blocks later execution until its own commit. It overrides all three parallel
+roles while retaining page targeting and `tabRef` validation. All ready calls share one execution limit of ten.
 Same-tab work follows execution dependencies; implicit targets, UID operations and undeclared/global
 tools retain commit barriers. Runtime-owned Session writes, effects, events and results publish in
 original call order, independently of execution completion order. A `parallelOpen` handler obtains
@@ -100,9 +101,12 @@ payloads cannot grant scheduling authority; the selected definition must come fr
 snapshot. Any build-time capability can use these fields through `qz.registerTool`; there is no tool-name
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
 marks a tool that may touch global resources. Skill/plugin tools (`source: "plugin"`) are always barriers;
-manifest fields cannot opt them into parallel execution. `run_script` and `run_skill_script` declare
-barriers for both page and inner execution because their nested tool APIs can cross tab/resource
-boundaries. Omitting `target` retains page mode; `mutatesPage` does not change scheduling.
+manifest fields cannot opt them into parallel execution. `run_skill_script` remains a barrier.
+`run_script` declares `parallelTab: true` and a barrier predicate: inner mode or code that may use
+host tools is a barrier; no-tools page code uses the normal tab lane. Omitting `target` means page,
+and `mutatesPage` controls effects rather than classification. The capability's conservative static
+classifier also selects bridge installation. Input/args-only code needs no bridge. Unknown syntax
+stays a barrier; missing tool access in a no-bridge invocation returns an error without replay.
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 

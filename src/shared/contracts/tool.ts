@@ -65,8 +65,8 @@ export type ToolBatchTabPolicy =
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
-  /** Wait for all preceding commits and block later execution until this call commits. Overrides parallel roles. */
-  barrier?: boolean;
+  /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */
+  barrier?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Provisional creation; Session state is published at ordered Agent settlement. */
