@@ -58,10 +58,15 @@ export interface ToolModelPolicy {
 }
 
 /** Derived from a trusted registration for one model response's tab dependency plan. */
-export type ToolBatchTabPolicy = { kind: "create"; parallel?: boolean } | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean };
+export type ToolBatchTabPolicy =
+  | { kind: "create"; parallel?: boolean }
+  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean }
+  | { kind: "barrier" };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
+  /** Wait for all preceding commits and block later execution until this call commits. Overrides parallel roles. */
+  barrier?: boolean;
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Provisional creation; Session state is published at ordered Agent settlement. */

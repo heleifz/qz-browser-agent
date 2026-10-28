@@ -84,6 +84,10 @@ Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session trans
 individual opens and actions, prove that ready readers advance before unrelated openings finish,
 and compare serial/parallel ownership, working tab, effects, ordered events and model messages.
 Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
+The data-flow fixture also retains production script declarations while controlling their execution:
+page, default-page, inner and hidden Skill scripts wait for prior commits and block later tabs.
+`npm test -- unit --match tool-behavior` verifies generic barrier precedence, capability-defined tools
+with new names, and the unconditional plugin barrier.
 `npm test -- playwright tests/browser/tab-navigation.spec.mjs` repeats the independent-read check
 with a withheld HTTP response, real Content readiness and Network watching both enabled and disabled.
 

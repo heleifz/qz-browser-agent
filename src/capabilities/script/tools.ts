@@ -304,7 +304,7 @@ function makeRunScriptTargetRequiredError({ code, skill, script, context = {} }:
 
 registerTool({
   name: "run_skill_script",
-  behavior: { timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
+  behavior: { barrier: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   requires: { tools: ["run_script"] },
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("runSkillScriptDescription"); },
@@ -344,7 +344,7 @@ registerTool({
 
 registerTool({
   name: "run_script",
-  behavior: { timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
+  behavior: { barrier: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   workingTab: args => args.mutatesPage === true ? "claim" : "update",
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return getRunScriptDescription(); },

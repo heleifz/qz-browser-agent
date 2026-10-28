@@ -208,6 +208,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
           tc('open-b', 'open_tab', { url: `${origin}/batch-open-b`, tabAlias: 'b', watchNetwork }),
           tc('read-a', 'read_article', { tabRef: 'a', limit: 3000 }),
           tc('read-b', 'read_article', { tabRef: 'b', limit: 3000 }),
+          tc('script-ref', 'run_script', { tabRef: 'b', target: 'page', timeout: 10, code: '() => location.href' }),
         ], new AbortController().signal);
         return { ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
           ends: events.filter(event => event.type === 'tool_execution_end') };
@@ -219,13 +220,48 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       expect(await worker.evaluate(() => navigationCompleted.includes('open-b'))).toBe(false);
       release('/batch-open-b');
       const batchResult = await batchRun;
-      expect(batchResult.ids).toEqual(['open-a', 'open-b', 'read-a', 'read-b']);
+      expect(batchResult.ids).toEqual(['open-a', 'open-b', 'read-a', 'read-b', 'script-ref']);
       expect(batchResult.ends.every(event => !event.isError)).toBe(true);
       const left = batchResult.ends.find(event => event.toolCallId === 'read-a').result;
       const right = batchResult.ends.find(event => event.toolCallId === 'read-b').result;
       expect(left.text).toContain('/late-body-batch-a'); expect(right.text).toContain('/batch-open-b');
       expect(left._tabId).not.toBe(right._tabId);
+      expect(batchResult.ends.find(event => event.toolCallId === 'script-ref').result.result).toBe(`${origin}/batch-open-b`);
       release('/late-image');
+
+      // Page scripts remain full barriers even on different tabs and with mutatesPage=false.
+      const scriptRun = worker.evaluate(async ids => {
+        globalThis.scriptBatchStarted = [];
+        let active = 0, peak = 0;
+        const agent = new navigationTestAgent('navigation', { tools: { ...navigationRuntime,
+          async execute(name, args, signal, context) {
+            scriptBatchStarted.push(context.toolCallId);
+            if (name === 'run_script') peak = Math.max(peak, ++active);
+            try { return await navigationRuntime.execute(name, args, signal, context); }
+            finally { if (name === 'run_script') active--; }
+          },
+        } });
+        agent._currentRunId = 'run';
+        const ends = []; agent.subscribe(event => { if (event.type === 'tool_execution_end') ends.push(event); });
+        const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
+        const messages = await agent._executeToolCalls([
+          tc('script-a', 'run_script', { target: 'page', tabId: ids[0], mutatesPage: true, timeout: 10,
+            code: 'async () => { globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }' }),
+          tc('script-b', 'run_script', { tabId: ids[1], mutatesPage: false, timeout: 10, code: '() => "script b"' }),
+          tc('after-script', 'read_article', { tabId: ids[1], limit: 3000 }),
+        ], new AbortController().signal);
+        return { peak, ends, ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id) };
+      }, [left._tabId, right._tabId]);
+      await expect.poll(() => worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: id },
+        world: 'MAIN', func: () => Boolean(globalThis.__scriptStarted) }))[0]?.result, left._tabId)).toBe(true);
+      expect(await worker.evaluate(() => scriptBatchStarted)).toEqual(['script-a']);
+      await worker.evaluate(id => chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN',
+        func: () => { globalThis.__scriptRelease = true; } }), left._tabId);
+      const scripts = await scriptRun;
+      expect(scripts.peak).toBe(1);
+      expect(scripts.ids).toEqual(['script-a', 'script-b', 'after-script']);
+      expect(scripts.ends.every(event => !event.isError)).toBe(true);
+      expect(scripts.ends.slice(0, 2).map(event => event.result.result)).toEqual(['script a', 'script b']);
       for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabId: event.result.id });
 
       const observations = [];

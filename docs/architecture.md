@@ -400,6 +400,16 @@ The Agent executes ready data-flow nodes with one shared limit of ten in-flight 
 explicit observations, and declared tab-local actions share that budget. Each tab has an execution
 lane: a navigation or element action waits for earlier work on its tab while independent tabs advance.
 Implicit targets, UID-dependent operations and undeclared/global operations remain commit barriers.
+Capability definitions can explicitly set `behavior.barrier: true`; this overrides `parallelOpen`,
+`parallelTab` and `parallelRead`. Runtime projection preserves target metadata for `tabRef`, and the
+same graph builder adds all preceding-commit and following-execution dependencies. No tool-name
+branch in the scheduler selects this behavior.
+
+`run_script` and `run_skill_script` declare barriers for page and inner targets: page scripts also
+have access to nested tools that can affect other tabs and global resources. Their nested-call scope
+is unchanged. An omitted `target` still means page, and `mutatesPage` still controls effects rather
+than concurrency. All Skill/plugin tools resolve to barriers regardless of host binding or manifest
+contents. These declarations govern scheduling only; permission, ownership and run checks still apply.
 A separate cursor publishes tool-owned Session state, effects, alias bindings, progress, final tool
 events and model messages in the original call order. Completed execution frees a slot immediately,
 even while its result awaits publication. Tool event publication is buffered until settlement;

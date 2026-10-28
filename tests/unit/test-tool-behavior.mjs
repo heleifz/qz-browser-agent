@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createToolRegistry } from "../../src/background/tools/registry.js";
+import { planTabBatch } from "../../src/background/tools/tab-batch.js";
+import { scheduleToolCalls } from "../../src/background/tools/tool-scheduler.js";
 import { findBuiltinSkill } from "../../src/shared/skills/builtin-skills.js";
 import { parseSkillManifest, findSkillManifestResource } from "../../src/shared/skills/skill-manifest.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
@@ -117,22 +119,66 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
   const resolve = plugin => runtime.resolveDefinition(tool.name, { toolRegistrySnapshot, skillToolRegistrySnapshot: {
     plugins: [plugin], toolIndex: new Map([[tool.name, { plugin, tool }]]),
   } });
-  assert.equal(resolve(plugin).behavior, core.behavior);
+  assert.deepEqual(resolve(plugin).behavior, { ...core.behavior, barrier: true });
   assert.equal(runtime.getParallelReadTab('manage_settings', { tabId: 12 }, { toolRegistrySnapshot }), 12);
   assert.deepEqual(runtime.getBatchTabPolicy('manage_settings', { tabAlias: 'a' }, { toolRegistrySnapshot }), { kind: 'create' });
   for (const candidate of [plugin, structuredClone(plugin)]) {
-    const claimedTool = { ...tool, source: 'core', behavior: { parallelRead: true, parallelOpen: true, parallelTab: true } };
+    const claimedTool = { ...tool, source: 'core', behavior: { barrier: false, parallelRead: true, parallelOpen: true, parallelTab: true } };
     const options = { toolRegistrySnapshot, skillToolRegistrySnapshot: {
       plugins: [candidate], toolIndex: new Map([[tool.name, { plugin: candidate, tool: claimedTool }]]),
     } };
     assert.equal(runtime.resolveDefinition(tool.name, options).source, 'plugin');
     assert.equal(runtime.getParallelReadTab(tool.name, { tabId: 12, parallelRead: true }, options), null,
       'even a trusted host alias or a forged plugin source stays outside core scheduling authority');
-    assert.equal(runtime.getBatchTabPolicy(tool.name, { tabAlias: 'a', tabRef: 'b' }, options), null,
+    assert.deepEqual(runtime.getBatchTabPolicy(tool.name, { tabAlias: 'a', tabRef: 'b' }, options), { kind: 'barrier' },
       'plugin aliases also cannot create or resolve batch tab bindings');
   }
   for (const untrusted of [structuredClone(plugin), { ...plugin, skillBuiltin: false }, { ...plugin, skillSource: "local" }, { ...plugin, id: "external-plugin" }]) {
-    assert.equal(resolve(untrusted).behavior, undefined, "plugin declarations must not cross the trusted behavior boundary");
+    assert.deepEqual(resolve(untrusted).behavior, { barrier: true }, "plugin declarations must not cross the trusted behavior boundary");
+  }
+});
+
+test('capability declarations alone place new tool names into the same graph, with barrier precedence', async () => {
+  const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('sample-capability') };
+  const base = { description: 'Fixture', page: 'tab', parameters: { type: 'object', properties: { tabId: { type: 'number' } } }, execute: () => ({}) };
+  qz.registerTool({ ...base, name: 'sample_local', behavior: { parallelTab: true } });
+  qz.registerTool({ ...base, name: 'sample_read', behavior: { parallelRead: true } });
+  qz.registerTool({ ...base, name: 'sample_barrier', behavior: { parallelTab: true, parallelRead: true, barrier: true } });
+  qz.registerTool({ ...base, name: 'sample_creator', workingTab: 'created', behavior: { parallelOpen: true, barrier: true } });
+  qz.registerTool({ name: 'sample_global', description: 'Global', behavior: { barrier: true },
+    parameters: { type: 'object', properties: {} }, execute: () => ({}) });
+  const lookup = { toolRegistrySnapshot: registry.snapshot() };
+  assert.equal(tools.getParallelReadTab('sample_read', { tabId: 4 }, lookup), 4);
+  assert.equal(tools.getParallelReadTab('sample_barrier', { tabId: 3, barrier: false }, lookup), null);
+  assert.deepEqual(tools.getBatchTabPolicy('sample_creator', {}, lookup), { kind: 'create', parallel: false });
+  assert.deepEqual(tools.getBatchTabPolicy('sample_global', {}, lookup), { kind: 'barrier' });
+  const input = [
+    { name: 'sample_local', tabId: 1 }, { name: 'sample_local', tabId: 2 },
+    { name: 'sample_barrier', tabId: 3 }, { name: 'sample_read', tabId: 4 },
+  ];
+  const plan = planTabBatch(input, item => ({ args: { tabId: item.tabId }, policy: tools.getBatchTabPolicy(item.name, item, lookup) }));
+  const started = [], committed = [], releases = new Map(), tick = () => new Promise(resolve => setImmediate(resolve));
+  const run = scheduleToolCalls(input, { signal: new AbortController().signal, tab: item => item.tabId,
+    dependencies: plan.dependencies, independent: plan.independent,
+    execute: async item => { started.push(item.tabId); await new Promise(resolve => releases.set(item.tabId, resolve)); return item; },
+    commit: async item => { committed.push(item.tabId); },
+  });
+  await tick(); assert.deepEqual(started, [1, 2]);
+  releases.get(2)(); await tick(); assert.deepEqual(committed, []); assert.deepEqual(started, [1, 2]);
+  releases.get(1)(); await tick(); assert.deepEqual(committed, [1, 2]); assert.deepEqual(started, [1, 2, 3]);
+  releases.get(3)(); await tick(); assert.deepEqual(committed, [1, 2, 3]); assert.deepEqual(started, [1, 2, 3, 4]);
+  releases.get(4)(); await run; assert.deepEqual(committed, [1, 2, 3, 4]);
+});
+
+test('all script targets declare barriers while page targets retain tabRef resolution', () => {
+  for (const name of ['run_script', 'run_skill_script']) {
+    assert.equal(runtime.resolveDefinition(name).behavior.barrier, true);
+    for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of [false, true]) {
+      const args = { target, mutatesPage, tabRef: 'a' };
+      const policy = runtime.getBatchTabPolicy(name, args);
+      assert.deepEqual(policy, target === 'inner' ? { kind: 'barrier' } : { kind: 'target', implicit: true, observation: false });
+      assert.equal(runtime.getParallelReadTab(name, { ...args, tabId: 1 }), null);
+    }
   }
 });
 

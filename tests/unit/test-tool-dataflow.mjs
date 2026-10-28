@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
 import { createSessionTabs } from '../../src/background/session/tabs.js';
+import { createToolRegistry } from '../../src/background/tools/registry.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = { runtime: { getURL: path => `chrome-extension://test/${path}` }, storage: { local: {
   async get() { return {}; }, async set() {}, async remove() {},
@@ -41,7 +42,7 @@ for (const action of [false, true]) defineTool({ name: action ? '__flow_action' 
     return { tabId: tab.id, text: tab.body };
   },
 });
-function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffects = false } = {}) {
+function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffects = false, scriptFixtures = false } = {}) {
   const state = { sessionId: 'flow', ownedTabIds: [], workingTabId: null };
   const tabs = new Map(), events = [], writes = [], started = [], gates = new Map(), removed = [];
   const controller = new AbortController();
@@ -70,14 +71,37 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   } });
   const agent = new Agent('flow', createTestAgentOptions({ tools: { ...runtime, maxInFlight: serial ? 1 : 10 } }));
   agent._currentRunId = 'run';
+  if (scriptFixtures) {
+    const registry = createToolRegistry(), register = registry.forCapability('script-fixture');
+    for (const name of ['__flow_open', '__flow_read', '__flow_action']) register(runtime.resolveDefinition(name));
+    for (const name of ['run_script', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
+      // Keep production declarations, schema, permission checks and effects; control only the script body.
+      async execute(args, signal, context) {
+        assert.equal(context.deferToolCommit, false, 'scripts execute behind a full commit barrier');
+        const key = args.code || args.script;
+        started.push(key); await fixture.wait(key, signal);
+        if (fail === key) throw Object.assign(new Error('script failed'), { code: 'SCRIPT_EVALUATION_FAILED' });
+        const tab = tabs.get(args.tabId);
+        if (args.mutatesPage) tab.body += '!';
+        return { ok: true, result: { target: args.target || 'page', text: tab?.body || 'inner' } };
+      },
+    });
+    agent._toolRegistrySnapshot = registry.snapshot();
+  }
+  const siteChanges = [];
+  agent._maybeRefreshDynamicContextForSiteSkills = async name => {
+    siteChanges.push({ name, working: state.workingTabId }); return null;
+  };
   const effects = [], apply = agent._applyToolResultEffects.bind(agent);
   agent._applyToolResultEffects = async (name, result, isError) => {
     effects.push({ name, result, isError, working: state.workingTabId, owned: [...state.ownedTabIds] });
     if (stopEffects && result.id === 97) controller.abort();
+    const gate = `effects:${name}:${result.tabId ?? result.id ?? result._tabId}`;
+    if (hold.includes(gate)) await fixture.wait(gate, controller.signal);
     return apply(name, result, isError);
   };
   agent._emit = event => { events.push(event); if (event.type === 'tool_execution_end' && event.toolCallId === stopAt) controller.abort(); };
-  const f = fixture = { state, sessions, runtime, tabs, events, writes, started, gates, removed, controller, fail,
+  const f = fixture = { state, sessions, runtime, tabs, events, writes, started, gates, removed, controller, fail, siteChanges,
     async wait(key, signal) {
       if (!hold.includes(key)) return;
       await new Promise(resolve => { gates.set(key, resolve); signal.addEventListener('abort', resolve, { once: true }); });
@@ -85,7 +109,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     },
     run: inputs => agent._executeToolCalls(inputs, controller.signal),
     snapshot(messages) {
-      return { state: structuredClone(state), owned: state.ownedTabIds, working: state.workingTabId, writes, effects,
+      return { state: structuredClone(state), owned: state.ownedTabIds, working: state.workingTabId, writes, effects, siteChanges,
         // Event timestamps and Chrome identities are fixed by this fixture; compare every observable payload.
         events, messages, live: [...tabs.keys()].sort() };
     },
@@ -161,6 +185,67 @@ test('stop during effects retains published ownership but publishes no late succ
   assert.deepEqual(snapshots[0], snapshots[1]);
   assert.deepEqual(snapshots[0].owned, [97]); assert.deepEqual(snapshots[0].live, [97]);
   assert.ok(snapshots[0].events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
+});
+
+for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of target === 'inner' ? [false] : [false, true]) {
+  test(`script barrier waits for prior commits and blocks later tabs: ${target || 'default'} / mutates=${mutatesPage}`, async () => {
+    const script = call('script', 'run_script', { code: 'script-b', timeout: 5, mutatesPage,
+      ...(target ? { target } : {}), ...(target === 'inner' ? {} : { tabRef: 'b' }) });
+    const input = [open('a'), open('b'), read('a'), script, call('after', '__flow_read', { tabRef: 'a' }), read('b')];
+    const scriptEffects = `effects:run_script:${target === 'inner' ? 'undefined' : 98}`;
+    const hold = ['read-a', 'effects:__flow_read:97', 'script-b', scriptEffects];
+    const f = setup({ scriptFixtures: true, hold });
+    const run = f.run(input);
+    await until(() => f.gates.has('read-a'));
+    assert.equal(f.started.includes('script-b'), false);
+    f.gates.get('read-a')(); await until(() => f.gates.has('effects:__flow_read:97'));
+    assert.equal(f.started.includes('script-b'), false, 'execution completion alone does not release the barrier');
+    f.gates.get('effects:__flow_read:97')(); await until(() => f.gates.has('script-b'));
+    assert.equal(f.events.filter(e => e.type === 'tool_execution_end').length, 3);
+    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
+    assert.equal(f.started.includes('read-b'), false, 'later work on another tab waits too');
+    hold.splice(0, 2); // Later reads are no longer held.
+    f.gates.get('script-b')(); await until(() => f.gates.has(scriptEffects));
+    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
+    assert.equal(f.started.includes('read-b'), false, 'later work also waits for the script commit');
+    assert.equal(f.siteChanges.length, 0);
+    f.gates.get(scriptEffects)();
+    const result = f.snapshot(await run);
+    assert.equal(f.siteChanges.length, mutatesPage ? 1 : 0);
+    const serial = setup({ serial: true, scriptFixtures: true });
+    assert.deepEqual(result, serial.snapshot(await serial.run(input)));
+  });
+}
+
+for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
+  test(`script barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${target}`, async () => {
+    const snapshots = [], input = [open('a'), open('b'), call('script', 'run_script', {
+      code: 'script-b', timeout: 5, target, ...(target === 'page' ? { tabRef: 'b', mutatesPage: true } : {}),
+    }), read('a'), read('b')];
+    for (const serial of [false, true]) {
+      const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-b'] } : { fail: 'script-b' }) });
+      const run = f.run(input);
+      if (cancel) { await until(() => f.gates.has('script-b')); f.controller.abort(); }
+      snapshots.push(f.snapshot(await run));
+      assert.equal(f.siteChanges.length, 0);
+      assert.equal(f.started.includes('read-a'), !cancel);
+    }
+    assert.deepEqual(snapshots[0], snapshots[1]);
+    assert.equal(snapshots[0].events.find(e => e.type === 'tool_execution_end' && e.toolCallId === 'script').result.code,
+      cancel ? 'OPERATION_ABORTED' : 'SCRIPT_EVALUATION_FAILED');
+  });
+}
+
+test('hidden Skill script shares the barrier and tabRef protocol', async () => {
+  const input = [open('a'), open('b'), call('skill', 'run_skill_script', {
+    skill: 'fixture', script: 'skill-script', timeout: 5, tabRef: 'a', mutatesPage: true,
+  }), read('b')];
+  const f = setup({ scriptFixtures: true, hold: ['skill-script'] }), run = f.run(input);
+  await until(() => f.gates.has('skill-script')); assert.equal(f.started.includes('read-b'), false);
+  f.gates.get('skill-script')(); const result = f.snapshot(await run);
+  assert.deepEqual(f.siteChanges, [{ name: 'run_skill_script', working: 97 }]);
+  const serial = setup({ serial: true, scriptFixtures: true });
+  assert.deepEqual(result, serial.snapshot(await serial.run(input)));
 });
 
 test('copied results and foreign runs cannot use or settle a private creation permit', async () => {
