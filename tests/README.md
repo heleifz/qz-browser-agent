@@ -358,6 +358,20 @@ tool errors and result order, completed Markdown, reading position and backward 
 Product/image fixtures are local; the documentation case visits public MDN pages. Use
 `QINGZHOU_TEST_EXTENSION_DIR` to exercise an unpacked production ZIP without rebuilding it.
 
+`QINGZHOU_LIVE_CASES=tableReveal npm test -- live deepseek` reads public Python and MDN documents
+for storage selection, narrow image layouts and HTTP caching. It uses the same viewport interactions
+and records every completed table's opacity and dimensions. Each table must fade once, keep its
+column widths and height, and stay visible during later output. The `streamUi` table cases use this
+probe too. Reports preserve public-page errors separately from per-task UI outcomes; a successful
+UI check does not make a run with unexpected console errors pass.
+For two additional tasks in the native Firefox sidebar, select
+`QINGZHOU_LIVE_FIREFOX_TABLES=1 npm test -- live firefox-ui` with the Firefox build and live credentials.
+These read public documentation for accessible forms and cross-timezone scheduling, exercise
+summary clicks and scripted wheel/scroll events, and retain trajectories and frame measurements.
+If an HTTPS test proxy supplies a CA, set `QINGZHOU_FIREFOX_CA_FILE` to that public certificate
+and install `certutil`. The runner imports it only into its disposable profile; TLS validation
+stays enabled.
+
 `QINGZHOU_LIVE_CASES=tabReferences npm test -- live deepseek` runs five additional tasks: a
 conference train plan, warehouse replenishment, an interactive shipping quote, Python JSON/CSV
 documentation research, and a lecture schedule update. Preparatory messages create real follow-up

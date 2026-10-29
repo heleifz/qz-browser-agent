@@ -3,6 +3,7 @@ import { runTabReferenceJourneys } from "./tab-reference-journeys.mjs";
 import { runSessionManagementCases } from "./session-management-cases.mjs";
 import { runPageBatchCase } from "./page-batch-case.mjs";
 import { runStreamUiJourneys } from "./stream-ui-journeys.mjs";
+import { runTableRevealJourneys } from "./table-reveal-journeys.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -131,6 +132,12 @@ try {
       ? await runSelected("streamUi", () => runStreamUiJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,
         output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-ui/report.json")),
         recordEvidence: evidence => { report.scenarios.streamUi = evidence; } })) : { skipped: true };
+
+    if (String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("tableReveal")) {
+      await runSelected("tableReveal", () => runTableRevealJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,
+        output: dirname(resolve(process.env.QINGZHOU_LIVE_REPORT || "tests/results/live-table-reveal/report.json")),
+        recordEvidence: evidence => { report.scenarios.tableReveal = evidence; } }));
+    }
 
     const tabReferences = String(process.env.QINGZHOU_LIVE_CASES || "").split(",").includes("tabReferences")
       ? await runSelected("tabReferences", () => runTabReferenceJourneys({ page, createSession, deleteSession, runPrompt, historyMessages,

@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { analyzeAssistantStreamFrames } from '../support/assistant-stream-fuzz.mjs';
+import { installLiveTableProbe, checkLiveTableReveal } from '../support/live-table-reveal.mjs';
 
 /** Real model + production tools/UI; only the task inputs and observation are fixtures. */
 export async function runStreamUiJourneys({ page, createSession, deleteSession, runPrompt, historyMessages, output, recordEvidence, scenarios }) {
@@ -62,6 +63,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         record.preparations=[];
         for (const prompt of scenario.prepare || []) record.preparations.push(await runPrompt(page, sessionId, prompt, {timeoutMs:180000}));
         await page.evaluate(installViewportProbe);
+        if (scenario.table) await page.evaluate(installLiveTableProbe);
         const start = Date.now();
         pending = runPrompt(page, sessionId, scenario.prompt, {timeoutMs:240000});
         pending.then(() => { finished = true; }, () => { finished = true; });
@@ -138,6 +140,11 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         await writeFile(join(output,`${scenario.id}-trajectory.json`),JSON.stringify({sessionId,prompt:scenario.prompt,messages,events},null,2));
         await writeFile(join(output,`${scenario.id}-frames.json`),JSON.stringify(frames));
         await page.screenshot({path:join(output,`${scenario.id}-completed.png`)});
+        if (scenario.table) {
+          const tableProbe = await page.evaluate(() => window.__liveTables.stop());
+          await writeFile(join(output,`${scenario.id}-table-frames.json`),JSON.stringify(tableProbe));
+          record.tableReveal = checkLiveTableReveal(tableProbe);
+        }
         for(const term of scenario.required) assert.ok(result.assistantText.toLowerCase().includes(term.toLowerCase()),`Missing ${term}`);
         for(const tool of scenario.tools) assert.ok(record.toolNames.includes(tool),`Required tool ${tool} was not used`);
         assert.equal(record.toolErrors.length,scenario.expectedErrors?.length||0,JSON.stringify(record.toolErrors));
@@ -164,6 +171,7 @@ export async function runStreamUiJourneys({ page, createSession, deleteSession, 
         await page.screenshot({path:join(output,`${scenario.id}-failure.png`)}).catch(()=>{});
         console.log(`FAIL live UI ${scenario.id}: ${String(error.message).slice(0,250)}`);
       } finally {
+        await page.evaluate(()=>window.__liveTables?.stop()).catch(()=>{});
         await page.evaluate(()=>{if(window.__liveViewport)window.__liveViewport.stop=true;}).catch(()=>{});
         if(!finished) await page.evaluate(sessionId=>window.__qzLiveHarness.request('stop_session',{sessionId},'state',20000),sessionId).catch(()=>{});
         slowResponse?.end('cancelled'); slowResponse=null;
