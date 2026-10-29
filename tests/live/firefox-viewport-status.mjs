@@ -101,6 +101,15 @@ try {
     report.environmentCertificateImported = true;
   }
   session = await openFirefoxSidebar({ extensionDir, profile });
+  report.pageDiagnostics = [];
+  const observePage = page => {
+    page.on("pageerror", error => report.pageDiagnostics.push({ type: "pageerror", page: page.url(), message: String(error) }));
+    page.on("console", message => {
+      if (message.type() === "error") report.pageDiagnostics.push({ type: "console", page: page.url(), message: message.text(), resource: message.location().url });
+    });
+  };
+  for (const page of session.context.pages()) observePage(page);
+  session.context.on("page", observePage);
   report.browser = session.browserVersion;
   report.version = JSON.parse(await readFile(join(extensionDir, "manifest.json"), "utf8")).version;
   await openFromToolbar(session);
@@ -119,6 +128,7 @@ try {
 
   if (process.env.QINGZHOU_LIVE_FIREFOX_TABLES === "1") {
     await runFirefoxTableRevealJourneys({ session, sidebar, call, finish, output: dirname(output), report, save });
+    assert.deepEqual(report.pageDiagnostics.filter(item => item.type === "pageerror"), [], "Live page reads must not throw component exceptions");
   } else {
 
   const slowGate = pauseModel(body => body.messages?.some(message => message.role === "tool" && String(message.content).includes('"incomplete"')));

@@ -10,6 +10,10 @@ const scenarios = [
     prompt: "阅读 https://developer.mozilla.org/en-US/docs/Learn_web_development/Extensions/Forms/How_to_structure_a_web_form，给活动报名表设计无障碍改进方案，比较 label、fieldset、legend、button、input 和错误提示的职责。" },
   { id: "firefox-python-dates", width: 500, theme: "light", terms: ["datetime", "zoneinfo"],
     prompt: "读取 https://docs.python.org/3/library/datetime.html 和 https://docs.python.org/3/library/zoneinfo.html，给跨时区会议排期系统写技术建议，比较 date、time、datetime、timedelta、timezone、ZoneInfo 的职责和陷阱。" },
+  { id: "firefox-media-accessibility", width: 390, theme: "light", terms: ["caption", "transcript"],
+    prompt: "我们要发布含演讲、屏幕操作和环境声音的教学视频。读取 https://www.w3.org/WAI/media/av/captions/ 和 https://www.w3.org/WAI/media/av/transcripts/，设计字幕 captions 与文字转录 transcripts 的交付清单，说明说话人、重要音效、画面信息、时序、格式和验收方式；明确哪些信息须由人工补充。" },
+  { id: "firefox-space-observatories", width: 520, theme: "dark", terms: ["Webb", "Hubble", "Chandra"],
+    prompt: "给中学生天文社设计一节多波段观测课。读取 https://science.nasa.gov/mission/webb/、https://science.nasa.gov/mission/hubble/ 和 https://science.nasa.gov/mission/chandra/，比较 Webb、Hubble、Chandra 的观测波段、目标、位置和互补关系，区分官网事实与教学类比，给出六个可讨论的问题。不要凭记忆填官网未提供的参数。" },
 ];
 
 export async function runFirefoxTableRevealJourneys({ session, sidebar, call, finish, output, report, save }) {
