@@ -4,7 +4,7 @@ import { firefoxExtension } from "../../../../shared/product-text.js";
 import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
 import { javascriptDialogT, readJavaScriptDialogForm } from "../../../../shared/javascript-dialog.js";
 import { t as backendT } from "../../../../shared/i18n/backend.js";
-import { t, tHtml } from "../../../i18n/index.js";
+import { t } from "../../../i18n/index.js";
 import { escapeHtml, escapeHtmlAttribute } from "../../../ui/ui-utils.js";
 import { record } from "../../../tools/renderer-input.js";
 import { renderResultChoice } from "../../../ui/result-choice.js";
@@ -225,7 +225,7 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
           <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(continueLabel)}</button>
-          ${showCancel ? `<button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${dialog ? escapeHtml(cancelLabel) : tHtml("cancel")}</button>` : ""}
+          ${showCancel ? `<button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${escapeHtml(cancelLabel)}</button>` : ""}
         </div>
       ` : ""}
     </div>

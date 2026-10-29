@@ -42,11 +42,12 @@ export function createSessionUserInput(options: Options) {
     const kind = form.browserPermission ? "browser_permission" : form.locationConsent === true
       ? "location_consent" : jsDialog ? "javascript_dialog"
         : Array.isArray(form.fields) && form.fields.length ? "form" : "confirmation";
+    const hasAnswers = kind === "form" || (kind === "javascript_dialog" && jsDialog?.type === "prompt");
     const consent = kind === "location_consent" ? { consentVersion: DATA_CONSENT_VERSION } : {};
     return {
       ...wait, waiting: true, kind,
       title: String(runtime.waitTitle || form.title || ""), message: String(runtime.waitMessage || ""),
-      form: structuredClone(form), actions: [kind === "form" ? "submit" : "approve", "reject"],
+      form: structuredClone(form), actions: [hasAnswers ? "submit" : "approve", "reject"],
       ...consent,
       instructions: kind === "browser_permission" ? browserPermissionInstructions() : kind === "javascript_dialog"
         ? "Show this page dialog to the user in the qz side panel. After they choose OK/Leave or Cancel/Stay, send responseTemplate to qingzhou_respond_to_user_input; to dismiss without accepting, use action reject with this sessionId and waitId."
@@ -55,8 +56,8 @@ export function createSessionUserInput(options: Options) {
         : "Show this request to the user. After approval, send responseTemplate to qingzhou_respond_to_user_input; to decline, use action reject with this sessionId and waitId.",
       ...(kind === "browser_permission" ? { requiresUserAction: true as const } : {
         responseTemplate: {
-          sessionId, waitId: wait.waitId, action: kind === "form" ? "submit" : "approve",
-          ...(kind === "form" ? { answers: answerTemplate(form) } : {}), ...consent,
+          sessionId, waitId: wait.waitId, action: hasAnswers ? "submit" : "approve",
+          ...(hasAnswers ? { answers: answerTemplate(form) } : {}), ...consent,
         },
       }),
     };
@@ -83,13 +84,17 @@ export function createSessionUserInput(options: Options) {
     };
     const fail = (code: string, message: string, extra: Fields = {}) => ({ accepted: false, ...result, code, message, ...extra, input: get({ sessionId }) });
     if (params.action === "reject") {
-      return options.reject(result) ? { accepted: true, ...result, reason: "cancelled" } : stale();
+      // Cancel/Stay is a page-dialog answer, not cancellation of the task.
+      const accepted = input.kind === "javascript_dialog"
+        ? options.resolve({ ...result, payload: { continued: false, reason: "cancelled" } })
+        : options.reject(result);
+      return accepted ? { accepted: true, ...result, reason: "cancelled" } : stale();
     }
     if (params.action !== "approve" && params.action !== "submit") {
       return fail("INVALID_ACTION", "Use submit for a form, or approve/reject for a confirmation.");
     }
     let payload: Fields = { continued: true, reason: "continued" };
-    if (input.kind === "form") {
+    if (input.kind === "form" || (input.kind === "javascript_dialog" && readJavaScriptDialogForm(input.form)?.type === "prompt")) {
       if (params.action !== "submit") return fail("ANSWERS_REQUIRED", "Submit answers to the pending form.");
       const validation = validateAnswers(input.form, params.answers);
       if (validation.fieldErrors.length) return fail("INVALID_ANSWERS", "Correct the indicated fields and submit again.", { fieldErrors: validation.fieldErrors });
