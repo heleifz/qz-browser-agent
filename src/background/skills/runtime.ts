@@ -29,6 +29,7 @@ import {
   normalizeModernSkill,
   matchSiteSkillsForUrls as matchSiteSkillsForUrlList,
   getSkillDisplayName,
+  isValidAgentSkillName,
   normalizeSkill,
   normalizeSkillLookup,
   normalizeSkillResourcePath,
@@ -105,11 +106,12 @@ export async function saveSkill(name = "", description: string, content: string,
   const skills = await _getAll();
   const expected = structuredClone(skills);
   const now = nowBeijingDateTime();
-  const existing = findSkillEntry(skills, name)?.skill || null;
+  const found = findSkillEntry(skills, name);
+  const existing = found?.skill || null;
   const cleanMetadata = Object.fromEntries(
     Object.entries(metadata || {}).filter(([, value]) => value !== undefined),
   );
-  const draft = normalizeModernSkill({
+  let draft = normalizeModernSkill({
     ...existing,
     ...cleanMetadata,
     name,
@@ -118,9 +120,18 @@ export async function saveSkill(name = "", description: string, content: string,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   });
+  const storedName = existing ? normalizeSkill(existing).name : "";
+  if (storedName && isValidAgentSkillName(storedName) && storedName !== draft.name) {
+    draft = normalizeModernSkill({
+      ...draft,
+      name: storedName,
+      displayName: getSkillDisplayName(draft),
+    });
+  }
   if (skillManifestContentChanged(existing, draft)) validateSkillManifest(draft);
   await validateSkillMcpConfig(draft, { refresh: true });
   deleteSkillEntriesByLookup(skills, draft.name);
+  if (found && found.key !== draft.name) delete skills[found.key];
   skills[draft.name] = draft;
   await _saveAll(skills, expected);
   return draft;
@@ -150,14 +161,16 @@ export async function updateSkill(name = "", patch: Fields = {}) {
       throw new SkillEditError("SKILL_READ_ONLY", t("skill.builtinRename", { name: String(targetName) }), { name, targetName });
     }
     const targetDraft = normalizeModernSkill({ ...draft, name: targetName });
-    const conflict = findSkillEntry(skills, targetDraft.name) || findSkillEntry(skills, getSkillDisplayName(targetDraft));
-    if (conflict && conflict.key !== found.key) {
-      throw new Error(`Skill "${targetName}" already exists`);
+    if (targetDraft.name !== draft.name) {
+      const conflict = findSkillEntry(skills, targetDraft.name) || findSkillEntry(skills, getSkillDisplayName(targetDraft));
+      if (conflict && conflict.key !== found.key) {
+        throw new Error(`Skill "${targetName}" already exists`);
+      }
+      changes.push({ field: "name", from: draft.name, to: targetDraft.name });
+      draft.name = targetDraft.name;
+      draft.metadata = targetDraft.metadata;
+      draft.displayName = getSkillDisplayName(targetDraft);
     }
-    changes.push({ field: "name", from: draft.name, to: targetName });
-    draft.name = targetDraft.name;
-    draft.metadata = targetDraft.metadata;
-    draft.displayName = getSkillDisplayName(targetDraft);
   }
 
   applyScalarUpdate(draft, patch, "description", changes);
