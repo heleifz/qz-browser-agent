@@ -14,6 +14,7 @@ import {
   isHiddenContextUserMessage,
 } from "../message-blocks.js";
 import { normalizeMessageDocuments } from "../documents/document-attachments.js";
+import { normalizeRecordedUsage } from "./session-usage.js";
 
 import type { ModelToolCall } from '../contracts/model-message.js';
 import type { CompactMeta, Conversation, ConversationEntry, SessionMessage,
@@ -1382,6 +1383,10 @@ function normalizeMessage(input: unknown): SessionMessage | null {
     const documents = normalizeMessageDocuments(msg.documents);
     if (documents.length) out.documents = documents;
     if (typeof msg.trim === "boolean") out.trim = msg.trim;
+    if (out._kind === "compaction") {
+      const usage = normalizeRecordedUsage(msg._usage);
+      if (usage) out._usage = usage;
+    }
     return out;
   }
 
@@ -1395,7 +1400,7 @@ function normalizeMessage(input: unknown): SessionMessage | null {
         .map(normalizeToolCall)
         .filter((call): call is ModelToolCall => call !== null);
     }
-    const usage = normalizeProviderUsage(msg._usage);
+    const usage = normalizeRecordedUsage(msg._usage);
     if (usage) out._usage = usage;
     const providerState = normalizeProviderState(msg._providerState);
     if (providerState) out._providerState = providerState;
@@ -1539,36 +1544,8 @@ function normalizeToolCall(input: unknown): ModelToolCall | null {
   };
 }
 
-function normalizeProviderUsage(input: unknown): Record<string, number> | null {
-  if (!input || typeof input !== "object") return null;
-  const usage = record(input);
-  const out: Record<string, number> = {};
-  for (const key of [
-    "input_tokens",
-    "output_tokens",
-    "total_tokens",
-    "prompt_tokens",
-    "completion_tokens",
-    "total_prompt_tokens",
-    "total_completion_tokens",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens",
-    "cached_tokens",
-  ]) {
-    const value = finiteUsageNumber(usage[key]);
-    if (value != null) out[key] = value;
-  }
-  return Object.keys(out).length ? out : null;
-}
-
 function normalizeUsageContextMarker(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, 180) : "";
-}
-
-function finiteUsageNumber(value: unknown) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) return null;
-  return Math.ceil(number);
 }
 
 function isJsonObjectString(value: string) {

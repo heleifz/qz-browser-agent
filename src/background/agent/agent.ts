@@ -1561,6 +1561,7 @@ export class Agent {
         plan,
         contextWindow: this._contextWindow(),
         inputTokensBefore: tokens,
+        usage: usage || summaryMsg._usage || null,
       });
       const compactDocuments = normalizeMessageDocuments(
         this.messages.slice(1, plan.cutIndex).flatMap(message => message?.documents || []),
