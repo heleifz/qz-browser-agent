@@ -108,6 +108,8 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   clickPointReady(inspection: ElementReply): inspection is ElementReply & { clickablePoint: PagePoint };
   clickNotReadyResult(input: { target: string; selector: string; index: number; inspection: ElementReply;
     originalInspection: ElementReply; resolved: ElementReply | null }): unknown;
+  withPageDialogGuard<T>(tabId: number, context: ToolContext, run: (send: CdpCommand, bind: (underlying: CdpCommand) => void) => Promise<T>): Promise<{ value: T; dialogs: import("../shared/javascript-dialog.js").JavaScriptDialogResult[] }>;
+  attachPageDialogResults<T extends Fields>(result: T, dialogs: import("../shared/javascript-dialog.js").JavaScriptDialogResult[]): T;
   captureTabScreenshot(tabId: number, options?: ScreenshotOptions, context?: ToolContext): Promise<Screenshot>;
   enablePreNavigationNetworkWatch(tabId: number, options: NetworkWatchOptions, context: ToolContext): Promise<unknown>;
   publishSkillRegistryChange(reason: string, details: Fields, refresh: NonNullable<ToolSkillsRuntime["refreshRegistry"]>): Promise<unknown>;

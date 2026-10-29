@@ -8,7 +8,8 @@ import type { ToolContext } from "#sdk/background";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
-  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getPageContext" | "getTabPageState" | "pageStateDelta"
+  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "withPageDialogGuard" | "attachPageDialogResults"
+  | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
@@ -95,6 +96,36 @@ async function remoteFrameInput(send: CdpCommand, frameId: string): Promise<CdpC
   return opened?.sessionId ? opened.send : null;
 }
 
+async function runPageDebugger(
+  host: Pick<PageElementHost, "withDebugger" | "withPageDialogGuard">,
+  tabId: number,
+  context: ToolContext,
+  run: (send: CdpCommand) => Promise<void>,
+): Promise<Awaited<ReturnType<PageElementHost["withPageDialogGuard"]>>["dialogs"]> {
+  const { dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
+    host.withDebugger(tabId, async (_target, cdpSend) => {
+      bind(cdpSend);
+      await run(send);
+    }, context),
+  );
+  return dialogs;
+}
+
+async function runPageDebuggerValue<T extends Record<string, unknown>>(
+  host: Pick<PageElementHost, "withDebugger" | "withPageDialogGuard" | "attachPageDialogResults">,
+  tabId: number,
+  context: ToolContext,
+  run: (send: CdpCommand) => Promise<T>,
+): Promise<T> {
+  const { value, dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
+    host.withDebugger(tabId, async (_target, cdpSend) => {
+      bind(cdpSend);
+      return run(send);
+    }, context),
+  );
+  return host.attachPageDialogResults(value, dialogs);
+}
+
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
   registerTool,
@@ -116,6 +147,8 @@ export function registerPageElementTools({
   clickNotReadyResult,
   sendCdp,
   withDebugger,
+  withPageDialogGuard,
+  attachPageDialogResults,
   getPageContext,
 }: PageElementHost) {
 async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>, call?: (action: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>, context?: ToolContext): Promise<ElementReply> {
@@ -273,9 +306,9 @@ registerTool({
       const frameId = String(ref.ref?.frameId || "");
       if (frameId && ref.tabId && !inspection.error) {
         try {
-          await withDebugger(ref.tabId, async (_target, send) => {
+          await runPageDebugger({ withDebugger, withPageDialogGuard }, ref.tabId, context, async send => {
             applyFramePageViewport(inspection, await frameContentOrigin(send, frameId), await readPageViewport(send));
-          }, context);
+          });
         } catch (error) {
           if (isCdpFallbackForbiddenError(error)) throw error;
         }
@@ -473,7 +506,7 @@ registerTool({
       let frameViewportBlocked = false;
       let movedFrameIntoPage = false;
       try {
-        await withDebugger(tabId, async (_target, send) => {
+        const dialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
@@ -533,7 +566,7 @@ registerTool({
               });
             }
           } finally { delivered = await inputWasDelivered(tabId, receiptId); }
-        }, context);
+        });
         if (frameFailure) return withElementActionHelp(frameFailure, normalizedAction);
         if (frameViewportBlocked || !clickPointReady(current)) {
           return clickNotReadyResult({
@@ -547,7 +580,7 @@ registerTool({
         }
         if (!delivered) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
-        return {
+        return attachPageDialogResults({
           action: "click",
           target: resolvedTarget,
           selector,
@@ -564,7 +597,7 @@ registerTool({
           ...(observedNavigation ? { observedNavigation } : {}),
           element: current,
           originalElement: current !== inspected ? inspected : undefined,
-        };
+        }, dialogs);
       } catch (err) {
         rethrowStaleElement(err);
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
@@ -596,7 +629,7 @@ registerTool({
       assertActive();
       const pageBefore = submit ? await getTabPageState(tabId) : null;
       const guardrails = submit ? await getSecurityGuardrails() : null;
-      return withDebugger(tabId, async (_target, send) => {
+      return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
         assertActive();
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value }, bound, context);
         assertActive();
@@ -646,7 +679,7 @@ registerTool({
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
         } finally { observation?.dispose(); }
-      }, context);
+      });
     }
 
     if (normalizedAction === "check" || normalizedAction === "uncheck") {
@@ -659,7 +692,7 @@ registerTool({
       if (inspected.type === "radio" && !desired) {
         return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
       }
-      return withDebugger(tabId, async (_target, send) => {
+      return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
         assertActive();
         await ensurePageSurface(tabId, send, { frameId });
         const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound, context);
@@ -671,7 +704,7 @@ registerTool({
         if (current.checked === desired) return { ...identity, checked: desired, changed: false, element: current };
         const clickTarget = !current.disabled && isElementReply(current.element) ? current.element : current;
         if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
-          inspection: clickTarget, originalInspection: current, resolved: null });
+          inspection: clickTarget, originalInspection: current, resolved: null }) as Record<string, unknown>;
         const point = await framedPagePoint(send, clickTarget.clickablePoint, frameId);
         const receiptId = await armPageInputReceipt(tabId);
         let delivered = false;
@@ -701,7 +734,7 @@ registerTool({
         if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...identity, error: t("elementCheckStateMismatch"),
           code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, element: actual };
         return { ...identity, checked: desired, changed: true, method: "cdp", inputDelivered: true, element: actual };
-      }, context);
+      });
     }
 
     if (normalizedAction === "press") {
@@ -717,8 +750,9 @@ registerTool({
       const preparedKey = keyboard.normalize(pressedKey);
       try {
         let delivered = !inspected.clickablePoint;
+        let pressDialogs: Awaited<ReturnType<typeof runPageDebugger>> = [];
         if (inspected.clickablePoint) {
-          await withDebugger(tabId, async (_target, send) => {
+          pressDialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
             await ensurePageSurface(tabId, send, { frameId });
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
             const localPoint = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
@@ -733,11 +767,11 @@ registerTool({
                 type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
               });
             } finally { delivered = await inputWasDelivered(tabId, receiptId); }
-          }, context);
+          });
           if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
         }
         await keyboard.press(tabId, preparedKey, context);
-        return { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected };
+        return attachPageDialogResults({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected }, pressDialogs);
       } catch (err) {
         rethrowStaleElement(err);
         assertActive();

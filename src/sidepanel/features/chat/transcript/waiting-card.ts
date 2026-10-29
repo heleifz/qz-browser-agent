@@ -2,6 +2,7 @@ import { isToolBrowserPermission, type ToolBrowserPermission } from "../../../..
 import { debuggerDetachT } from "../../../../shared/debugger-detach.js";
 import { firefoxExtension } from "../../../../shared/product-text.js";
 import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
+import { javascriptDialogT, readJavaScriptDialogForm } from "../../../../shared/javascript-dialog.js";
 import { t as backendT } from "../../../../shared/i18n/backend.js";
 import { t, tHtml } from "../../../i18n/index.js";
 import { escapeHtml, escapeHtmlAttribute } from "../../../ui/ui-utils.js";
@@ -16,7 +17,7 @@ export type WaitingField = FieldBase & (
   | { type: "single_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string }
   | { type: "multi_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string[] }
 );
-interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; debuggerDetached?: boolean; title: string; submitLabel: string; fields: WaitingField[] }
+interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; debuggerDetached?: boolean; javascriptDialog?: { type: string; message: string; defaultPrompt?: string }; title: string; submitLabel: string; fields: WaitingField[] }
 interface WaitCard {
   waitId: string; runId: string; title: string; message: string; status: string; reason: string; form: WaitingForm;
 }
@@ -165,6 +166,10 @@ function normalizeWaitCard(value: unknown): WaitCard {
   } else if (form.debuggerDetached) {
     form.title = debuggerDetachT("title");
     message = debuggerDetachT("message");
+  } else if (readJavaScriptDialogForm(form as unknown as Record<string, unknown>)) {
+    const dialog = readJavaScriptDialogForm(form as unknown as Record<string, unknown>)!;
+    form.title = dialog.message;
+    message = javascriptDialogT("hint");
   }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),
@@ -192,9 +197,22 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
     (field.type === "single_choice" || field.type === "multi_choice") && field.presentation === "cards")
     && entry.message === form.title;
   const message = repeatedCardTitle ? "" : entry.message || "";
+  const dialog = readJavaScriptDialogForm(form as unknown as Record<string, unknown>);
+  const dialogType = dialog?.type || "";
   const hint = waiting
-    ? (form.browserPermission ? permissionT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
+    ? (form.browserPermission ? permissionT("hint") : dialog ? javascriptDialogT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
     : waitResolvedHint(entry);
+  const continueLabel = form.locationConsent ? t("dataConsentAccept")
+    : form.browserPermission ? permissionT("allow")
+      : dialogType === "beforeunload" ? javascriptDialogT("leave")
+        : dialog ? javascriptDialogT("ok")
+          : form.debuggerDetached ? debuggerDetachT("continue")
+            : hasForm ? form.submitLabel : t("doneContinue");
+  const cancelLabel = dialogType === "beforeunload" ? javascriptDialogT("stay")
+    : dialog ? javascriptDialogT("cancel")
+      : form.debuggerDetached ? debuggerDetachT("stop")
+        : t("cancel");
+  const showCancel = !dialog || dialogType !== "alert";
   return `
     <div class="waiting-card${statusClass} qz:relative qz:overflow-hidden qz:px-3 qz:pt-2.5 qz:pb-3">
       <div class="waiting-pulse"></div>
@@ -206,8 +224,8 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       </div>
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
-          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(form.locationConsent ? t("dataConsentAccept") : form.browserPermission ? permissionT("allow") : form.debuggerDetached ? debuggerDetachT("continue") : hasForm ? form.submitLabel : t("doneContinue"))}</button>
-          <button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${form.debuggerDetached ? escapeHtml(debuggerDetachT("stop")) : tHtml("cancel")}</button>
+          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(continueLabel)}</button>
+          ${showCancel ? `<button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${dialog ? escapeHtml(cancelLabel) : tHtml("cancel")}</button>` : ""}
         </div>
       ` : ""}
     </div>
@@ -238,6 +256,7 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
     ...(form.locationConsent === true ? { locationConsent: true } : {}),
     ...(isToolBrowserPermission(form.browserPermission) ? { browserPermission: form.browserPermission } : {}),
     ...(form.debuggerDetached === true ? { debuggerDetached: true } : {}),
+    ...(readJavaScriptDialogForm(form as unknown as Record<string, unknown>) ? { javascriptDialog: readJavaScriptDialogForm(form as unknown as Record<string, unknown>)! } : {}),
     title: String(form.title || "").trim(),
     submitLabel: String(form.submitLabel || t("submit")).trim(),
     fields: fields.map((value: unknown, index): WaitingField => {

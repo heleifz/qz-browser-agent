@@ -1,4 +1,5 @@
 import { DATA_CONSENT_VERSION } from "../../shared/data-consent.js";
+import { readJavaScriptDialogForm } from "../../shared/javascript-dialog.js";
 import { productText } from "../../shared/product-text.js";
 
 type Fields = Record<string, unknown>;
@@ -16,7 +17,7 @@ interface Options {
 }
 interface Input extends WaitIdentity {
   waiting: true;
-  kind: "form" | "confirmation" | "browser_permission" | "location_consent";
+  kind: "form" | "confirmation" | "browser_permission" | "location_consent" | "javascript_dialog";
   title: string; message: string; form: Fields;
   actions: string[]; consentVersion?: number;
   instructions: string;
@@ -37,15 +38,19 @@ export function createSessionUserInput(options: Options) {
     const runtime = options.getRuntime(sessionId);
     if (runtime.waitId !== wait.waitId || runtime.runId !== wait.runId) return null;
     const form = object(runtime.waitForm) || {};
+    const jsDialog = readJavaScriptDialogForm(form);
     const kind = form.browserPermission ? "browser_permission" : form.locationConsent === true
-      ? "location_consent" : Array.isArray(form.fields) && form.fields.length ? "form" : "confirmation";
+      ? "location_consent" : jsDialog ? "javascript_dialog"
+        : Array.isArray(form.fields) && form.fields.length ? "form" : "confirmation";
     const consent = kind === "location_consent" ? { consentVersion: DATA_CONSENT_VERSION } : {};
     return {
       ...wait, waiting: true, kind,
       title: String(runtime.waitTitle || form.title || ""), message: String(runtime.waitMessage || ""),
       form: structuredClone(form), actions: [kind === "form" ? "submit" : "approve", "reject"],
       ...consent,
-      instructions: kind === "browser_permission" ? browserPermissionInstructions() : kind === "form"
+      instructions: kind === "browser_permission" ? browserPermissionInstructions() : kind === "javascript_dialog"
+        ? "Show this page dialog to the user in the qz side panel. After they choose OK/Leave or Cancel/Stay, send responseTemplate to qingzhou_respond_to_user_input; to dismiss without accepting, use action reject with this sessionId and waitId."
+        : kind === "form"
         ? "Fill responseTemplate.answers with the user's answers. Keys are field IDs; choices use option values, and multi_choice uses an array. Send the completed template to qingzhou_respond_to_user_input."
         : "Show this request to the user. After approval, send responseTemplate to qingzhou_respond_to_user_input; to decline, use action reject with this sessionId and waitId.",
       ...(kind === "browser_permission" ? { requiresUserAction: true as const } : {
