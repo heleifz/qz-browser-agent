@@ -2,6 +2,7 @@ import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js'
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import { forgetIsolatedContexts } from './isolated-contexts.js';
 import { forgetChildFrames } from './child-frames.js';
+import { forgetJavaScriptDialogConnection, JAVASCRIPT_DIALOG_TIMEOUT, noteJavaScriptDialogOpening, watchBlockedDialogCommand } from './javascript-dialog.js';
 export type { CdpCommand };
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
@@ -17,6 +18,7 @@ interface CdpState {
 }
 interface DebuggerApi {
   onDetach?: { addListener(listener: (source: chrome.debugger.Debuggee, reason: string) => void): void };
+  onEvent?: { addListener(listener: (source: chrome.debugger.Debuggee & { sessionId?: string }, method: string, params?: object) => void): void };
   attach(target: chrome.debugger.Debuggee, version: string): Promise<void>;
   detach(target: chrome.debugger.Debuggee): Promise<void>;
   sendCommand(target: chrome.debugger.DebuggerSession, method: string, params?: object): Promise<unknown>;
@@ -47,10 +49,21 @@ export function createCdpRuntime({
   let temporaryScopeSeq = 0;
   let connectionSeq = 0;
 
+  debuggerApi?.onEvent?.addListener((source, method, params) => {
+    if (method !== "Page.javascriptDialogOpening") return;
+    const tabId = Number(source?.tabId);
+    if (!Number.isInteger(tabId) || tabId <= 0) return;
+    const decision = noteJavaScriptDialogOpening(tabId, params);
+    const target = source?.sessionId ? { tabId, sessionId: source.sessionId } : { tabId };
+    // The open command is blocked in the renderer until this returns. Do not send it through the watched path.
+    void Promise.resolve(debuggerApi.sendCommand(target, "Page.handleJavaScriptDialog", decision)).catch(() => {});
+  });
+
   debuggerApi?.onDetach?.addListener((source, reason) => {
     const tabId = Number(source?.tabId);
     if (!Number.isFinite(tabId) || tabId <= 0) return;
     const state = tabs.get(tabId);
+    if (state) forgetJavaScriptDialogConnection(tabId, state.connectionId);
     if (!state) return;
     state.attached = false;
     state.attachPromise = null;
@@ -215,7 +228,7 @@ export function createCdpRuntime({
     try {
       return await sendForState(state, method, params, check, "", context);
     } catch (err) {
-      if (record(err).code === "CDP_RUN_RELEASED") throw err;
+      if (record(err).code === "CDP_RUN_RELEASED" || record(err).code === JAVASCRIPT_DIALOG_TIMEOUT) throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, {
         tabId: state.tabId,
         method,
@@ -443,6 +456,7 @@ export function createCdpRuntime({
         // drops isolated contexts and child targets before the next connection.
         forgetIsolatedContexts(state.tabId);
         forgetChildFrames(state.tabId);
+        forgetJavaScriptDialogConnection(state.tabId, state.connectionId);
         if (tabs.get(state.tabId) === state) tabs.delete(state.tabId);
       }
     })();
@@ -527,7 +541,7 @@ export function createCdpRuntime({
     const finishPhase = context.measurePhase?.("cdp");
     try {
       const target = sessionId ? { ...state.target, sessionId } : state.target;
-      const result = await debuggerApi.sendCommand(target, method, params);
+      const result = await sendCommandWatchingDialogs(state, target, method, params, check);
       assertStateActive(state);
       check();
       return result;
@@ -538,6 +552,19 @@ export function createCdpRuntime({
     } finally {
       finishPhase?.();
     }
+  }
+
+  function sendCommandWatchingDialogs(state: CdpState, target: chrome.debugger.DebuggerSession, method: string, params: Record<string, unknown>, check: () => void) {
+    const command = Promise.resolve(debuggerApi.sendCommand(target, method, params));
+    if (!method.startsWith("Input.")) return command;
+    return watchBlockedDialogCommand(command, async () => {
+      check();
+      await debuggerApi.sendCommand(target, "Page.handleJavaScriptDialog", { accept: true, promptText: "" });
+    }, () => new ToolExecutionError(
+      JAVASCRIPT_DIALOG_TIMEOUT,
+      "The page action was blocked by a JavaScript dialog and did not finish",
+      { tabId: state.tabId, method },
+    ));
   }
 
   function runReleasedError(tabId: unknown, sessionId: string, runId: string) {
@@ -588,6 +615,7 @@ export function isCdpFallbackForbiddenError(error: unknown) {
   const code = String(record(error).code || "");
   return code === "OPERATION_ABORTED"
     || code === "SECURITY_GUARDRAIL_BLOCKED"
+    || code === JAVASCRIPT_DIALOG_TIMEOUT
     || code.startsWith("SESSION_TAB_")
     || [
       "CDP_RUN_CONTEXT_REQUIRED",

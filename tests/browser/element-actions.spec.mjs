@@ -646,3 +646,46 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
     expect(await h.page.evaluate(() => window.keys)).toContain("a");
   } finally { await h.close(); }
 });
+
+test("a click that opens a JavaScript dialog returns it and leaves the page usable", async () => {
+  test.setTimeout(60_000);
+  const h = await createHarness("desktop");
+  const dialogs = [];
+  // A listener stops Playwright from dismissing the dialog, so only the extension can unblock the click.
+  h.page.on("dialog", dialog => {
+    dialogs.push({ type: dialog.type(), message: dialog.message(), defaultValue: dialog.defaultValue() });
+  });
+  const within = (promise, label) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} hung`)), 12_000)),
+  ]);
+  try {
+    await h.page.setContent(`<!doctype html><div id="rich"></div><input id="trace">
+      <button id="alert" style="width:160px;height:40px">Show alert</button>
+      <button id="confirm" style="width:160px;height:40px">Show confirm</button>
+      <button id="prompt" style="width:160px;height:40px">Show prompt</button>
+      <script>
+        window.events = []; window.submits = 0; window.invalid = 0; window.acceptedValue = "";
+        const trace = document.querySelector("#trace");
+        document.querySelector("#alert").onclick = () => { alert("Heads up: code 4417"); trace.value = "alert"; };
+        document.querySelector("#confirm").onclick = () => { trace.value = confirm("Leave?") ? "confirm-yes" : "confirm-no"; };
+        document.querySelector("#prompt").onclick = () => { trace.value = "prompt:" + prompt("Code?", "4417"); };
+      </script>`);
+    const alerted = await within(h.act("alert", "click"), "alert click");
+    expect(alerted, JSON.stringify(alerted)).toMatchObject({
+      action: "click", dialog: { type: "alert", message: "Heads up: code 4417", accepted: true },
+    });
+    expect(alerted).not.toHaveProperty("error");
+    const confirmed = await within(h.act("confirm", "click"), "confirm click");
+    expect(confirmed, JSON.stringify(confirmed)).toMatchObject({
+      dialog: { type: "confirm", message: "Leave?", accepted: true },
+    });
+    const prompted = await within(h.act("prompt", "click"), "prompt click");
+    expect(prompted, JSON.stringify(prompted)).toMatchObject({
+      dialog: { type: "prompt", message: "Code?", defaultPrompt: "4417", accepted: true },
+    });
+    const state = await within(h.state(), "page read after dialogs");
+    expect(state.values.trace).toBe("prompt:4417");
+    expect(dialogs.map(dialog => dialog.type)).toEqual(["alert", "confirm", "prompt"]);
+  } finally { await h.close(); }
+});

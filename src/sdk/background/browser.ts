@@ -56,5 +56,7 @@ export { beginPageNavigationObservation } from "../../background/tools/page-navi
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
 export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";
+export { beginJavaScriptDialogCapture, ensureJavaScriptDialogEvents, javascriptDialogFields, takeJavaScriptDialogs } from "../../background/tools/javascript-dialog.js";
+export type { JavaScriptDialogInfo } from "../../background/tools/javascript-dialog.js";
 export { isRunScriptInnerTargetArgs, resolveRunScriptTargetTabId } from "../../background/tools/script-policy.js";
 export { directChildFrames, openChildFrame, frameContentOrigin } from "../../background/tools/child-frames.js";

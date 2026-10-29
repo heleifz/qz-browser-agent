@@ -13,7 +13,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, readPageInputReceipt } from "#sdk/background/browser";
+import { armPageInputReceipt, beginJavaScriptDialogCapture, beginPageNavigationObservation, ensureJavaScriptDialogEvents, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, javascriptDialogFields, readPageInputReceipt, takeJavaScriptDialogs, type JavaScriptDialogInfo } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
 
 /** Iframe content scripts report iframe-local points. Shift them by the iframe content origin only at dispatch. */
@@ -94,6 +94,18 @@ async function observeElementNavigation(tabId: number, pageBefore: PageState, pr
 }
 const keyboard = createCdpKeyboard({ sendCdp, ToolExecutionError });
 const touch = createCdpTouch({ ToolExecutionError });
+async function prepareJavaScriptDialogs(tabId: number, context: ToolContext) {
+  try {
+    await withDebugger(tabId, async (_target, send) => { await ensureJavaScriptDialogEvents(send); }, context);
+  } catch (error) {
+    if (isCdpFallbackForbiddenError(error)) throw error;
+  }
+}
+function mergeJavaScriptDialogs(result: unknown, dialogs: readonly JavaScriptDialogInfo[]) {
+  const fields = javascriptDialogFields(dialogs);
+  if (!fields || !result || typeof result !== "object" || Array.isArray(result)) return result;
+  return { ...result, ...fields };
+}
 // ===========================================================================
 // Page content
 // ===========================================================================
@@ -286,6 +298,17 @@ registerTool({
     return perform();
     async function perform() {
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
+    const dialogCapture = beginJavaScriptDialogCapture(tabId);
+    try {
+      const result = await performElementAction(tabId);
+      return mergeJavaScriptDialogs(result, takeJavaScriptDialogs(tabId, dialogCapture));
+    } catch (error) {
+      const fields = javascriptDialogFields(takeJavaScriptDialogs(tabId, dialogCapture));
+      if (fields && error instanceof ToolExecutionError) error.details = { ...error.details, ...fields };
+      throw error;
+    }
+    }
+    async function performElementAction(tabId: number) {
     const frameId = String(ref.ref?.frameId || "");
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
@@ -397,6 +420,7 @@ registerTool({
           if (!clickPointReady(current)) return;
           const point = await framedPagePoint(send, current.clickablePoint, frameId);
           touchInput = getPageContext(tabId).pageMode === "mobile";
+          await ensureJavaScriptDialogEvents(send);
           const receiptId = await armPageInputReceipt(tabId);
           try {
             observation = await beginPageNavigationObservation(tabId, _signal);
@@ -474,6 +498,7 @@ registerTool({
       assertActive();
       const pageBefore = submit ? await getTabPageState(tabId) : null;
       const guardrails = submit ? await getSecurityGuardrails() : null;
+      await prepareJavaScriptDialogs(tabId, context);
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value }, bound, context);
@@ -537,6 +562,7 @@ registerTool({
       if (inspected.type === "radio" && !desired) {
         return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
       }
+      await prepareJavaScriptDialogs(tabId, context);
       return withDebugger(tabId, async (_target, send) => {
         assertActive();
         await ensurePageSurface(tabId, send, { frameId });
@@ -594,6 +620,7 @@ registerTool({
       }
       const preparedKey = keyboard.normalize(pressedKey);
       try {
+        await prepareJavaScriptDialogs(tabId, context);
         let delivered = !inspected.clickablePoint;
         if (inspected.clickablePoint) {
           await withDebugger(tabId, async (_target, send) => {

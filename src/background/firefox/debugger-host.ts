@@ -1,3 +1,4 @@
+import { installPageDialogGuard, readPageDialogGuard, removePageDialogGuard } from "../tools/javascript-dialog.js";
 import { isIsolatedContentInvoke, isIsolatedContentProbe } from "../tools/isolated-page-calls.js";
 import { createNetworkWatch } from "./network-watch.js";
 import type { NetworkChrome } from "./network-watch.js";
@@ -31,6 +32,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   const emulation = new Map<number, { userAgent: string; touch: boolean }>();
   const savedWindows = new Map<number, SavedWindow>();
   const announced = new Map<number, Map<string, string>>();
+  const dialogFrames = new Map<number, Set<number>>();
   const streams = new Map<string, { bytes: Uint8Array; offset: number }>();
   let nextContext = 1;
   let nextStream = 1;
@@ -77,7 +79,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
 
   async function dispatch(tabId: number, frameId: number, method: string, params: Fields): Promise<unknown> {
     // Runtime.disable must not drop the hook. It stays until the debugger detaches.
-    if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
+    if (method === "Page.enable" || method === "Page.disable" || method === "Page.handleJavaScriptDialog" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
     if (method === "Page.getFrameTree") return frameTree(tabId, frameId);
     if (method === "Page.reload") {
       await chromeApi.tabs?.reload?.(tabId, { bypassCache: params.ignoreCache === true });
@@ -115,16 +117,16 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "Runtime.releaseObjectGroup") return run(tabId, frameId, { op: "release", objectGroup: String(params.objectGroup || "") });
     if (method === "Runtime.awaitPromise") return { result: { type: "undefined" } };
     if (method === "Input.dispatchMouseEvent") {
-      return run(tabId, frameId, { op: "input", input: { kind: "mouse", type: String(params.type || ""), x: numberValue(params.x), y: numberValue(params.y), button: String(params.button || "left"), clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } });
+      return withPageDialogs(tabId, frameId, () => run(tabId, frameId, { op: "input", input: { kind: "mouse", type: String(params.type || ""), x: numberValue(params.x), y: numberValue(params.y), button: String(params.button || "left"), clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } }));
     }
     if (method === "Input.dispatchKeyEvent") {
-      return run(tabId, frameId, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } });
+      return withPageDialogs(tabId, frameId, () => run(tabId, frameId, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } }));
     }
     if (method === "Input.dispatchTouchEvent") {
       const point = fields(arrayValue(params.touchPoints)[0]);
-      return run(tabId, frameId, { op: "input", input: { kind: "touch", type: String(params.type || ""), x: numberValue(point.x), y: numberValue(point.y) } });
+      return withPageDialogs(tabId, frameId, () => run(tabId, frameId, { op: "input", input: { kind: "touch", type: String(params.type || ""), x: numberValue(point.x), y: numberValue(point.y) } }));
     }
-    if (method === "Input.insertText") return run(tabId, frameId, { op: "input", input: { kind: "text", text: String(params.text || "") } });
+    if (method === "Input.insertText") return withPageDialogs(tabId, frameId, () => run(tabId, frameId, { op: "input", input: { kind: "text", text: String(params.text || "") } }));
     if (method === "Emulation.setUserAgentOverride") return setUserAgent(tabId, String(params.userAgent || ""));
     if (method === "Emulation.setDeviceMetricsOverride") return resizeWindow(tabId, numberValue(params.width) || 412, numberValue(params.height) || 915);
     if (method === "Emulation.clearDeviceMetricsOverride") return restoreWindow(tabId);
@@ -145,6 +147,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   }
 
   async function release(tabId: number, restore: boolean) {
+    await clearPageDialogs(tabId);
     attached.delete(tabId);
     runtimeEnabled.delete(tabId);
     autoAttach.delete(tabId);
@@ -514,6 +517,41 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const failed = results.find(item => item?.error);
     if (failed) throw new Error(typeof failed.error === "string" ? failed.error : "Firefox page command failed");
     return results.map(item => item?.result);
+  }
+
+  // Click listeners run in the page world. Accept alert/confirm/prompt there, then report the same
+  // Page.javascriptDialogOpening event Chrome delivers, so the shared CDP handler can record it.
+  async function withPageDialogs<T>(tabId: number, frameId: number, operation: () => Promise<T>): Promise<T> {
+    await armPageDialogs(tabId, frameId);
+    try {
+      return await operation();
+    } finally {
+      for (const dialog of await collectPageDialogs(tabId, frameId)) emit(tabId, "Page.javascriptDialogOpening", dialog);
+    }
+  }
+
+  async function armPageDialogs(tabId: number, frameId: number) {
+    const frames = dialogFrames.get(tabId) || new Set<number>();
+    frames.add(frameId);
+    dialogFrames.set(tabId, frames);
+    // Reinstall on every input. The guard is idempotent, and a navigation replaces the page world.
+    try {
+      await execute({ tabId, frameIds: [frameId] }, "MAIN", installPageDialogGuard, []);
+    } catch { /* A later input retries. A dialog that still blocks ends at the command stall. */ }
+  }
+
+  async function collectPageDialogs(tabId: number, frameId: number) {
+    try {
+      const [result] = await execute({ tabId, frameIds: [frameId] }, "MAIN", readPageDialogGuard, []);
+      return Array.isArray(result) ? result.filter(item => !!item && typeof item === "object") : [];
+    } catch { return []; }
+  }
+
+  async function clearPageDialogs(tabId: number) {
+    const frames = dialogFrames.get(tabId);
+    dialogFrames.delete(tabId);
+    if (!frames) return;
+    await Promise.all([...frames].map(frameId => execute({ tabId, frameIds: [frameId] }, "MAIN", removePageDialogGuard, []).catch(() => {})));
   }
 }
 
