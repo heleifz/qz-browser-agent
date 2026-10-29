@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerPageElementTools } from "../../src/capabilities/page/tools.js";
+import { pageDialogStub } from "../support/page-dialog-stub.mjs";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 
 const navigationListeners = new Set();
@@ -21,7 +22,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
     return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : 1 }];
   } };
   const state = { value: "old", checked };
-  let execute, onCommand = async () => {}, onContent = async () => {};
+  let execute, guardActive = false, onCommand = async () => {}, onContent = async () => {};
   const inspection = () => ({ tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
     clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
@@ -42,6 +43,12 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
     return produced === undefined ? {} : produced;
   };
   registerPageElementTools({
+    ...pageDialogStub,
+    async withPageDialogGuard(...args) {
+      guardActive = true;
+      try { return await pageDialogStub.withPageDialogGuard(...args); }
+      finally { guardActive = false; }
+    },
     registerTool(definition) { if (definition.name === "act_on_element") execute = definition.execute; },
     ToolExecutionError,
     async resolveElementReference(tabId, { target, index }) {
@@ -61,7 +68,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false } = {})
     sendCdp: async (_tabId, method, params) => send(method, params),
     withDebugger: async (_tabId, callback) => callback({}, send),
   });
-  return { commands, messages, observations, controller, state, receipts,
+  return { commands, messages, observations, controller, state, receipts, isGuardActive: () => guardActive,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
@@ -214,6 +221,18 @@ for (const method of ["href_navigation", "content_fallback"]) {
     });
   }
 }
+
+test("press keeps its dialog guard through key dispatch and never replays a failed key", async () => {
+  const f = fixture();
+  f.onCommand((method, params) => {
+    if (method !== 'Input.dispatchKeyEvent') return;
+    assert.equal(f.isGuardActive(), true);
+    if (params.type === 'keyDown') throw new Error('key response lost');
+  });
+  await assert.rejects(f.call({ action: 'press', key: 'Enter' }), /key response lost/);
+  assert.equal(f.commands.filter(command => command.params.type === 'keyDown').length, 1);
+  assertNoReplay(f);
+});
 
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();

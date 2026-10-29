@@ -104,7 +104,7 @@ async function runPageDebugger(
 ): Promise<Awaited<ReturnType<PageElementHost["withPageDialogGuard"]>>["dialogs"]> {
   const { dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
     host.withDebugger(tabId, async (_target, cdpSend) => {
-      bind(cdpSend);
+      await bind(cdpSend);
       await run(send);
     }, context),
   );
@@ -119,7 +119,7 @@ async function runPageDebuggerValue<T extends Record<string, unknown>>(
 ): Promise<T> {
   const { value, dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
     host.withDebugger(tabId, async (_target, cdpSend) => {
-      bind(cdpSend);
+      await bind(cdpSend);
       return run(send);
     }, context),
   );
@@ -306,9 +306,9 @@ registerTool({
       const frameId = String(ref.ref?.frameId || "");
       if (frameId && ref.tabId && !inspection.error) {
         try {
-          await runPageDebugger({ withDebugger, withPageDialogGuard }, ref.tabId, context, async send => {
+          await withDebugger(ref.tabId, async (_target, send) => {
             applyFramePageViewport(inspection, await frameContentOrigin(send, frameId), await readPageViewport(send));
-          });
+          }, context);
         } catch (error) {
           if (isCdpFallbackForbiddenError(error)) throw error;
         }
@@ -748,11 +748,11 @@ registerTool({
         };
       }
       const preparedKey = keyboard.normalize(pressedKey);
+      let dispatched = false;
       try {
         let delivered = !inspected.clickablePoint;
-        let pressDialogs: Awaited<ReturnType<typeof runPageDebugger>> = [];
-        if (inspected.clickablePoint) {
-          pressDialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+        const pressDialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+          if (inspected.clickablePoint) {
             await ensurePageSurface(tabId, send, { frameId });
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
             const localPoint = !refreshed.error && clickPointReady(refreshed) ? refreshed.clickablePoint : inspected.clickablePoint;
@@ -760,6 +760,7 @@ registerTool({
             const point = await framedPagePoint(send, localPoint, frameId);
             const receiptId = await armPageInputReceipt(tabId);
             try {
+              dispatched = true;
               await send("Input.dispatchMouseEvent", {
                 type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
               });
@@ -767,15 +768,19 @@ registerTool({
                 type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
               });
             } finally { delivered = await inputWasDelivered(tabId, receiptId); }
-          });
-          if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
-        }
-        await keyboard.press(tabId, preparedKey, context);
+          }
+          if (delivered) {
+            dispatched = true;
+            const guardedKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_id, method, params) => send(method, params) });
+            await guardedKeyboard.press(tabId!, preparedKey, context);
+          }
+        });
+        if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
         return attachPageDialogResults({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected }, pressDialogs);
       } catch (err) {
         rethrowStaleElement(err);
         assertActive();
-        if (frameId || isCdpFallbackForbiddenError(err)) throw err;
+        if (dispatched || frameId || isCdpFallbackForbiddenError(err)) throw err;
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound, context);
         return { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };
       }

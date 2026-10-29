@@ -10,7 +10,7 @@ import { record } from "../../../tools/renderer-input.js";
 import { renderResultChoice } from "../../../ui/result-choice.js";
 
 type Answer = string | string[];
-interface FieldBase { id: string; label: string; help: string; required: boolean }
+interface FieldBase { id: string; label: string; help: string; required: boolean; preserveWhitespace?: boolean }
 interface ChoiceOption { label: string; value: string; description: string; meta?: string[]; imageUrl?: string; url?: string }
 export type WaitingField = FieldBase & (
   | { type: "text" | "textarea"; placeholder: string; defaultValue: string }
@@ -252,11 +252,12 @@ function waitResolvedHint(entry: WaitCard) {
 export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
   const form = record(value);
   const fields = Array.isArray(form.fields) ? form.fields : [];
+  const dialog = readJavaScriptDialogForm(form);
   return {
     ...(form.locationConsent === true ? { locationConsent: true } : {}),
     ...(isToolBrowserPermission(form.browserPermission) ? { browserPermission: form.browserPermission } : {}),
     ...(form.debuggerDetached === true ? { debuggerDetached: true } : {}),
-    ...(readJavaScriptDialogForm(form as unknown as Record<string, unknown>) ? { javascriptDialog: readJavaScriptDialogForm(form as unknown as Record<string, unknown>)! } : {}),
+    ...(dialog ? { javascriptDialog: dialog } : {}),
     title: String(form.title || "").trim(),
     submitLabel: String(form.submitLabel || t("submit")).trim(),
     fields: fields.map((value: unknown, index): WaitingField => {
@@ -273,7 +274,8 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
           ...(typeof option.url === "string" ? { url: option.url } : {}),
         };
       }).filter(option => option.label && option.value) : [];
-      const base: FieldBase = { id, label: String(field.label || id).trim(), help: String(field.help || "").trim(), required: field.required !== false };
+      const base: FieldBase = { id, label: String(field.label || id).trim(), help: String(field.help || "").trim(), required: field.required !== false,
+        ...(dialog?.type === "prompt" && id === "promptText" ? { preserveWhitespace: true } : {}) };
       const presentation = field.presentation === "cards" ? { presentation: "cards" as const } : {};
       const defaultValue = Object.hasOwn(field, "defaultValue") ? field.defaultValue
         : Object.hasOwn(field, "defaultValues") ? field.defaultValues
@@ -284,7 +286,7 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
       }
       const scalar = defaultValue == null ? "" : String(defaultValue);
       if (field.type === "single_choice" && options.length) return { ...base, ...presentation, type: "single_choice", options, defaultValue: scalar };
-      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: scalar.trim() };
+      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: base.preserveWhitespace ? scalar : scalar.trim() };
     }).filter(field => field.id && field.label),
   };
 }
@@ -370,7 +372,8 @@ function readWaitingFieldValue(wrap: HTMLElement | null, field: WaitingField) {
   if (field.type === "multi_choice") {
     return Array.from(wrap.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value);
   }
-  return wrap.querySelector<HTMLInputElement | HTMLTextAreaElement>(".waiting-field-control")?.value.trim() || "";
+  const value = wrap.querySelector<HTMLInputElement | HTMLTextAreaElement>(".waiting-field-control")?.value || "";
+  return field.preserveWhitespace ? value : value.trim();
 }
 
 function markWaitingFieldInvalid(wrap: HTMLElement | null, field: WaitingField) {

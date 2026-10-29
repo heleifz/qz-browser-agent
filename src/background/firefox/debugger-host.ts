@@ -78,7 +78,6 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   async function dispatch(tabId: number, frameId: number, method: string, params: Fields): Promise<unknown> {
     // Runtime.disable must not drop the hook. It stays until the debugger detaches.
     if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
-    if (method === "Page.handleJavaScriptDialog") return {};
     if (method === "Page.getFrameTree") return frameTree(tabId, frameId);
     if (method === "Page.reload") {
       await chromeApi.tabs?.reload?.(tabId, { bypassCache: params.ignoreCache === true });

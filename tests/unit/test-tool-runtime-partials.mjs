@@ -24,6 +24,31 @@ test('deadline retains an immutable per-call partial and rejects late updates', 
   await assert.rejects(runToolWithTimeout('other', never, undefined, 15, partialResult, context), { code: 'TOOL_TIMEOUT' });
 });
 
+test('nested user waits preserve the remaining deadline and cannot rearm after settlement', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let pause, signal, result;
+  const pending = runToolWithTimeout('action', async (s, _publish, suspend) => {
+    signal = s; pause = suspend; return never();
+  }, undefined, 100, partialResult, context).catch(error => { result = error; });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(30);
+  const resumeFirst = pause(), resumeSecond = pause();
+  t.mock.timers.tick(10000);
+  resumeFirst(); resumeFirst();
+  t.mock.timers.tick(10000);
+  assert.equal(signal.aborted, false);
+  resumeSecond();
+  t.mock.timers.tick(69);
+  assert.equal(signal.aborted, false);
+  t.mock.timers.tick(1);
+  await pending;
+  assert.equal(result.code, 'TOOL_TIMEOUT');
+  assert.equal(signal.aborted, true);
+  pause()(); resumeSecond();
+  t.mock.timers.tick(1000);
+  assert.equal(result.code, 'TOOL_TIMEOUT');
+});
+
 test('cancellation and security failures retain their original errors despite a partial', async () => {
   for (const timeout of [0, 100]) {
     const controller = new AbortController();

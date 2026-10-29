@@ -17,6 +17,8 @@ function pageHtml(crossUrl) {
       #fixed{position:fixed;top:-700px;left:12px}
     </style>
     <button id="top" type="button">Top Button</button>
+    <button id="dialog" type="button" onclick="window.dialogAnswer=confirm('')">Dialog</button>
+    <input id="prompt" onkeydown="if(event.key==='Enter') window.promptAnswer=prompt('Name?', ' guest ')">
     <iframe id="same" name="same" title="Same frame"></iframe>
     <div id="gap" style="height:1px"></div>
     <iframe id="cross" name="cross" title="Cross frame" src="${crossUrl}"></iframe>
@@ -63,7 +65,9 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     const manifestPath = join(extension, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     await writeFile(join(extension, "element-test-worker.js"), `import "./${manifest.background.service_worker}";
-      import * as tools from "./background/tools/runtime.js"; globalThis.elementTestTools = tools;`);
+      import * as tools from "./background/tools/runtime.js"; globalThis.elementTestTools = tools;
+      import { createSessionSupervisor } from "./background/session/supervisor.js";
+      globalThis.createTestSupervisor = createSessionSupervisor;`);
     manifest.background.service_worker = "element-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
@@ -73,12 +77,18 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"],
     });
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent("serviceworker");
-    await worker.evaluate(() => {
-      let tabId;
+    await worker.evaluate(async () => {
+      const supervisor = createTestSupervisor({ createAgent: () => ({ subscribe(emit) { this.emit = emit; } }) });
+      (await supervisor.getAgent('iframe-offscreen')).emit({ type: 'agent_start', runId: 'run' });
+      let tabId, waiting;
+      const emit = event => { if (event.type === 'waiting_for_user') waiting = event; };
       const context = { sessionId: "iframe-offscreen", runId: "run", runProfile: { platform: { os: "linux" } } };
       const runtime = elementTestTools.createToolRuntime({
+        emit,
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: {
+          beginUserWait: supervisor.beginUserWait,
+          isWaitingForUser: supervisor.isWaitingForUser,
           isRunCurrent: () => true,
           resolveTargetTab: async input => input.tabId === tabId
             ? { ok: true, tabId, tab: await chrome.tabs.get(tabId), ownedByCurrentTask: true }
@@ -87,6 +97,11 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
         },
       });
       globalThis.elementHarness = {
+        get waiting() { return waiting || null; },
+        answer(payload) {
+          supervisor.resolveUserWait({ sessionId: 'iframe-offscreen', waitId: waiting.waitId, payload });
+          waiting = null;
+        },
         async call(name, args) {
           try { return await runtime.execute(name, { tabId, ...args }, undefined, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { error: error.message, code: error.code, details: error.details }; }
@@ -97,6 +112,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     const opened = await call("open_tab", { url: `http://127.0.0.1:${parent.address().port}/` });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     const page = browser.pages().find(item => item.url().startsWith("http://127.0.0.1:"));
+    page.on('dialog', () => {}); // The extension, not Playwright's default dismissal, owns answers.
     await expect.poll(async () => page.frame({ name: "same" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
     await expect.poll(async () => page.frame({ name: "cross" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
     await expect.poll(async () => page.frame({ name: "fixed" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
@@ -198,6 +214,18 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     expect(afterBelow.bottom).toBeGreaterThan(0);
     expect(await page.frame({ name: "cross" }).evaluate(() => window.clicks || 0)).toBe(1);
     expect(await page.frame({ name: "fixed" }).evaluate(() => window.clicks || 0)).toBe(0);
+
+    const clickDialog = call('act_on_element', { target: 'css:#dialog', action: 'click' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog)).toEqual({ type: 'confirm', message: '' });
+    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
+    expect(await clickDialog).toMatchObject({ dialog: { type: 'confirm', message: '', accepted: false }, inputDelivered: true });
+    expect(await page.evaluate(() => window.dialogAnswer)).toBe(false);
+
+    const keyDialog = call('act_on_element', { target: 'css:#prompt', action: 'press', key: 'Enter' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('prompt');
+    await worker.evaluate(() => elementHarness.answer({ submitted: true, answers: { promptText: ' Alice ' } }));
+    expect(await keyDialog).toMatchObject({ dialog: { type: 'prompt', accepted: true, promptText: ' Alice ' }, pressed: true });
+    expect(await page.evaluate(() => window.promptAnswer)).toBe(' Alice ');
   } finally {
     await close();
   }

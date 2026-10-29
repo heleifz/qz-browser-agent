@@ -583,9 +583,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     try {
       result = await runToolWithTimeout(
         name,
-        async (signal, reportPartial) => {
+        async (signal, reportPartial, pauseDeadline) => {
           const args = executionArgs;
-          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial }, getToolRuntimeDependencies(context));
+          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial, pauseDeadline }, getToolRuntimeDependencies(context));
           if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
             callContext.prepareCreatedTab = async tab => {
               const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });

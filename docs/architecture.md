@@ -127,6 +127,12 @@ Native Chrome permission requests remain paused until the user grants access in 
 External approval checks the actual permission and returns `requiresUserAction` while it is absent.
 The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
 
+Chrome element-input dialog guards enable Page events before input, retain child debugger-session
+identity, and route native dialogs through the same wait lifecycle. A dialog wait suspends only its
+own tool deadline; Stop and run cancellation remain active. Cancel/Stay answers the page without
+rejecting the task wait. Prompt text is submitted unchanged. A failed browser answer produces no
+successful dialog receipt. Firefox keeps its native dialogs; see [Page dialogs](firefox-differences.md#page-dialogs).
+
 ## Message transport
 
 [Port transport](../src/shared/transport/port-transport.ts) sends small messages directly and

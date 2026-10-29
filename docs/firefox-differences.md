@@ -174,6 +174,14 @@ Click, press, and `act_on_screen` send `Input.dispatchMouseEvent`, `Input.dispat
 | Coordinates | `DOM.getBoxModel` returns the element's viewport quad from `getBoundingClientRect`. Clicks and iframe screenshot math in this extension use that origin. | These quads are viewport CSS pixels. Raw Chrome DevTools Protocol box models are document coordinates. |
 | Stop | `Runtime.terminateExecution` returns an empty result. `Runtime.disable` also returns an empty result and leaves the console hook in place until detach. | A running page function is not interrupted. Calling `Runtime.disable` in Firefox returns `{}` and must not be treated as success at clearing the hook. |
 
+## Page dialogs
+
+Answer native `alert`, `confirm`, `prompt`, and `beforeunload` dialogs in Firefox itself.
+Firefox's extension APIs do not expose Chrome's dialog-opening events or dialog-answer command,
+so these dialogs do not produce sidebar wait cards or dialog receipts. The adapter leaves the
+page's synchronous dialog functions unchanged. A synchronous JavaScript replacement cannot wait
+for an asynchronous extension answer without blocking the page thread.
+
 ## Screenshots
 
 `Page.captureScreenshot` uses `tabs.captureTab`. Firefox 158 `ImageDetails.rect` is CSS pixels

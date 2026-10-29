@@ -1,6 +1,5 @@
 import { defineMessages } from "./i18n/definition.js";
 import { createTranslator } from "./i18n/index.js";
-import { firefoxExtension } from "./product-text.js";
 
 export type JavaScriptDialogType = "alert" | "confirm" | "prompt" | "beforeunload";
 
@@ -32,11 +31,6 @@ export const javascriptDialogMessages = defineMessages("javascript-dialog", {
 
 export const javascriptDialogT = createTranslator(javascriptDialogMessages);
 
-/** Firefox does not surface beforeunload through the same CDP bridge as Chrome. */
-export function firefoxBeforeunloadDialogSupported() {
-  return !firefoxExtension();
-}
-
 export function normalizeJavaScriptDialogType(value: unknown): JavaScriptDialogType {
   const type = String(value || "").trim().toLowerCase();
   if (type === "confirm" || type === "prompt" || type === "beforeunload") return type;
@@ -47,9 +41,8 @@ export function readJavaScriptDialogForm(form: Record<string, unknown> | null | 
   const dialog = form?.javascriptDialog;
   if (!dialog || typeof dialog !== "object" || Array.isArray(dialog)) return null;
   const record = dialog as Record<string, unknown>;
-  const message = String(record.message || form?.title || "").trim();
-  if (!message) return null;
+  const message = String(record.message ?? "");
   const type = normalizeJavaScriptDialogType(record.type);
-  const defaultPrompt = String(record.defaultPrompt || "").trim();
+  const defaultPrompt = String(record.defaultPrompt ?? "");
   return { type, message, ...(defaultPrompt ? { defaultPrompt } : {}) };
 }
