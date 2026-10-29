@@ -96,7 +96,9 @@ messages retain their existing automatic continuation after a run fails or is st
 failure before handoff releases the reservation without repeatedly retrying the unconsumed message.
 
 Observers follow the Session across runs and return successfully when a snapshot shows completion,
-empty queues, and no pending execution. Messages accepted after that snapshot belong to later work.
+empty queues, and no pending execution. The snapshot's `usage` sums provider usage recorded on each
+model call and counts tool calls, screenshots, and context compressions from the transcript.
+Messages accepted after that snapshot belong to later work.
 Removing a queued message also allows its waiting sender to finish without streaming an earlier
 answer. Failure, stop, timeout, and cancellation end observation without resubmitting messages.
 
