@@ -12,6 +12,7 @@ const TOKEN_KEYS = [
   "cache_read_input_tokens",
   "cache_creation_input_tokens",
   "cached_tokens",
+  "prompt_cache_hit_tokens",
 ] as const;
 const INCOMPLETE_COMPACT = new Set(["running", "failed", "aborted", "error"]);
 
@@ -37,7 +38,6 @@ interface RecordedCall {
 /** Keep the provider fields later snapshots need. Nested cache details become cached_tokens. */
 export function normalizeRecordedUsage(input: unknown): Record<string, number> | null {
   const usage = asRecord(input);
-  if (!usage) return null;
   const out: Record<string, number> = {};
   for (const key of TOKEN_KEYS) {
     if (!Object.hasOwn(usage, key)) continue;
@@ -102,8 +102,7 @@ export function summarizeSessionUsage({ conversation = null, transcript = null }
 function readRecordedCall(input: unknown): RecordedCall {
   const usage = asRecord(input);
   const empty: RecordedCall = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costTicks: null, recorded: false };
-  if (!usage) return empty;
-  const cacheRead = firstToken(usage, ["cache_read_input_tokens", "cached_tokens", "cacheRead"]) ?? cachedFromDetails(usage);
+  const cacheRead = firstToken(usage, ["cache_read_input_tokens", "cached_tokens", "prompt_cache_hit_tokens", "cacheRead"]) ?? cachedFromDetails(usage);
   const cacheWrite = firstToken(usage, ["cache_creation_input_tokens", "cacheWrite"]);
   const output = firstToken(usage, ["output_tokens", "completion_tokens", "total_completion_tokens", "output"]);
   const prompt = firstToken(usage, ["prompt_tokens", "total_prompt_tokens"]);
@@ -119,8 +118,10 @@ function readRecordedCall(input: unknown): RecordedCall {
     cached = cacheRead ?? 0;
     promptTokens = Math.max(0, prompt - cached);
   } else if (inputTokens != null) {
-    promptTokens = inputTokens;
+    // Responses-style input_tokens includes cache reads. Anthropic and the Codex
+    // adapter's disjoint input/cache fields take the split branch above.
     cached = cacheRead ?? 0;
+    promptTokens = Math.max(0, inputTokens - cached);
   } else {
     cached = cacheRead ?? 0;
   }

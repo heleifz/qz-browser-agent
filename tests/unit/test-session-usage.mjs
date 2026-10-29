@@ -131,6 +131,24 @@ test("recorded usage round-trips through the session codec", () => {
   assert.deepEqual(summarizeSessionUsage({ conversation: restored, transcript: sessionTranscript() }), expected);
 });
 
+test("cache totals survive codec round-trips for DeepSeek, Responses and split usage", () => {
+  for (const [usage, expectedInput, expectedCached] of [
+    [{ prompt_tokens: 100, completion_tokens: 10, prompt_cache_hit_tokens: 80, prompt_cache_miss_tokens: 20 }, 20, 80],
+    [{ input_tokens: 100, output_tokens: 10, input_tokens_details: { cached_tokens: 80 } }, 20, 80],
+    [{ input_tokens: 20, output_tokens: 10, cache_read_input_tokens: 80 }, 20, 80],
+    [{ input_tokens: 20, output_tokens: 10, cache_read_input_tokens: 80, cache_creation_input_tokens: 5 }, 25, 80],
+  ]) {
+    const conversation = [{ role: 'assistant', content: 'answer', _usage: usage }];
+    const live = summarizeSessionUsage({ conversation });
+    assert.equal(live.inputTokens, expectedInput);
+    assert.equal(live.cachedTokens, expectedCached);
+    assert.equal(live.outputTokens, 10);
+    assert.equal(live.modelCalls, 1);
+    assert.deepEqual(summarizeSessionUsage({ conversation: serializeConversation(conversation) }), live);
+    assert.deepEqual(summarizeSessionUsage({ conversation: deserializeConversation(serializeConversation(conversation), 'system') }), live);
+  }
+});
+
 test("provider cost prefers ticks and does not invent a price", () => {
   const preferred = summarizeSessionUsage({ conversation: [{
     role: "assistant", content: "priced",
