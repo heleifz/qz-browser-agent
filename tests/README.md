@@ -97,8 +97,65 @@ checks same-tab serialization, real nested `tools.read_article` barriers and one
 a DOM side effect. No public sites or model providers are involved.
 `npm test -- playwright tests/browser/tab-navigation.spec.mjs` repeats the independent-read check
 with a withheld HTTP response, real Content readiness and Network watching both enabled and disabled.
+It uses the production Session tab manager and checks a fresh Session's first open, pre-navigation
+Network capture and a same-batch alias read. `--match session-tab-targeting` also covers provisional
+desktop/mobile setup, reservation isolation and cancellation during CDP authorization.
+The navigation fixture also holds a new tab's response past the open deadline, exercises eight page
+readers' own deadlines, and checks that the retained tab becomes readable after commit. The
+`page-readiness` units cover missing `pendingUrl`, cancellation, closed tabs and restricted destinations
+using the production Session target resolver. Firefox's `page-readiness.spec.mjs` checks native
+navigation and reader waits through its existing page-tool harness.
+
+`npm test -- unit --match page-readiness-fuzz` runs four replayable seeds through 220 lifecycle
+combinations with a controlled clock. It varies empty/blank/old documents, missing pending URLs,
+same-URL reloads, commit/deadline races, cancellation, removal, run replacement, deletion and
+restricted destinations. Each case also checks independent-tab progress and late callbacks.
+`npm test -- playwright tab-navigation-fuzz.spec.mjs --workers 2` exercises 17 lifecycle scenarios
+with three seeds and network watching on/off in Chrome. Firefox runs the same scenarios through
+`tests/firefox/page-navigation-fuzz.spec.mjs`; both fixtures load the production Session target
+resolver in an isolated extension. Filter a seed with Playwright's `--grep 'seed=17'`.
+Reports include the seed, scenario, observed navigation state and checked read count. Eight reader
+entry points run in shuffled concurrent batches. Network-error screenshots and AX trees may describe
+the browser's error document; they must not present the requested article as loaded.
+
+Use `--grep combinations` on the browser navigation fuzz specs for a second matrix: 12 compound
+scenarios, three different seeds, and network watching on/off in both browsers. It combines redirect
+chains with cancellation or policy changes, parser-blocking responses, reload timeouts and retries,
+same-URL replacement with late responses, alias reuse after closure, concurrent Sessions, ownership
+transfer, old/new runs, deadline/commit/close races, 204 recovery and stale UIDs. Assertions inspect
+actual text, elements, image metadata and lossless screenshot pixels rather than page metadata.
+The `page-readiness-fuzz` unit file adds 105 controlled-clock combinations with two scheduled
+transitions per case; `--test-name-pattern=combinations` selects just those three seeded tests.
 
 ## Add a test at the right boundary
+
+`npm test -- playwright chat-followup-restore.spec.mjs` exercises queue withdrawal through the
+production Side Panel transport, Session commands, Agent queues, and document store. It checks
+image/file restoration, editing and resending, merging an existing draft, Session switching, and
+persistence failure with retry in both color schemes. The fixture uses isolated local data and
+does not invoke a model provider.
+
+Use `--grep "extreme"` for blocked persistence, repeated cancellation, Enter and attachment
+removal during recall, in-flight Session switches, queue consumption and steering races,
+attachment-copy failures, lost replies with repeated disconnects, composition events, and
+attachment-only or long Unicode messages. The fixture uses the production Session supervisor
+to serialize commands. `npm test -- unit --match queued-message-recovery` adds competing-window
+admission, durable rollback and restart snapshots, cleanup failure, stale drafts, and recovery
+reads queued behind a Session command. Composer lifecycle tests check that reconnect recovery
+keeps editing locked, preserves Session ownership, and never replays the recall mutation.
+
+For seeded queue/composer interactions, run:
+
+```bash
+npm test -- playwright chat-followup-restore.spec.mjs --grep "queued recall fuzz" --repeat-each=3
+```
+
+The matrix uses three widths and both themes, with a new seed per repetition. Native steering/recall
+clicks, double-clicks, attachment removal,
+Shift+Enter editing, Session switches, and wheels overlap assistant streaming and delayed recall
+responses. Each scenario checks text and attachment ownership before resending and records frame
+geometry, real input events, and the action sequence. Firefox's native BiDi `fill` sends ordinary
+Enter for embedded newlines; the fuzz uses Shift+Enter to exercise editing without submitting.
 
 | Behavior being changed | Where to put the evidence |
 | --- | --- |
@@ -344,9 +401,59 @@ model/tool turns and elapsed time, including any additional verification calls. 
 `QZ_PAGE_BATCH_EXPECT_BINDINGS=0` when measuring an older extension without this contract; answer
 checks remain enabled. This case is selected explicitly and uses the normal live credential rules.
 
+`QINGZHOU_LIVE_CASES=streamUi npm test -- live deepseek` runs product comparison, image collection,
+public MDN research and timeout recovery through the real model, tools and Side Panel. Set
+`QINGZHOU_LIVE_REPORT` to a JSON path in an existing output directory to retain each task's prompt,
+model/tool transcript, UI frames and screenshots. `QINGZHOU_LIVE_UI_CASES` accepts comma-separated
+case IDs: `product-comparison`, `image-collection`, `public-documentation`, `timeout-recovery`.
+The cases use 360/430/560px viewports and both themes, expand actual tool results, read earlier
+content while output arrives and return to the live tail. Assertions cover persisted records,
+tool errors and result order, completed Markdown, reading position and backward scroll movement.
+Product/image fixtures are local; the documentation case visits public MDN pages. Use
+`QINGZHOU_TEST_EXTENSION_DIR` to exercise an unpacked production ZIP without rebuilding it.
+
+`QINGZHOU_LIVE_CASES=tableReveal npm test -- live deepseek` reads public Python, MDN and national
+park pages for research and design tasks. It uses the same viewport interactions
+and records every completed table's opacity and dimensions. Each table must fade once, keep its
+column widths and height, and stay visible during later output. The `streamUi` table cases use this
+probe too. Reports preserve public-page errors separately from per-task UI outcomes; a successful
+UI check does not make a run with unexpected console errors pass.
+For tasks in the native Firefox sidebar, select
+`QINGZHOU_LIVE_FIREFOX_TABLES=1 npm test -- live firefox-ui` with the Firefox build and live credentials.
+These read public documentation for accessibility, scheduling and astronomy, exercise
+summary clicks and scripted wheel/scroll events, and retain trajectories and frame measurements.
+If an HTTPS test proxy supplies a CA, set `QINGZHOU_FIREFOX_CA_FILE` to that public certificate
+and install `certutil`. The runner imports it only into its disposable profile; TLS validation
+stays enabled.
+
+Five additional public-site tasks exercise article extraction with streaming UI. Select
+`QINGZHOU_LIVE_UI_CASES=public-clipboard-design,public-national-parks,public-archive-import`
+with the Chrome `tableReveal` runner, and
+`QINGZHOU_LIVE_UI_CASES=firefox-media-accessibility,firefox-space-observatories`
+with the Firefox table runner. These cover a Clipboard API feature design, three persisted park
+records, archive processing, accessible video deliverables and a multiwavelength astronomy lesson.
+Firefox retains public-page console diagnostics and rejects page exceptions during these reads.
+
+`QINGZHOU_LIVE_CASES=tabReferences npm test -- live deepseek` runs five additional tasks: a
+conference train plan, warehouse replenishment, an interactive shipping quote, Python JSON/CSV
+documentation research, and a lecture schedule update. Preparatory messages create real follow-up
+runs in the same Session. The cases verify alias reuse across turns, one deliberate duplicate-name
+rejection, UID/alias agreement, numeric `tabRef`, and alias reuse after closure. The form case checks
+the actual page quote; the warehouse case reads back persisted rows. Other tool errors fail the
+test. These cases share the streaming viewport probes, native wheel interactions, Markdown checks,
+screenshots and trajectory evidence above. `QINGZHOU_LIVE_UI_CASES` can select their case IDs from
+[the task definitions](live/tab-reference-journeys.mjs).
+
+`QINGZHOU_LIVE_CASES=tabReferencesDiverse npm test -- live deepseek` adds public weather JSON,
+network-backed invoice pagination, mobile accessibility inspection, poster image collection, and
+redirected return-policy research. The same output and case selectors apply. Assertions check live
+forecast dates, requested invoice pages, mode changes on one alias, three persisted image assets,
+and repeated navigation without opening another tab. Local fixtures use random codes, real browser
+requests and real extension tools; the weather task visits the public Open-Meteo API.
+
 `npm test -- live firefox-ui` runs real DeepSeek tasks in an isolated Firefox sidebar. It holds a
 local navigation until the tool returns a partial timeout, checks the incomplete indicator, and
-verifies a later read returns the page's random code without opening it again. A multi-page task
+verifies a later read by its persistent alias returns the page's random code without opening it again. A multi-page task
 tests repeated header/footer collapse while the next model request is paused, then checks the
 final answer. It also pairs the current CLI bridge and lists both tasks through the real CLI/MCP
 path. Set `QINGZHOU_FIREFOX_EXTENSION_DIR` to a built Firefox extension, `FIREFOX_EXECUTABLE` to
@@ -489,8 +596,26 @@ Markdown streaming, Provider timing replay, production loading, CSS comparisons 
 extraction. Run the relevant synthetic benchmark for stream, motion, timeline or virtualized-grid
 changes.
 
-The browser viewport fuzz uses 60 fixed-seed cases across three windows and six font sizes. To
-replay private samples, place a JSON array of paths in the ignored `tests/results/corpus.json`:
+The browser tool-anchor viewport fuzz uses 60 fixed-seed cases across three windows and six font
+sizes. Its streaming stage updates thinking text. The assistant viewport fuzz separately covers
+six seeded streams with Markdown tables, long links and footnotes across three windows, light/dark
+themes, tail following and history reading. Native clicks and wheels overlap randomized content
+chunks and delivery delays. It records every frame through stream completion, rejects backward tail
+motion even when the tail gap stays zero, and checks history anchors and final table/link semantics.
+Coverage assertions require real inputs and changing content during the observed idle periods.
+
+```bash
+npm test -- playwright tests/browser/assistant-viewport-stability-fuzz.spec.mjs
+QINGZHOU_ASSISTANT_FUZZ_SEED_OFFSET=100000 npm test -- playwright \
+  tests/browser/assistant-viewport-stability-fuzz.spec.mjs --repeat-each=3
+```
+
+Failure attachments contain the seed, chunk plan, native inputs and frame geometry. The optional
+`QINGZHOU_FUZZ_MARKDOWN_MODULE` points to a local compiled ESM renderer for negative-control runs;
+normal verification always loads the current renderer. Keep baseline modules in ignored output.
+
+To replay private samples in the tool-anchor matrix, place a JSON array of paths in the ignored
+`tests/results/corpus.json`:
 
 ```bash
 QINGZHOU_FUZZ_CORPUS=tests/results/corpus.json npm test -- playwright \

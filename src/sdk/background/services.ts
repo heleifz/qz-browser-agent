@@ -53,6 +53,10 @@ export type GoalUpdateInput = Partial<Pick<SessionGoal, 'objective' | 'criteria'
 
 /** Finite caller-owned port. Session commands retain all persistence and run authority. */
 export interface ToolSessionCommands extends UserWaitRuntime {
+  getTabAliases(sessionId: string): Record<string, number>;
+  reserveTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }): Promise<object>;
+  commitTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; reservation: object; tabId: number }): void;
+  discardTabAlias(reservation: object): void;
   isRunCurrent(sessionId: string, runId: string): boolean;
   listSessions(input: { limit: number; excludeSessionId: string }): Promise<unknown>;
   createSession(input: { title: string; firstMessage: string; parentSessionId: string }): Promise<object>;
@@ -67,7 +71,7 @@ export interface ToolSessionCommands extends UserWaitRuntime {
   runAutomation(id: string): Promise<unknown>;
   listAutomationRuns(input: { automationId: string; limit: number }): Promise<unknown>;
   updateGoal(input: GoalUpdateInput): Promise<unknown>;
-  resolveTargetTab(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tabId: number; source: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; createdTabReservation?: object }): Promise<TargetTabResult>;
+  resolveTargetTab(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tabId: number; source: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; allowLoadingBlank?: boolean; createdTabReservation?: object }): Promise<TargetTabResult>;
   listOwnedTabIds?(sessionId: string): readonly number[];
   /** Execution-only permit: no Session ownership or working-tab publication until commit. */
   reserveCreatedTab?(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; tab: TabReference }): Promise<{ ok: boolean; code?: string; reservation?: object }>;

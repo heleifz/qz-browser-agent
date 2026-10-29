@@ -244,8 +244,15 @@ loading state and `incomplete` marker. Stop and navigation failures retain new-t
 claimed while blank, configured for mobile mode or network capture, then navigated through this
 gate.
 
-Read-only page tools also wait for an initial pending navigation to leave `about:blank`, within
-their timeout and cancellation signal. They recheck access after waiting. Content reads inject
+Page readers, including accessibility trees and screenshots, wait for initial navigation to leave
+an empty URL or `about:blank`, within their timeout and cancellation signal. Admission also accepts
+an owned blank tab still marked `loading` when Chrome has dropped `pendingUrl`. Readers recheck
+the target and security policy before page preparation, even if navigation finished between admission
+and the wait. A web `pendingUrl` also gates reads of an existing document during replacement or
+same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
+Committed documents remain readable while subresources load. Firefox's host supplies its missing
+`pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
+replaced requests. Readers need no Session-level navigation registry. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait
@@ -454,11 +461,17 @@ can use the original result identity to authorize a dependent observation. A JSO
 permission. Actions await published ownership. Commit checks run authority, live tab availability and
 security again, then publishes ownership and selection together. Failed or cancelled uncommitted
 creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
-its loading tab only if its ordered commit is still authorized, and supplies no alias binding.
+its loading tab only if its ordered commit is still authorized, and retains its alias for dependent and later calls.
 
-Only trusted core registrations declare scheduling authority. References expire at the array boundary;
-subsequent messages use returned numeric IDs. Multiple opens require explicit page targets. Duplicate,
-invalid, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed, incomplete or
+Only trusted core registrations declare scheduling authority. Page-tool model schemas expose `tabRef`
+(integer or string); numeric strings also select browser IDs. Internal handlers retain numeric `tabId`,
+and legacy `tabId` input remains compatible. `open_tab.tabAlias` names a page within its Session until
+closure. Aliases persist across turns, follow-ups and worker restarts in runtime schema 4. An alias
+reservation precedes browser creation, so open and pending names cannot collide; aliases cannot be
+entirely numeric. Failed creation releases the reservation. The planner snapshots existing aliases
+when admitting a batch, so reuse after closure cannot retarget already queued calls. UID and explicit
+page references must agree. Multiple opens require explicit page targets. Duplicate, invalid,
+conflicting, forward and ambiguous references return `BATCH_TAB_REFERENCE_ERROR`. Failed or
 effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers, including observations
 that executed speculatively before the producer's commit failed. Independent pages continue. Browser
 operations already issued may still finish after cancellation; closed provisional tabs and revoked
@@ -523,6 +536,24 @@ timeline upgrades.
 The [capability host](../src/sidepanel/capability-host/runtime.ts) registers and cleans up pages and
 settings. Packages own form drafts; Session runtime owns unsent messages by window and message ID.
 Heavy UI libraries load on demand and update the instance that requested them.
+
+Submitting to a running Session shows a provisional queue row while the single `prompt` command
+awaits Background admission. The complete optimistic transcript record retains its message ID,
+images and documents, but the UI projection hides it while delivery is pending. Provisional rows
+cannot be recalled, steered or dragged until admission settles. A queued acknowledgement removes
+the local transcript record; a started acknowledgement or accepted user event reveals it, and a
+failure reveals the existing retry action. Presentation is scoped to the originating Session and
+does not change Background queue ownership or admission decisions.
+
+The queued-message close button returns the message to the composer for editing. Background saves
+the queue withdrawal and the complete draft together before releasing queue admission. Existing
+draft text and attachments are retained; documents from a different message are copied with their
+parsed models into the draft's ownership before the queued originals are collected. A failed save
+keeps the message queued, and messages whose execution has already started cannot be recalled.
+If a recall response is lost, the composer stays locked while reconnecting and reads the saved
+draft after the original command in both the Session and composer queues. It adopts the newer
+snapshot before editing resumes, without replaying the withdrawal. A late response never updates
+a different or deleted Session.
 
 [Session export](../src/sidepanel/features/export/session-export-feature.ts) uses one Background
 exchange payload and synchronous `renderStatic` projections. It embeds the active skin and a

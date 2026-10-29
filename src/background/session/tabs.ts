@@ -6,6 +6,8 @@ import type { PortableSessionTab } from "../../shared/session/session-exchange.j
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { NewTabTarget } from "../services/chrome-window-target.js";
+import { isTabAlias, normalizeTabAliases } from "../../shared/tab-reference.js";
+import { tabReferenceError } from "../tools/tab-reference.js";
 type Fields = Record<string, unknown>;
 type WorkingTab = NonNullable<ReturnType<typeof normalizeWorkingTab>>;
 interface GroupWindow { groupId: number; tabIds: number[] }
@@ -34,7 +36,7 @@ interface SessionTabsOptions {
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
 interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean; createdTabReservation?: object }
-interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; createdTabReservation?: object }
+interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; allowLoadingBlank?: boolean; createdTabReservation?: object }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
 type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; tab: WorkingTab };
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
@@ -89,8 +91,68 @@ export function createSessionTabs({
   }
 
   const pendingTabs = new Map<number, { token: object; sessionId: string; runId?: string | null; tab: WorkingTab }>();
+  const pendingAliases = new Map<object, { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }>();
   const groupSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const timestamp = () => String(now?.() || "");
+
+  function getTabAliases(sessionId: string) {
+    const runtime = supervisor.getRuntime(normalizeSessionId(sessionId));
+    return normalizeTabAliases(runtime?.tabAliases, getOwnedTabIds(runtime));
+  }
+
+  function assertAliasRun(sessionId: string, { runId, signal }: RunAuthority) {
+    if (!sessionId || !supervisor.getRuntime(sessionId) || signal?.aborted || (runId && !supervisor.isRunCurrent(sessionId, runId))) {
+      throw Object.assign(new Error("Operation aborted during tab alias binding"), { code: "OPERATION_ABORTED" });
+    }
+  }
+
+  async function reserveTabAlias({ sessionId, alias, runId, signal }: RunAuthority & { sessionId: string; alias: string }) {
+    const id = normalizeSessionId(sessionId);
+    if (!isTabAlias(alias)) throw tabReferenceError("invalid_alias", alias);
+    await ready();
+    if (!supervisor.getRuntime(id)) {
+      // An empty CLI/MCP Session has metadata before its first runtime checkpoint.
+      const sessions = await getSessions();
+      if (!Object.hasOwn(sessions, id) || signal?.aborted || (runId && !supervisor.isRunCurrent(id, runId))) {
+        throw Object.assign(new Error("Operation aborted during tab alias binding"), { code: "OPERATION_ABORTED" });
+      }
+      setRuntime(id, {});
+    }
+    assertAliasRun(id, { runId, signal });
+    const existing = getTabAliases(id)[alias];
+    if (Object.hasOwn(getTabAliases(id), alias)) {
+      // A close event can arrive after the next tool call. Reconcile only this old binding.
+      let alive = true;
+      try { await tabsApi.get(existing); } catch { alive = false; }
+      assertAliasRun(id, { runId, signal });
+      if (alive) throw tabReferenceError("duplicate_alias", alias);
+      await handleTabRemoved(existing);
+    }
+    assertAliasRun(id, { runId, signal });
+    if (Object.hasOwn(getTabAliases(id), alias)) throw tabReferenceError("duplicate_alias", alias);
+    for (const pending of pendingAliases.values()) {
+      if (pending.sessionId === id && pending.alias === alias) throw tabReferenceError("duplicate_alias", alias);
+    }
+    const reservation = Object.freeze({});
+    pendingAliases.set(reservation, { sessionId: id, alias, runId, signal });
+    return reservation;
+  }
+
+  function commitTabAlias({ sessionId, runId, signal, reservation, tabId }: RunAuthority & { sessionId: string; reservation: object; tabId: number }) {
+    const pending = pendingAliases.get(reservation);
+    const id = normalizeSessionId(sessionId);
+    assertAliasRun(id, { runId, signal });
+    if (!pending || pending.sessionId !== id || pending.runId !== runId || pending.signal?.aborted || !owns(id, tabId)) {
+      const error = tabReferenceError("invalid_reference", pending?.alias);
+      Object.assign(error.details, { tabId, sessionId: id, bindingReason: !pending ? "missing_reservation"
+        : pending.signal?.aborted ? "aborted_reservation" : !owns(id, tabId) ? "unowned_tab" : "mismatched_reservation" });
+      throw error;
+    }
+    setRuntime(id, { tabAliases: { ...getTabAliases(id), [pending.alias]: tabId } });
+    pendingAliases.delete(reservation);
+  }
+
+  function discardTabAlias(reservation: object) { pendingAliases.delete(reservation); }
 
   function findOwner(tabId: unknown, { excludeSessionId = "" } = {}) {
     const target = Number(tabId);
@@ -218,6 +280,7 @@ export function createSessionTabs({
     readOnly = false,
     tabOnly = false,
     allowPreNavigationBlank = false,
+    allowLoadingBlank = false,
     createdTabReservation,
   }: TargetTabOptions = {}) {
     const id = normalizeSessionId(sessionId);
@@ -263,6 +326,13 @@ export function createSessionTabs({
       return { ok: false, code: "SESSION_TAB_UNAVAILABLE", reason: "pending_creation", sessionId: id, tabId: targetTabId };
     const owner = findOwner(targetTabId);
     const formatted = formatTab(tab, { titleLimit: 120 });
+    // Admission to the reader's readiness wait only. Do not publish the initial blank
+    // as the working page, and require ordinary target validation before page access.
+    if (allowLoadingBlank && owner?.sessionId === id && tab.status === "loading"
+      && (!tab.url || tab.url === "about:blank")) {
+      return { ok: true, reason: "loading_owned_tab", sessionId: id, tabId: targetTabId,
+        tab: formatted, ownedByCurrentTask: true };
+    }
     const tabUrl = String(tab?.url || tab?.pendingUrl || "").trim();
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"
@@ -624,6 +694,7 @@ export function createSessionTabs({
 
   async function discardPendingTabs(sessionId: unknown) {
     const id = normalizeSessionId(sessionId);
+    for (const [token, pending] of pendingAliases) if (pending.sessionId === id) pendingAliases.delete(token);
     for (const pending of pendingTabs.values()) if (pending.sessionId === id) await discardCreatedTab(pending.token);
   }
 
@@ -673,6 +744,7 @@ export function createSessionTabs({
           }
         : {}),
       ownedTabIds: [],
+      tabAliases: {},
       ownedTabsClosedAt: timestamp(),
       ownedTabsCloseSource: source || "terminal",
     });
@@ -731,7 +803,8 @@ export function createSessionTabs({
       try {
         const tab = await tabsApi.get(tabId);
         if (!isPageTab(tab)) continue;
-        const formatted = formatTab(tab, { titleLimit });
+        const tabAlias = Object.entries(getTabAliases(id)).find(([, target]) => target === tabId)?.[0];
+        const formatted = { ...formatTab(tab, { titleLimit }), ...(tabAlias ? { tabAlias } : {}) };
         out.push(guardrails ? annotateGuardrailTab(formatted, guardrails) : formatted);
       } catch (_error) {}
     }
@@ -796,6 +869,7 @@ export function createSessionTabs({
             }
           : {}),
         ownedTabIds: nextTabIds,
+        tabAliases: normalizeTabAliases(runtime.tabAliases, nextTabIds),
         sessionTabIds: nextTabIds,
         ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
         updatedAt: timestamp(),
@@ -831,14 +905,16 @@ export function createSessionTabs({
     const groupedTabIds = new Set();
     let runtimeChanged = false;
     for (const [runtimeSessionId, runtime] of supervisor.runtimeEntries()) {
-      const validTabIds = [];
+      const validTabIds: number[] = [];
       const ownedTabIds = getOwnedTabIds(runtime);
       for (const tabId of ownedTabIds) {
         try {
           const tab = await tabsApi.get(tabId);
-          if (!isPageTab(tab)) continue;
           const normalizedTabId = Number(tab.id);
           validTabIds.push(normalizedTabId);
+          // Loading about:blank and temporarily non-page tabs still belong to their Session.
+          // Group presentation must not revoke the reference before navigation commits.
+          if (!isPageTab(tab)) continue;
           if (!groupedTabIds.has(normalizedTabId)) {
             groupedTabIds.add(normalizedTabId);
             validTabs.push(tab);
@@ -846,10 +922,15 @@ export function createSessionTabs({
         } catch (_error) {}
       }
       if (!sameTabIdSet(ownedTabIds, validTabIds)) {
+        const latest = supervisor.getRuntime(runtimeSessionId);
+        if (!latest) continue;
+        const missing = new Set(ownedTabIds.filter(tabId => !validTabIds.includes(tabId)));
+        const retained = getOwnedTabIds(latest).filter(tabId => !missing.has(tabId));
         supervisor.setRuntime(runtimeSessionId, {
-          ...runtime,
-          ownedTabIds: validTabIds,
-          sessionTabIds: validTabIds,
+          ...latest,
+          ownedTabIds: retained,
+          sessionTabIds: retained,
+          tabAliases: normalizeTabAliases(latest.tabAliases, retained),
           ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
           updatedAt: timestamp(),
         });
@@ -981,6 +1062,10 @@ export function createSessionTabs({
   }
 
   return Object.freeze({
+    getTabAliases,
+    reserveTabAlias,
+    commitTabAlias,
+    discardTabAlias,
     reserveCreatedTab,
     commitCreatedTab,
     discardCreatedTab,
