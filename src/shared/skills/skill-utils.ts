@@ -77,13 +77,13 @@ export function isValidAgentSkillName(value: unknown = "") {
 
 export function toAgentSkillName(value: unknown = "", fallback = "skill") {
   const raw = String(value || "").trim();
-  const fallbackSlug = basicSkillSlug(fallback) || "skill";
-  const slug = basicSkillSlug(raw);
+  const fallbackSlug = skillSlug(fallback) || "skill";
+  const slug = skillSlug(raw);
   const hasNonAscii = /[^\x00-\x7F]/.test(raw);
   if (slug && isValidAgentSkillName(slug) && !hasNonAscii) return slug;
   const hash = shortSkillHash(raw || fallbackSlug);
   const base = slug || fallbackSlug;
-  return trimSkillSlug(`${base}-${hash}`);
+  return agentSkillNameWithDisambiguator(base, hash);
 }
 
 export function getSkillDisplayName(skill: Data = {}) {
@@ -269,27 +269,30 @@ function normalizeSkillIdentity(skill: Data = {}, metadata: SkillMetadata = {}) 
   return { name, displayName, metadata: nextMetadata };
 }
 
-function basicSkillSlug(value: unknown = "") {
+function skillSlug(value: unknown = "") {
   return String(value || "")
     .normalize("NFKD")
     .toLowerCase()
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 64)
     .replace(/^-|-$/g, "");
 }
 
-function trimSkillSlug(value: unknown = "") {
-  let text = String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  if (text.length > 64) text = text.slice(0, 64).replace(/-+$/g, "");
-  if (!isValidAgentSkillName(text)) text = `skill-${shortSkillHash(text || "skill")}`;
-  return text;
+/** Keep the full hash inside the 64-character id so a shared prefix cannot collide. */
+function agentSkillNameWithDisambiguator(base: string, hash: string) {
+  const suffix = `-${hash}`;
+  const stemSource = skillSlug(base);
+  const direct = `${stemSource}${suffix}`;
+  if (isValidAgentSkillName(direct)) return direct;
+  const maxStem = Math.max(1, 64 - suffix.length);
+  let stem = stemSource.slice(0, maxStem).replace(/-+$/g, "");
+  if (!stem || !/^[a-z0-9]/u.test(stem)) stem = "skill";
+  if (stem.length > maxStem) stem = stem.slice(0, maxStem).replace(/-+$/g, "");
+  const text = `${stem || "skill"}${suffix}`;
+  if (isValidAgentSkillName(text)) return text;
+  const fallback = `skill${suffix}`;
+  return isValidAgentSkillName(fallback) ? fallback : "skill";
 }
 
 function shortSkillHash(value: unknown = "") {
