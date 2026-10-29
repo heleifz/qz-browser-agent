@@ -6,6 +6,11 @@ import {
   createPageSkillImportService,
 } from "../../src/background/skills/page-skill-importer.js";
 import { createZip } from "../../src/shared/skills/skill-package.js";
+import {
+  getSkillDisplayName,
+  normalizeModernSkill,
+  toAgentSkillName,
+} from "../../src/shared/skills/skill-utils.js";
 
 const ZIP_URL = "https://skills.example/download/private-package.zip";
 
@@ -112,6 +117,79 @@ test("page importer reports name conflicts without overwriting until explicitly 
   assert.equal(installed.content, "# New content");
   assert.equal(installed.createdAt, "2026-07-01 10:00:00");
   assert.equal(installed.updatedAt, "2026-07-14 15:30:00");
+});
+
+test("page importer reuses a legacy truncated id when the display name matches", async () => {
+  const prefix = "qzb-shared-".padEnd(64, "a");
+  const longName = `${prefix}-alpha`;
+  const legacy = normalizeModernSkill({
+    name: prefix,
+    displayName: longName,
+    description: "Imported Skill",
+    content: "# legacy body",
+    createdAt: "2026-01-01 00:00:00",
+    updatedAt: "2026-01-01 00:00:00",
+  });
+  assert.equal(legacy.name, prefix);
+  assert.notEqual(toAgentSkillName(longName), prefix);
+  const archive = await skillZip([{ name: longName, content: "# reimported body" }]);
+  const { repository } = createRepositoryState({
+    _skills: { [prefix]: legacy },
+  });
+  const service = createPageSkillImportService({
+    repository,
+    downloadFromTab: async () => archive,
+    now: () => "2026-07-14 16:00:00",
+  });
+
+  const conflict = await service.import({ tabId: 73, url: ZIP_URL });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.code, "SKILL_IMPORT_NAME_CONFLICT");
+  assert.deepEqual(conflict.conflicts, [{ name: prefix, reason: "name_conflict" }]);
+  assert.equal((await repository.readSnapshot()).skills[prefix].content, "# legacy body");
+  assert.equal((await repository.readSnapshot()).skills[toAgentSkillName(longName)], undefined);
+
+  const overwritten = await service.import({ tabId: 73, url: ZIP_URL, overwrite: true });
+  assert.equal(overwritten.ok, true);
+  assert.deepEqual(overwritten.names, [prefix]);
+  assert.equal(overwritten.overwrittenCount, 1);
+  const snapshot = await repository.readSnapshot();
+  assert.deepEqual(Object.keys(snapshot.skills), [prefix]);
+  assert.equal(snapshot.skills[prefix].content, "# reimported body");
+  assert.equal(snapshot.skills[prefix].createdAt, "2026-01-01 00:00:00");
+  assert.equal(getSkillDisplayName(snapshot.skills[prefix]), longName);
+});
+
+test("page importer does not treat a real 64-character skill as the legacy id of a longer name", async () => {
+  const prefix = "qzb-shared-".padEnd(64, "a");
+  const longName = `${prefix}-alpha`;
+  const hashedName = toAgentSkillName(longName);
+  const prefixSkill = normalizeModernSkill({
+    name: prefix,
+    displayName: prefix,
+    description: "prefix",
+    content: "# prefix original",
+    createdAt: "2026-01-01 00:00:00",
+    updatedAt: "2026-01-01 00:00:00",
+  });
+  const archive = await skillZip([{ name: longName, content: "# should be new" }]);
+  const { repository } = createRepositoryState({
+    _skills: { [prefix]: prefixSkill },
+  });
+  const service = createPageSkillImportService({
+    repository,
+    downloadFromTab: async () => archive,
+    now: () => "2026-07-14 16:10:00",
+  });
+
+  const imported = await service.import({ tabId: 73, url: ZIP_URL, overwrite: true });
+  assert.equal(imported.ok, true);
+  assert.deepEqual(imported.names, [hashedName]);
+  const snapshot = await repository.readSnapshot();
+  assert.equal(snapshot.skills[prefix].content, "# prefix original");
+  assert.equal(snapshot.skills[prefix].updatedAt, "2026-01-01 00:00:00");
+  assert.equal(snapshot.skills[hashedName].content, "# should be new");
+  assert.equal(getSkillDisplayName(snapshot.skills[hashedName]), longName);
 });
 
 test("page importer validates every Skill before committing any of them", async () => {

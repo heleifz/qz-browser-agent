@@ -12,9 +12,15 @@ import { buildGitSkillPublishFiles } from "../../src/background/skills/git-skill
 import {
   getGitSkillOrigin,
   gitSkillSourceId,
+  withGitSkillOrigin,
+  withoutGitSkillOrigin,
 } from "../../src/shared/skills/git-skill-sources.js";
 import { createZip, importSkillsZip } from "../../src/shared/skills/skill-package.js";
-import { normalizeModernSkill } from "../../src/shared/skills/skill-utils.js";
+import {
+  getSkillDisplayName,
+  normalizeModernSkill,
+  toAgentSkillName,
+} from "../../src/shared/skills/skill-utils.js";
 
 const REPOSITORY_URL = "https://gitlab.example.com/example-team/browser-skills";
 const GITHUB_REPOSITORY_URL = "https://github.com/openai/codex";
@@ -545,6 +551,90 @@ test("unbind cleanup deletes unchanged skills but preserves local modifications"
   assert.equal(getGitSkillOrigin(after.skills["content-one"]), null);
 });
 
+test("git sync keeps a legacy truncated id for the same owned skill", async () => {
+  const prefix = "qzb-shared-".padEnd(64, "a");
+  const longName = `${prefix}-alpha`;
+  const hashedName = toAgentSkillName(longName);
+  const harness = createHarness();
+  harness.imported = () => [skill(longName, "# synced body")];
+  const bound = await harness.service.bind({ repositoryUrl: REPOSITORY_URL });
+  const sourceId = bound.source.id;
+  assert.deepEqual(bound.names, [hashedName]);
+
+  const snapshot = await harness.repository.readSnapshot();
+  const source = snapshot.sources[sourceId];
+  const origin = getGitSkillOrigin(snapshot.skills[hashedName]);
+  const legacySkill = withGitSkillOrigin({
+    ...snapshot.skills[hashedName],
+    name: prefix,
+    displayName: longName,
+  }, source, { skillName: prefix, importedAt: origin.importedAt });
+  delete snapshot.skills[hashedName];
+  snapshot.skills[prefix] = legacySkill;
+  snapshot.sources[sourceId] = {
+    ...source,
+    skillNames: [prefix],
+    skillDigests: { [prefix]: comparableSkillDigest(legacySkill) },
+  };
+  await harness.repository.commitSnapshot({
+    ...snapshot,
+    expected: await harness.repository.readSnapshot(),
+  });
+
+  const checked = await harness.service.check({ sourceId });
+  assert.deepEqual(checked.names, [prefix]);
+  assert.equal(checked.changes.addedCount, 0);
+  assert.equal(checked.changes.removedCount, 0);
+  assert.equal(checked.updateAvailable, false);
+
+  const updated = await harness.service.update({ sourceId });
+  assert.equal(updated.action, "current");
+  assert.deepEqual(updated.names, [prefix]);
+  const after = await harness.repository.readSnapshot();
+  assert.equal(after.skills[hashedName], undefined);
+  assert.equal(after.skills[prefix].content, "# synced body");
+  assert.equal(getSkillDisplayName(after.skills[prefix]), longName);
+  assert.equal(getGitSkillOrigin(after.skills[prefix]).skillName, prefix);
+  assert.deepEqual(after.sources[sourceId].skillNames, [prefix]);
+
+  harness.archiveVersion = 2;
+  harness.imported = () => [skill(longName, "# synced body v2")];
+  const changed = await harness.service.update({ sourceId });
+  assert.equal(changed.action, "updated");
+  assert.deepEqual(changed.names, [prefix]);
+  assert.deepEqual(changed.removedNames, []);
+  const changedSnapshot = await harness.repository.readSnapshot();
+  assert.equal(changedSnapshot.skills[hashedName], undefined);
+  assert.equal(changedSnapshot.skills[prefix].content, "# synced body v2");
+  assert.equal(getGitSkillOrigin(changedSnapshot.skills[prefix]).skillName, prefix);
+  assert.deepEqual(changedSnapshot.sources[sourceId].skillNames, [prefix]);
+});
+
+test("git sync does not adopt an unowned skill id that only shares a truncated prefix", async () => {
+  const prefix = "qzb-shared-".padEnd(64, "a");
+  const longName = `${prefix}-alpha`;
+  const hashedName = toAgentSkillName(longName);
+  const prefixSkill = normalizeModernSkill({
+    name: prefix,
+    displayName: prefix,
+    description: "prefix",
+    content: "# prefix original",
+    createdAt: "2026-01-01 00:00:00",
+    updatedAt: "2026-01-01 00:00:00",
+  });
+  const harness = createHarness({ skills: { [prefix]: prefixSkill } });
+  harness.imported = () => [skill(longName, "# synced body")];
+  const bound = await harness.service.bind({ repositoryUrl: REPOSITORY_URL });
+  assert.equal(bound.ok, true);
+  assert.deepEqual(bound.names, [hashedName]);
+  const snapshot = await harness.repository.readSnapshot();
+  assert.equal(snapshot.skills[prefix].content, "# prefix original");
+  assert.equal(snapshot.skills[prefix].updatedAt, "2026-01-01 00:00:00");
+  assert.equal(getGitSkillOrigin(snapshot.skills[prefix]), null);
+  assert.equal(snapshot.skills[hashedName].content, "# synced body");
+  assert.equal(getGitSkillOrigin(snapshot.skills[hashedName]).skillName, hashedName);
+});
+
 function createHarness({ skills = {}, repositoryProbe, downloadFromTab } = {}) {
   const state = { _skills: skills };
   const storage = {
@@ -590,4 +680,20 @@ function byteDigest(buffer) {
   let value = 0;
   for (const byte of bytes) value = (value + byte) % 256;
   return value.toString(16).padStart(2, "0").repeat(32);
+}
+
+function comparableSkillDigest(skill) {
+  const detached = withoutGitSkillOrigin(skill);
+  const comparable = { ...detached };
+  delete comparable.createdAt;
+  delete comparable.updatedAt;
+  return byteDigest(new TextEncoder().encode(stableJson(comparable)).buffer);
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(item => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
