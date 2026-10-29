@@ -3,6 +3,7 @@ import {
   getSkillDisplayName,
   isValidAgentSkillName,
   normalizeModernSkill,
+  preserveStoredSkillId,
   toAgentSkillName,
 } from "../../src/shared/skills/skill-utils.js";
 
@@ -83,6 +84,37 @@ const normalizedAlpha = normalizeModernSkill({ name: alpha, description: "alpha"
 assert.equal(normalizedAlpha.name, toAgentSkillName(alpha));
 assert.equal(getSkillDisplayName(normalizedAlpha), alpha);
 assert.notEqual(toAgentSkillName(legacyLong), legacyId);
+
+const legacyAlpha = normalizeModernSkill({
+  name: prefix,
+  displayName: alpha,
+  description: "legacy alpha",
+  content: "legacy-alpha",
+});
+const incomingAlpha = normalizeModernSkill({ name: alpha, description: "alpha", content: "alpha body" });
+assert.equal(preserveStoredSkillId(incomingAlpha, [legacyAlpha]).name, prefix);
+assert.equal(getSkillDisplayName(preserveStoredSkillId(incomingAlpha, [legacyAlpha])), alpha);
+assert.equal(
+  preserveStoredSkillId(incomingAlpha, [normalizeModernSkill({ name: prefix, content: "real prefix" })]).name,
+  toAgentSkillName(alpha),
+);
+assert.equal(
+  preserveStoredSkillId(incomingAlpha, [legacyAlpha, normalizeModernSkill({ name: toAgentSkillName(alpha), displayName: alpha, content: "already hashed" })]).name,
+  toAgentSkillName(alpha),
+);
+assert.equal(
+  preserveStoredSkillId(incomingAlpha, [
+    legacyAlpha,
+    normalizeModernSkill({ name: "other-alpha", displayName: alpha, content: "other" }),
+  ]).name,
+  toAgentSkillName(alpha),
+);
+const prettyIncoming = normalizeModernSkill({ name: "Travel Booking", content: "pretty" });
+assert.equal(prettyIncoming.name, "travel-booking");
+assert.equal(
+  preserveStoredSkillId(prettyIncoming, [normalizeModernSkill({ name: "other-skill", displayName: "Travel Booking", content: "other" })]).name,
+  "travel-booking",
+);
 
 const storage = {
   _skills: {

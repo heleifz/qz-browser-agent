@@ -5,6 +5,7 @@ import { importSkillsZip } from "../../shared/skills/skill-package.js";
 import {
   normalizeModernSkill,
   normalizeSkillLookup,
+  preserveStoredSkillId,
 } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import { downloadGitArchiveFromTab, resolveDownloadDebuggerScope } from "./git-skill-sources.js";
@@ -103,7 +104,7 @@ export function createPageSkillImportService(options: PageImportOptions) {
         );
       }
 
-      const rows = (Array.isArray(imported) ? imported : [])
+      let rows = (Array.isArray(imported) ? imported : [])
         .map(skill => withoutGitSkillOrigin(normalizeModernSkill(skill)))
         .filter(skill => skill.name);
       if (!rows.length) {
@@ -134,6 +135,23 @@ export function createPageSkillImportService(options: PageImportOptions) {
       const existingSkills = Object.values(snapshot.skills || {})
         .map(skill => normalizeModernSkill(skill))
         .filter(skill => skill.name);
+      rows = rows.map(skill => preserveStoredSkillId(skill, existingSkills));
+      const reconciledDuplicate = findDuplicateSkillName(rows);
+      if (reconciledDuplicate) {
+        throw new PageSkillImportError(
+          "PAGE_SKILL_ZIP_DUPLICATE",
+          t("skill.pageZipDuplicate", { name: String(reconciledDuplicate) }),
+          { name: reconciledDuplicate, url, tabId },
+        );
+      }
+      const reconciledBuiltin = rows.find(skill => isBuiltinSkillName(skill.name))?.name;
+      if (reconciledBuiltin) {
+        throw new PageSkillImportError(
+          "SKILL_READ_ONLY",
+          t("skill.pageZipBuiltin", { name: String(reconciledBuiltin) }),
+          { name: reconciledBuiltin, url, tabId },
+        );
+      }
       const conflicts = rows
         .filter(incoming => existingSkills.some(existing => (
           normalizeSkillLookup(existing.name) === normalizeSkillLookup(incoming.name)

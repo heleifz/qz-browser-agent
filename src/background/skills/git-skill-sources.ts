@@ -20,6 +20,7 @@ import {
   modernSkillValuesFromRecord,
   normalizeModernSkill,
   normalizeSkillLookup,
+  preserveStoredSkillId,
 } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 
@@ -293,7 +294,7 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
       if (record(error).code === "OPERATION_ABORTED" || record(error).name === "AbortError") throw error;
       throw new GitSkillSourceError("GIT_ARCHIVE_INVALID", t("git.invalidSkillZip", { reason: String(errorMessage(error)) }));
     }
-    const rows = (Array.isArray(imported) ? imported : [])
+    let rows = (Array.isArray(imported) ? imported : [])
       .map(normalizeModernSkill)
       .filter(skill => skill.name);
     if (!rows.length) {
@@ -315,6 +316,20 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
     const checkedAt = now();
     const snapshot = await repository.readSnapshot();
     const previousSource = snapshot.sources[sourceId] || null;
+    const existingSkills = modernSkillValuesFromRecord(snapshot.skills);
+    const ownedSkills = existingSkills.filter(skill => gitSkillBelongsToSource(skill, sourceId));
+    rows = rows.map(skill => preserveStoredSkillId(skill, ownedSkills));
+    const reconciledDuplicate = findDuplicateSkillName(rows);
+    if (reconciledDuplicate) {
+      throw new GitSkillSourceError(
+        "GIT_ARCHIVE_DUPLICATE_SKILL",
+        t("git.duplicateSkill", { name: String(reconciledDuplicate) }),
+      );
+    }
+    const reconciledBuiltin = rows.find(skill => isBuiltinSkillName(skill.name))?.name;
+    if (reconciledBuiltin) {
+      throw new GitSkillSourceError("GIT_ARCHIVE_BUILTIN_CONFLICT", t("git.builtinSkill", { name: String(reconciledBuiltin) }));
+    }
     const incomingDigests: Record<string, string> = {};
     for (const skill of rows) incomingDigests[skill.name] = await skillDigest(skill, digest);
     if (subpath) {
@@ -340,8 +355,6 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
       checkedAt,
       updatedAt: checkedAt,
     });
-    const existingSkills = modernSkillValuesFromRecord(snapshot.skills);
-    const ownedSkills = existingSkills.filter(skill => gitSkillBelongsToSource(skill, sourceId));
     const ownedKeys = new Set(ownedSkills.map(skill => normalizeSkillLookup(skill.name)));
     const nameConflicts = [];
     for (const incoming of rows) {

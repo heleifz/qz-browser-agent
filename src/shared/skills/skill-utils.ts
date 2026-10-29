@@ -120,6 +120,35 @@ export function normalizeSkillLookup(value: unknown = "") {
   return String(value || "").toLowerCase().replace(/[-_\s]/g, "");
 }
 
+/**
+ * Reuse a stored agent id when a re-import is the same skill.
+ * An exact agent-id match stays on the existing name path. One stored skill
+ * with the same display name keeps that id, including a legacy truncated id.
+ * A shared 64-character prefix is not a match: a real skill of that id stays put.
+ */
+export function preserveStoredSkillId(skill: unknown, existingSkills: readonly unknown[] = []) {
+  const incoming = normalizeModernSkill(skill);
+  if (!incoming.name) return incoming;
+  const storedSkills = existingSkills
+    .map(existing => normalizeSkill(existing))
+    .filter(existing => existing.name);
+  const incomingNameLookup = normalizeSkillLookup(incoming.name);
+  if (storedSkills.some(existing => normalizeSkillLookup(existing.name) === incomingNameLookup)) {
+    return incoming;
+  }
+  const displayName = getSkillDisplayName(incoming);
+  if (!displayName || normalizeSkillLookup(displayName) === incomingNameLookup) return incoming;
+  const matches = storedSkills.filter(existing => (
+    isValidAgentSkillName(existing.name) && getSkillDisplayName(existing) === displayName
+  ));
+  if (matches.length !== 1) return incoming;
+  return normalizeModernSkill({
+    ...incoming,
+    name: matches[0].name,
+    displayName,
+  });
+}
+
 export function normalizeSkillMetadata(value: unknown = {}): SkillMetadata {
   const metadata: SkillMetadata = clonePlainObject(value);
   const qingzhou = clonePlainObject(metadata[QINGZHOU_SKILL_METADATA_KEY]);
