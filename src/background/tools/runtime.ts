@@ -78,6 +78,7 @@ import {
 } from "../skills/skill-tool-runtime.js";
 import { createCdpRuntime } from "./cdp-runtime.js";
 import { confirmDebuggerReattach } from "./debugger-reattach.js";
+import { createJavaScriptDialogHandler } from "./javascript-dialog.js";
 import { createElementRuntime } from "./element-runtime.js";
 import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
@@ -1523,6 +1524,11 @@ const {
   confirmUserReattach: access => confirmDebuggerReattach(access, getToolRuntimeDependencies(access.context)),
 });
 
+const pageDialogRuntime = createJavaScriptDialogHandler({
+  ToolExecutionError,
+  getToolRuntimeDependencies,
+});
+
 function isCdpRunCurrent({ sessionId, runId, context = {} }: { sessionId: string; runId: string; context?: ToolContext }) {
   return getToolRuntimeDependencies(context).sessions?.isRunCurrent?.(sessionId, runId) === true;
 }
@@ -1642,7 +1648,9 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
-  sendToContent, sendCdp, withDebugger, getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
+  sendToContent, sendCdp, withDebugger, withPageDialogGuard: pageDialogRuntime.withDialogGuard,
+  attachPageDialogResults: pageDialogRuntime.attachDialogResults,
+  getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,
   publishSkillRegistryChange, summarizeToolArgsForTrace,
