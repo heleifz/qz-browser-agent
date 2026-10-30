@@ -74,6 +74,22 @@ assert.equal(toAgentSkillName("travel-booking"), legacyAgentSkillName("travel-bo
 assert.equal(toAgentSkillName("B站视频搜索"), legacyAgentSkillName("B站视频搜索"));
 assert.equal(toAgentSkillName("Host 插件技能"), legacyAgentSkillName("Host 插件技能"));
 
+// Pin IDs across the empty, fallback, Unicode and suffix-truncation paths.
+for (const [value, fallback, expected] of [
+  ["", undefined, "skill-1k2kmd2"],
+  ["!!!", undefined, "skill-ckr8de"],
+  ["视频", undefined, "skill-q79se0"],
+  ["Crème brûlée", undefined, "creme-brulee-1f3f833"],
+  ["", "Fallback Name", "fallback-name-11xlzah"],
+  ["", "?!", "skill-1k2kmd2"],
+  ["", "x".repeat(80), `${"x".repeat(57)}-ss38cl`],
+  [`${"a".repeat(56)}-${"b".repeat(20)}`, undefined, `${"a".repeat(56)}-oi93mw`],
+]) {
+  const id = toAgentSkillName(value, fallback);
+  assert.equal(id, expected);
+  assert.equal(isValidAgentSkillName(id), true);
+}
+
 const mixedAlpha = `${prefix}视频甲`;
 const mixedBeta = `${prefix}视频乙`;
 assert.notEqual(toAgentSkillName(mixedAlpha), toAgentSkillName(mixedBeta));

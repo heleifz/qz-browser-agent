@@ -81,9 +81,10 @@ export function toAgentSkillName(value: unknown = "", fallback = "skill") {
   const slug = skillSlug(raw);
   const hasNonAscii = /[^\x00-\x7F]/.test(raw);
   if (slug && isValidAgentSkillName(slug) && !hasNonAscii) return slug;
-  const hash = shortSkillHash(raw || fallbackSlug);
-  const base = slug || fallbackSlug;
-  return agentSkillNameWithDisambiguator(base, hash);
+  // Reserve the full hash suffix before truncating the already-normalized, nonempty slug.
+  const suffix = `-${shortSkillHash(raw || fallbackSlug)}`;
+  const stem = (slug || fallbackSlug).slice(0, 64 - suffix.length).replace(/-+$/g, "");
+  return `${stem}${suffix}`;
 }
 
 export function getSkillDisplayName(skill: Data = {}) {
@@ -306,22 +307,6 @@ function skillSlug(value: unknown = "") {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-}
-
-/** Keep the full hash inside the 64-character id so a shared prefix cannot collide. */
-function agentSkillNameWithDisambiguator(base: string, hash: string) {
-  const suffix = `-${hash}`;
-  const stemSource = skillSlug(base);
-  const direct = `${stemSource}${suffix}`;
-  if (isValidAgentSkillName(direct)) return direct;
-  const maxStem = Math.max(1, 64 - suffix.length);
-  let stem = stemSource.slice(0, maxStem).replace(/-+$/g, "");
-  if (!stem || !/^[a-z0-9]/u.test(stem)) stem = "skill";
-  if (stem.length > maxStem) stem = stem.slice(0, maxStem).replace(/-+$/g, "");
-  const text = `${stem || "skill"}${suffix}`;
-  if (isValidAgentSkillName(text)) return text;
-  const fallback = `skill${suffix}`;
-  return isValidAgentSkillName(fallback) ? fallback : "skill";
 }
 
 function shortSkillHash(value: unknown = "") {

@@ -96,19 +96,18 @@ async function remoteFrameInput(send: CdpCommand, frameId: string): Promise<CdpC
   return opened?.sessionId ? opened.send : null;
 }
 
-async function runPageDebugger(
+function runPageDebugger<T>(
   host: Pick<PageElementHost, "withDebugger" | "withPageDialogGuard">,
   tabId: number,
   context: ToolContext,
-  run: (send: CdpCommand) => Promise<void>,
-): Promise<Awaited<ReturnType<PageElementHost["withPageDialogGuard"]>>["dialogs"]> {
-  const { dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
+  run: (send: CdpCommand) => Promise<T>,
+) {
+  return host.withPageDialogGuard(tabId, context, (send, bind) =>
     host.withDebugger(tabId, async (_target, cdpSend) => {
       await bind(cdpSend);
-      await run(send);
+      return run(send);
     }, context),
   );
-  return dialogs;
 }
 
 async function runPageDebuggerValue<T extends Record<string, unknown>>(
@@ -117,12 +116,7 @@ async function runPageDebuggerValue<T extends Record<string, unknown>>(
   context: ToolContext,
   run: (send: CdpCommand) => Promise<T>,
 ): Promise<T> {
-  const { value, dialogs } = await host.withPageDialogGuard(tabId, context, (send, bind) =>
-    host.withDebugger(tabId, async (_target, cdpSend) => {
-      await bind(cdpSend);
-      return run(send);
-    }, context),
-  );
+  const { value, dialogs } = await runPageDebugger(host, tabId, context, run);
   return host.attachPageDialogResults(value, dialogs);
 }
 
@@ -506,7 +500,7 @@ registerTool({
       let frameViewportBlocked = false;
       let movedFrameIntoPage = false;
       try {
-        const dialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+        const { dialogs } = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
@@ -751,7 +745,7 @@ registerTool({
       let dispatched = false;
       try {
         let delivered = !inspected.clickablePoint;
-        const pressDialogs = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+        const { dialogs: pressDialogs } = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
           if (inspected.clickablePoint) {
             await ensurePageSurface(tabId, send, { frameId });
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
