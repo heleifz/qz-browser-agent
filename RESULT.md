@@ -1,5 +1,14 @@
 # Re-review result: PASS
 
+## Neatness audit: MOSTLY
+
+The scoped merge-pending additions are mostly justified by concrete lifecycle and compatibility
+requirements. Commit `71e9e3b` removes two small exceptions: the single-use Skill-ID suffix helper's
+redundant normalization and unreachable fallback branches, and duplicated guard/debugger binding
+in the page action wrappers. The dialog wait queue, private dismissal WeakMap, legacy-ID reconciliation,
+and remove-only AX probe remain justified. See [RESULT-NEAT.md](RESULT-NEAT.md) for the entity audit,
+minimal changes, commit references, and validation. The prior product/re-review record follows unchanged.
+
 Reviewed the complete net diff `origin/main...8ee0c64` (43 files), then the fixes below,
 on `autofix/merge-pending-astra-review-2` in `/workspace/mp-astra-review-2`.
 Baseline: `242453292cd5d84fc16a055209ebe5e78214e868`.
