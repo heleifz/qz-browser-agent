@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { createJavaScriptDialogHandler } from "../../src/background/tools/javascript-dialog.js";
+import { createCdpRuntime } from "../../src/background/tools/cdp-runtime.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 import { readJavaScriptDialogForm } from "../../src/shared/javascript-dialog.js";
@@ -9,11 +10,16 @@ import { runToolWithTimeout } from "../../src/background/tools/tool-timeout.js";
 import { normalizeWaitingForm } from "../../src/sidepanel/features/chat/transcript/waiting-card.js";
 
 const listeners = new Set();
+const detachListeners = new Set();
 globalThis.chrome = {
   debugger: {
     onEvent: {
       addListener(listener) { listeners.add(listener); },
       removeListener(listener) { listeners.delete(listener); },
+    },
+    onDetach: {
+      addListener(listener) { detachListeners.add(listener); },
+      removeListener(listener) { detachListeners.delete(listener); },
     },
   },
   scripting: { executeScript: async () => [] },
@@ -24,7 +30,7 @@ function dispatchDebugger(tabId, method, params, sessionId) {
   for (const listener of listeners) listener({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params);
 }
 
-function runtimeFixture() {
+function runtimeFixture(dismissDialog) {
   const events = [];
   const supervisor = createSessionSupervisor({ createAgent: () => ({ subscribe(emit) { this.emit = emit; } }) });
   const sessions = {
@@ -39,6 +45,7 @@ function runtimeFixture() {
   const handler = createJavaScriptDialogHandler({
     ToolExecutionError,
     getToolRuntimeDependencies: () => ({ sessions, emit }),
+    dismissDialog,
   });
   return { handler, sessions, events, supervisor };
 }
@@ -284,6 +291,201 @@ test("dialog user time does not consume the tool deadline and Stop remains activ
     assert.equal(cancel ? result.code : result.value, cancel ? 'OPERATION_ABORTED' : 'done');
     assert.equal(listeners.size, 0);
   }
+});
+
+test('a stalled browser answer consumes the remaining tool deadline after the user responds', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { handler, sessions, events, supervisor } = runtimeFixture();
+  await activeSession(supervisor);
+  let result;
+  const pending = runToolWithTimeout('act_on_element', (signal, _partial, pauseDeadline) => handler.withDialogGuard(9,
+    { sessionId: 's1', runId: 'r1', signal, pauseDeadline }, async (send, bind) => {
+      await bind(async method => {
+        if (method === 'Page.handleJavaScriptDialog') return new Promise(() => {});
+        if (method === 'Input.dispatchMouseEvent') dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'alert' });
+        return {};
+      });
+      await send('Input.dispatchMouseEvent');
+    }), undefined, 20, async () => assert.fail('no partial'), {}).catch(error => { result = error; });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(1000);
+  assert.equal(result, undefined);
+  sessions.resolveUserWait({ sessionId: 's1', waitId: events.at(-1).waitId, payload: { continued: true } });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(20);
+  await pending;
+  assert.equal(result.code, 'TOOL_TIMEOUT');
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  assert.equal(listeners.size, 0);
+});
+
+for (const childSession of ['', 'child']) test(`native dialog closure retires only its own wait (${childSession || 'root'})`, async () => {
+  const { handler, sessions, events, supervisor } = runtimeFixture();
+  await activeSession(supervisor);
+  const commands = [];
+  const real = async method => { commands.push(method); return {}; };
+  real.inSession = () => real;
+  let complete;
+  const pending = handler.withDialogGuard(9, { sessionId: 's1', runId: 'r1' }, async (_send, bind) => {
+    await bind(real);
+    dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'prompt', message: 'Name?' }, childSession);
+    await new Promise(resolve => { complete = resolve; });
+  });
+  await new Promise(setImmediate);
+  const wait = events.find(event => event.type === 'waiting_for_user');
+  assert.ok(wait);
+  dispatchDebugger(8, 'Page.javascriptDialogClosed', { result: true });
+  dispatchDebugger(9, 'Page.javascriptDialogClosed', { result: true }, 'unrelated');
+  assert.equal(sessions.isWaitingForUser('s1'), true);
+  dispatchDebugger(9, 'Page.javascriptDialogClosed', { result: true, userInput: ' Native ' }, childSession);
+  await new Promise(setImmediate);
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  assert.equal(sessions.resolveUserWait({ sessionId: 's1', waitId: wait.waitId }), false);
+  complete();
+  assert.deepEqual((await pending).dialogs, [{ type: 'prompt', message: 'Name?', accepted: true, promptText: ' Native ' }]);
+  assert.equal(commands.includes('Page.handleJavaScriptDialog'), false, 'never answer a closed or subsequent dialog');
+  assert.equal(listeners.size, 0);
+  assert.equal(detachListeners.size, 0);
+});
+
+test('debugger detach retires a dialog wait even when the input command never settles', async () => {
+  const { handler, sessions, events, supervisor } = runtimeFixture();
+  await activeSession(supervisor);
+  const pending = handler.withDialogGuard(9, { sessionId: 's1', runId: 'r1' }, async (_send, bind) => {
+    await bind(async () => ({}));
+    dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Continue?' });
+    return new Promise(() => {});
+  });
+  const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
+  await new Promise(setImmediate);
+  assert.ok(events.some(event => event.type === 'waiting_for_user'));
+  for (const listener of detachListeners) listener({ tabId: 8 }, 'target_closed');
+  assert.equal(sessions.isWaitingForUser('s1'), true);
+  for (const listener of detachListeners) listener({ tabId: 9 }, 'target_closed');
+  await rejected;
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  assert.equal(listeners.size, 0);
+  assert.equal(detachListeners.size, 0);
+});
+
+for (const childSession of ['', 'child']) test(`abort dismisses through the revoked CDP lease without granting later-run control (${childSession || 'root'})`, async () => {
+  const commands = [];
+  let currentRun = 'r1';
+  const cdp = createCdpRuntime({
+    ToolExecutionError,
+    isRunCurrent: ({ runId }) => runId === currentRun,
+    debuggerApi: {
+      async attach() {}, async detach() {},
+      async sendCommand(target, method, params) { commands.push({ target, method, params }); return {}; },
+    },
+  });
+  const { handler, sessions, events, supervisor } = runtimeFixture(cdp.dismissJavaScriptDialog);
+  await activeSession(supervisor);
+  const controller = new AbortController();
+  const context = { sessionId: 's1', runId: 'r1', signal: controller.signal };
+  let saved;
+  const pending = handler.withDialogGuard(9, context, (_send, bind) => cdp.withDebugger(9, async (_target, real) => {
+    await bind(real);
+    saved = childSession ? real.inSession(childSession) : real;
+    cdp.setDebuggerRetention(9, true, context);
+    dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Continue?' }, childSession);
+    return new Promise(() => {});
+  }, context));
+  const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
+  await new Promise(setImmediate);
+  assert.ok(events.some(event => event.type === 'waiting_for_user'));
+  currentRun = '';
+  controller.abort();
+  await cdp.releaseRun('s1', 'r1');
+  await rejected;
+  await new Promise(setImmediate);
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  const answers = commands.filter(command => command.method === 'Page.handleJavaScriptDialog');
+  assert.deepEqual(answers, [{ target: { tabId: 9, ...(childSession ? { sessionId: childSession } : {}) }, method: 'Page.handleJavaScriptDialog', params: { accept: false } }]);
+  await assert.rejects(saved('Input.insertText', { text: 'late' }));
+  currentRun = 'r2';
+  const next = { sessionId: 's1', runId: 'r2' };
+  await cdp.withDebugger(9, async () => {}, next);
+  const before = commands.length;
+  await cdp.dismissJavaScriptDialog(saved);
+  await cdp.dismissJavaScriptDialog(Object.assign(async () => {}, saved));
+  assert.equal(commands.length, before, 'old or copied sends cannot dismiss a newer run dialog');
+  let reconnectSend;
+  await cdp.withDebugger(9, async (_target, send) => { reconnectSend = send; }, next);
+  await cdp.releaseDebugger(9, next);
+  await cdp.withDebugger(9, async () => {}, next);
+  await cdp.dismissJavaScriptDialog(reconnectSend);
+  assert.equal(commands.length, before, 'old sends cannot affect a reconnected target');
+  await cdp.releaseSession('s1');
+});
+
+test('cancellation before a queued dialog wait starts dismisses the dialog exactly once', async () => {
+  const handled = [];
+  const { handler, sessions, supervisor } = runtimeFixture();
+  await activeSession(supervisor);
+  const controller = new AbortController();
+  await assert.rejects(handler.withDialogGuard(9, { sessionId: 's1', runId: 'r1', signal: controller.signal }, async (_send, bind) => {
+    await bind(async (method, params) => {
+      if (method === 'Page.handleJavaScriptDialog') handled.push(params);
+      return {};
+    });
+    dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Late' });
+    controller.abort();
+    return new Promise(() => {});
+  }), { code: 'OPERATION_ABORTED' });
+  await new Promise(setImmediate);
+  assert.deepEqual(handled, [{ accept: false }]);
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  assert.equal(listeners.size, 0);
+});
+
+test('parallel dialogs queue per Session without expiring or dismissing the second page', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { handler, sessions, events, supervisor } = runtimeFixture();
+  await activeSession(supervisor);
+  await activeSession(supervisor, 's2', 'r2');
+  const handled = [];
+  const open = (tabId, sessionId = 's1', runId = 'r1', parentSignal) => runToolWithTimeout('act_on_element', (signal, _partial, pauseDeadline) =>
+    handler.withDialogGuard(tabId, { sessionId, runId, signal, pauseDeadline }, async (send, bind) => {
+      await bind(async (method, params) => {
+        if (method === 'Page.handleJavaScriptDialog') handled.push({ tabId, ...params });
+        return {};
+      });
+      dispatchDebugger(tabId, 'Page.javascriptDialogOpening', { type: 'confirm', message: String(tabId) });
+      await send('Input.dispatchMouseEvent');
+    }), parentSignal, 20, async () => assert.fail('no partial'), {});
+  const first = open(1);
+  await new Promise(setImmediate);
+  const firstWait = supervisor.getUserWait('s1');
+  const cancelled = new AbortController();
+  const second = open(2, 's1', 'r1', cancelled.signal);
+  const secondRejected = assert.rejects(second, { code: 'OPERATION_ABORTED' });
+  const third = open(3);
+  const independent = open(4, 's2', 'r2');
+  await new Promise(setImmediate);
+  t.mock.timers.tick(86400000);
+  await new Promise(setImmediate);
+  assert.deepEqual(handled, []);
+  assert.deepEqual(events.filter(event => event.type === 'waiting_for_user').map(event => event.message), ['1', '4']);
+  cancelled.abort();
+  await secondRejected;
+  await new Promise(setImmediate);
+  assert.deepEqual(supervisor.getUserWait('s1'), firstWait, 'cancelling a queued dialog keeps the current card');
+  assert.deepEqual(handled, [{ tabId: 2, accept: false }]);
+  sessions.resolveUserWait({ ...supervisor.getUserWait('s2'), payload: { reason: 'cancelled' } });
+  await independent;
+  assert.deepEqual(supervisor.getUserWait('s1'), firstWait);
+  sessions.resolveUserWait({ ...firstWait, payload: { continued: true } });
+  await first;
+  await new Promise(setImmediate);
+  assert.equal(events.filter(event => event.type === 'waiting_for_user').at(-1).message, '3');
+  sessions.resolveUserWait({ ...supervisor.getUserWait('s1'), payload: { reason: 'cancelled' } });
+  await third;
+  assert.deepEqual(handled, [
+    { tabId: 2, accept: false }, { tabId: 4, accept: false }, { tabId: 1, accept: true }, { tabId: 3, accept: false },
+  ]);
+  assert.equal(sessions.isWaitingForUser('s1'), false);
+  assert.equal(listeners.size, 0);
 });
 
 test("waiting card normalizes javascriptDialog form metadata", () => {

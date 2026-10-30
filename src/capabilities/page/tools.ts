@@ -786,17 +786,24 @@ registerTool({
       }
     }
 
-    const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
-    return {
-      ...fallback,
-      target: resolvedTarget,
-      selector,
-      uid: ref.uid || undefined,
-      index,
-      tabId,
-      method: fallback.error ? "content_failed" : "content",
-      element: fallback.element || inspected,
+    const contentAction = async () => {
+      const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
+      return {
+        ...fallback,
+        target: resolvedTarget,
+        selector,
+        uid: ref.uid || undefined,
+        index,
+        tabId,
+        method: fallback.error ? "content_failed" : "content",
+        element: fallback.element || inspected,
+      };
     };
+    // Selecting dispatches input/change handlers, which can open a native dialog
+    // while the Content reply is still pending. Arm the guard before dispatch.
+    return normalizedAction === "select"
+      ? runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, contentAction)
+      : contentAction();
     }
   },
 });

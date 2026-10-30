@@ -19,6 +19,7 @@ function pageHtml(crossUrl) {
     <button id="top" type="button">Top Button</button>
     <button id="dialog" type="button" onclick="window.dialogAnswer=confirm('')">Dialog</button>
     <input id="prompt" onkeydown="if(event.key==='Enter') window.promptAnswer=prompt('Name?', ' guest ')">
+    <select id="select" onchange="window.selectAnswer=confirm('Change?')"><option>old</option><option>new</option></select>
     <iframe id="same" name="same" title="Same frame"></iframe>
     <div id="gap" style="height:1px"></div>
     <iframe id="cross" name="cross" title="Cross frame" src="${crossUrl}"></iframe>
@@ -80,14 +81,18 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     await worker.evaluate(async () => {
       const supervisor = createTestSupervisor({ createAgent: () => ({ subscribe(emit) { this.emit = emit; } }) });
       (await supervisor.getAgent('iframe-offscreen')).emit({ type: 'agent_start', runId: 'run' });
-      let tabId, waiting;
-      const emit = event => { if (event.type === 'waiting_for_user') waiting = event; };
+      let tabId, waiting, controller;
+      const emit = event => {
+        if (event.type === 'waiting_for_user') waiting = event;
+        if (event.type === 'user_wait_resolved' && event.waitId === waiting?.waitId) waiting = null;
+      };
       const context = { sessionId: "iframe-offscreen", runId: "run", runProfile: { platform: { os: "linux" } } };
       const runtime = elementTestTools.createToolRuntime({
         emit,
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: {
           beginUserWait: supervisor.beginUserWait,
+          resolveUserWait: supervisor.resolveUserWait,
           isWaitingForUser: supervisor.isWaitingForUser,
           isRunCurrent: () => true,
           resolveTargetTab: async input => input.tabId === tabId
@@ -102,8 +107,10 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
           supervisor.resolveUserWait({ sessionId: 'iframe-offscreen', waitId: waiting.waitId, payload });
           waiting = null;
         },
+        abort() { controller?.abort(); },
         async call(name, args) {
-          try { return await runtime.execute(name, { tabId, ...args }, undefined, { ...context, workingTabId: tabId, source: "run_script" }); }
+          controller = new AbortController();
+          try { return await runtime.execute(name, { tabId, ...args }, controller.signal, { ...context, workingTabId: tabId, source: "run_script" }); }
           catch (error) { return { error: error.message, code: error.code, details: error.details }; }
         },
       };
@@ -226,6 +233,57 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     await worker.evaluate(() => elementHarness.answer({ submitted: true, answers: { promptText: ' Alice ' } }));
     expect(await keyDialog).toMatchObject({ dialog: { type: 'prompt', accepted: true, promptText: ' Alice ' }, pressed: true });
     expect(await page.evaluate(() => window.promptAnswer)).toBe(' Alice ');
+
+    const selection = call('act_on_element', { target: 'css:#select', action: 'select', value: 'new' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Change?');
+    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
+    expect(await selection).toMatchObject({ dialog: { type: 'confirm', message: 'Change?', accepted: false } });
+    expect(await page.evaluate(() => window.selectAnswer)).toBe(false);
+
+    const nativeDialog = page.waitForEvent('dialog');
+    const nativeClick = call('act_on_element', { target: 'css:#dialog', action: 'click' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('confirm');
+    await (await nativeDialog).accept();
+    expect(await nativeClick).toMatchObject({ dialog: { type: 'confirm', accepted: true }, inputDelivered: true });
+    expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
+    expect(await page.evaluate(() => window.dialogAnswer)).toBe(true);
+
+    await page.evaluate(() => {
+      document.querySelector('#dialog').onclick = () => {
+        window.firstAnswer = confirm('First');
+        window.secondAnswer = prompt('Second');
+      };
+    });
+    const firstNative = page.waitForEvent('dialog');
+    const sequentialDialogs = call('act_on_element', { target: 'css:#dialog', action: 'click' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('First');
+    await (await firstNative).dismiss();
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Second');
+    await worker.evaluate(() => elementHarness.answer({ answers: { promptText: 'second answer' } }));
+    expect(await sequentialDialogs).toMatchObject({ dialogs: [
+      { type: 'confirm', message: 'First', accepted: false },
+      { type: 'prompt', message: 'Second', accepted: true, promptText: 'second answer' },
+    ] });
+    expect(await page.evaluate(() => [window.firstAnswer, window.secondAnswer])).toEqual([false, 'second answer']);
+    await page.evaluate(() => { document.querySelector('#dialog').onclick = () => { window.dialogAnswer = confirm('Stop?'); }; });
+
+    await page.frame({ name: 'cross' }).evaluate(() => {
+      document.querySelector('button').onclick = () => { window.dialogAnswer = confirm('Child?'); };
+    });
+    const childClick = call('act_on_element', { target: found.cross, action: 'click' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Child?');
+    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
+    expect(await childClick).toMatchObject({ dialog: { type: 'confirm', message: 'Child?', accepted: false }, inputDelivered: true });
+    expect(await page.frame({ name: 'cross' }).evaluate(() => window.dialogAnswer)).toBe(false);
+
+    const stoppedClick = call('act_on_element', { target: 'css:#dialog', action: 'click' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('confirm');
+    await worker.evaluate(() => elementHarness.abort());
+    expect(await stoppedClick).toMatchObject({ code: 'OPERATION_ABORTED' });
+    await expect.poll(() => worker.evaluate(() => elementHarness.waiting)).toBe(null);
+    // A real CDP command enforces the aborted call signal. Cleanup must still
+    // decline the native dialog or this page-thread read remains blocked.
+    expect(await page.evaluate(() => window.dialogAnswer)).toBe(false);
   } finally {
     await close();
   }

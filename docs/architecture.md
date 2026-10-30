@@ -129,9 +129,14 @@ The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
 
 Chrome element-input dialog guards enable Page events before input, retain child debugger-session
 identity, and route native dialogs through the same wait lifecycle. A dialog wait suspends only its
-own tool deadline; Stop and run cancellation remain active. Cancel/Stay answers the page without
-rejecting the task wait. Prompt text is submitted unchanged. A failed browser answer produces no
-successful dialog receipt. Firefox keeps its native dialogs; see [Page dialogs](firefox-differences.md#page-dialogs).
+own tool deadline until the user responds; browser acknowledgement uses the remaining deadline.
+Parallel dialogs queue their decisions within the same Session/run, suspending queued deadlines too;
+other Sessions and independent tool execution remain concurrent.
+Stop and run cancellation remain active. Cancel/Stay answers the page without rejecting the task wait.
+Answering the native Chrome dialog also retires its sidebar card, and debugger detachment cancels the
+wait. Cancellation can decline the pending dialog through a cleanup-only sender bound to the original
+connection and run; it cannot reattach or control a newer run. Prompt text is submitted unchanged.
+A failed browser answer produces no successful dialog receipt. Firefox keeps its native dialogs; see [Page dialogs](firefox-differences.md#page-dialogs).
 
 ## Message transport
 

@@ -1513,6 +1513,7 @@ const {
   setDebuggerRetention,
   releaseDebugger,
   confirmRunReattach,
+  dismissJavaScriptDialog,
   releaseRun: releaseRunDebuggerConnections,
   releaseSession: releaseSessionCdp,
   releaseTab: releaseTabCdp,
@@ -1527,6 +1528,7 @@ const {
 const pageDialogRuntime = createJavaScriptDialogHandler({
   ToolExecutionError,
   getToolRuntimeDependencies,
+  dismissDialog: dismissJavaScriptDialog,
 });
 
 function isCdpRunCurrent({ sessionId, runId, context = {} }: { sessionId: string; runId: string; context?: ToolContext }) {

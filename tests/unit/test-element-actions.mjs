@@ -222,6 +222,18 @@ for (const method of ["href_navigation", "content_fallback"]) {
   }
 }
 
+test('select arms the dialog guard before dispatching Content change handlers without replay', async () => {
+  const f = fixture();
+  f.onContent((action, params) => {
+    if (action !== 'actOnElement') return;
+    assert.equal(params.elementAction, 'select');
+    assert.equal(f.isGuardActive(), true);
+    throw new Error('selection response lost');
+  });
+  await assert.rejects(f.call({ action: 'select', value: 'choice' }), /selection response lost/);
+  assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+});
+
 test("press keeps its dialog guard through key dispatch and never replays a failed key", async () => {
   const f = fixture();
   f.onCommand((method, params) => {

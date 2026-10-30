@@ -44,6 +44,7 @@ export function createCdpRuntime({
 }: CdpHost) {
   const tabs = new Map<number, CdpState>();
   const reattachPrompts = new Map<string, Promise<boolean>>();
+  const dialogDismissals = new WeakMap<CdpCommand, () => Promise<unknown>>();
   let temporaryScopeSeq = 0;
   let connectionSeq = 0;
 
@@ -518,7 +519,23 @@ export function createCdpRuntime({
     send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""), context);
     send.tabId = state.tabId;
     send.connectionId = state.connectionId;
+    const connectionId = state.connectionId, runId = state.runId, ownerSessionId = state.sessionId;
+    dialogDismissals.set(send, async () => {
+      // Cleanup may outlive cancellation, but never this connection/run. It can
+      // only decline a dialog; it cannot reattach or issue arbitrary commands.
+      if (tabs.get(state.tabId) !== state || !state.attached || state.releasing
+        || state.connectionId !== connectionId || state.runId !== runId || state.sessionId !== ownerSessionId) return;
+      const finishPhase = context.measurePhase?.("cdp");
+      try {
+        return await debuggerApi.sendCommand(sessionId ? { ...state.target, sessionId } : state.target,
+          "Page.handleJavaScriptDialog", { accept: false });
+      } finally { finishPhase?.(); }
+    });
     return send;
+  }
+
+  async function dismissJavaScriptDialog(send: CdpCommand) {
+    await dialogDismissals.get(send)?.();
   }
 
   async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "", context: ToolContext = {}) {
@@ -565,6 +582,7 @@ export function createCdpRuntime({
     evaluateCdpScript,
     withDebugger,
     withTemporaryDebugger,
+    dismissJavaScriptDialog,
     releaseRun,
     releaseSession,
     releaseTab,
