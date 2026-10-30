@@ -37,6 +37,7 @@ const REVIEWED = new Map([
   }],
   ...[
     ["33445b4d16f8797c82850bf05d48c497e57dc488270f9c4756edb8a2ffe89e28", "background/tools/cdp-runtime", "Run-owned CDP evaluator with cancellation and stale-owner checks; existing page-script capability."],
+    ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
     ["3e11705ca0c9ddb62d92e242771769301b481d4c3349267a5132318e07e6763a", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element."],
     ["fd33ba99589746223f976d8fefb913d8fb665001c4f72964dc50b7609f7081a3", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity and arguments to the run-owned evaluator."],
     ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],

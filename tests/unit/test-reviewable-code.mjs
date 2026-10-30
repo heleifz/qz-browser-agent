@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { minify } from "terser";
+import { transform } from "esbuild";
 import { inspectJavaScript, assertReviewableCode } from "../../scripts/check-reviewable-code.mjs";
 
 const failures = source => inspectJavaScript(source).findings.filter(item => !item.reviewed);
@@ -22,6 +23,20 @@ for (const source of [
   'const F=Function; new F("return 1"); function local(){const F=42;return F}',
   'const _0xa33 = ["hidden", "behavior"];',
 ]) assert.ok(failures(source).length, source);
+
+// The disabled-option repair is a fixed node predicate, not a general execution exemption.
+const axSource = await readFile(new URL('../../src/capabilities/accessibility/tools.ts', import.meta.url), 'utf8');
+const { code: axCode } = await transform(axSource, { loader: 'ts', format: 'esm', target: 'chrome114' });
+const axPath = 'capabilities/accessibility/tools.js';
+const cdpFindings = (code, file = axPath) => inspectJavaScript(code, file).findings.filter(item => item.rule === 'cdp-execution');
+assert.equal(cdpFindings(axCode).length, 1);
+assert.ok(cdpFindings(axCode)[0].reviewed);
+assert.ok(cdpFindings(axCode, 'background/service-worker.js')[0].reviewed);
+assert.equal(cdpFindings(axCode, 'unrelated.js')[0].reviewed, undefined);
+const mutatedAxCode = axCode.replace("this.matches(':disabled')", "this.matches(pageControlledSelector)");
+assert.notEqual(mutatedAxCode, axCode);
+assert.equal(cdpFindings(mutatedAxCode)[0].reviewed, undefined);
+assert.equal(cdpFindings(`${axCode}\nsend('Runtime.callFunctionOn', { functionDeclaration: remoteCode });`).filter(item => !item.reviewed).length, 1);
 
 // Real rejected upstream inputs, including the worker's unrelated local numeric GT binding.
 for (const file of ["pdf.mjs", "pdf.worker.mjs"]) {
