@@ -1,3 +1,4 @@
+import "../support/default-locale.mjs";
 import assert from "node:assert/strict";
 import { transformSync } from "esbuild";
 import { readFileSync, existsSync } from "node:fs";
