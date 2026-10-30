@@ -5,6 +5,6 @@ export default ((host) => [{
   async read({ sessionId, signal }) {
     const editor = await host.getSkinEditorContext?.(sessionId);
     if (!editor || signal?.aborted) return null;
-    return JSON.stringify({ skinId: editor.skinId, tool: 'manage_skin', instruction: 'Read with get before editing; update refreshes the draft. Use manage_skin action:screenshot to see the actual rendered preview. This is an extension studio: use this tool instead of browser page screenshot, DOM or script tools.' });
+    return JSON.stringify({ skinId: editor.skinId, ...(editor.characterId ? { selectedCharacterId: editor.characterId } : {}), tool: 'manage_skin', instruction: 'Read with get before editing; update refreshes the draft. If selectedCharacterId exists in visual.models, it is the selected subject; preserve other characters unless requested. Use manage_skin action:screenshot to see the actual rendered preview. This is an extension studio: use this tool instead of browser page screenshot, DOM or script tools.' });
   },
 }]) satisfies ContextCapability;

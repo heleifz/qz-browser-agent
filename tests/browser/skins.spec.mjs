@@ -36,7 +36,7 @@ async function skinHarness(context, page) {
       try {
         const result = command.action === 'list' ? await repository.snapshot()
           : command.action === 'welcome' ? await repository.welcome(command.id, command.revision)
-          : command.action === 'get' ? { skin: await repository.get(command.id || '') }
+          : command.action === 'get' ? { skin: await repository.get(command.id || '', command.saved === true) }
           : command.action === 'open' ? { id: command.id }
           : await repository.mutate(command);
         return { ok: true, result };
@@ -68,6 +68,132 @@ async function skinHarness(context, page) {
 async function openAdjustments(page) {
   if (await page.locator('#skin-inspector').isHidden()) await page.locator('#skin-toggle-inspector').click();
 }
+
+for (const version of ['0', '1']) test(`character studio VRM ${version} frames, previews expressions without reload, photographs and groups looks`, async ({ page, context }, testInfo) => {
+  const { repository } = await skinHarness(context, page);
+  await context.addInitScript(() => {
+    if (window === window.top) return;
+    const add = window.addEventListener.bind(window);
+    window.addEventListener = (type, listener, options) => add(type, type === 'message' && typeof listener === 'function'
+      ? event => { if (event.data?.type === 'capture' && event.data.options?.camera) setTimeout(() => listener(event), 500); else listener(event); }
+      : listener, options);
+  });
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const source = `window.studioProbe={vrm,model};model.traverse(node=>{if(node.isMesh)node.onBeforeRender=(renderer,scene,camera)=>{
+    if(!renderer.getRenderTarget())window.studioProbe.camera=camera;};});vrm.expressionManager.setValue('happy',.25);return {root:model};`;
+  const { skin } = await repository.mutate({ action: 'create', skin: { name: 'Whale', quotes: [], assets: {},
+    visual: { type: 'model3d', src: 'data:model/gltf-binary;base64,' + vrmFixture(version).toString('base64'), source } } });
+  await page.goto('/extension/dom/skins/editor.html?skin=' + skin.id);
+  await expect(page.locator('#skin-apply')).toBeEnabled({ timeout: 15000 });
+  const frame = page.frames().find(frame => frame.url().endsWith('/sandbox.html'));
+  await expect(page.locator('#skin-expression-list img')).toHaveCount(3);
+  const thumbnails = await page.locator('#skin-expression-list img').evaluateAll(images => images.map(image => image.src));
+  expect(thumbnails[1]).not.toBe(thumbnails[2]);
+  expect(await frame.evaluate(() => window.studioProbe.vrm.expressionManager.getValue('happy'))).toBe(.25);
+  const camera = () => frame.evaluate(() => window.studioProbe.camera.position.toArray());
+  const full = await camera();
+  await page.locator('[data-camera="bust"]').click();
+  await expect.poll(async () => (await camera())[2]).toBeLessThan(full[2]);
+  const bust = await camera(); await page.locator('[data-camera="close"]').click();
+  await expect.poll(async () => (await camera())[1]).toBeGreaterThan(bust[1]);
+  expect((await camera())[2]).toBeLessThanOrEqual(bust[2]);
+  await frame.evaluate(() => window.originalModel = window.studioProbe.model);
+  await page.locator('[data-expression="happy"]').click();
+  await expect(page.locator('[data-expression="happy"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => frame.evaluate(() => window.studioProbe.vrm.expressionManager.getValue('happy'))).toBe(1);
+  expect(await frame.evaluate(() => window.originalModel === window.studioProbe.model)).toBe(true);
+  expect((await repository.get(skin.id)).visual.expressions).toEqual({ happy: 1 });
+  expect((await repository.get(skin.id, true)).visual.expressions).toBeUndefined();
+  await page.locator('#skin-compare').click();
+  await expect(page.locator('#skin-comparison-images')).toBeVisible({ timeout: 15000 });
+  const comparison = await page.locator('#skin-comparison-images img').evaluateAll(images => images.map(image => image.src));
+  expect(comparison[0]).not.toBe(comparison[1]);
+  await expect(page.locator('.skin-comparison-render')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('compare.png') });
+  await page.keyboard.press('Escape'); await expect(page.locator('#skin-comparison')).not.toBeVisible();
+  const downloading = page.waitForEvent('download'); await page.locator('#skin-portrait').click();
+  const download = await downloading, bytes = await readFile(await download.path());
+  expect(download.suggestedFilename()).toBe('Whale-portrait.png');
+  const photo = await page.evaluate(async data => {
+    const image = await createImageBitmap(await (await fetch(data)).blob());
+    const canvas = new OffscreenCanvas(image.width, image.height), context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, image.width, image.height).data;
+    return { width: image.width, height: image.height, transparent: pixels.filter((v, i) => i % 4 === 3 && v === 0).length,
+      opaque: pixels.filter((v, i) => i % 4 === 3 && v === 255).length };
+  }, 'data:image/png;base64,' + bytes.toString('base64'));
+  expect(photo.width).toBe(1024); expect(photo.height).toBe(1024); expect(photo.transparent).toBeGreaterThan(1000); expect(photo.opaque).toBeGreaterThan(1000);
+  await page.locator('#skin-duplicate').click();
+  await expect(page.locator('#skin-preview-name')).toHaveText('造型 2');
+  const lookId = new URL(page.url()).searchParams.get('skin');
+  expect((await repository.get(lookId)).character).toEqual({ id: skin.id, name: 'Whale' });
+  await expect(page.locator('.skin-library-group[aria-label="Whale"] [data-skin-id]')).toHaveCount(2);
+  await expect(page.locator('#skin-apply')).toBeEnabled({ timeout: 15000 });
+  await page.locator('#skin-apply').click(); await expect.poll(async () => (await repository.snapshot()).activeId).toBe(lookId);
+  await page.reload(); await expect(page.locator('[data-expression="happy"]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#skin-apply')).toBeEnabled();
+  await page.locator('[data-expression=""]').click();
+  await expect(page.locator('[data-expression=""]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#skin-expression-list img')).toHaveCount(3);
+  await page.locator('[data-expression="happy"]').click();
+  for (const colorScheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme }); await expect(page.locator('#skin-expression-list img')).toHaveCount(3);
+    await page.screenshot({ path: testInfo.outputPath(`studio-${colorScheme}.png`) });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator('#skin-open-chat')).toBeVisible();
+  await page.frames().find(frame => frame.url().endsWith('/sandbox.html'))
+    .evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const painted = await page.locator('#skin-viewer').screenshot();
+  const bluePixels = await page.evaluate(async data => {
+    const image = await createImageBitmap(await (await fetch(data)).blob()), canvas = new OffscreenCanvas(image.width, image.height);
+    const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, image.width, image.height).data;
+    let count = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 2] > pixels[i] + 30) count++;
+    return count;
+  }, 'data:image/png;base64,' + painted.toString('base64'));
+  expect(bluePixels).toBeGreaterThan(1000);
+  await page.screenshot({ path: testInfo.outputPath('studio-narrow.png'), fullPage: true });
+});
+
+test('comparison dismissal releases resources and a concurrent edit cannot present a stale comparison', async ({ page, context }) => {
+  const { repository } = await skinHarness(context, page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/extension/dom/skins/editor.html?skin=dafeiyu');
+  await expect(page.locator('#skin-apply')).toBeEnabled({ timeout: 15000 });
+  await repository.mutate({ action: 'update', id: 'dafeiyu', revision: 1, patch: { name: 'Changed' } });
+  await expect(page.locator('#skin-compare')).toBeEnabled();
+  async function blockSavedRead() {
+    await page.evaluate(() => {
+      const request = window.__skinCommand;
+      window.__skinCommand = async command => {
+        if (command.action === 'get' && command.saved) {
+          window.__skinCommand = request;
+          const saved = await request(command);
+          await new Promise(resolve => window.releaseComparison = resolve); return saved;
+        }
+        return request(command);
+      };
+    });
+  }
+  await blockSavedRead(); await page.locator('#skin-compare').click();
+  await expect(page.locator('#skin-comparison-loading')).toBeVisible();
+  await page.waitForFunction(() => typeof window.releaseComparison === 'function');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { window.releaseComparison(); delete window.releaseComparison; });
+  await expect(page.locator('#skin-compare')).toBeEnabled();
+  await expect(page.locator('.skin-comparison-render')).toHaveCount(0); await expect(page.locator('#skin-error')).toBeHidden();
+  await blockSavedRead(); await page.locator('#skin-compare').click();
+  await page.waitForFunction(() => typeof window.releaseComparison === 'function');
+  const latest = await repository.get('dafeiyu');
+  await repository.mutate({ action: 'update', id: latest.id, revision: latest.revision, patch: { name: 'Concurrent edit' } });
+  await page.evaluate(() => window.releaseComparison());
+  await expect(page.locator('#skin-comparison')).not.toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.skin-comparison-render')).toHaveCount(0);
+  await expect(page.locator('#skin-preview-name')).toHaveText('Concurrent edit');
+  await expect(page.locator('#skin-apply')).toBeEnabled();
+});
 
 test('studio previews 3D, rotates, applies, exports and reimports editable skins', async ({ page, context }, testInfo) => {
   const harness = await skinHarness(context, page);
@@ -450,7 +576,7 @@ test('VRM edits retain one renderer and the last valid scene across syntax and r
     const probe=window.preview; const geometries=new Set();
     model.traverse(node=>{if(node.isMesh){
       geometries.add(node.geometry);
-      node.onBeforeRender=(renderer,scene,camera)=>{probe.renderer=renderer;probe.camera=camera;probe.draws++;};
+      node.onBeforeRender=(renderer,scene,camera)=>{if(!renderer.getRenderTarget()){probe.renderer=renderer;probe.camera=camera;probe.draws++;}};
     }});
     for(const geometry of geometries) geometry.addEventListener('dispose',()=>probe.disposals++);
     return {root:model};`;
@@ -611,6 +737,16 @@ test('drop multiple GLB/VRM characters, compose independent poses, export and re
   const id=new URL(page.url()).searchParams.get('skin');
   const imported=await repository.get(id);
   expect(imported.visual.type).toBe('scene3d');
+  await expect(page.locator('#skin-focus-character')).toHaveValue('character_2');
+  await page.locator('#skin-focus-character').selectOption('character_1');
+  await expect(page.locator('#skin-expressions')).toBeHidden();
+  await page.locator('#skin-focus-character').selectOption('character_2');
+  await expect(page.locator('#skin-expressions')).toBeVisible();
+  await page.locator('[data-expression="happy"]').click();
+  await expect.poll(async () => (await repository.get(id)).visual.models.character_2.expressions).toEqual({ happy: 1 });
+  expect((await repository.get(id)).visual.models.character_1.expressions).toBeUndefined();
+  expect(new URL(page.url()).searchParams.get('character')).toBe('character_2');
+  await page.locator('[data-expression="@original"]').click();
   await openAdjustments(page);
   await page.locator('#skin-character-name').fill('鲸鱼娘');await page.locator('#skin-character-name').blur();
   await expect.poll(async()=>(await repository.get(id)).visual.models.character_2.name).toBe('鲸鱼娘');

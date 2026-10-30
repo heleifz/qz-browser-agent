@@ -39,6 +39,7 @@ export function createSkinRepository(storage: Storage, changed: () => void = () 
   function snapshot(library: SkinLibrary): SkinSnapshot {
     return { activeId: library.activeId, active: structuredClone(library.entries.find(entry => entry.saved.id === library.activeId)!.saved),
       skins: library.entries.map(({ draft, saved }) => ({ id: draft.id, name: draft.name, revision: draft.revision,
+        ...(draft.character ? { character: structuredClone(draft.character) } : {}),
         type: draft.visual.type, modified: !sameSkinData(draft, saved) })) };
   }
   return {
@@ -49,11 +50,11 @@ export function createSkinRepository(storage: Storage, changed: () => void = () 
         ...(id === saved.id && revision === saved.revision ? {} : { active: structuredClone(saved) }) };
     }),
     snapshot: () => serial(async () => snapshot(await read())),
-    get: (id: string) => serial(async () => {
+    get: (id: string, saved = false) => serial(async () => {
       const library = await read();
       const entry = library.entries.find(entry => entry.draft.id === (id || library.activeId));
       if (!entry) throw skinError('SKIN_NOT_FOUND');
-      return structuredClone(entry.draft);
+      return structuredClone(saved ? entry.saved : entry.draft);
     }),
     mutate(command: SkinCommand, assertCurrent: () => void = () => {}): Promise<{ skin?: WelcomeSkin; snapshot: SkinSnapshot }> {
       // Capture data at admission, before any queued operation can mutate caller-owned objects.
@@ -77,7 +78,7 @@ export function createSkinRepository(storage: Storage, changed: () => void = () 
           if (input.revision !== entry.draft.revision) throw skinError('SKIN_CONFLICT');
           if (input.action === 'update') {
             const patch = skinObject(input.patch);
-            if (Object.keys(patch).some(key => !['name', 'visual', 'quotes', 'assets'].includes(key))) throw skinError('SKIN_INVALID');
+            if (Object.keys(patch).some(key => !['name', 'character', 'visual', 'quotes', 'assets'].includes(key))) throw skinError('SKIN_INVALID');
             let visual = patch.visual === undefined ? entry.draft.visual : skinObject(patch.visual);
             // Scene model patches merge by stable character id. null explicitly removes a character.
             // Missing src/source fields retain the original binary and its per-character customization.

@@ -4,7 +4,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import type { SkinVisual, SkinModel } from '../../shared/skins/model.js';
 import { glbDataBytes, inspectGlb } from '../../shared/skins/glb.js';
-import { readSkinView, type SkinViewState } from '../../shared/skins/preview.js';
+import { readSkinView, type SkinViewState, type SkinCamera, type SkinCaptureOptions } from '../../shared/skins/preview.js';
+import { frameSkinSubject, photographSkin } from './scene-photography.js';
 
 interface Character { root: THREE.Object3D; update?(time: number, delta: number): void; dispose?(): void }
 let token = '', revision = 0, loadEpoch = 0, instance: Awaited<ReturnType<typeof createScene>> | undefined;
@@ -78,10 +79,14 @@ window.addEventListener('message', event => {
     else if (data.type === 'cancel') { loadEpoch++; transition?.skipTransition(); loading?.abort(); loading = undefined; instance?.setMotion(requestedMotion); instance?.setPaused(false); }
     else if (data.type === 'reset') instance?.reset();
     else if (data.type === 'rotate') instance?.rotate(Number(data.amount) || 0);
+    else if (data.type === 'camera' && ['full', 'bust', 'close'].includes(data.preset)) instance?.setCamera(data.preset, data.character);
+    else if (data.type === 'expressions' && instance && !loading) {
+      revision = data.revision; instance.setExpressions(data.visual); report('loaded');
+    }
     else if (data.type === 'capture' && typeof data.requestId === 'string' && data.requestId.length <= 100) {
       if (!instance || loading) report('capture', { requestId: data.requestId, error: true });
       else {
-        try { report('capture', { requestId: data.requestId, preview: instance.capture(data.maxSize, data.format) }); }
+        try { report('capture', { requestId: data.requestId, preview: instance.capture(data.maxSize, data.format, data.options) }); }
         catch { report('capture', { requestId: data.requestId, error: true }); }
       }
     }
@@ -114,6 +119,7 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(35, 1, .1, 100);
   camera.position.set(0, .1, 6.8);
+  let cameraDistance = 6.8;
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.disconnect();
   controls.enablePan = false; controls.enableZoom = false;
@@ -132,6 +138,26 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
   let vrm: VRM | undefined;
   const loadedModels: THREE.Group[] = [], mixers: THREE.AnimationMixer[] = [], avatars: VRM[] = [], characterActors: Character[] = [];
   const characters: Record<string, { root: THREE.Group; model: THREE.Group; vrm?: VRM }> = Object.create(null);
+  const expressionSettings = new Map<VRM, Record<string, number>>();
+  const expressionBaselines = new Map<VRM, Record<string, number>>();
+  function applyExpressions() {
+    for (const [avatar, values] of expressionSettings) {
+      for (const [name, value] of Object.entries(values)) avatar.expressionManager?.setValue(name, value);
+      avatar.expressionManager?.update();
+    }
+  }
+  function setExpressions(next: Exclude<SkinVisual, { type: 'image2d' }>) {
+    for (const [avatar, values] of expressionBaselines) {
+      for (const [name, value] of Object.entries(values)) avatar.expressionManager?.setValue(name, value);
+    }
+    expressionSettings.clear();
+    if (next.type === 'model3d' && vrm) expressionSettings.set(vrm, next.expressions || {});
+    if (next.type === 'scene3d') for (const [id, spec] of Object.entries(next.models || {})) {
+      const avatar = characters[id]?.vrm;
+      if (avatar) expressionSettings.set(avatar, spec.expressions || {});
+    }
+    applyExpressions(); requestDraw();
+  }
   let visible = false, active = false, paused = false, frame = 0, last = 0, elapsed = 0, disposed = false, dirty = true, interacting = false;
   let qualityTimer: ReturnType<typeof setTimeout> | undefined;
   let quality = 1, qualitySamples = 0, qualityElapsed = 0, lastPaint = 0;
@@ -179,7 +205,7 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
       renderer.setDrawingBufferSize(width, height, density);
     }
     camera.aspect = width / height;
-    camera.position.setLength(6.8 / Math.min(1, camera.aspect)); camera.updateProjectionMatrix();
+    camera.position.sub(controls.target).setLength(cameraDistance / Math.min(1, camera.aspect)).add(controls.target); camera.updateProjectionMatrix();
   }
   function draw() {
     if (disposed || !visible) return;
@@ -192,6 +218,9 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
   function resizeView() {
     if (!active || disposed) return;
     resizeRenderer(); dirty = true; cancelAnimationFrame(frame); tick(performance.now());
+    // Chromium may replace the compositor surface after the synchronous resize paint.
+    // One follow-up frame keeps a static/reduced-motion avatar visible on that new surface.
+    requestDraw();
   }
   function tick(now: number) {
     frame = 0;
@@ -205,6 +234,7 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
         actor?.update?.(elapsed, delta);
         pivot.position.y = Math.sin(elapsed * 1.4) * .025;
         for (const avatar of avatars) avatar.update(delta);
+        applyExpressions();
       }
       // Camera input is painted on the next display frame, independently of the idle animation cap.
       if (animate || dirty) {
@@ -235,7 +265,19 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
     if (!visible) { clearTimeout(qualityTimer); interacting = false; }
     else { resizeRenderer(); requestDraw(); }
   }
-  function reset() { camera.position.set(0, .1, 6.8); controls.target.set(0, 0, 0); resizeRenderer(); controls.update(); requestDraw(); if (epoch === loadEpoch) report('view-changed'); }
+  function reset() { cameraDistance = 6.8; camera.position.set(0, .1, 6.8); controls.target.set(0, 0, 0); resizeRenderer(); controls.update(); requestDraw(); if (epoch === loadEpoch) report('view-changed', { camera: 'full' }); }
+  function subject(id?: string) {
+    const character = id ? characters[id] : undefined;
+    return { root: character?.root || pivot, avatar: character?.vrm || (id ? undefined : vrm) };
+  }
+  function setCamera(preset: SkinCamera, id?: string) {
+    const { root, avatar } = subject(id);
+    const framing = frameSkinSubject(root, avatar?.humanoid.getRawBoneNode('head'), preset);
+    cameraDistance = framing.distance; controls.target.copy(framing.target);
+    camera.position.copy(framing.target).add(new THREE.Vector3(0, 0, cameraDistance));
+    resizeRenderer(); controls.update(); requestDraw();
+    if (epoch === loadEpoch) report('view-changed', { camera: preset });
+  }
   controls.addEventListener('change', requestDraw);
   controls.addEventListener('start', () => {
     clearTimeout(qualityTimer); interacting = true; resizeRenderer(); requestDraw();
@@ -320,41 +362,60 @@ async function createScene(visual: Exclude<SkinVisual, { type: 'image2d' }>, ass
     // Apply static expressions even with reduced motion; reset physics after fitting the model.
     scene.updateMatrixWorld(true);
     for (const avatar of avatars) { avatar.springBoneManager?.reset(); avatar.update(0); }
+    for (const avatar of avatars) expressionBaselines.set(avatar, Object.fromEntries(
+      (avatar.expressionManager?.expressions || []).map(expression => [expression.expressionName, expression.weight])));
+    setExpressions(visual);
     // Warm shaders while the current preview remains visible. The old scene is replaced only
     // after the complete candidate succeeds; a broken draft cannot blank the previous picture.
     await renderer.compileAsync(scene, camera);
     signal.throwIfAborted();
   } catch (error) { dispose(); throw error; }
-  return { dispose, setVisible, reset, present(value: boolean) { setVisible(value); if (value) draw(); }, setPaused(value: boolean) {
+  const getView = (): SkinViewState => ({ position: camera.position.toArray(), target: controls.target.toArray(), distance: cameraDistance, elapsed, quality });
+  return { dispose, setVisible, reset, setCamera, setExpressions, present(value: boolean) { setVisible(value); if (value) draw(); }, setPaused(value: boolean) {
     paused = value; last = lastPaint = qualitySamples = qualityElapsed = 0;
     if (!paused) requestDraw();
   }, setMotion(value: boolean) {
     reducedMotion = value; last = lastPaint = qualitySamples = qualityElapsed = 0;
     if (active) resizeRenderer(); requestDraw();
-  }, getView: (): SkinViewState => ({ position: camera.position.toArray(), elapsed, quality }), activate(view?: SkinViewState) {
+  }, getView, activate(view?: SkinViewState) {
     active = true;
     if (view) {
       camera.position.fromArray(view.position); quality = view.quality; elapsed = view.elapsed;
-      if (elapsed > 0 && !reducedMotion) {
+      controls.target.fromArray(view.target || [0, 0, 0]); cameraDistance = view.distance || 6.8;
+      if (elapsed > 0) {
         for (const mixer of mixers) mixer.setTime(elapsed);
         for (const character of characterActors) character.update?.(elapsed, 0);
         actor?.update?.(elapsed, 0); pivot.position.y = Math.sin(elapsed * 1.4) * .025;
         for (const avatar of avatars) avatar.update(0);
+        applyExpressions();
       }
     }
     controls.connect(renderer.domElement); resize.observe(document.body); resizeRenderer(); controls.update();
-  }, capture(maxSize: unknown, format: unknown) {
-    // Render and copy synchronously: preserveDrawingBuffer would slow every interactive frame.
-    renderer.render(scene, camera);
-    const edge = Math.max(64, Math.min(1024, Number(maxSize) || 1024));
-    const canvas = document.createElement('canvas'), source = renderer.domElement;
-    const scale = Math.min(1, edge / Math.max(source.width, source.height));
-    canvas.width = Math.max(1, Math.round(source.width * scale)); canvas.height = Math.max(1, Math.round(source.height * scale));
-    canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height);
-    return { image: canvas.toDataURL(format === 'webp' ? 'image/webp' : 'image/png', .9), width: canvas.width, height: canvas.height,
-      view: { position: camera.position.toArray(), elapsed, quality } };
+  }, capture(maxSize: unknown, format: unknown, options: SkinCaptureOptions = {}) {
+    const lens = camera.clone(), { root, avatar } = subject(options.character);
+    const manager = avatar?.expressionManager;
+    const weights = manager?.expressions.map(expression => [expression.expressionName, expression.weight] as const);
+    try {
+      if (options.camera && ['full', 'bust', 'close'].includes(options.camera)) {
+        const framing = frameSkinSubject(root, avatar?.humanoid.getRawBoneNode('head'), options.camera);
+        lens.position.copy(framing.target).add(new THREE.Vector3(0, 0, framing.distance / (options.square ? 1 : Math.min(1, lens.aspect))));
+        lens.lookAt(framing.target);
+      }
+      if ((options.expression !== undefined || options.originalExpression) && manager) {
+        for (const expression of manager.expressions) manager.setValue(expression.expressionName, options.originalExpression
+          ? expressionBaselines.get(avatar!)?.[expression.expressionName] || 0 : expression.expressionName === options.expression ? 1 : 0);
+        manager.update();
+      }
+      return { ...photographSkin(renderer, scene, lens, maxSize, format, options.square), view: getView() };
+    } finally {
+      for (const [name, value] of weights || []) manager?.setValue(name, value);
+      manager?.update();
+      // An offscreen GL render can invalidate a non-preserved default buffer. Restore the
+      // original camera and expression synchronously before the compositor can present it.
+      if (visible && !disposed) renderer.render(scene, camera);
+    }
   }, rotate(amount: number) {
-    camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.max(-.5, Math.min(.5, amount))); controls.update(); requestDraw();
+    camera.position.sub(controls.target).applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.max(-.5, Math.min(.5, amount))).add(controls.target); controls.update(); requestDraw();
     if (epoch === loadEpoch) report('view-changed');
   } };
 }

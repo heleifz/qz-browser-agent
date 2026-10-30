@@ -8,7 +8,8 @@ export function skinEditorTab(tab: EditorTab, extensionId: string) {
     const skinId = url.searchParams.get('skin');
     if (url.protocol !== 'chrome-extension:' || url.host !== extensionId || url.pathname !== `/${SKIN_EDITOR_PATH}`
       || !skinId || !/^[a-zA-Z0-9_-]{1,100}$/.test(skinId)) return null;
-    return { ...tab, skinId, sessionId: url.searchParams.get('session') || '' };
+    const character = url.searchParams.get('character');
+    return { ...tab, skinId, ...(character && /^[a-zA-Z0-9_-]{1,80}$/.test(character) ? { characterId: character } : {}), sessionId: url.searchParams.get('session') || '' };
   } catch { return null; }
 }
 
@@ -21,10 +22,12 @@ export function selectSkinEditor(tabs: readonly EditorTab[], extensionId: string
   const bound = sessionId ? editors.filter(tab => tab.sessionId === sessionId) : [];
   const active = bound.filter(tab => tab.active);
   const candidates = active.length ? active : bound;
-  if (candidates.length === 1) return { skinId: candidates[0]!.skinId };
+  const selection = (editor: NonNullable<ReturnType<typeof skinEditorTab>>) => ({ skinId: editor.skinId,
+    ...(editor.characterId ? { characterId: editor.characterId } : {}) });
+  if (candidates.length === 1) return selection(candidates[0]!);
   if (candidates.length || windowId === undefined) return null;
   const unbound = editors.filter(tab => tab.active && !tab.sessionId);
-  return unbound.length === 1 ? { skinId: unbound[0]!.skinId } : null;
+  return unbound.length === 1 ? selection(unbound[0]!) : null;
 }
 
 export function createSkinEditorTabs(tabs: Pick<typeof chrome.tabs, 'query' | 'update' | 'create'>, extensionId: string) {
@@ -42,6 +45,7 @@ export function createSkinEditorTabs(tabs: Pick<typeof chrome.tabs, 'query' | 'u
         || editors.find(tab => tab.active && !tab.sessionId);
       const url = new URL(`chrome-extension://${extensionId}/${SKIN_EDITOR_PATH}`);
       url.searchParams.set('skin', id);
+      if (existing?.characterId) url.searchParams.set('character', existing.characterId);
       if (sessionId) url.searchParams.set('session', sessionId);
       const tab = existing?.id === undefined
         ? await tabs.create({ url: url.href, ...(windowId === undefined ? {} : { windowId }) })

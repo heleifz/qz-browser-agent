@@ -7,6 +7,7 @@ import { createSkinViewer, skinImageUrl } from './viewer.js';
 import { GLB_DATA_PREFIX, MAX_GLB_BYTES, inspectGlb, glbDataBytes } from '../../shared/skins/glb.js';
 import { registerSkinPreviewCapture } from './preview-capture.js';
 import { createLibraryPreviews } from './library-previews.js';
+import { createStudioTools } from './studio-tools.js';
 
 await initializeLanguage();
 document.documentElement.lang = getLanguage(); document.documentElement.dir = getTextDirection();
@@ -35,7 +36,7 @@ let current: WelcomeSkin | undefined, snapshot: SkinLibrarySummary | undefined, 
 let renderReady = false, rendered: WelcomeSkin | undefined, selected = new URL(location.href).searchParams.get('skin') || '';
 let quote = '', saveTimer: ReturnType<typeof setTimeout> | undefined, darkUpload = false, refreshAgain = false;
 let librarySelection = '', libraryWidth = 0;
-let selectedCharacter = '', appendModels = false, dragTimer: ReturnType<typeof setTimeout> | undefined;
+let selectedCharacter = new URL(location.href).searchParams.get('character') || '', appendModels = false, dragTimer: ReturnType<typeof setTimeout> | undefined;
 let operations: Promise<unknown> = Promise.resolve();
 const modelMetadata = new Map<string, ReturnType<typeof inspectGlb>>();
 const libraryPreviews = createLibraryPreviews();
@@ -49,11 +50,13 @@ function modelInfo(src: string) {
   }
   return info;
 }
-const viewer = createSkinViewer(el('viewer'), { onFileDrag: showDropTarget, onStatus(ready, message) {
+const viewer = createSkinViewer(el('viewer'), { onFileDrag: showDropTarget, onCamera: preset => studioTools.cameraChanged(preset), onStatus(ready, message) {
   renderReady = ready; syncButtons();
   if (message) showError(message);
   if (ready) void updateThumbnail();
 } });
+const studioTools = createStudioTools({ viewer, signal, current: () => current, character: () => current?.visual.type === 'scene3d' ? selectedCharacter : '',
+  selectCharacter(id) { selectedCharacter = id; renderCharacters(); syncButtons(); }, modelInfo, update, run, status });
 registerSkinPreviewCapture({ current: () => current, settled: () => !busy && !sourceDirty && !fieldsDirty && renderReady,
   capture: () => viewer.capture(), signal });
 function status(key: Parameters<typeof t>[0]) { el('status').textContent = t(key); }
@@ -90,6 +93,7 @@ function syncButtons() {
   const count = current?.visual.type === 'scene3d' ? Object.keys(current.visual.models || {}).length : 0;
   el<HTMLButtonElement>('add-character').disabled = busy || count >= MAX_SCENE_MODELS;
   el<HTMLButtonElement>('remove-character').disabled = busy || count <= 1;
+  studioTools.refresh({ busy, ready: renderReady && !fieldsDirty && !sourceDirty, modified: Boolean(modified) });
 }
 function run(operation: () => Promise<void>) {
   const next = operations.then(async () => {
@@ -123,7 +127,24 @@ function renderLibrary() {
   const list = el('library-list');
   const { scrollLeft, scrollTop } = list;
   const focusedId = list.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.skinId : undefined;
-  list.replaceChildren(); el('library-count').textContent = String(snapshot?.skins.length || 0);
+  list.replaceChildren();
+  const groups = new Map<string, HTMLElement>();
+  for (const item of snapshot?.skins || []) {
+    const id = item.character?.id || item.id;
+    if (groups.has(id)) continue;
+    const members = snapshot!.skins.filter(skin => (skin.character?.id || skin.id) === id);
+    const group = document.createElement('div'); group.className = 'skin-library-group'; group.setAttribute('role', 'group');
+    const name = members.find(skin => skin.character)?.character?.name || item.name;
+    group.setAttribute('aria-label', name);
+    if (members.length > 1) {
+      const heading = document.createElement('div'); heading.className = 'skin-library-group-heading';
+      const title = document.createElement('span'); title.textContent = name;
+      const count = document.createElement('span'); count.textContent = t('looks', { number: members.length });
+      heading.append(title, count); group.append(heading);
+    }
+    groups.set(id, group); list.append(group);
+  }
+  el('library-count').textContent = String(groups.size);
   for (const item of snapshot?.skins || []) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'skin-library-item';
     button.setAttribute('aria-pressed', String(item.id === selected)); button.dataset.skinId = item.id;
@@ -144,7 +165,7 @@ function renderLibrary() {
     const hint = document.createElement('span'); hint.className = 'skin-library-meta'; hint.textContent = type;
     if (active) { const label = document.createElement('span'); label.className = 'skin-library-active'; label.textContent = t('active'); hint.append(label); }
     if (item.modified) { const dot = document.createElement('span'); dot.className = 'skin-library-draft'; dot.title = t('draft'); dot.setAttribute('aria-hidden', 'true'); hint.append(dot); }
-    copy.append(name, hint); button.append(symbol, copy); list.append(button);
+    copy.append(name, hint); button.append(symbol, copy); groups.get(item.character?.id || item.id)!.append(button);
     if (item.id === focusedId) button.focus({ preventScroll: true });
   }
   list.scrollTo({ left: scrollLeft, top: scrollTop });
@@ -189,8 +210,10 @@ function adopt(skin: WelcomeSkin, fillFields: boolean) {
 function renderCharacters() {
   const models = current?.visual.type === 'scene3d' ? current.visual.models : undefined;
   el('characters').hidden = !models;
-  if (!models) return;
+  const url = new URL(location.href);
+  if (!models) { url.searchParams.delete('character'); history.replaceState(null, '', url); return; }
   if (!Object.hasOwn(models, selectedCharacter)) selectedCharacter = Object.keys(models)[0]!;
+  url.searchParams.set('character', selectedCharacter); history.replaceState(null, '', url);
   const select = el<HTMLSelectElement>('character'); select.replaceChildren();
   for (const [id, character] of Object.entries(models)) {
     const option = document.createElement('option'); option.value = id; option.textContent = character.name; select.append(option);
@@ -211,7 +234,7 @@ let refreshGeneration = 0;
 async function refresh(force: boolean) {
   if (busy) { refreshAgain = true; return; }
   const generation = ++refreshGeneration;
-  const finishPreview = current ? viewer.beginUpdate() : () => {};
+  let finishPreview = () => {};
   try {
     const next = await skinRequest<SkinLibrarySummary>({ action: 'list' }, signal);
     if (signal.aborted || generation !== refreshGeneration) return;
@@ -220,6 +243,7 @@ async function refresh(force: boolean) {
     if (!force && current?.id === id && current.revision === next.skins.find(skin => skin.id === id)?.revision) {
       renderLibrary(); syncButtons(); return;
     }
+    finishPreview = current ? viewer.beginUpdate() : () => {};
     const { skin } = await skinRequest<{ skin: WelcomeSkin }>({ action: 'get', id }, signal);
     if (signal.aborted || generation !== refreshGeneration) return;
     if (!force && current?.id === skin.id && current.revision !== skin.revision && (fieldsDirty || sourceDirty)) {
@@ -293,7 +317,9 @@ click('revert', async () => {
 });
 click('duplicate', async () => {
   await savePending(); if (!current) return;
-  const result = await skinRequest<{ skin: WelcomeSkin; snapshot: SkinLibrarySummary }>({ action: 'create', skin: { ...current, name: `${current.name.slice(0, 90)} (2)` } }, signal);
+  const character = current.character || { id: current.id, name: current.name };
+  const count = snapshot?.skins.filter(skin => (skin.character?.id || skin.id) === character.id).length || 1;
+  const result = await skinRequest<{ skin: WelcomeSkin; snapshot: SkinLibrarySummary }>({ action: 'create', skin: { ...current, character, name: t('look', { number: count + 1 }) } }, signal);
   snapshot = result.snapshot; adopt(result.skin, true);
 });
 click('delete', async () => {
@@ -414,7 +440,7 @@ document.addEventListener('drop', event => {
   const files = [...event.dataTransfer.files]; if (files.length) void run(() => importModels(files, true));
 }, { signal });
 window.addEventListener('blur', hideDropTarget, { signal });
-el<HTMLSelectElement>('character').addEventListener('change', event => { selectedCharacter = (event.target as HTMLSelectElement).value; renderCharacters(); }, { signal });
+el<HTMLSelectElement>('character').addEventListener('change', event => { selectedCharacter = (event.target as HTMLSelectElement).value; renderCharacters(); syncButtons(); }, { signal });
 el('characters').addEventListener('change', event => {
   const input = event.target as HTMLInputElement, field = input.dataset.characterField, id = selectedCharacter;
   if (!field || current?.visual.type !== 'scene3d' || !current.visual.models?.[id]) return;

@@ -2,7 +2,7 @@ import type { WelcomeSkin } from '../../shared/skins/model.js';
 import { sameSkinData, skinError } from '../../shared/skins/model.js';
 import { glbDataBytes } from '../../shared/skins/glb.js';
 import { skinT } from '../../shared/skins/messages.js';
-import { readSkinPreview, type SkinPreview } from '../../shared/skins/preview.js';
+import { readSkinPreview, type SkinPreview, type SkinViewState, type SkinCamera, type SkinCaptureOptions } from '../../shared/skins/preview.js';
 import { clearWelcomePreview, writeWelcomePreview, type WelcomePreview } from './welcome-preview.js';
 
 export function skinImageUrl(source: string): string {
@@ -12,7 +12,8 @@ export function skinImageUrl(source: string): string {
   return source;
 }
 export function createSkinViewer(container: HTMLElement, options: { onStatus?(ready: boolean, message?: string): void; onFileDrag?(): void;
-  welcomePreview?: WelcomePreview; rememberView?: boolean } = {}) {
+  onCamera?(preset: SkinCamera): void;
+  welcomePreview?: WelcomePreview; rememberView?: boolean; initialView?: SkinViewState; still?: boolean } = {}) {
   const lifetime = new AbortController(), token = crypto.randomUUID();
   const theme = matchMedia('(prefers-color-scheme: dark)'), motion = matchMedia('(prefers-reduced-motion: reduce)');
   let skin: WelcomeSkin | undefined, iframe: HTMLIFrameElement | undefined, image: HTMLImageElement | undefined;
@@ -55,7 +56,7 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
           .map(([id, model]) => [id, { ...model, src: reference(model.src) }])) } : {}) };
       post({ type: 'load', visual, assets: skin.assets, revision: generation, modelBuffers,
         modelKeys: [...nextKeys.values()], visible: visible && inView && !document.hidden,
-        reducedMotion: motion.matches, ...(restored ? { view: restored.view } : {}) }, Object.values(modelBuffers));
+        reducedMotion: options.still || motion.matches, view: restored?.view || options.initialView }, Object.values(modelBuffers));
       modelKeys = nextKeys;
     } catch (error) {
       clearTimeout(timer); failed = true; rendering = false; setLoading(false);
@@ -70,7 +71,7 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
     for (const pending of captures.values()) { clearTimeout(pending.timer); pending.reject(skinError('SKIN_PREVIEW_UNAVAILABLE')); }
     captures.clear();
   }
-  async function capture(maxSize = 1024, format: 'png' | 'webp' = 'png'): Promise<SkinPreview> {
+  async function capture(maxSize = 1024, format: 'png' | 'webp' = 'png', captureOptions: SkinCaptureOptions = {}): Promise<SkinPreview> {
     const current = generation;
     const deadline = performance.now() + 20000;
     while (!signal.aborted && current === generation && !failed && (rendering || pendingPreparation || !presented) && performance.now() < deadline) {
@@ -82,14 +83,16 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
       if (!image.complete || !image.naturalWidth) throw skinError('SKIN_PREVIEW_UNAVAILABLE');
       const canvas = document.createElement('canvas'), scale = Math.min(1, edge / Math.max(image.naturalWidth, image.naturalHeight));
       canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-      canvas.getContext('2d')!.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const width = canvas.width, height = canvas.height;
+      if (captureOptions.square) canvas.width = canvas.height = Math.max(width, height);
+      canvas.getContext('2d')!.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
       return { image: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height };
     }
     if (!presented || !iframe) throw skinError('SKIN_PREVIEW_UNAVAILABLE');
     return new Promise((resolve, reject) => {
       const requestId = crypto.randomUUID();
       const timer = setTimeout(() => { captures.delete(requestId); reject(skinError('SKIN_PREVIEW_UNAVAILABLE')); }, 3000);
-      captures.set(requestId, { resolve, reject, timer }); post({ type: 'capture', requestId, maxSize: edge, format });
+      captures.set(requestId, { resolve, reject, timer }); post({ type: 'capture', requestId, maxSize: edge, format, options: captureOptions });
     });
   }
   async function remember() {
@@ -111,7 +114,10 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
       try { pending.resolve(readSkinPreview(event.data.preview)); } catch { pending.reject(skinError('SKIN_PREVIEW_UNAVAILABLE')); }
       return;
     }
-    if (event.data.type === 'view-changed') { void remember(); return; }
+    if (event.data.type === 'view-changed') {
+      if (['full', 'bust', 'close'].includes(event.data.camera)) options.onCamera?.(event.data.camera);
+      void remember(); return;
+    }
     if (event.data.type === 'file-drag') { options.onFileDrag?.(); return; }
     if (event.data.type === 'loaded') {
       clearTimeout(timer); presented = true; rendering = false;
@@ -126,13 +132,14 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
   }, { signal });
   document.addEventListener('visibilitychange', visibility, { signal });
   theme.addEventListener('change', () => { if (image && skin?.visual.type === 'image2d') image.src = skinImageUrl(theme.matches && skin.visual.darkSrc || skin.visual.src); }, { signal });
-  motion.addEventListener('change', () => post({ type: 'motion', reducedMotion: motion.matches }), { signal });
+  motion.addEventListener('change', () => post({ type: 'motion', reducedMotion: options.still || motion.matches }), { signal });
   container.addEventListener('keydown', event => {
     if (!iframe || !['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
     event.preventDefault(); post(event.key === 'Home' ? { type: 'reset' } : { type: 'rotate', amount: event.key === 'ArrowLeft' ? -.15 : .15 });
   }, { signal });
   return {
     capture,
+    camera(preset: SkinCamera, character?: string) { post({ type: 'camera', preset, character }); },
     setSkin(next: WelcomeSkin) {
       if (signal.aborted) return;
       container.setAttribute('aria-label', next.name);
@@ -140,7 +147,28 @@ export function createSkinViewer(container: HTMLElement, options: { onStatus?(re
       if (image) image.alt = next.name;
       if (!failed && skin?.id === next.id && sameSkinData(skin.visual, next.visual) && sameSkinData(skin.assets, next.assets)) { skin = next; void remember(); return; }
       const reuse = iframe && skin?.id === next.id && !fatal && next.visual.type !== 'image2d';
+      const withoutExpressions = (value: WelcomeSkin['visual']): unknown => {
+        if (value.type === 'image2d') return value;
+        if (value.type === 'model3d') { const { expressions: _, ...rest } = value; return rest; }
+        return { ...value, ...(value.models ? { models: Object.fromEntries(Object.entries(value.models).map(([id, spec]) => {
+          const { expressions: _, ...rest } = spec; return [id, rest];
+        })) } : {}) };
+      };
+      const expressionsOnly = reuse && !failed && !rendering && presented && skin
+        && sameSkinData(skin.assets, next.assets) && sameSkinData(withoutExpressions(skin.visual), withoutExpressions(next.visual));
       skin = next; generation++; clearTimeout(timer);
+      if (expressionsOnly) {
+        // Only send small override maps; keep decoded models, shaders, camera and animation alive.
+        rendering = true; options.onStatus?.(false);
+        timer = setTimeout(() => {
+          post({ type: 'cancel' }); failed = true; rendering = false; setLoading(false);
+          options.onStatus?.(false, skinT('fallback'));
+        }, 20000);
+        const visual = next.visual.type === 'model3d' ? { type: 'model3d', expressions: next.visual.expressions }
+          : next.visual.type === 'scene3d' ? { type: 'scene3d', models: Object.fromEntries(Object.entries(next.visual.models || {})
+            .map(([id, spec]) => [id, { expressions: spec.expressions }])) } : undefined;
+        post({ type: 'expressions', revision: generation, visual }); return;
+      }
       if (!reuse) clear(restored?.id === next.id && restored.revision === next.revision && next.visual.type !== 'image2d');
       if (options.rememberView && (!restored || next.visual.type === 'image2d')) clearWelcomePreview();
       failed = false; fatal = false; options.onStatus?.(false);

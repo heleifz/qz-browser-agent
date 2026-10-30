@@ -11,6 +11,7 @@ export const MAX_SCENE_BYTES = 256 * 1024;
 export const MAX_SCENE_MODELS = 4;
 export interface SkinModel {
   src: string; source: string; animation: string; animationSpeed: number; rotationY: number;
+  expressions?: Record<string, number>;
 }
 export interface SkinCharacter extends SkinModel {
   name: string; position: [number, number, number]; scale: number;
@@ -24,13 +25,14 @@ export interface WelcomeSkin {
   id: string;
   revision: number;
   name: string;
+  character?: { id: string; name: string };
   visual: SkinVisual;
   quotes: string[];
   assets: Record<string, string>;
 }
 export interface SkinEntry { draft: WelcomeSkin; saved: WelcomeSkin }
 export interface SkinLibrary { schemaVersion: 1; activeId: string; entries: SkinEntry[] }
-export interface SkinSummary { id: string; name: string; revision: number; type: SkinVisual['type']; modified: boolean }
+export interface SkinSummary { id: string; name: string; character?: WelcomeSkin['character']; revision: number; type: SkinVisual['type']; modified: boolean }
 export interface SkinLibrarySummary { activeId: string; skins: SkinSummary[] }
 export interface SkinSnapshot extends SkinLibrarySummary { active: WelcomeSkin }
 export interface SkinWelcome { activeId: string; revision: number; active?: WelcomeSkin }
@@ -38,6 +40,7 @@ export interface SkinCommand {
   action: string; id?: string; revision?: number; skin?: unknown; patch?: unknown; package?: unknown;
   sessionId?: string;
   summaryOnly?: boolean;
+  saved?: boolean;
 }
 /** Compare portable data without allocating serialized copies of embedded model binaries. */
 export function sameSkinData(left: unknown, right: unknown): boolean {
@@ -59,13 +62,17 @@ export function validateSkinImage(value: unknown): string {
 }
 function normalizeModel(value: Record<string, unknown>): SkinModel {
   if (typeof value.src !== 'string') throw skinError('SKIN_MODEL_INVALID');
-  inspectGlb(glbDataBytes(value.src));
+  const info = inspectGlb(glbDataBytes(value.src));
+  const expressions = value.expressions === undefined ? undefined : skinObject(value.expressions);
+  if (expressions && Object.entries(expressions).some(([name, weight]) => !info.vrm?.expressions.includes(name)
+    || typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0 || weight > 1)) throw skinError('SKIN_INVALID');
   const source = value.source ?? 'return { root: model };';
   const animation = value.animation ?? 'auto', animationSpeed = value.animationSpeed ?? 1, rotationY = value.rotationY ?? 0;
   if (typeof source !== 'string' || skinBytes(source) > MAX_SCENE_BYTES || typeof animation !== 'string' || animation.length > 200
     || typeof animationSpeed !== 'number' || !Number.isFinite(animationSpeed) || animationSpeed < 0 || animationSpeed > 3
     || typeof rotationY !== 'number' || !Number.isFinite(rotationY) || Math.abs(rotationY) > 360) throw skinError('SKIN_INVALID');
-  return { src: value.src, source, animation, animationSpeed, rotationY };
+  return { src: value.src, source, animation, animationSpeed, rotationY,
+    ...(expressions ? { expressions: { ...expressions } as Record<string, number> } : {}) };
 }
 function normalizeCharacters(value: unknown): Record<string, SkinCharacter> {
   const entries = Object.entries(skinObject(value));
@@ -93,6 +100,9 @@ export function normalizeSkin(value: unknown): WelcomeSkin {
     || !Number.isSafeInteger(data.revision) || Number(data.revision) < 1
     || typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100) throw skinError('SKIN_INVALID');
   const visual = skinObject(data.visual);
+  const character = data.character === undefined ? undefined : skinObject(data.character);
+  if (character && (typeof character.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(character.id)
+    || typeof character.name !== 'string' || !character.name.trim() || character.name.length > 100)) throw skinError('SKIN_INVALID');
   let normalizedVisual: SkinVisual;
   if (visual.type === 'image2d') {
     normalizedVisual = { type: 'image2d', src: validateSkinImage(visual.src),
@@ -108,6 +118,7 @@ export function normalizeSkin(value: unknown): WelcomeSkin {
   const assets = skinObject(data.assets ?? {});
   if (Object.keys(assets).length > 30 || Object.keys(assets).some(key => !/^[a-zA-Z0-9_-]{1,80}$/.test(key))) throw skinError('SKIN_INVALID');
   return { schemaVersion: 1, id: data.id, revision: Number(data.revision), name: data.name.trim(), visual: normalizedVisual,
+    ...(character ? { character: { id: String(character.id), name: String(character.name).trim() } } : {}),
     quotes: data.quotes.map(text => String(text)), assets: Object.fromEntries(Object.entries(assets).map(([key, value]) => [key, validateSkinImage(value)])) };
 }
 export function parseSkinPackage(value: unknown): WelcomeSkin {

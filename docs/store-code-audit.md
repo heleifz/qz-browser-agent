@@ -105,6 +105,12 @@ submission-policy review obligation as the sandbox executor.
 
 ### storecheck's sandbox findings
 
+The character studio's camera, expression and photography messages stay inside this same sandbox
+boundary. They operate on loaded scene objects and bounded local render targets; responses contain
+validated raster previews and camera state. Comparison reads saved data through the existing
+Background repository and uses a disposable viewer. These additions introduce no network or
+extension-API bridge. The reviewed compiler and whole-script fingerprints include these paths.
+
 The unmodified CLI reports `privacy/remote-code-execution` errors for `runner-sandbox.js`'s
 embedded `new Function` and, when the skin capability is included, `dom/skins/sandbox.js`'s scene
 compiler. Its CSP rules already distinguish sandbox pages and report no sandbox CSP error.

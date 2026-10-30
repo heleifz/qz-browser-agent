@@ -17,6 +17,11 @@
   .skin-library > .skin-section-heading { padding-inline: 8px; }
   #skin-library-count { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .skin-library-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; overflow-y: auto; padding: 2px; }
+  .skin-library-group { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; min-width: 0; }
+  .skin-library-group-heading { display: flex; flex-direction: column; gap: 3px; padding: 12px 8px 4px; color: var(--text-secondary); font-size: 11px; }
+  .skin-library-group-heading > span:first-child { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skin-library-group-heading > span:last-child { color: var(--text-muted); font-size: 10px; }
+  #skin-duplicate { justify-content: flex-start; margin-inline: 4px; color: var(--text-secondary); }
   .skin-library-item { position: relative; appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; flex: 0 0 auto; padding: 8px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-primary); text-align: start; cursor: pointer; transition: var(--transition-surface); }
   .skin-library-item:hover { background: var(--control-hover-fill); }
   .skin-library-item[aria-pressed="true"] { background: var(--bg-elevated); border-color: var(--control-active-border); }
@@ -48,7 +53,7 @@
   .skin-state-badge[data-state="draft"] { color: var(--orange); }
   .skin-preview-body { isolation: isolate; position: relative; min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 4px 24px 0; }
   .skin-stage-glow { position: absolute; z-index: -1; inset: 0; pointer-events: none; background: radial-gradient(ellipse closest-side at 50% 46%, color-mix(in srgb, var(--text-secondary) 12%, transparent), color-mix(in srgb, var(--text-secondary) 5%, transparent) 55%, transparent); }
-  .skin-preview-stage .qz-skin-viewer { width: min(100%, 600px); height: clamp(260px, calc(100dvh - 304px), 660px); flex: 0 0 auto; }
+  .skin-preview-stage .qz-skin-viewer { width: min(100%, 600px); height: clamp(260px, calc(100dvh - 348px), 660px); flex: 0 0 auto; }
   .skin-studio .qz-skin-viewer iframe, .skin-studio .qz-skin-viewer img { display: block; width: 100%; height: 100%; object-fit: contain; border: 0; background: transparent; }
   .skin-preview-stage .qz-skin-viewer[data-visual="image2d"] img { padding: clamp(64px, 10vh, 120px); }
   .skin-preview-caption { display: flex; justify-content: center; align-items: center; gap: 6px; max-width: min(100%, 520px); min-height: 32px; padding-top: 4px; }
@@ -109,12 +114,46 @@
   .skin-inspector-heading { justify-content: space-between; }
   .skin-inspector-heading h2 { font-size: 13px; font-weight: 550; }
   #skin-toggle-inspector[aria-expanded="true"] { background: var(--control-active-fill); }
+  .skin-creative-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 28px; flex-wrap: wrap; }
+  .skin-camera-tabs { display: flex; gap: 2px; padding: 3px; background: var(--bg-tertiary); border-radius: var(--radius-md); }
+  .skin-camera-tabs .qz-btn { min-height: 26px; padding-inline: 12px; color: var(--text-muted); }
+  .skin-camera-tabs [aria-pressed="true"] { background: var(--bg-primary); color: var(--text-primary); box-shadow: var(--shadow-sm); }
+  .skin-photo-actions { display: flex; gap: 2px; margin-inline-start: auto; }
+  .skin-photo-actions .qz-btn { color: var(--text-secondary); }
+  #skin-focus-character { width: auto; max-width: 170px; font-size: 11px; }
+  .skin-preview-body:has(.skin-expressions:not([hidden])) { padding-inline-end: 116px; }
+  .skin-expressions { position: absolute; inset-inline-end: 28px; top: 16px; bottom: 24px; width: 68px; display: flex; flex-direction: column; gap: 10px; }
+  .skin-expressions h2 { font-size: 10px; color: var(--text-muted); text-align: center; }
+  #skin-expression-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px; }
+  .skin-expression { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 3px 3px 5px; border: 1px solid transparent; border-radius: var(--radius-md); color: var(--text-secondary); background: transparent; font-size: 10px; cursor: pointer; flex: 0 0 auto; min-width: 0; }
+  .skin-expression:hover { background: var(--control-hover-fill); }
+  .skin-expression[aria-pressed="true"] { border-color: var(--control-active-border); background: var(--bg-primary); color: var(--text-primary); }
+  .skin-expression:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 1px; box-shadow: var(--control-focus-ring); }
+  .skin-expression:disabled { cursor: default; opacity: .6; }
+  .skin-expression-preview { display: block; width: 54px; height: 54px; border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+  .skin-expression-preview img { width: 100%; height: 100%; object-fit: contain; }
+  .skin-expression > span:last-child { max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .skin-comparison { width: min(960px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); margin: auto; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-primary); color: var(--text-primary); box-shadow: var(--shadow-lg); }
+  .skin-comparison::backdrop { background: color-mix(in srgb, #000 30%, transparent); backdrop-filter: blur(6px); }
+  .skin-comparison header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
+  .skin-comparison h2 { font-size: 15px; font-weight: 550; }
+  .skin-comparison header p { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  #skin-comparison-loading { min-height: 240px; display: grid; place-items: center; font-size: 12px; color: var(--text-muted); }
+  .skin-comparison-images { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .skin-comparison-images figure { min-width: 0; background: var(--bg-elevated); border-radius: var(--radius-md); padding: 12px; }
+  .skin-comparison-images img { width: 100%; height: min(54vh, 480px); object-fit: contain; }
+  .skin-comparison-images figcaption { font-size: 11px; color: var(--text-secondary); text-align: center; padding: 12px 0 4px; }
+  .skin-comparison-render { position: fixed; inset: 0 auto auto 0; opacity: 0; pointer-events: none; }
   @media (max-width: 1100px) {
     .skin-studio-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
     .skin-studio-layout[data-inspector-open] { grid-template-columns: minmax(0, 1fr) 264px; }
     .skin-library { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 12px; padding: 8px 16px; border-inline-end: 0; border-bottom: 1px solid var(--border); }
     .skin-library > .skin-section-heading, .skin-library-imports .skin-field-hint, .skin-local-note { display: none; }
     .skin-library-list { flex: 1; flex-direction: row; overflow-x: auto; padding: 2px; }
+    .skin-library-group { flex-direction: row; align-items: center; }
+    .skin-library-group-heading { max-width: 120px; padding: 0 6px; }
+    #skin-duplicate { margin: 0; padding-inline: 8px; }
+    #skin-duplicate span { display: none; }
     .skin-library-item { flex: 0 0 168px; width: 168px; padding: 6px; }
     .skin-library-symbol { width: 32px; height: 38px; }
     .skin-library-item[aria-pressed="true"]::before { display: none; }
@@ -126,7 +165,7 @@
     .skin-preview-heading { padding: 18px 20px 8px; }
     .skin-preview-identity { flex-wrap: wrap; gap: 4px 8px; }
     .skin-preview-stage { min-height: 460px; }
-    .skin-preview-stage .qz-skin-viewer { height: clamp(220px, calc(100dvh - 376px), 580px); }
+    .skin-preview-stage .qz-skin-viewer { height: clamp(220px, calc(100dvh - 420px), 580px); }
     .skin-chat-bar { margin-bottom: 20px; padding: 12px; }
     .skin-chat-icon { display: none; }
   }
@@ -143,6 +182,15 @@
     .skin-studio-main { overflow: visible; }
     .skin-preview-stage { min-height: 500px; }
     .skin-preview-body { padding: 0 12px; }
+    .skin-preview-body:has(.skin-expressions:not([hidden])) { padding-inline: 12px; }
+    .skin-creative-toolbar { padding: 0 16px 10px; gap: 8px; }
+    .skin-creative-toolbar .qz-btn { padding-inline: 8px; }
+    .skin-expressions { position: static; width: 100%; max-width: 480px; gap: 4px; padding: 12px 0 0; }
+    .skin-expressions h2 { display: none; }
+    #skin-expression-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+    .skin-photo-actions { gap: 0; }
+    .skin-comparison { padding: 16px; }
+    .skin-comparison-images { gap: 8px; }
     .skin-preview-stage .qz-skin-viewer { height: clamp(260px, 42vh, 380px); }
     .skin-preview-heading { padding: 16px; flex-wrap: wrap; }
     #skin-preview-name { font-size: 14px; }

@@ -80,6 +80,23 @@ WebGL contexts. The optional `qingzhou_studio_thumbnails_v1` presentation cache 
 160-pixel previews within 768 KiB. Capture results are discarded if selection or revision changed;
 the cache never writes to the authoritative skin library.
 
+The character library groups looks through optional `character: { id, name }` metadata. Older
+skins form independent groups. **Save as a new look** creates a separate saved/draft pair in the
+same group without applying it or overwriting its source look. The metadata travels with exports.
+The studio's full/bust/close-up camera buttons frame the selected scene character; VRM portraits
+use the humanoid head, while other models use their visible bounds. Camera state is presentation
+state and does not change the saved model or enable panning/zooming on the welcome screen.
+
+Expression thumbnails use the actual VRM and its supported expressions. Optional model-level
+`expressions` maps replace the previous override map and are applied after source/VRM updates;
+an empty map restores source expressions. Expression-only changes reuse decoded models and shaders.
+Thumbnail and photo captures use a temporary render target on the existing renderer, restore
+expression weights and repaint the visible buffer synchronously. Photos export transparent PNG;
+portraits use a square close-up. GLB models without a VRM expression manager omit the expression strip.
+**Compare** reads the actual saved snapshot and captures it in a temporary viewer with the current
+camera and animation time. It verifies both saved and draft revisions after capture, disposes that
+viewer on success, failure or dismissal, and presents two still images. It never writes to storage.
+
 [SkinRepository](../src/background/skins/repository.ts) owns the versioned `qingzhou_skins_v1`
 record in `chrome.storage.local`. Background serializes writes across tabs and Sessions. Drafts
 remain separate from saved skins; the active id selects a saved snapshot. Cancellation and live-run
@@ -148,7 +165,7 @@ and copies synchronously to a bounded transparent PNG, without enabling `preserv
 or granting page-tool access to extension URLs. Sandbox replies use the existing source, token and
 generation checks. The image depicts the preview, not browser coordinates for page actions.
 Scene sources compile before model loading and execute in a lexical block, so a local declaration
-such as `const vrm = characters.fish.vrm` can shadow the injected `vrm` binding. Each edit loads
+such as `const vrm = characters.fish.vrm` can shadow the injected `vrm` binding. Geometry/source edits load
 fresh model instances, preserving the previous picture and pausing its animation until shader preparation succeeds. A rejected
 draft leaves the last valid preview visible and disables saving; the error explains how to recover.
 Loading epochs discard stale decoders and release candidate resources without touching the current

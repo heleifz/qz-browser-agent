@@ -66,6 +66,46 @@ import { chooseSkinQuote, exportSkinPackage, normalizeSkin, parseSkinPackage, SK
 import { createMemoryStorage } from '../support/memory-storage.mjs';
 import { vrmFixture } from '../fixtures/skins/vrm-fixture.mjs';
 
+test('character looks, saved comparisons and expression overrides survive restart and portable import', async () => {
+  const storage = createMemoryStorage(), repository = createSkinRepository(storage);
+  const src = GLB_DATA_PREFIX + vrmFixture().toString('base64');
+  const { skin: original } = await repository.mutate({ action: 'create', skin: { name: 'Avatar',
+    visual: { type: 'model3d', src }, quotes: [], assets: {} } });
+  const character = { id: original.id, name: original.name };
+  const { skin: look } = await repository.mutate({ action: 'create', skin: { ...original, character, name: 'Happy look' } });
+  const { skin: edited } = await repository.mutate({ action: 'update', id: look.id, revision: look.revision,
+    patch: { visual: { type: 'model3d', expressions: { happy: .8 } } } });
+  assert.deepEqual(edited.visual.expressions, { happy: .8 });
+  assert.equal((await repository.get(look.id, true)).visual.expressions, undefined);
+  assert.equal((await repository.snapshot()).activeId, 'qingzhou', 'new looks and drafts do not apply themselves');
+  assert.deepEqual((await repository.snapshot()).skins.find(skin => skin.id === look.id).character, character);
+  const restarted = createSkinRepository(storage);
+  assert.deepEqual((await restarted.get(look.id)).character, character);
+  assert.deepEqual((await restarted.get(look.id)).visual.expressions, { happy: .8 });
+  for (const expressions of [{ missing: 1 }, { happy: -1 }, { happy: 1.1 }, { happy: '1' }]) {
+    await assert.rejects(restarted.mutate({ action: 'update', id: look.id, revision: edited.revision,
+      patch: { visual: { type: 'model3d', expressions } } }), { code: 'SKIN_INVALID' });
+  }
+  const { skin: imported } = await restarted.mutate({ action: 'import', package: exportSkinPackage(edited) });
+  assert.notEqual(imported.id, look.id); assert.deepEqual(imported.character, character);
+  assert.deepEqual(imported.visual.expressions, { happy: .8 });
+  const { skin: reverted } = await restarted.mutate({ action: 'revert', id: look.id, revision: edited.revision });
+  assert.equal(reverted.visual.expressions, undefined);
+  assert.deepEqual(reverted.character, character); assert.equal((await restarted.get(original.id)).name, 'Avatar');
+  const { skin: reset } = await restarted.mutate({ action: 'update', id: imported.id, revision: imported.revision,
+    patch: { visual: { type: 'model3d', expressions: {} } } });
+  assert.deepEqual(reset.visual.expressions, {}, 'the complete override map is replaced, allowing source expressions again');
+});
+
+test('saved reads are isolated from callers and never replace the current draft', async () => {
+  const service = createSkinService({ storage: createMemoryStorage(), emit() {}, openEditor: async () => ({}), isRunCurrent: () => true });
+  await service.execute({ action: 'update', id: 'dafeiyu', revision: 1, patch: { name: 'New look' } });
+  const { skin: saved } = await service.execute({ action: 'get', id: 'dafeiyu', saved: true });
+  assert.equal(saved.revision, 1); saved.name = 'Caller change';
+  assert.equal((await service.execute({ action: 'get', id: 'dafeiyu' })).skin.name, 'New look');
+  assert.notEqual((await service.execute({ action: 'get', id: 'dafeiyu', saved: true })).skin.name, saved.name);
+});
+
 test('skins keep drafts separate from the active saved skin across restarts', async () => {
   const storage = createMemoryStorage(), repository = createSkinRepository(storage);
   const original = await repository.get('qingzhou');
@@ -300,6 +340,8 @@ test('studio context follows only the current chat and rejects ambiguous or fore
   assert.equal(selectSkinEditor([tab('one')], 'qz', ''), null);
   assert.equal(selectSkinEditor([{ url: 'https://qz/dom/skins/editor.html?skin=x&session=s' }], 'qz', 's'), null);
   assert.equal(selectSkinEditor([tab('one')], 'foreign', 's'), null);
+  assert.deepEqual(selectSkinEditor([{ ...tab('one'), url: tab('one').url + '&character=fish' }], 'qz', 's'), { skinId: 'one', characterId: 'fish' });
+  assert.deepEqual(selectSkinEditor([{ ...tab('one'), url: tab('one').url + '&character=bad%20id' }], 'qz', 's'), { skinId: 'one' });
 });
 
 test('chat tools inspect GLB metadata without returning binary and apply only current revisions', async () => {

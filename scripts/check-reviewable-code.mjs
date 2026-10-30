@@ -27,7 +27,7 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
   }],
-  ["dynamic-code:f0e6a8419d48a4306529902b5a65d060a0681e4613fc58cfee2b3eb7eb3173fd", {
+  ["dynamic-code:f5172ec77db76a12676339b15ae9d54b7a5c1f133739031ea02152c7f95e1a1d", {
     files: /^dom\/skins\/sandbox\.js$/u,
     reason: "User/Agent skin scene source in the manifest-declared opaque-origin skin sandbox. Local Three.js and embedded models only; CSP blocks network access, frames and Workers. See docs/store-code-audit.md.",
   }],

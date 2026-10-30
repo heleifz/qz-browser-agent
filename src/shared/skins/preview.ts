@@ -4,16 +4,24 @@ export interface SkinViewState {
   position: [number, number, number];
   elapsed: number;
   quality: number;
+  target?: [number, number, number];
+  distance?: number;
 }
+export type SkinCamera = 'full' | 'bust' | 'close';
+export interface SkinCaptureOptions { camera?: SkinCamera; character?: string; expression?: string; originalExpression?: boolean; square?: boolean }
 export interface SkinPreview { image: string; width: number; height: number; view?: SkinViewState }
 
 export function readSkinView(value: unknown): SkinViewState | undefined {
   if (!value || typeof value !== 'object') return;
   const view = value as SkinViewState;
   if (!Array.isArray(view.position) || view.position.length !== 3 || view.position.some(n => !Number.isFinite(n))
-    || Math.hypot(...view.position) < 1 || Math.hypot(...view.position) > 1000
+    || Math.hypot(...view.position) < (view.distance === undefined ? 1 : .01) || Math.hypot(...view.position) > 1000
     || !Number.isFinite(view.elapsed) || view.elapsed < 0 || !Number.isFinite(view.quality) || view.quality < .1 || view.quality > 1) return;
-  return { position: [...view.position], elapsed: view.elapsed, quality: view.quality };
+  const target = view.target;
+  if (target !== undefined && (!Array.isArray(target) || target.length !== 3 || target.some(n => !Number.isFinite(n) || Math.abs(n) > 1000))) return;
+  if (view.distance !== undefined && (!Number.isFinite(view.distance) || view.distance < .1 || view.distance > 1000)) return;
+  return { position: [...view.position], elapsed: view.elapsed, quality: view.quality,
+    ...(target ? { target: [...target] as [number, number, number] } : {}), ...(view.distance === undefined ? {} : { distance: view.distance }) };
 }
 
 /** Sandbox images are untrusted messages, never arbitrary image URLs or executable data. */

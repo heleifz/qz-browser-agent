@@ -9,12 +9,12 @@ export default function(qz: ToolExtensionAPI) {
   qz.registerTool({
     name: 'manage_skin',
     get title() { return t('tool'); },
-    get description() { return `${modelText('toolDescription')}\n\n${modelText('imageInstructions')}`; },
+    get description() { return `${modelText('toolDescription')}\n\n${modelText('studioInstructions')}\n\n${modelText('imageInstructions')}`; },
     parameters: { type: 'object', properties: {
       action: { type: 'string', enum: ['list', 'get', 'open', 'create', 'update', 'apply', 'revert', 'screenshot'], description: 'Operation. screenshot returns the current studio preview as an image.' },
       id: { type: 'string', description: 'Skin id from list/get.' },
       revision: { type: 'integer', description: 'Current revision from get, required for writes.' },
-      patch: { type: 'string', description: 'JSON object with name, visual, quotes and/or assets; required for update. image2d src/darkSrc accept raster data URLs, direct HTTP(S) image URLs, or asset:image: IDs from collect_images.' },
+      patch: { type: 'string', description: 'JSON object with name, character, visual, quotes and/or assets; required for update. Optional character={id,name} groups saved looks. VRM visual.expressions maps supported expression names to weights 0–1. image2d src/darkSrc accept raster data URLs, direct HTTP(S) image URLs, or asset:image: IDs from collect_images.' },
       skin: { type: 'string', description: 'For create: JSON object with name, visual, quotes and assets. image2d src/darkSrc accept raster data URLs, direct HTTP(S) image URLs, or asset:image: IDs from collect_images.' },
     }, required: ['action'] } as const,
     execute: async (args, signal, context) => {

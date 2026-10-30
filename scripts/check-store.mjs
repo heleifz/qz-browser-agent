@@ -17,7 +17,7 @@ const REVIEWED_SANDBOXES = new Map([
   }],
   ["dom/skins/sandbox.js", {
     page: "dom/skins/sandbox.html", script: "sandbox.js",
-    tokens: "acaaf1333dff3dd9bf2fbf70d04cf40ac3ef23471214369d12b0d49f8ba865fe",
+    tokens: "6d265c9bb1b31235a725c9418b0b9d9a0266c4c9f014650abd4cdfa66a73fbe9",
     arguments: 'new Function("THREE", "assets", "model", "vrm", "characters",',
     csp: "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src data: blob:; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'",
     reason: "Exact packaged skin scene editor in a manifest-declared opaque-origin sandbox. User/Agent scene source uses local Three.js and embedded models; no extension APIs, parent DOM, network, frames or Workers.",

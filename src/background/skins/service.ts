@@ -38,7 +38,7 @@ export function createSkinService(options: {
       const sessionId = context?.sessionId || input.sessionId || '';
       const windowId = context?.sourceWindowId ?? await options.getCurrentWindowId?.();
       const editor = !input.id ? selectSkinEditor(await options.getEditorTabs?.() || [], options.extensionId || '', sessionId, windowId) : null;
-      const skin = await repository.get(input.id || editor?.skinId || '');
+      const skin = await repository.get(input.id || editor?.skinId || '', input.action === 'get' && input.saved === true);
       assertCurrent();
       if (input.action === 'get') {
         if (context) await options.openEditor(skin.id, sessionId, windowId, assertCurrent);
