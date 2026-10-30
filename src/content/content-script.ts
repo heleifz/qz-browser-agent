@@ -43,7 +43,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-28-shadow-find-target";
+  const QZ_CONTENT_VERSION = "2026-10-30-fill-submit-target";
   const findElementRefs = new Map<string, WeakRef<Element>>();
   const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let findElementRefSequence = 0;
@@ -2007,7 +2007,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       } satisfies PageOverview;
     },
 
-    prepareElementFill({ selector, index = 0, value = "" }) {
+    prepareElementFill({ selector, index = 0, value = "", submit = false, fillToken = "" }) {
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
       const { element: el } = targetResult;
@@ -2024,6 +2024,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const fillMode = target instanceof HTMLTextAreaElement
         || (target instanceof HTMLInputElement && ["text", "search", "tel", "url", "password", "email", "number"].includes(target.type))
         || (target.isContentEditable && !hasLineBreaks(value)) ? "text" : "content";
+      if (submit && fillToken && fillMode === "text"
+        && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        rememberFillSubmission(fillToken, target);
+      }
       target.scrollIntoView({ behavior: "instant", block: "center" });
       target.focus({ preventScroll: true });
       if (!target.isConnected || !elementHasFocus(target)) {
@@ -2042,27 +2046,49 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return { ...getElementSummary(target), fillMode, contentEditable: target.isContentEditable };
     },
 
+    async refreshElementFill({ fillToken = "", value = "" }) {
+      await settleElementAction();
+      const saved = fillSubmissions.get(fillToken);
+      if (!saved) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
+      if (!saved.element.isConnected) {
+        // Stay in the original document/shadow root and surviving container. Focus alone
+        // is not identity: never refill an unrelated field that stole the focus.
+        const findReplacement = () => {
+          const scope = saved.ancestors.find(element => element.isConnected) || saved.root;
+          return [...scope.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input,textarea")].filter(candidate =>
+            !saved.existing.has(candidate) && candidate.getRootNode() === saved.root
+            && candidate.tagName === saved.tag && candidate.type === saved.type
+            && ((saved.id && candidate.id === saved.id) || (saved.name && candidate.name === saved.name))
+            && isVisible(candidate));
+        };
+        let candidates = findReplacement();
+        // Mounting may remove the old node before inserting its successor. Bound this wait.
+        for (let attempt = 0; !candidates.length && attempt < 10; attempt++) {
+          await new Promise(resolve => window.setTimeout(resolve, 50));
+          candidates = findReplacement();
+        }
+        if (candidates.length !== 1) {
+          return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus", getElementSummary(saved.element));
+        }
+        saved.element = candidates[0];
+        const prepared = handlers.prepareElementFill({ action: "prepareElementFill", selector: saved.element, value } as unknown as ContentRequest);
+        // Even a copied DOM value needs a native input event to reach the new component's model.
+        return { element: prepared, refill: true };
+      }
+      return { element: elementActionState(saved.element), refill: false };
+    },
+
+    releaseElementFill({ fillToken = "" }) {
+      fillSubmissions.delete(fillToken);
+      return { ok: true };
+    },
+
     async readElementActionState({ selector, index = 0 }) {
-      // Let page event handlers commit or roll back native actions; background tabs may not paint.
-      await new Promise<void>(resolve => {
-        const timeout = window.setTimeout(() => {
-          window.cancelAnimationFrame(frame);
-          resolve();
-        }, 50);
-        const frame = window.requestAnimationFrame(() => {
-          window.clearTimeout(timeout);
-          resolve();
-        });
-      });
+      await settleElementAction();
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
       const { element: el } = targetResult;
-      return {
-        ...getElementSummary(el),
-        value: getElementValue(el, true),
-        focused: elementHasFocus(el),
-        checked: "checked" in el ? !!el.checked : undefined,
-      };
+      return elementActionState(el);
     },
 
     resolveCheckTarget({ selector, index = 0 }) {
@@ -3028,7 +3054,37 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     });
   }
 
+  function settleElementAction() {
+    // Let page handlers commit native actions; background tabs may not paint.
+    return new Promise<void>(resolve => {
+      const timeout = window.setTimeout(() => { window.cancelAnimationFrame(frame); resolve(); }, 50);
+      const frame = window.requestAnimationFrame(() => { window.clearTimeout(timeout); resolve(); });
+    });
+  }
+
+  function elementActionState(el: Element) {
+    return {
+      ...getElementSummary(el),
+      value: getElementValue(el, true),
+      focused: el.isConnected && elementHasFocus(el),
+      checked: "checked" in el ? !!el.checked : undefined,
+    };
+  }
+
   const FILL_ROOT_LIMIT = 8;
+  const fillSubmissions = new Map<string, {
+    element: Element; root: Document | ShadowRoot; ancestors: Element[]; existing: WeakSet<Element>;
+    tag: string; type: string; id: string; name: string;
+  }>();
+  function rememberFillSubmission(token: string, element: HTMLInputElement | HTMLTextAreaElement) {
+    const ancestors: Element[] = [];
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.push(parent);
+    const root = element.getRootNode() as Document | ShadowRoot;
+    fillSubmissions.set(token, { element, root, ancestors, existing: new WeakSet(root.querySelectorAll("input,textarea")),
+      tag: element.tagName, type: element.type, id: element.id, name: element.name });
+    while (fillSubmissions.size > FILL_ROOT_LIMIT) fillSubmissions.delete(fillSubmissions.keys().next().value!);
+  }
+
   const fillRoots = new Map<string, Element>();
   function rememberFillRoot(token: string, root: Element) {
     if (!token || !root.isConnected) return;
@@ -3053,6 +3109,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return element?.isConnected && element.ownerDocument === document ? element : null;
     }
     const token = String(payload?.fillToken || "");
+    // These call-local actions must survive removal of the originally bound UID node.
+    // A fresh tool call still uses the normal stale-UID checks below.
+    if (payload?.action === "refreshElementFill" || payload?.action === "releaseElementFill") {
+      return handlers[payload.action](payload);
+    }
     if (payload?.action === "releaseFillRoot") {
       if (token) fillRoots.delete(token);
       return { ok: true };

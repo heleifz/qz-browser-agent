@@ -354,6 +354,96 @@ for (const mode of ["desktop", "mobile"]) {
   });
 }
 
+for (const scenario of [
+  { name: "observer setup / copied value", trigger: "observer", copy: true, focus: true },
+  { name: "observer setup / empty value / no focus", trigger: "observer", copy: false, focus: false },
+  { name: "focus / empty value", trigger: "focus", copy: false, focus: true },
+  { name: "input / copied value", trigger: "input", copy: true, focus: true },
+  { name: "UID / delayed mount", trigger: "observer", copy: true, focus: true, uid: true, delay: 100 },
+  { name: "missing successor", trigger: "observer", missing: true },
+  { name: "pre-existing same-name field is not a successor", trigger: "observer", missing: true, existing: true },
+  { name: "ambiguous successors", trigger: "observer", ambiguous: true },
+]) test(`fill submit follows an asynchronously replaced search input: ${scenario.name}`, async () => {
+  const h = await createHarness("desktop");
+  try {
+    await h.page.setContent(`<!doctype html><title>Lazy search</title>
+      <div id="search"><form action="/navigation-done" method="post">
+        <input id="searchInput" name="search" type="search" aria-label="Search"><button>Search</button>
+        ${scenario.existing ? '<input id="existing" name="search" type="search" value="untouched">' : ''}
+      </form></div><input id="sink" value="untouched">
+      <script>
+        const scenario = ${JSON.stringify(scenario)};
+        window.original = document.querySelector('input');
+        window.mountReady = new Promise(resolve => { window.finishMount = resolve; });
+        window.searchEvents = [];
+        original.addEventListener('input', () => { if (scenario.trigger === 'input') finishMount(); });
+        original.addEventListener('focus', async () => {
+          if (scenario.trigger === 'focus') finishMount();
+          await mountReady;
+          const marker = document.createComment('mount');
+          original.replaceWith(marker);
+          if (scenario.delay) await new Promise(resolve => setTimeout(resolve, scenario.delay));
+          if (scenario.missing) { document.querySelector('#sink').focus(); return; }
+          const next = document.createElement('input');
+          next.name = 'search'; next.type = 'search'; next.setAttribute('aria-label', 'Search');
+          if (scenario.copy) next.value = original.value;
+          marker.replaceWith(next);
+          if (scenario.ambiguous) next.after(next.cloneNode());
+          // A lazy component may copy the DOM value before its model sees native input.
+          let model = '';
+          next.addEventListener('input', event => { model = next.value; searchEvents.push({type:'input', trusted:event.isTrusted}); });
+          next.form.addEventListener('submit', event => { if (!model) event.preventDefault(); });
+          next.addEventListener('keydown', event => {
+            if (event.key === 'Enter') sessionStorage.searchEnter = JSON.stringify({value:next.value, model,
+              trusted:event.isTrusted, originalConnected:original.isConnected, events:searchEvents});
+          });
+          if (scenario.focus) next.focus();
+        }, {once:true});
+      </script>`);
+    // Finish the focus-triggered lazy mount while the navigation observer is arming,
+    // after the first value/focus readback but before Enter. No input dispatch is mocked.
+    await h.worker.evaluate(() => {
+      const execute = chrome.scripting.executeScript.bind(chrome.scripting);
+      chrome.scripting.executeScript = async options => {
+        if (options.injectImmediately && String(options.func).includes("=> null")) {
+          await execute({ target: options.target, world: "MAIN", func: () => { window.finishMount?.(); } });
+        }
+        return execute(options);
+      };
+    });
+    let target = "css:#searchInput";
+    if (scenario.uid) {
+      const tree = await h.worker.evaluate(() => elementHarness.call("get_ax_tree", { scope: "full" }));
+      target = tree.snapshot.split("\n").find(line => line.includes('Search') && line.includes('searchbox'))?.match(/target=(uid:\S+)/)?.[1];
+      expect(target, JSON.stringify(tree)).toMatch(/^uid:/);
+    }
+    const result = await h.worker.evaluate(target => elementHarness.call("act_on_element", {
+      target, action: "fill", value: "灵隐寺", submit: true,
+    }), target);
+    const evidence = await h.page.evaluate(() => ({
+      url: location.href, originalConnected: window.original?.isConnected,
+      currentValue: document.querySelector('input[name=search]')?.value,
+      active: document.activeElement?.outerHTML.slice(0,500), events: window.searchEvents,
+      enter: JSON.parse(sessionStorage.searchEnter || 'null'),
+    }));
+    console.log("fill replacement evidence", JSON.stringify({ result, evidence }));
+    if (scenario.missing || scenario.ambiguous) {
+      expect(result).toMatchObject({ code: "ELEMENT_FOCUS_FAILED" });
+      expect(result.submitDispatched).not.toBe(true);
+      expect(evidence.enter).toBeNull();
+      expect(h.submissions).toHaveLength(0);
+      await expect(h.page.locator('#sink')).toHaveValue('untouched');
+      if (scenario.existing) await expect(h.page.locator('#existing')).toHaveValue('untouched');
+    } else {
+      expect(result).toMatchObject({ filled: true, submitDispatched: true, navigated: true, urlChanged: true });
+      expect(h.submissions).toHaveLength(1);
+      expect(evidence.enter).toMatchObject({ value: "灵隐寺", model: "灵隐寺", trusted: true, originalConnected: false });
+      expect(evidence.enter.events.length).toBeGreaterThan(0);
+      expect(evidence.enter.events.every(event => event.trusted)).toBe(true);
+    }
+  } finally { await h.close(); }
+});
+
 test("httpbin pizza radios check through the wrapped label", async () => {
   test.setTimeout(120_000);
   const h = await createHarness("desktop");

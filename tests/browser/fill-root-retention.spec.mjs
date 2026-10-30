@@ -75,3 +75,27 @@ test("rich-text fill roots are released and do not keep disconnected elements", 
   expect(report.hasOld).toBe(false);
   expect(report.hasNext).toBe(true);
 });
+
+test("submit recovery is call-local, bounded and released even after the UID node is removed", async ({ page }) => {
+  await installContentScript(page);
+  const report = await page.evaluate(async () => {
+    const invoke = (node, payload) => window.__qzInvoke(node, payload);
+    const tokens = Array.from({ length: 10 }, (_, index) => `submit:${index}`);
+    let last;
+    for (const fillToken of tokens) {
+      last = document.createElement('input');
+      last.name = 'search';
+      document.body.append(last);
+      await invoke(last, { action: 'prepareElementFill', fillToken, submit: true });
+    }
+    const book = window.__qzMaps.find(map => map.has(tokens.at(-1)));
+    const size = book.size;
+    const hasOldest = book.has(tokens[0]);
+    last.remove();
+    const stale = await invoke(last, { action: 'inspectElement' });
+    for (const fillToken of tokens) await invoke(last, { action: 'releaseElementFill', fillToken });
+    const released = await invoke(null, { action: 'refreshElementFill', fillToken: tokens.at(-1) });
+    return { size, hasOldest, staleCode: stale.code, remaining: book.size, releasedCode: released.code };
+  });
+  expect(report).toEqual({ size: 8, hasOldest: false, staleCode: 'STALE_ELEMENT_UID', remaining: 0, releasedCode: 'ELEMENT_FOCUS_FAILED' });
+});
