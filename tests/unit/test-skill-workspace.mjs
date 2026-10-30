@@ -110,6 +110,37 @@ test('batch import requires expectations, validates all rows before writing, and
   await assert.rejects(workspace.import({ skills: [skill('one', 'overwrite')], expected: { one: null } }), conflict);
 });
 
+test('local re-import preserves a legacy id and requires approval of the existing record', async () => {
+  const id = 'legacy-prefix-'.padEnd(64, 'a');
+  const name = `${id}-long-name`;
+  const legacy = normalizeModernSkill({ name: id, displayName: name, content: 'original', createdAt: '2026-01-01 00:00:00' });
+  const incoming = skill(name, 'updated');
+  const { workspace, storage } = setup({ [id]: legacy });
+  assert.notEqual(incoming.name, id);
+  await assert.rejects(workspace.import({ skills: [incoming], expected: { [incoming.name]: null } }), conflict);
+  assert.deepEqual(storage.snapshot()._skills, { [id]: legacy });
+  const result = await workspace.import({ skills: [incoming], expected: { [incoming.name]: legacy } });
+  assert.deepEqual(result.names, [id]);
+  assert.deepEqual(Object.keys(storage.snapshot()._skills), [id]);
+  assert.equal(storage.snapshot()._skills[id].content, 'updated');
+  assert.equal(storage.snapshot()._skills[id].createdAt, legacy.createdAt);
+  await assert.rejects(workspace.import({ skills: [incoming], expected: { [incoming.name]: legacy } }), conflict);
+});
+
+test('local re-import does not adopt an unrelated prefix or merge reconciled duplicates', async () => {
+  const id = 'legacy-prefix-'.padEnd(64, 'a');
+  const incoming = skill(`${id}-long-name`, 'new');
+  const prefix = skill(id, 'unrelated');
+  const { workspace, storage } = setup({ [id]: prefix });
+  const result = await workspace.import({ skills: [incoming], expected: { [incoming.name]: null } });
+  assert.deepEqual(result.names, [incoming.name]);
+  assert.deepEqual(storage.snapshot()._skills[id], prefix);
+  const legacy = normalizeModernSkill({ ...prefix, displayName: incoming.displayName });
+  const duplicate = setup({ [id]: legacy });
+  await assert.rejects(duplicate.workspace.import({ skills: [incoming, legacy], expected: { [incoming.name]: legacy, [id]: legacy } }));
+  assert.deepEqual(duplicate.storage.snapshot()._skills, { [id]: legacy });
+});
+
 test('workspace transport preserves optimistic snapshots and correlates replies', async () => {
   const { workspace } = setup({});
   const api = createBackgroundApi({ system: { ready: async () => {} }, skills: { workspaceRead: workspace.read, workspaceSave: workspace.save, workspaceImport: workspace.import, workspaceDelete: workspace.remove } });

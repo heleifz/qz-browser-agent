@@ -24,10 +24,11 @@ test.beforeEach(async ({ page }) => {
     const gates = [];
     const workspace = createSkillWorkspaceService({ repository, prepare: async () => {}, validate: async () => {}, onChanged: async () => {} });
     const { createSkillsFeature } = await import("/extension/capabilities/skills/workspace/skills-feature.js");
-    const calls = [], toasts = [];
+    const calls = [], toasts = [], confirmations = [];
     const lifetime = new AbortController();
     const featureOptions = {
-      signal: lifetime.signal, root: document, isActive: () => true, showToast: message => toasts.push(message), confirm: async () => true,
+      signal: lifetime.signal, root: document, isActive: () => true, showToast: message => toasts.push(message),
+      confirm: async options => { confirmations.push(options); return window.__skillsTest?.approveImport !== false; },
       request: async (type, payload) => {
         calls.push({ type, payload: structuredClone(payload) });
         if (type === "get_skill_workspace") return workspace.read();
@@ -44,7 +45,7 @@ test.beforeEach(async ({ page }) => {
     await feature.activate();
     feature.showDetail("alpha");
     window.__skillsTest = {
-      feature, calls, toasts, storage, lifetime, tabListeners,
+      feature, calls, toasts, storage, lifetime, tabListeners, confirmations,
       async remount() {
         const nextLifetime = new AbortController();
         const next = createSkillsFeature({ ...featureOptions, signal: nextLifetime.signal });
@@ -68,6 +69,42 @@ async function save(page, value) {
   await page.locator("#btn-save-skill-edit-top").click();
   await expect.poll(() => page.evaluate(() => window.__skillsTest.calls.filter(call => call.type === "save_workspace_skill").length)).toBeGreaterThan(0);
 }
+
+test('local ZIP re-import asks before updating the legacy id instead of silently creating a duplicate', async ({ page }) => {
+  const id = await page.evaluate(async () => {
+    const { normalizeModernSkill } = await import('/extension/shared/skills/skill-utils.js');
+    const { exportSkillsZip } = await import('/extension/shared/skills/skill-package.js');
+    const state = window.__skillsTest;
+    const id = 'legacy-prefix-'.padEnd(64, 'a');
+    const name = `${id}-long-name`;
+    const legacy = normalizeModernSkill({ name: id, displayName: name, content: 'original' });
+    await state.storage.set({ _skills: { [id]: legacy } });
+    const zip = await exportSkillsZip([normalizeModernSkill({ name, content: 'updated' })]);
+    state.importZip = () => {
+      const files = new DataTransfer();
+      files.items.add(new File([zip], 'skill.zip', { type: 'application/zip' }));
+      const input = document.querySelector('#skills-import-file');
+      input.files = files.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    state.approveImport = false;
+    state.importZip();
+    return id;
+  });
+  await expect.poll(() => page.evaluate(() => window.__skillsTest.confirmations.length)).toBe(1);
+  expect(await page.evaluate(() => window.__skillsTest.calls.filter(call => call.type === 'import_workspace_skills'))).toEqual([]);
+  expect(await page.evaluate(() => Object.keys(window.__skillsTest.storage.snapshot()._skills))).toEqual([id]);
+  await page.evaluate(() => { window.__skillsTest.approveImport = true; window.__skillsTest.importZip(); });
+  await expect.poll(() => page.evaluate(id => window.__skillsTest.storage.snapshot()._skills[id]?.content, id)).toBe('updated');
+  const result = await page.evaluate(() => {
+    const state = window.__skillsTest;
+    return { calls: state.calls.filter(call => call.type === 'import_workspace_skills'), ids: Object.keys(state.storage.snapshot()._skills), prompts: state.confirmations.length };
+  });
+  expect(result.ids).toEqual([id]);
+  expect(result.prompts).toBe(2);
+  expect(result.calls[0].payload.skills[0].name).toBe(id);
+  expect(result.calls[0].payload.expected[id].content).toBe('original');
+});
 
 test("saving preserves newer edits and uses the saved snapshot for the next save", async ({ page }) => {
   await save(page, "first edit");
