@@ -58,6 +58,27 @@ async function createHarness(mode, launchOptions = {}) {
         res.end("<!doctype html><title>Submission completed</title><p>Submitted once</p>");
       }, Number(url.searchParams.get("delay") || 0));
       responseTimers.add(timer);
+    } else if (url.pathname === "/navigation-press") {
+      const scenario = url.searchParams.get("scenario");
+      const action = scenario === "same" ? req.url : `/navigation-done${url.search}`;
+      res.end(`<!doctype html><title>Before press</title>
+        <form method="post" action="${action}"><input id="press" name="q" value="once" style="width:160px;height:40px"><button>Send</button></form>
+        <script>
+          const scenario = ${JSON.stringify(scenario)};
+          sessionStorage.pressSubmits = '0'; sessionStorage.pressKeys = '0';
+          document.querySelector('#press').addEventListener('keydown', event => {
+            if (event.isTrusted) sessionStorage.pressKeys = String(Number(sessionStorage.pressKeys) + 1);
+            if (scenario === 'shift' || scenario === 'escape') {
+              event.preventDefault(); event.target.form.requestSubmit();
+            }
+          });
+          document.querySelector('form').addEventListener('submit', event => {
+            sessionStorage.pressSubmits = String(Number(sessionStorage.pressSubmits) + 1);
+            if (['none', 'hash', 'push'].includes(scenario)) event.preventDefault();
+            if (scenario === 'hash') location.hash = 'sent';
+            if (scenario === 'push') history.pushState({}, '', '/navigation-press?sent=1');
+          });
+        </script>`);
     } else if (url.pathname === "/navigation-form" || url.pathname === "/navigation-same") {
       const action = url.pathname === "/navigation-same" ? req.url : `/navigation-done${url.search}`;
       res.end(`<!doctype html><title>Before submission</title>
@@ -622,6 +643,60 @@ test("form submission navigation waits for delayed responses without submitting 
     expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
   } finally { await h.close(); }
 });
+
+for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift", "escape"]) {
+  test(`standalone press navigation: ${scenario}`, async ({}, testInfo) => {
+    test.setTimeout(60_000);
+    const h = await createHarness("desktop");
+    try {
+      const origin = new URL(h.page.url()).origin;
+      const otherKey = scenario === "shift" || scenario === "escape";
+      const delay = scenario === "slow" ? 11_500 : otherKey ? 1500 : 400;
+      const beforeUrl = `${origin}/navigation-press?scenario=${scenario}&delay=${delay}`;
+      await h.page.goto(beforeUrl);
+      const args = { target: "css:#press", action: "press",
+        ...(scenario === "push" ? { value: "Enter" } : { key: scenario === "shift" ? "Shift+Enter" : scenario === "escape" ? "Escape" : "Enter" }) };
+      const { result, elapsedMs } = await h.worker.evaluate(async args => {
+        const start = performance.now();
+        const result = await elementHarness.call("act_on_element", args);
+        return { result, elapsedMs: performance.now() - start };
+      }, args);
+      await testInfo.attach("press-navigation-result", { body: JSON.stringify({ scenario, result, elapsedMs }, null, 2), contentType: "application/json" });
+      expect(result, JSON.stringify(result)).toMatchObject({ pressed: true, key: args.key || args.value, method: "cdp", inputDelivered: true });
+      expect(result).not.toHaveProperty("submitDispatched");
+      expect(result).not.toHaveProperty("error");
+      if (otherKey) {
+        for (const field of ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "observedNavigation"]) {
+          expect(result).not.toHaveProperty(field);
+        }
+        // These handlers start a real slow navigation, but modified Enter/Escape must not wait for it.
+        expect(elapsedMs).toBeLessThan(1000);
+      } else {
+        const afterUrl = ["cross"].includes(scenario) ? `${origin}/navigation-done?scenario=${scenario}&delay=${delay}`
+          : scenario === "hash" ? `${beforeUrl}#sent` : scenario === "push" ? `${origin}/navigation-press?sent=1` : beforeUrl;
+        const navigated = ["cross", "push", "same"].includes(scenario);
+        const changedUrl = ["cross", "push"].includes(scenario);
+        const title = ["cross", "same"].includes(scenario) ? "Submission completed" : "Before press";
+        expect(result).toMatchObject({
+          pageBefore: { url: beforeUrl, title: "Before press" }, pageAfter: { url: afterUrl, title },
+          urlChanged: changedUrl, titleChanged: title !== "Before press", navigationPending: scenario === "slow",
+          navigated: scenario === "slow" ? null : navigated, _pageUrl: afterUrl, _pageTitle: title,
+        });
+        if (changedUrl) expect(result.observedNavigation).toMatchObject({ url: afterUrl, rateLimitRecorded: false });
+        else expect(result).not.toHaveProperty("observedNavigation");
+        expect(h.page.url()).toBe(afterUrl);
+      }
+      const submitsToServer = ["cross", "same", "slow", "shift", "escape"].includes(scenario);
+      if (submitsToServer) {
+        await h.page.waitForURL(url => url.pathname === (scenario === "same" ? "/navigation-press" : "/navigation-done"), { waitUntil: "load" });
+        await expect(h.page).toHaveTitle("Submission completed");
+      }
+      expect(h.submissions).toHaveLength(submitsToServer ? 1 : 0);
+      expect(await h.page.evaluate(() => ({ submits: Number(sessionStorage.pressSubmits), keys: Number(sessionStorage.pressKeys) })))
+        .toEqual({ submits: 1, keys: 1 });
+    } finally { await h.close(); }
+  });
+}
 
 const clickFrameDocument = `<!doctype html><style>html,body{margin:0;height:100%}button{width:100%;height:100%;margin:0}</style>
   <button id="inner" type="button">Inside</button>
