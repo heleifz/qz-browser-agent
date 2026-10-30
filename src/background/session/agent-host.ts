@@ -28,6 +28,7 @@ interface AgentHostOptions {
   getSupervisor(): HostSupervisor;
   getCommands(): HostCommands;
   getWorkingTabContext(sessionId: string): Promise<TabReference | null>;
+  getSkinEditorContext?: ContextCapabilityHost["getSkinEditorContext"];
   recordTranscriptEvent(sessionId: string, event: SessionEvent): unknown;
   recordRuntimeEvent(sessionId: string, event: SessionEvent): unknown;
   persistRuntime?(sessionId: string, options: { terminal: boolean }): Promise<unknown>;
@@ -58,6 +59,7 @@ export function createSessionAgentHost({
   getSupervisor,
   getCommands,
   getWorkingTabContext,
+  getSkinEditorContext,
   recordTranscriptEvent,
   recordRuntimeEvent,
   persistRuntime,
@@ -79,7 +81,7 @@ export function createSessionAgentHost({
       return runtime ? { visitedTaskSites: runtime.visitedTaskSites, tracker: runtime.tracker, goal: runtime.goal } : null;
     },
     canUseSessionGoal: (sessionId: string) => getCommands().canUseSessionGoal(sessionId),
-    getWorkingTabContext, getSecurityGuardrails,
+    getWorkingTabContext, getSkinEditorContext, getSecurityGuardrails,
   });
   const collectContext = createContextSources([
     ...contextCapabilities.flatMap(contribute => contribute(contextHost)),

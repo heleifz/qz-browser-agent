@@ -271,6 +271,7 @@ function withExecutionAuthority(context: ToolContext, authority: ToolRuntimeDepe
 }
 
 export function createToolRuntime({
+  skins = null,
   sessions = null,
   skills = null,
   skillSettings = null,
@@ -280,6 +281,7 @@ export function createToolRuntime({
   emit = null,
 }: ToolRuntimeDependencies = {}) {
   const dependencies = Object.freeze({
+    skins,
     requestLocation,
     sessions: sessions && typeof sessions === "object" ? sessions : null,
     skills: skills && typeof skills === "object" ? skills : null,

@@ -49,6 +49,7 @@ Judge a task at four levels:
 | H15 | Paste or drop images into a message | Strong | Mixed image/document follow-up coverage. |
 | H16 | Return to a task from a notification | Medium | Real Chrome notification clicks and reopening the Side Panel. |
 | H17 | Copy answers and code snippets | Medium | Browser checks of full clipboard content and selection restoration. |
+| H18 | Open the studio, import and customize a welcome skin | Medium | Full natural-language chat-to-preview acceptance in a loaded extension. |
 
 ### Agent workflows
 
@@ -302,6 +303,18 @@ extension E2E and live tests for persistence and real-model behavior.
 - **Evidence**: [message actions unit](unit/test-chat-message-actions.mjs), [product runtime unit](unit/test-product-runtime.mjs), [observer unit](unit/test-lifecycle-observers.mjs)
 - **Coverage**: Medium
 - **Next test**: Check full Markdown, code-block, and selection clipboard contents in a real browser, including focus restoration.
+
+### H18 · Open the studio, import and customize a welcome skin
+
+- **Role**: Human
+- **Task**: Import a 2D image, GLB or VRM avatar and refine it with chat before saving it to new chats.
+- **Preconditions**: The skins capability is installed; imported models embed their resources.
+- **Steps**: Open the studio from the toolbar or start editing through chat without a setup chooser. Drop GLB/VRM files into the studio, read the skin with `manage_skin get`, update a character or scene with the current revision, preview, request `manage_skin screenshot`, save/apply, close/reopen the Side Panel, export and reimport.
+- **Expected outcome**: The preview and chat action are visible initially; adjustments expand on demand without reloading the viewer. Visited skins keep bounded local thumbnails from the existing renderer. Desktop library and settings scroll independently; narrow layouts keep every control reachable. Tool reads and edits open the studio and reuse the current chat’s tab. The active unbound studio can be adopted in the source window; other chats and windows remain separate. GLB textures and clips remain available. VRM 0/1 retains MToon, humanoid edits, expressions and spring bones. Model bytes stay local and unchanged; the tool returns metadata and editable source. Loading appears when a visual edit begins and stays through first-frame presentation; the previous view crossfades to the rendered replacement. First loads hand off directly from the cached image; layout changes repaint the resized canvas without waiting for another animation frame. Reduced motion retains static expressions and skips the fade. Saved and draft states survive reload and export. Reopened panels immediately restore a transparent presentation frame and camera, validate the saved revision, and reuse local render data instead of transferring the model again. Studio screenshots return the settled preview image to the model, scoped to the selected skin and revision. Multi-character scenes retain independent poses, transforms and source; partial edits preserve other characters and original bytes. Text-only chat can draw transparent 2D images with Canvas or pass direct image URLs and collected asset IDs to create/update. Images become local bytes before preview, stay independent of their source and remain portable in exports.
+- **Failure and recovery**: Invalid containers, external resources and oversized batches are rejected before persistence. Adding a character preserves pending edits; removing one is recoverable with the complete last save. Conflicting writes preserve newer revisions. Broken source keeps the last valid preview and cannot be applied; restore recovers the original model and settings. Local VRM declarations can shadow host bindings. Repeated edits reuse the renderer and transferred binary; stale decoders cannot replace newer scenes. Corrupt render caches recover from Background; failed storage writes cannot poison cached library data. Screenshot requests reject changed revisions, stopped runs and unsettled previews. Image import rejects invalid bytes, missing assets, blocked URLs, oversized downloads and obsolete writes; failures preserve the previous skin.
+- **Evidence**: [skin repository and chat tool tests](unit/test-skins.mjs), [2D image resolution tests](unit/test-skins-images.mjs), [2D chat and offline export browser test](browser/skins-images.spec.mjs), [studio and renderer browser tests](browser/skins.spec.mjs)
+- **Coverage**: Medium
+- **Next test**: Run a real-provider edit through the loaded extension, then restart the Worker and verify the saved welcome avatar.
 
 ## Agent workflows: details
 

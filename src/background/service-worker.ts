@@ -110,6 +110,9 @@ import {
 } from "./tools/run-script-bridge.js";
 import { createToolEventRouter } from "./tools/event-router.js";
 import { createBackgroundApi } from "./background-api.js";
+import { createSkinService } from './skins/service.js';
+import { createSkinEditorTabs } from './skins/editor-tabs.js';
+import { captureSkinEditor } from './skins/capture.js';
 import { createMcpRuntime } from "./mcp/mcp-runtime.js";
 import { createMcpTransport } from "./transports/mcp.js";
 import { createSidepanelTransport } from "./transports/sidepanel.js";
@@ -408,6 +411,7 @@ const sessionAgentHost = createSessionAgentHost({
   getSupervisor: () => sessionSupervisor,
   getCommands: () => sessionCommands,
   getWorkingTabContext: sessionId => sessionTabs.getWorkingTabContext(sessionId, { readOnly: true }),
+  getSkinEditorContext: sessionId => skinService.getEditorContext(sessionId),
   recordTranscriptEvent: (...args) => sessionTranscript.recordEvent(...args),
   recordRuntimeEvent: (...args) => sessionRuntimeState.recordEvent(...args),
   persistRuntime: (...args) => sessionRuntimeState.persist(...args),
@@ -699,7 +703,19 @@ const locationService = createLocationService({
   emit: handleToolRuntimeEvent,
   locate: sidepanelChannel.requestLocation,
 });
+const skinEditorTabs = createSkinEditorTabs(chrome.tabs, chrome.runtime.id);
+const skinService = createSkinService({
+  extensionId: chrome.runtime.id, getEditorTabs: () => chrome.tabs.query({}),
+  storage: chrome.storage.local, emit: broadcast, isRunCurrent: sessionSupervisor.isRunCurrent,
+  onStorageChange: invalidate => chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.qingzhou_skins_v1) invalidate();
+  }),
+  getCurrentWindowId: async () => (await chrome.windows.getLastFocused()).id,
+  openEditor: skinEditorTabs.open,
+  captureEditor: captureSkinEditor,
+});
 toolRuntime = createToolRuntime({
+  skins: skinService,
   requestLocation: locationService.request,
   skillSettings,
   skillNetwork,
@@ -836,6 +852,7 @@ const connectMcp = createMcpConnectPage({
 });
 
 const backgroundApi = createBackgroundApi({
+  skins: { command: skinService.fromPage },
   system: {
     connectMcp,
     mcpConnectionStatus: (sender: chrome.runtime.MessageSender) => {

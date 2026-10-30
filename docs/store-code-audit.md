@@ -85,6 +85,7 @@ This is a source-change gate, not a whole-program data-flow proof.
 | `loadMathRuntime` | The script source is the literal packaged `vendor/mathjax/startup.js`; browser fixtures use a same-origin test-server URL. |
 | `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. |
 | Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. |
+| Skin sandbox's `createScene` | User/Agent scene edits compiled with local Three.js, embedded GLB/VRM models and assets. The manifest sandbox and iframe omit `allow-same-origin`; the page CSP blocks network requests, frames and Workers. The parent accepts only revision/token-matched viewer status messages, with no tool or storage bridge. |
 | `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. |
 | `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. |
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
@@ -102,24 +103,27 @@ function fingerprint and owning output path. storecheck does not detect these ca
 made static or policy-safe merely because there is no `eval` token. This capability has the same
 submission-policy review obligation as the sandbox executor.
 
-### storecheck's sandbox finding
+### storecheck's sandbox findings
 
-The unmodified CLI reports one `privacy/remote-code-execution` error for `runner-sandbox.js`'s
-embedded `new Function`. Its CSP rules already distinguish sandbox pages and report no sandbox CSP
-error. Version 0.1.0 has **no ignore-file or inline-suppression feature**.
+The unmodified CLI reports `privacy/remote-code-execution` errors for `runner-sandbox.js`'s
+embedded `new Function` and, when the skin capability is included, `dom/skins/sandbox.js`'s scene
+compiler. Its CSP rules already distinguish sandbox pages and report no sandbox CSP error.
+Version 0.1.0 has **no ignore-file or inline-suppression feature**.
 
 The integration uses its supported `runRules({ rules })` / `RuleContext.report` API to adapt only
-that individual report. It requires all of:
+these individually reviewed reports. Each requires all of:
 
 - the exact rule, file, message and line containing the expected argument list;
-- a token hash of the **entire** packaged runner, without identifier normalization;
+- a token hash of the **entire** packaged sandbox script, without identifier normalization;
 - the exact sandbox page declaration, sandbox CSP and restrictive extension-page CSP;
-- the sandbox HTML loading the packaged runner.
+- the sandbox HTML loading its packaged script, and the skin page's exact restrictive CSP.
 
 No rule is disabled and no package bytes are hidden from the CLI. `storecheck.json` preserves the
 original exit code and report, the accepted finding with its reason, and the effective report.
-Additional or changed execution sites fail. Unit tests check another file, a modified runner,
-a removed sandbox declaration and a minification warning.
+Additional or changed execution sites fail. Unit tests check another file, modified runner and skin
+scripts, removed sandbox declarations, a weakened skin CSP, a package without the optional skin
+capability and a minification warning. The AST audit also rejects moving the skin compiler into an
+extension context or changing its enclosing function.
 
 This exception preserves a deliberate product capability, not a claim that CWS must accept it.
 Chrome permits eval in sandboxed pages, but store policy also considers remotely supplied logic,

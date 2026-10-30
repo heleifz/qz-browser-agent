@@ -16,6 +16,8 @@ const product = JSON.parse(read("src/products/manifest.json")).defaultProduct;
 const sidepanelSources = [...new Set([
   ...["src/sidepanel", `src/products/${product}/sidepanel`].flatMap(listSidepanelSources),
   ...[...graph.contexts.sidepanel].map(path => relative(root, path)),
+  // The skins SDK delegates this shared Side Panel DOM to the standalone studio viewer.
+  "src/dom/skins/viewer.ts",
   ...capabilityDirectories.map(path => `${path}/ui.html`).filter(path => existsSync(join(root, path))),
 ])].map(path => [path, read(path)]);
 const productStyles = sidepanelSources.flatMap(([, source]) =>

@@ -27,6 +27,10 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
   }],
+  ["dynamic-code:f0e6a8419d48a4306529902b5a65d060a0681e4613fc58cfee2b3eb7eb3173fd", {
+    files: /^dom\/skins\/sandbox\.js$/u,
+    reason: "User/Agent skin scene source in the manifest-declared opaque-origin skin sandbox. Local Three.js and embedded models only; CSP blocks network access, frames and Workers. See docs/store-code-audit.md.",
+  }],
   ["dynamic-code:9320e0271a5fb141f43cdc676a62a81b330b57d7b32cd48f5974aeadb62435d2", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",

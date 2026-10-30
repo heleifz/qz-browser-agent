@@ -25,6 +25,7 @@ export interface ContextCapabilityHost {
   getSessionRuntime(sessionId: string): Readonly<{ visitedTaskSites?: unknown; tracker?: unknown; goal?: unknown }> | null;
   canUseSessionGoal(sessionId: string): Promise<boolean>;
   getWorkingTabContext(sessionId: string): Promise<TabReference | null>;
+  getSkinEditorContext?(sessionId: string): Promise<{ skinId: string } | null>;
   readonly getSecurityGuardrails: typeof getSecurityGuardrails;
 }
 export type ContextCapability = (host: ContextCapabilityHost) => readonly ContextSource[];

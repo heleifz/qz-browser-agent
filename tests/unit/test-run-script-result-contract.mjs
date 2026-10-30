@@ -33,7 +33,7 @@ assert.match(source, /function makePageContextUnavailableResult\(/, "run_script 
 assert.match(source, /error:\s*"page_context_unavailable"/, "page-context failure should have a stable agent-readable error");
 assert.match(source, /execution_world:\s*"page"/, "run_script results should state the page execution world");
 assert.match(source, /execution_world:\s*"inner"/, "inner run_script results should state the inner execution world");
-assert.deepEqual(manifestJson.sandbox?.pages, ["runner-sandbox.html"], "manifest should register the inner runner sandbox page");
+assert.ok(manifestJson.sandbox?.pages.includes("runner-sandbox.html"), "manifest should register the inner runner sandbox page");
 assert.match(manifestJson.content_security_policy?.sandbox || "", /unsafe-eval[\s\S]*worker-src blob:/, "manifest should provide a sandboxed eval-capable worker host for inner run_script");
 assert.match(offscreen, /run_script_inner_ping/, "offscreen should expose an inner runner ready ping");
 assert.match(offscreen, /runner-sandbox\.html/, "offscreen should host the sandbox runner page");

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { compileInnerWorker } from "../../scripts/build-extension.mjs";
 import { checkStore } from "../../scripts/check-store.mjs";
+import { inspectJavaScript } from "../../scripts/check-reviewable-code.mjs";
+import { stablePackagePaths } from "../../scripts/vendor/assets.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "qz-storecheck-"));
 try {
@@ -25,10 +27,26 @@ try {
     tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true, useDefineForClassFields: true } } });
   const sandbox = built.outputFiles[0].text;
   await writeFile(join(root, "runner-sandbox.js"), sandbox);
+  await mkdir(join(root, "dom/skins"), { recursive: true });
+  const skinHtml = await readFile("src/dom/skins/sandbox.html", "utf8");
+  await writeFile(join(root, "dom/skins/sandbox.html"), skinHtml);
+  const skinBuilt = await build({ absWorkingDir: resolve("src"), entryPoints: ["dom/skins/sandbox.ts"], bundle: true,
+    write: false, platform: "browser", format: "iife", target: "chrome114", plugins: [stablePackagePaths()],
+    tsconfigRaw: { compilerOptions: { verbatimModuleSyntax: true, useDefineForClassFields: true } } });
+  const skin = skinBuilt.outputFiles[0].text;
+  await writeFile(join(root, "dom/skins/sandbox.js"), skin);
+  const skinFindings = inspectJavaScript(skin, "dom/skins/sandbox.js").findings;
+  assert.equal(skinFindings.length, 1);
+  assert.ok(skinFindings[0].reviewed, "the exact skin compiler is reviewed");
+  assert.ok(inspectJavaScript(skin, "background/service-worker.js").findings.some(finding => !finding.reviewed),
+    "the same compiler outside its sandbox remains blocked");
+  const changedSkin = skin.replace('new Function("THREE",', 'new Function("changed",');
+  assert.ok(inspectJavaScript(changedSkin, "dom/skins/sandbox.js").findings.some(finding => !finding.reviewed),
+    "changes to the skin compiler invalidate its AST review");
   const accepted = await checkStore(root);
   assert.equal(accepted.ok, true, JSON.stringify(accepted));
   assert.equal(accepted.rawCliExitCode, 1, "never pretend the upstream CLI ignored the sandbox");
-  assert.equal(accepted.exceptions.length, 1);
+  assert.equal(accepted.exceptions.length, 2);
   assert.equal(accepted.effective.summary.errors, 0);
   assert.ok(accepted.effective.findings.some(finding => finding.ruleId === "permissions/high-risk-permissions"));
   assert.equal(accepted.effective.rulesRun, 24);
@@ -39,10 +57,23 @@ try {
   await writeFile(join(root, "runner-sandbox.js"), `${sandbox}\nnew Function("extra code");\n`);
   assert.equal((await checkStore(root)).ok, false, "changed sandbox bytes revoke the exact exception");
   await writeFile(join(root, "runner-sandbox.js"), sandbox);
+  await writeFile(join(root, "dom/skins/sandbox.js"), changedSkin);
+  assert.equal((await checkStore(root)).ok, false, "changed skin bytes revoke the exact exception");
+  await writeFile(join(root, "dom/skins/sandbox.js"), skin);
+  await writeFile(join(root, "dom/skins/sandbox.html"), skinHtml.replace("connect-src data: blob:", "connect-src *"));
+  assert.equal((await checkStore(root)).ok, false, "the skin exception requires its restrictive page CSP");
+  await writeFile(join(root, "dom/skins/sandbox.html"), skinHtml);
+  manifest.sandbox = { pages: ["runner-sandbox.html"] };
+  await saveManifest();
+  assert.equal((await checkStore(root)).ok, false, "a skin page outside the manifest sandbox is rejected");
+  await rm(join(root, "dom"), { recursive: true });
+  const withoutSkins = await checkStore(root);
+  assert.equal(withoutSkins.ok, true, "packages without the optional skin capability retain the runner exception");
+  assert.equal(withoutSkins.exceptions.length, 1);
   delete manifest.sandbox;
   await saveManifest();
   assert.equal((await checkStore(root)).ok, false, "an unisolated runner is never exempt");
-  manifest.sandbox = actual.sandbox;
+  manifest.sandbox = { pages: ["runner-sandbox.html"] };
   await saveManifest();
   await writeFile(join(root, "large.js"), "var one=1;".repeat(3000));
   const minified = await checkStore(root);

@@ -34,8 +34,8 @@ assert.ok(
 );
 assert.deepEqual(
   manifest.sandbox?.pages,
-  ["runner-sandbox.html"],
-  "The only sandbox page should be the explicit inner run_script runner.",
+  ["runner-sandbox.html", "dom/skins/sandbox.html"],
+  "Only the script runner and skin renderer may execute sandboxed code.",
 );
 assert.match(
   manifest.content_security_policy?.sandbox || "",

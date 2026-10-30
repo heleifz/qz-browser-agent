@@ -106,17 +106,17 @@ test("release bundler is deterministic, preserves vendor, and keeps runtime entr
   await bundleExtension({ extensionDir: sidepanelChanged });
 
   assert.equal(firstSummary.tool, "esbuild@0.28.1");
-  assert.equal(firstSummary.entries.length, 2);
+  assert.equal(firstSummary.entries.length, 3);
   assert.ok(firstSummary.chunks.length > 0, "Side Panel keeps deferred implementation chunks");
-  assert.equal(firstSummary.outputFiles, 2 + firstSummary.chunks.length);
+  assert.equal(firstSummary.outputFiles, 3 + firstSummary.chunks.length);
   assert.ok(firstSummary.inputFiles > 100, "the production graph should be bundled, not only the entry shims");
   assert.ok(firstSummary.preservedFiles > 0, "standalone bundles retain offscreen's shared graph");
-  assert.equal(firstSummary.removedFiles, firstSummary.inputFiles - 2 - firstSummary.preservedFiles);
+  assert.equal(firstSummary.removedFiles, firstSummary.inputFiles - 3 - firstSummary.preservedFiles);
   assert.deepEqual(firstSummary, secondSummary);
   assert.equal(await treeDigest(join(first, "vendor")), vendorBefore, "vendor bytes must remain unchanged");
   assert.equal(await treeDigest(join(second, "vendor")), vendorBefore, "vendor bytes must be deterministic");
 
-  const expectedEntries = ["background/service-worker.js", "sidepanel/sidepanel.js"];
+  const expectedEntries = ["background/service-worker.js", "sidepanel/sidepanel.js", "dom/skins/editor.js"];
   for (const entry of [...expectedEntries, ...firstSummary.chunks.map(item => item.output)]) {
     const firstSource = await readFile(join(first, entry), "utf8");
     const secondSource = await readFile(join(second, entry), "utf8");
@@ -202,14 +202,17 @@ test("release publisher packages bundles and records auditable metadata", async 
   assert.equal(metadata.package, `qz-browser-agent-extension-${version}.zip`);
   assert.equal(metadata.packageRoot, "qz-browser-agent-extension");
   assert.equal(metadata.bundling.enabled, true);
-  assert.equal(metadata.bundling.entries.length, 2);
-  assert.equal(metadata.bundling.outputFiles, 2 + metadata.bundling.chunks.length);
+  assert.equal(metadata.bundling.entries.length, 3);
+  assert.equal(metadata.bundling.outputFiles, 3 + metadata.bundling.chunks.length);
   assert.ok(metadata.bundling.chunks.length > 0);
   assert.ok(metadata.bundling.removedFiles > 100);
   const zipPath = join(releaseDir, `qz-browser-agent-extension-${version}.zip`);
   assertPublicReleasePackage(zipPath);
   const entries = zipEntries(zipPath);
-  const runtimeFileCount = entries.filter(path => path.startsWith("qz-browser-agent-extension/") && !path.startsWith("qz-browser-agent-extension/vendor/licenses/")).length;
+  const studioPrefix = "qz-browser-agent-extension/dom/skins/";
+  assert.deepEqual(entries.filter(path => path.startsWith(studioPrefix)).map(path => path.slice(studioPrefix.length)).sort(),
+    ["editor.css", "editor.html", "editor.js", "sandbox.html", "sandbox.js"], "the studio ships two independent, bundled runtime entries");
+  const runtimeFileCount = entries.filter(path => path.startsWith("qz-browser-agent-extension/") && !path.startsWith("qz-browser-agent-extension/vendor/licenses/") && !path.startsWith(studioPrefix)).length;
   assert.ok(runtimeFileCount < 85, `expected compact runtime resources, received ${runtimeFileCount} files excluding bundled dependency licenses`);
   assert.ok(entries.includes("qz-browser-agent-extension/background/service-worker.js"));
   assert.ok(entries.includes("qz-browser-agent-extension/sidepanel/sidepanel.js"));

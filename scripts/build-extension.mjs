@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { Script } from "node:vm";
 import { generateModelsDevIndex, modelsDevIndexPlugin } from "./models-dev-assets.mjs";
-import { bundleExtension, readRuntimeModuleGraph, stableDebugSourceMap } from "./build-extension-bundles.mjs";
+import { BUNDLED_EXTENSION_ENTRIES, bundleExtension, readRuntimeModuleGraph, stableDebugSourceMap } from "./build-extension-bundles.mjs";
 import { acquireBuildOutput, BuildOutputLockedError, getBuildProcessParentPid, isBuildProcessRunning } from "./build-output-lock.mjs";
 import { readProductProfile } from "./product-profile.mjs";
 import { capabilityBuildProfile, capabilityUiAssets, generateCapabilityCatalogs } from "./capability-catalog.mjs";
@@ -37,6 +37,8 @@ export const EXTENSION_ENTRIES = Object.freeze([
   { path: "content/run-script-tool-bridge.js", format: "iife" },
   { path: "content/content-script.js", format: "iife" },
   { path: "runner-sandbox.js", format: "iife" },
+  { path: "dom/skins/editor.js", format: "esm" },
+  { path: "dom/skins/sandbox.js", format: "iife" },
   { path: "shared/mathjax-config.js", format: "iife" },
 ].map(Object.freeze));
 const CLASSIC_ENTRIES = new Set(EXTENSION_ENTRIES.filter(entry => entry.format === "iife").map(entry => entry.path));
@@ -413,7 +415,7 @@ async function validateRuntimeEntries(root) {
   for (const path of manifest.content_scripts.flatMap(item => item.js || [])) {
     if (!path.startsWith("vendor/") && !CLASSIC_ENTRIES.has(path)) throw new Error(`declare the classic entry in EXTENSION_ENTRIES: ${path}`);
   }
-  for (const html of ["sidepanel/sidepanel.html", "offscreen.html", "runner-sandbox.html"]) {
+  for (const html of ["sidepanel/sidepanel.html", "offscreen.html", "runner-sandbox.html", "dom/skins/editor.html", "dom/skins/sandbox.html"]) {
     references.add(html);
     const contents = await readFile(resolve(root, html), "utf8");
     for (const match of contents.matchAll(/<(script|link)\b[^>]*\b(?:src|href)=["']([^"']+)["'][^>]*>/gi)) {
@@ -436,7 +438,7 @@ async function validateRuntimeEntries(root) {
   }
 }
 
-const BUNDLED_RUNTIME_ENTRIES = new Set(["background/service-worker.js", "sidepanel/sidepanel.js"]);
+const BUNDLED_RUNTIME_ENTRIES = new Set(BUNDLED_EXTENSION_ENTRIES.map(entry => entry.path));
 const FIREFOX_BOOT_ENTRIES = ["background/firefox-boot.js", "sidepanel/firefox-boot.js"];
 
 async function validateModuleGraphs(root) {

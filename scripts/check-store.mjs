@@ -5,27 +5,46 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tokenizer } from "acorn";
-import { loadExtension, loadRules, runRules, formatJson } from "storecheck";
+import { loadExtension, loadRules, runRules, formatJson, stripComments } from "storecheck";
 
 const STORECHECK_VERSION = "0.1.0";
-const SANDBOX_TOKENS = "be360135e3b288b310f1fd14dfac454cc9620223262b2be8b1012c04fbb5a8eb";
+const REVIEWED_SANDBOXES = new Map([
+  ["runner-sandbox.js", {
+    page: "runner-sandbox.html", script: "runner-sandbox.js",
+    tokens: "be360135e3b288b310f1fd14dfac454cc9620223262b2be8b1012c04fbb5a8eb",
+    arguments: 'new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId"',
+    reason: "Exact packaged inner-runner in a manifest-declared opaque-origin sandbox Worker. No extension APIs; existing user/Agent script capability.",
+  }],
+  ["dom/skins/sandbox.js", {
+    page: "dom/skins/sandbox.html", script: "sandbox.js",
+    tokens: "acaaf1333dff3dd9bf2fbf70d04cf40ac3ef23471214369d12b0d49f8ba865fe",
+    arguments: 'new Function("THREE", "assets", "model", "vrm", "characters",',
+    csp: "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src data: blob:; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'",
+    reason: "Exact packaged skin scene editor in a manifest-declared opaque-origin sandbox. User/Agent scene source uses local Three.js and embedded models; no extension APIs, parent DOM, network, frames or Workers.",
+  }],
+]);
 const REQUIRED_CLEAN = /^(?:code\/(?:obfuscated-code|minified-without-source)|privacy\/(?:remote-code-execution|remote-script-tag)|csp\/)/u;
 const identity = finding => JSON.stringify([finding.ruleId, finding.file, finding.line, finding.message]);
 
 /** Storecheck 0.1.0 has no ignore config. Its public Rule API permits this exact report adapter. */
 export function reviewedSandboxFinding(source, finding) {
-  if (finding.file !== "runner-sandbox.js" || finding.message !==
+  const reviewed = REVIEWED_SANDBOXES.get(finding.file);
+  if (!reviewed || finding.message !==
       "new Function( - new Function() compiles a string into executable code. Manifest V3 requires that the full functionality of an extension be discernible from the submitted code, so remotely sourced logic is not allowed.") return false;
   const manifest = source.manifest;
-  if (JSON.stringify(manifest?.sandbox?.pages) !== '["runner-sandbox.html"]' ||
+  const pages = JSON.stringify(manifest?.sandbox?.pages);
+  if (!['["runner-sandbox.html"]', '["runner-sandbox.html","dom/skins/sandbox.html"]'].includes(pages) ||
+      !manifest.sandbox.pages.includes(reviewed.page) ||
       manifest?.content_security_policy?.extension_pages !== "script-src 'self'; object-src 'self';" ||
       manifest?.content_security_policy?.sandbox !== "sandbox allow-scripts; script-src 'self' 'unsafe-eval' blob:; worker-src blob:; child-src blob:;") return false;
-  const runtime = source.file("runner-sandbox.js")?.text();
-  const html = source.file("runner-sandbox.html")?.text();
-  if (!runtime || !html || !/<script src="runner-sandbox\.js"><\/script>/u.test(html) ||
-      !runtime.split("\n")[finding.line - 1]?.includes('new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId"')) return false;
+  const runtime = source.file(finding.file)?.text();
+  const html = source.file(reviewed.page)?.text();
+  if (!runtime || !html || !html.includes(`<script src="${reviewed.script}"></script>`) ||
+      (reviewed.csp && !html.includes(`<meta http-equiv="Content-Security-Policy" content="${reviewed.csp}">`)) ||
+      // The pinned rule reports lines after stripping comments; token hashing still uses every executable token.
+      !stripComments(runtime).split("\n")[finding.line - 1]?.includes(reviewed.arguments)) return false;
   const digest = createHash("sha256").update(JSON.stringify([...tokenizer(runtime, { ecmaVersion: "latest" })].map(token => [token.type.label, token.value]))).digest("hex");
-  return digest === SANDBOX_TOKENS;
+  return digest === reviewed.tokens;
 }
 
 export async function checkStore(path) {
@@ -51,7 +70,7 @@ export async function checkStore(path) {
           exceptions.push({ ...finding, ruleId: loaded.meta.id, severity: loaded.meta.severity,
             category: loaded.meta.category, title: loaded.meta.title, policyRef: loaded.meta.policyRef,
             rejectionCodes: loaded.meta.rejectionCodes,
-            reason: "Exact packaged inner-runner in a manifest-declared opaque-origin sandbox Worker. No extension APIs; existing user/Agent script capability. See docs/store-code-audit.md; this is not a CWS approval." });
+            reason: `${REVIEWED_SANDBOXES.get(finding.file).reason} See docs/store-code-audit.md; this is not a CWS approval.` });
         } else context.report(finding);
       } });
     } },
@@ -61,7 +80,8 @@ export async function checkStore(path) {
   const accepted = new Set(exceptions.map(identity));
   const cliUnresolved = cliReport.findings.filter(finding => !accepted.has(identity(finding)));
   const blocking = effective.findings.filter(finding => finding.severity === "error" || REQUIRED_CLEAN.test(finding.ruleId));
-  const ok = exceptions.length <= 1 && !cliUnresolved.length && !blocking.length && !effective.ruleErrors.length;
+  const ok = exceptions.length <= REVIEWED_SANDBOXES.size && new Set(exceptions.map(finding => finding.file)).size === exceptions.length &&
+    !cliUnresolved.length && !blocking.length && !effective.ruleErrors.length;
   return { version: 1, storecheck: STORECHECK_VERSION, ok, rawCliExitCode: raw.status, rawCli: cliReport,
     rawFindings: [...effective.findings, ...exceptions.map(({ reason, ...finding }) => finding)],
     exceptions, effective, blocking };

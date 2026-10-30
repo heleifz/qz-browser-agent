@@ -189,10 +189,12 @@ async function extensionFixture(root) {
       background: { service_worker: "background/service-worker.js", type: "module" },
       side_panel: { default_path: "sidepanel/sidepanel.html" },
       content_scripts: [{ js: EXTENSION_ENTRIES.filter(entry => entry.path.startsWith("content/")).map(entry => entry.path) }],
-      sandbox: { pages: ["runner-sandbox.html"] }, declarative_net_request: { rule_resources: [] } }),
+      sandbox: { pages: ["runner-sandbox.html", "dom/skins/sandbox.html"] }, declarative_net_request: { rule_resources: [] } }),
     "products/manifest.json": JSON.stringify({ version: 1, defaultProduct: "public", ports: [] }),
     "sidepanel/sidepanel.html": '<script type="module" src="sidepanel.js"></script>',
     "offscreen.html": '<script type="module" src="offscreen.js"></script>',
+    "dom/skins/editor.html": '<script type="module" src="editor.js"></script>',
+    "dom/skins/sandbox.html": '<script src="sandbox.js"></script>',
     "runner-sandbox.html": '<script src="runner-sandbox.js"></script>',
     ...Object.fromEntries(EXTENSION_ENTRIES.map(entry => [entry.path, "globalThis.fixture = true;\n"])),
   };

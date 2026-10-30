@@ -12,8 +12,8 @@ import {
 const index = loadBehaviorIndex();
 const plan = createEvidencePlan(index);
 
-assert.equal(index.journeys.length, 51, "the product behavior catalog should stay explicit and reviewable");
-assert.equal(Object.keys(index.summaryCoverage).length, 51, "every detailed journey needs one summary coverage rating");
+assert.equal(index.journeys.length, 52, "the product behavior catalog should stay explicit and reviewable");
+assert.equal(Object.keys(index.summaryCoverage).length, 52, "every detailed journey needs one summary coverage rating");
 assert.ok(plan.evidenceItems.length >= 100, "journeys should link concrete evidence rather than broad suite names");
 assert.ok(plan.commands.length >= 10, "the runner should preserve distinct product boundaries");
 assert.ok(plan.commands.length < plan.evidenceItems.length / 2, "shared evidence must be deduplicated before execution");

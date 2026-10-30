@@ -53,6 +53,154 @@ runtimes. [SDK modules](../src/sdk/) expose services to capabilities. Package in
 contributions; generated catalogs connect them to each runtime. The [product
 manifest](../src/products/manifest.json) selects adapters for the public build.
 
+## Local welcome skins
+
+The `manage_skin` tool's `open` action opens the packaged
+[skin studio](../src/dom/skins/editor.html) in a browser tab. The welcome screen shows the active
+character and phrases without an editor button. Users edit with the adjacent Side Panel,
+upload a 2D image or self-contained GLB/VRM, change welcome phrases, and save/apply the draft.
+Dropping model files anywhere on the studio adds them to the current scene. **Add character**
+provides the same operation through a file picker; **Import 3D model** starts a separate skin. The
+`manage_skin` capability reads and updates the same draft with revision checks. Chat edits remain
+in the draft until the user requests saving or applying. **Restore last save**, beside **Save and
+apply**, discards draft changes and unsubmitted editor inputs, restoring the model/image, name,
+phrases and assets together. Saving establishes the next restore point; automatic draft persistence
+keeps the previous one. Restoring also works when the draft preview fails. Imported model
+binary is omitted from model-facing reads; node, material and animation names remain available.
+Editors opened from a chat carry its Session id. A bounded context contribution exposes the selected
+skin only to that chat; ambiguous editors require an explicit id.
+
+The studio uses the shared theme controls in both color schemes. A continuous preview canvas
+holds the character, welcome phrase and compact chat launcher. Its library and inspector scroll
+independently on desktop, with the inspector collapsed initially. At narrower widths the library
+becomes a horizontal strip; expanded settings remain beside the preview. On small screens the inspector follows the preview in a
+scrollable page. The preview identifies active skins and unsaved drafts; scene source stays in
+the advanced section. Library thumbnails come from the already active renderer, with no additional
+WebGL contexts. The optional `qingzhou_studio_thumbnails_v1` presentation cache holds at most 24
+160-pixel previews within 768 KiB. Capture results are discarded if selection or revision changed;
+the cache never writes to the authoritative skin library.
+
+[SkinRepository](../src/background/skins/repository.ts) owns the versioned `qingzhou_skins_v1`
+record in `chrome.storage.local`. Background serializes writes across tabs and Sessions. Drafts
+remain separate from saved skins; the active id selects a saved snapshot. Cancellation and live-run
+authority are checked before committing tool writes. Imports allocate a new id. A `.qzskin.json`
+export embeds model/image data, custom scene code and phrases; the Three.js runtime remains in the
+extension. The initial skin retains the localized 2D logo and tagline.
+
+For 2D chat creation, `manage_skin create/update` resolves `visual.src` and optional `darkSrc`
+from raster data URLs, direct HTTP(S) image URLs, or `asset:image:…` IDs returned by
+`collect_images`. The capability checks URL guardrails, downloads within the shared image budget,
+decodes and embeds local raster bytes before calling the repository. Direct downloads omit cookies
+and reject redirects; collect protected or redirected images from their page first. The shared
+normalizer caps imported images at 2048 pixels and 2 MiB, retaining transparency and fitting GIFs;
+oversized GIFs may be flattened. Failed downloads, missing assets, cancellation and stale revisions
+leave the existing skin intact. Exported skins remain independent of websites and the image store.
+Text-only models can use this path without enabling image input. They can also draw through
+`run_script target:"inner"` using `OffscreenCanvas`, then pass a transparent PNG to `manage_skin`
+in the same script. This stores a raster image; drawing source remains in the conversation.
+
+The shared [viewer](../src/dom/skins/viewer.ts) mounts images or a dedicated manifest sandbox.
+The [sandbox](../src/dom/skins/sandbox.ts) has no extension APIs or parent DOM access and blocks
+network resources. Its protocol is limited to rendering, visibility, rotation and diagnostics;
+it cannot proxy tools or storage operations. Three.js, GLTFLoader and three-vrm are bundled in this separate
+entry. The host owns the camera, pointer interaction, idle animation scheduling and disposal. Idle
+animation runs at up to 30 FPS; camera input renders on the next display frame without rotation
+damping. Hidden views pause, reduced-motion views render on interaction, and failed scenes retain
+an accessible fallback. The transparent canvas combines MSAA with 2–3 pixels per CSS pixel, capped
+at 2.5 million drawing buffer pixels and the GPU's size limit. Dragging temporarily uses up to 1.5
+pixels per CSS pixel and 800,000 buffer pixels; releasing restores sharp rendering after 120 ms.
+Sustained animation frames above 50 ms gradually reduce supersampling to a 1x lower bound while
+keeping MSAA. Ninety frames with headroom gradually restore quality; hidden time and isolated
+loading spikes do not count. Reduced-motion previews retain full static quality.
+Resizing and display-density changes refresh that budget without reallocating an unchanged buffer.
+New chats retain the connected welcome subtree and its loaded model instead of recreating its
+iframe, decoding textures and recompiling shaders. Skin id/revision checks avoid serializing large
+model data during welcome updates. Resetting a chat still clears its transcript, changes the welcome
+phrase and resets the camera. Switching skins or disposing the workspace releases the viewer.
+The Side Panel toolbar opens the studio directly. The studio starts with the library, preview and
+chat action; manual fields live in a collapsible adjustments panel. Toggling that panel preserves
+the viewer and its camera. Creative requests use `manage_skin` directly instead of a setup chooser.
+Tool reads and edits open the preview automatically; repeated opens reuse the same tab without
+navigating or reloading its renderer. With no explicit skin id, opening prefers the current chat's
+studio in the source window, then that window's active unbound studio, then the saved active skin.
+An unbound studio can be adopted by the chat; studios belonging to other chats or windows remain
+separate. Tab creation is serialized and queued cancelled runs cannot open a studio.
+Within one skin, edits reuse the sandbox, WebGL renderer and camera. The viewer transfers each
+model's binary buffer once and retains only the current scene's model references. Metadata-only
+changes compare structured values without serializing embedded binaries; the inspector reuses
+validated model metadata. Motion-preference changes update scheduling without reloading models.
+The studio requests library summaries without the saved active binary and fetches a selected
+draft only when its revision changes. Background caches the validated library while it observes
+storage changes; failed writes cannot modify the cache and external writes invalidate it. The
+welcome `welcome` command returns only the saved id/revision when the caller already has that
+version. A single derived IndexedDB render cache retains the saved active skin, avoiding repeated
+base64 model transfers when Chrome recreates a closed panel. Background remains authoritative:
+a changed saved version returns the current skin, drafts never become the welcome cache, and an
+unusable cache triggers a fresh read. A bounded localStorage presentation cache shows the last
+transparent frame immediately and restores its camera while 3D initializes. It disappears only
+after the matching first frame is rendered. Switching skins or returning to 2D clears stale views.
+
+`manage_skin action:"screenshot"` returns the studio's current 2D/3D preview through the existing
+`_image` tool result contract. Background selects the Session's studio and verifies its tab, skin
+and revision before and after capture. The editor waits for settled fields and rendering; failures
+and revision changes reject the request rather than returning an old frame. The renderer draws
+and copies synchronously to a bounded transparent PNG, without enabling `preserveDrawingBuffer`
+or granting page-tool access to extension URLs. Sandbox replies use the existing source, token and
+generation checks. The image depicts the preview, not browser coordinates for page actions.
+Scene sources compile before model loading and execute in a lexical block, so a local declaration
+such as `const vrm = characters.fish.vrm` can shadow the injected `vrm` binding. Each edit loads
+fresh model instances, preserving the previous picture and pausing its animation until shader preparation succeeds. A rejected
+draft leaves the last valid preview visible and disables saving; the error explains how to recover.
+Loading epochs discard stale decoders and release candidate resources without touching the current
+scene. Shared geometries, materials, textures and skeletons are disposed once per scene.
+The preview exposes an accessible loading indicator from the start of a visual draft write or
+refresh through first-frame presentation. The renderer paints the replacement before reporting
+readiness. Supported browsers crossfade the old and new frames with a 180 ms same-document View
+Transition; first loads, reduced motion and hidden views skip the fade. A cached welcome image
+therefore hands off to a fully drawn model without a second fade from an empty frame. Both frames use the same camera and
+adaptive quality. Errors dismiss the indicator while retaining the previous view.
+Left-button and single-touch drags rotate the view; panning, zooming and multi-touch gestures are disabled.
+The Side Panel's welcome container adds a theme-aware radial backdrop with a non-interactive CSS
+gradient behind the transparent viewer. The backdrop stays fixed in the Side Panel while the user
+rotates the model and accommodates arbitrary shapes, including floating and abstract avatars.
+
+GLB and VRM imports support embedded textures, skinning, morph targets and animation clips. VRM 0.x
+and 1.0 additionally preserve MToon materials, expressions and spring bones. The binary payload
+determines the format, so existing skin packages require no migration. Files must be
+glTF 2.0, at most 40 MiB, with no external resources or required Draco, Meshopt or KTX2 decoders.
+Skins are limited to 56 MiB, the library (including drafts and saved copies) to 280 MiB,
+and custom source to 256 KiB. The skin limit accounts for base64 expansion and keeps mutation
+replies containing both the edited and active skin within the 128 MiB transport limit.
+The studio reports unsupported models
+before saving them. Export a self-contained, uncompressed GLB or VRM from a modeling tool when needed.
+
+Both formats accept partial `visual.source` edits through `manage_skin` without resending model
+bytes. VRM reads additionally expose humanoid bone mappings and runtime expression names. Source
+receives `model` and, for VRM, `vrm`: use `vrm.humanoid.getRawBoneNode('head')` for proportions
+and `vrm.expressionManager.setValue('happy', 0.6)` for expressions. The host advances the
+animation mixer, custom update and VRM components in that order. Normalized humanoid pose
+copying is disabled by default so it cannot reset raw bone edits. VRM 0 orientation is normalized
+on load; compatible skeletons are combined to avoid duplicate bone-matrix calculations without
+changing humanoid names or morph expressions. Fitting resets spring bones, and static expressions
+also apply with reduced motion.
+No character assets are bundled with the VRM runtime; users import their own licensed models.
+
+Multi-character scenes use `scene3d` with a `models` map keyed by stable character ids. Each
+character retains its own source, name, position, scale, facing and animation. A scene contains
+1–4 characters and at most 40 MiB of model data in total. Import batches validate before writing;
+promoting a single-model skin preserves pending source edits. Inspector controls edit one character
+at a time. Dragging the rendered scene still only rotates the camera.
+
+`manage_skin get` omits every model binary and returns metadata by character id. A
+`visual.models` patch merges only supplied fields for supplied ids; `null` removes that character.
+Scene source receives `characters[id] = {root, model, vrm}` and `model` as the combined group.
+Character source runs first, then scene source can arrange positions, expressions and bone poses
+for shared interactions. The initial maximum size per character is 2.6 world units, with a bottom-center
+position origin. Rendering advances all mixers, per-character updates, the scene update and all VRM
+components. Export and restore operate on the complete scene, including every original model.
+The sandbox sends only a file-drag hint to show the editor drop surface; the editor reads actual
+files from the browser drop event. The hint cannot supply files or trigger storage writes.
+
 ## First-use data consent
 
 [Data consent](../src/background/services/data-consent.ts) owns the versioned acceptance record.

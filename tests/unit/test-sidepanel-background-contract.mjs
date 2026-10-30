@@ -191,7 +191,7 @@ function createApiFixture(overrides = {}) {
   };
   const namespaces = [
     "system", "sessions", "artifacts", "attachments", "exchange", "ui", "config", "skillSettings", "auth", "skills",
-    "product", "automations", "trace",
+    "product", "automations", "trace", "skins",
   ];
   return Object.fromEntries(namespaces.map(namespace => [namespace, new Proxy({}, {
     get(_target, method) {

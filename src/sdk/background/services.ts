@@ -92,6 +92,7 @@ export interface ToolSkillsRuntime {
   publishToGit?(input: { skill: SkillRecord; target: ToolGitPublishTarget; commitMessage: string }, runtime: { signal?: AbortSignal; context: ToolContext }): Promise<unknown>;
 }
 export interface ToolRuntimeDependencies {
+  skins?: { execute(input: import('../../shared/skins/model.js').SkinCommand, context?: ToolContext, signal?: AbortSignal): Promise<object> } | null;
   requestLocation?(context: ToolContext, signal?: AbortSignal): Promise<Record<string, unknown>>;
   skills?: ToolSkillsRuntime | null;
   skillNetwork?: { registerExecution(requestId: unknown, descriptor?: { plugin?: { id?: string; skillName?: string; network?: { allowedMethods?: readonly string[]; allowedOrigins?: readonly { setting?: string; origin?: string }[]; browserManagedHeaders?: readonly string[]; maxRequestBytes?: number; maxResponseBytes?: number } }; config?: Record<string, unknown>; signal?: AbortSignal | null }): () => void } | null;

@@ -2142,7 +2142,11 @@ function appendSystemNote(message: string) {
     scroll.setFollowing(true);
     disposeRendererTree(messagesEl);
     storeReview.clear();
-    messagesEl.innerHTML = welcomeHTML;
+    // Keep welcome-owned views connected (including loaded sandbox iframes) across new chats.
+    const welcome = messagesEl.querySelector<HTMLElement>(":scope > #welcome");
+    if (welcome) {
+      for (const child of [...messagesEl.childNodes]) if (child !== welcome) child.remove();
+    } else messagesEl.innerHTML = welcomeHTML;
     showWelcome();
     scroll.syncScrollPosition();
     applyBranding();

@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src data: blob:; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
+::view-transition{pointer-events:none}
+::view-transition-group(root){animation-duration:180ms}
+::view-transition-old(root),::view-transition-new(root){animation-duration:180ms;animation-timing-function:ease-out;mix-blend-mode:normal}
+@media(prefers-reduced-motion:reduce){::view-transition-old(root),::view-transition-new(root){animation:none}}
+</style>
+</head><body><script src="sandbox.js"></script></body></html>

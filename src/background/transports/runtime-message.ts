@@ -8,6 +8,7 @@ import { RUNTIME_REQUEST_PORT } from "../../shared/transport/runtime-request.js"
 import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-budget.js";
 
 const OWNED_MESSAGE_TYPES = new Set([
+  'skin_command',
   "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request", "mcp_bridge_connect",
   "mcp_connection_status", "mcp_connection_connect", "mcp_connection_disconnect",
   "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_fetch",
@@ -22,6 +23,12 @@ export function createRuntimeMessageTransport(api: BackgroundApi, {
 
   function dispatch(message: Fields, sender: chrome.runtime.MessageSender, sendResponse: (response: unknown) => void) {
     const type = String(message?.type || "");
+
+    if (type === 'skin_command') {
+      respondAsync(() => call('skins.command', object(message.command), sender),
+        result => ({ ok: true, result }), error => failure(error, 'SKIN_INVALID'), sendResponse);
+      return true;
+    }
 
     if (["mcp_connection_status", "mcp_connection_connect", "mcp_connection_disconnect"].includes(type)) {
       const method = type === "mcp_connection_status" ? "mcpConnectionStatus"

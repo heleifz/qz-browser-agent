@@ -1,0 +1,29 @@
+@layer components {
+  .qz-skin-viewer { position: relative; }
+  .qz-skin-viewer .skin-viewer-loading { position: absolute; z-index: 3; inset-block-end: 12px; inset-inline-start: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 7px; max-width: calc(100% - 24px); padding: 6px 11px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg-elevated); color: var(--text-secondary); box-shadow: var(--shadow-sm); font: 11px/18px var(--font-sans); white-space: nowrap; pointer-events: none; }
+  .qz-skin-viewer .skin-viewer-loading[hidden] { display: none; }
+  .qz-skin-viewer .skin-viewer-loading > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .qz-skin-viewer .skin-viewer-spinner { width: 12px; height: 12px; flex: 0 0 auto; border: 1.5px solid var(--border); border-top-color: var(--text-secondary); border-radius: 50%; animation: skin-viewer-spin .8s linear infinite; }
+  :dir(rtl) .qz-skin-viewer .skin-viewer-loading { transform: translateX(50%); }
+  @keyframes skin-viewer-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .qz-skin-viewer .skin-viewer-spinner { animation: none; } }
+  .welcome-icon.qz-skin-viewer { background: none; position: relative; isolation: isolate; --skin-halo-center: 20%; --skin-halo-middle: 12%; --skin-halo-edge: 3.5%; }
+  .welcome-icon.qz-skin-viewer iframe, .welcome-icon.qz-skin-viewer img { position: relative; z-index: 1; display: block; width: 100%; height: 100%; object-fit: contain; border: 0; background: transparent; }
+  .welcome-icon.qz-skin-viewer .skin-viewer-poster { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+  .welcome-icon.qz-skin-viewer:not([data-skin-visual="image2d"]) { width: min(300px, 76vw); height: clamp(210px, 34vh, 320px); }
+  /* The Side Panel owns this backdrop; the model iframe stays transparent. */
+  .welcome-icon.qz-skin-viewer:not([data-skin-visual="image2d"]):not(.skin-preview-failed)::before {
+    content: ""; position: absolute; z-index: 0; pointer-events: none;
+    inset: -6% -12% -2%;
+    background: radial-gradient(ellipse closest-side at 50% 46%,
+      color-mix(in srgb, var(--text-secondary) var(--skin-halo-center), transparent),
+      color-mix(in srgb, var(--text-secondary) var(--skin-halo-middle), transparent) 36%,
+      color-mix(in srgb, var(--text-secondary) var(--skin-halo-edge), transparent) 68%, transparent);
+  }
+  .welcome-icon.skin-preview-failed { background: url('../../icons/logo-day.png') center / contain no-repeat; }
+  .welcome-icon.skin-preview-failed iframe, .welcome-icon.skin-preview-failed img { visibility: hidden; }
+  @media (prefers-color-scheme: dark) {
+    .welcome-icon.qz-skin-viewer { --skin-halo-center: 16%; --skin-halo-middle: 10%; --skin-halo-edge: 3%; }
+    .welcome-icon.skin-preview-failed { background-image: url('../../icons/logo-night.png'); }
+  }
+}

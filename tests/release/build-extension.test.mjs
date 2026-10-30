@@ -159,7 +159,7 @@ test("TS emits .js imports, maps and standalone classic scripts; production reta
   assert.match(classic, /sourceMappingURL=content-script\.js\.map/);
 
   const production = await buildExtension({ sourceDir, outputDir: join(work, "production"), mode: "production" });
-  assert.equal(production.bundling.outputFiles, 2);
+  assert.equal(production.bundling.outputFiles, 3);
   assert.equal(production.files.some(path => !path.startsWith("vendor/") && /\.(?:ts|map)$/.test(path)), false);
   assert.ok(production.files.includes("shared/value.js"), "offscreen still imports this module after background bundling");
   assert.ok(production.files.includes("examples/registered.js"), "an example explicitly registered into a runtime is a real dependency");
@@ -280,9 +280,9 @@ test("Side Panel chunks defer evaluation and retain maps, vendor paths and depen
   await put(sourceDir, "sidepanel/heavy.ts", 'import { parse } from "partial-json";\nglobalThis.__lazyChunkExecutions = (globalThis.__lazyChunkExecutions || 0) + 1;\nexport function run(): unknown { return parse(\'{"marker":"lazy-chunk-marker"}\'); }\n');
   await put(sourceDir, "sidepanel/pdf.ts", 'export { version } from "pdfjs-dist/build/pdf.mjs";');
   const first = await buildExtension({ sourceDir, outputDir, mode: "production", debugMaps: true });
-  assert.deepEqual(first.bundling.entries.map(entry => entry.output), ["background/service-worker.js", "sidepanel/sidepanel.js"]);
+  assert.deepEqual(first.bundling.entries.map(entry => entry.output), ["background/service-worker.js", "sidepanel/sidepanel.js", "dom/skins/editor.js"]);
   assert.ok(first.bundling.chunks.length >= 2);
-  assert.equal(first.bundling.outputFiles, 2 + first.bundling.chunks.length);
+  assert.equal(first.bundling.outputFiles, 3 + first.bundling.chunks.length);
   const entry = await readFile(join(outputDir, "sidepanel/sidepanel.js"), "utf8");
   assert.doesNotMatch(entry, /lazy-chunk-marker|__lazyChunkExecutions|partial-json/u);
   assert.match(entry, /import\("\.\/chunk-/u);
@@ -828,13 +828,15 @@ async function fixture(t) {
     background: { service_worker: "background/service-worker.js", type: "module" },
     side_panel: { default_path: "sidepanel/sidepanel.html" },
     content_scripts: [{ js: EXTENSION_ENTRIES.filter(entry => entry.path.startsWith("content/")).map(entry => entry.path) }],
-    sandbox: { pages: ["runner-sandbox.html"] },
+    sandbox: { pages: ["runner-sandbox.html", "dom/skins/sandbox.html"] },
     declarative_net_request: { rule_resources: [] },
   };
   await put(sourceDir, "manifest.json", JSON.stringify(manifest));
   for (const entry of EXTENSION_ENTRIES) await put(sourceDir, entry.path, "globalThis.fixture = true;\n");
   await put(sourceDir, "sidepanel/sidepanel.html", '<script src="../shared/mathjax-config.js"></script><script type="module" src="sidepanel.js"></script>');
   await put(sourceDir, "offscreen.html", '<script type="module" src="offscreen.js"></script>');
+  await put(sourceDir, "dom/skins/editor.html", '<script type="module" src="editor.js"></script>');
+  await put(sourceDir, "dom/skins/sandbox.html", '<script src="sandbox.js"></script>');
   await put(sourceDir, "runner-sandbox.html", '<script src="runner-sandbox.js"></script>');
   await rm(join(sourceDir, "background/service-worker.js"));
   await put(sourceDir, "background/service-worker.ts", 'import { value } from "../shared/value.js";\nexport const answer: number = value;\n');

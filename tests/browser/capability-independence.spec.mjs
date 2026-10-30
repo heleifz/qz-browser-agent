@@ -226,13 +226,14 @@ test("returning from another capability's settings resumes a cancelled credentia
   expect(await configRequestCount(page)).toBe(configReads);
 });
 
-test("onboarding is reinserted after the complete app rebuilds the chat welcome view", async ({ page }) => {
+for (const recreate of [false, true]) test(`new chats ${recreate ? 'recreate missing' : 'retain'} welcome views with working onboarding`, async ({ page }) => {
   await openApp(page);
   await expect(page.locator("#welcome .welcome-onboarding")).toHaveCount(1);
   await page.evaluate(() => { window.__oldWelcome = document.querySelector("#welcome"); });
+  if (recreate) await page.evaluate(() => document.querySelector("#welcome").remove());
   await page.locator("#btn-new").click();
   await expect(page.locator("#welcome .welcome-onboarding")).toHaveCount(1);
-  expect(await page.evaluate(() => window.__oldWelcome === document.querySelector("#welcome"))).toBe(false);
+  expect(await page.evaluate(() => window.__oldWelcome === document.querySelector("#welcome"))).toBe(!recreate);
   await page.locator('[data-onboarding-action="summarize"]').click();
   await expect(page.locator("#input")).toHaveValue(/世界主要城市未来 7 天天气/);
 });

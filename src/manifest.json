@@ -40,7 +40,8 @@
   },
   "sandbox": {
     "pages": [
-      "runner-sandbox.html"
+      "runner-sandbox.html",
+      "dom/skins/sandbox.html"
     ]
   },
   "content_scripts": [

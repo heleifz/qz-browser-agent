@@ -19,9 +19,10 @@ import { encodeSourceMapPath, originalSourceMapPath, refreshDependencyProvenance
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_EXTENSION_DIR = resolve(REPO_ROOT, "src");
-const ENTRY_POINTS = Object.freeze([
+export const BUNDLED_EXTENSION_ENTRIES = Object.freeze([
   Object.freeze({ name: "background", path: "background/service-worker.js" }),
   Object.freeze({ name: "sidepanel", path: "sidepanel/sidepanel.js" }),
+  Object.freeze({ name: "skin-editor", path: "dom/skins/editor.js", optional: true }),
 ]);
 const PANEL_CHUNK = /^chunk-[\w.-]+\.js(?:\.map)?$/u;
 
@@ -33,10 +34,14 @@ export async function bundleExtension({ extensionDir, metafilePath = "", allowSo
     throw new Error("refusing to bundle the source extension in place; use a staging copy");
   }
 
-  await validateExtensionRoot(root);
+  const entries = [];
+  for (const entry of BUNDLED_EXTENSION_ENTRIES) {
+    if (!entry.optional || await stat(resolve(root, entry.path)).then(() => true, () => false)) entries.push(entry);
+  }
+  await validateExtensionRoot(root, entries);
   preservedInputs ??= await readRuntimeModuleGraph(root, "offscreen.js");
   const builds = [];
-  for (const entry of ENTRY_POINTS) {
+  for (const entry of entries) {
     builds.push(await buildEntry(root, entry, debugMaps));
   }
 
@@ -46,7 +51,7 @@ export async function bundleExtension({ extensionDir, metafilePath = "", allowSo
     for (const input of item.inputs) capturedInputs.add(input);
   }
 
-  const entryPaths = new Set(ENTRY_POINTS.map(entry => entry.path));
+  const entryPaths = new Set(entries.map(entry => entry.path));
   const retained = new Set(preservedInputs.map(path => normalizeInputPath(root, path)));
   const removableInputs = [...capturedInputs]
     .filter(path => !entryPaths.has(path))
@@ -214,11 +219,11 @@ export function stableDebugSourceMap(contents, sourceRoot, mapDirectory) {
   return `${JSON.stringify(map)}\n`;
 }
 
-async function validateExtensionRoot(root) {
+async function validateExtensionRoot(root, entries) {
   const manifestPath = resolve(root, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (manifest.manifest_version !== 3) throw new Error(`${manifestPath} is not a Manifest V3 extension`);
-  if (manifest.background?.service_worker !== ENTRY_POINTS[0].path) {
+  if (manifest.background?.service_worker !== BUNDLED_EXTENSION_ENTRIES[0].path) {
     throw new Error(`unexpected background entry: ${manifest.background?.service_worker || "missing"}`);
   }
   const sidepanelHtml = await readFile(resolve(root, "sidepanel/sidepanel.html"), "utf8");
@@ -226,7 +231,7 @@ async function validateExtensionRoot(root) {
       && !/<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']sidepanel\.js["'][^>]*>/i.test(sidepanelHtml)) {
     throw new Error("sidepanel/sidepanel.html does not load sidepanel.js as an ES module");
   }
-  for (const entry of ENTRY_POINTS) {
+  for (const entry of entries) {
     const info = await stat(resolve(root, entry.path));
     if (!info.isFile()) throw new Error(`${entry.path} is not a file`);
   }

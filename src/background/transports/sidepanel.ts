@@ -22,6 +22,7 @@ export function createSidepanelTransport(api: BackgroundApi, {
 }: TransportOptions = {}) {
   const call = (path: string, ...args: unknown[]) => resolveBackgroundApiMethod(api, path)(...args);
   const replies: Readonly<Record<string, ReplyRoute>> = {
+    skin_command: { method: 'skins.command', response: 'skin_command_result', envelope: 'result', args: (message, port) => [object(message.command), port?.sender || {}] },
     mcp_connection_status: { method: "system.mcpConnectionStatus", response: "mcp_connection_status_result", envelope: "result", args: (_message, port) => [port?.sender || {}] },
     mcp_connection_connect: { method: "system.connectMcpFromSettings", response: "mcp_connection_connect_result", envelope: "result", args: (message, port) => [port?.sender || {}, { name: message.name, endpoint: message.endpoint }] },
     mcp_connection_disconnect: { method: "system.disconnectMcp", response: "mcp_connection_disconnect_result", envelope: "result", args: (_message, port) => [port?.sender || {}] },
