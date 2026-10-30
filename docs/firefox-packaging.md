@@ -78,7 +78,11 @@ Firefox API stand-ins install from the boot modules, which run before the shared
 hooks on the `chrome` object, then the shared service worker reads that object. It supplies
 Firefox's missing `Tab.pendingUrl` through main-frame request and commit events. Request IDs keep
 errors from replaced requests from clearing a newer navigation; commits, errors, no-content responses
-and tab removal clear the pending field. This adapter uses the package's existing permissions.
+and tab removal clear the pending field. Firefox can deliver the main-frame commit before
+`onBeforeRequest`. A request whose own timestamp is at or before the commit of that same URL does
+not set `pendingUrl` again, and a completed tab already showing the pending URL drops it. A newer
+request, including a same-URL reload, stays pending until its own commit. This adapter uses the
+package's existing permissions.
 The host also sets
 `qzSessionAutomationsEnabled` to false, clears `qingzhou.automation.scheduler`, and arms the
 Firefox MCP wake (`qzFirefoxMcpWake`) before that service worker starts. The wake pings a parent

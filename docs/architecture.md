@@ -265,7 +265,10 @@ and the wait. A web `pendingUrl` also gates reads of an existing document during
 same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
 Committed documents remain readable while subresources load. Firefox's host supplies its missing
 `pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
-replaced requests. Readers need no Session-level navigation registry. Content reads inject
+replaced requests. A commit delivered before its request does not re-arm `pendingUrl` when the
+request timestamp is at or before that commit, and a completed tab already showing the pending URL
+drops it. A newer request, including a same-URL reload, stays pending until its own commit.
+Readers need no Session-level navigation registry. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge
 is idempotent. A presence ping also reports whether DOMContentLoaded has fired. Content reads wait
