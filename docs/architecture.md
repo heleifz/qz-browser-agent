@@ -248,7 +248,8 @@ reconnect; previous page actions remain completed. User detachment ends automati
 `open_tab` and `navigate` share the [navigation gate](../src/capabilities/tabs/navigation.ts), using
 `tabs` and `scripting`. A constant main-frame script obtains Chrome's document ID after a tab
 security check. The gate waits for `pendingUrl` to clear and a new document ID to become accessible.
-Fragment navigation can keep the same document.
+Fragment navigation can keep the same document. Firefox can report the tab complete
+before the main frame accepts a document probe; that empty result is retried briefly.
 
 The old-document probe has a 100 ms deadline. If it expires or fails, the fallback also requires a
 `tabs.onUpdated` completion event. Polls run 50 ms apart; every awaited Chrome operation races
