@@ -132,6 +132,9 @@ identity, and route native dialogs through the same wait lifecycle. A dialog wai
 own tool deadline and the budgets of its waiting script ancestors until the user responds;
 browser acknowledgement uses the remaining deadline. Script bridges carry an opaque live parent-call
 ID; parent cancellation or settlement revokes descendant calls, including unawaited children.
+Settlement cancels only descendant authority, leaving the successful tool's own signal unchanged.
+Parent lookup requires the exact Session and run; an absent run and its empty wire value match only
+each other and still require the live opaque parent ID.
 Parallel dialogs queue their decisions within the same Session/run, suspending queued deadlines too;
 other Sessions and independent tool execution remain concurrent.
 Stop and run cancellation remain active. Cancel/Stay answers the page without rejecting the task wait.

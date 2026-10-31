@@ -43,7 +43,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-30-fill-submit-target";
+  const QZ_CONTENT_VERSION = "2026-10-30-nested-call-lifetime";
   const findElementRefs = new Map<string, WeakRef<Element>>();
   const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let findElementRefSequence = 0;

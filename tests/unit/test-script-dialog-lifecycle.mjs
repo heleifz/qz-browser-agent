@@ -88,7 +88,11 @@ for (const outcome of ['answer', 'answer then stall', 'stop', 'parent returns', 
   }
   await parent;
   await flush();
-  assert.equal(childSignal.aborted, true, 'settled parent revokes descendant execution');
+  assert.equal(childSignal.aborted, !outcome.startsWith('answer'),
+    'settled parent revokes pending descendants, not successfully completed tools');
+  if (outcome === 'answer' || outcome === 'parent returns') {
+    assert.equal(parentContext.signal.aborted, false, 'successful parent retains its own execution signal');
+  }
   assert.equal(sessions.isWaitingForUser('s'), false);
   assert.equal(listeners.size, listenerCount);
   if (outcome === 'answer') assert.equal(settled.ok, true);
