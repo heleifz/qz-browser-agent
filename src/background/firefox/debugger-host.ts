@@ -11,6 +11,8 @@ import type { PageCommand } from "./page-command.js";
 import { bytesToBase64, jpegsToPdf } from "./pdf-raster.js";
 import { cropDataUrl, decodeDataUrl, stitchTiles, stripDataUrl } from "./screenshot-image.js";
 import type { ImageClip } from "./screenshot-image.js";
+import type { DebuggerCommandScope } from "../tools/cdp-runtime.js";
+import { createFirefoxEnterInput } from "./enter-input.js";
 
 const MARK = Symbol.for("qz.firefox.debugger");
 const COMPAT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -28,6 +30,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   const autoAttach = new Set<number>();
   const contexts = new Map<number, ContextRecord[]>();
   const generations = new Map<string, number>();
+  const enterInput = createFirefoxEnterInput((tabId, frameId) => generations.get(`${tabId}:${frameId}`) || 0);
   const emulation = new Map<number, { userAgent: string; touch: boolean }>();
   const savedWindows = new Map<number, SavedWindow>();
   const announced = new Map<number, Map<string, string>>();
@@ -69,16 +72,25 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     onEvent, onDetach,
     async attach(target) { attached.add(tabIdOf(target)); },
     async detach(target) { await release(tabIdOf(target), true); },
-    sendCommand(target, method, params) {
-      const tabId = tabIdOf(target);
-      if (!attached.has(tabId)) return Promise.reject(new Error("Debugger is not attached to the tab"));
-      return dispatch(tabId, frameFromSession(tabId, target?.sessionId), method, fields(params));
-    },
+    sendCommand(target, method, params) { return sendCommand(target, method, params); },
+    sendCommandWithScope: sendCommand,
   };
   api[MARK] = true;
   chromeApi.debugger = api;
 
-  async function dispatch(tabId: number, frameId: number, method: string, params: Fields): Promise<unknown> {
+  function sendCommand(target: DebugSource, method: string, params?: object, scope?: DebuggerCommandScope) {
+    const tabId = tabIdOf(target);
+    const active: DebuggerCommandScope = { signal: scope?.signal, check() {
+      scope?.check();
+      if (!attached.has(tabId)) throw new Error("Debugger is not attached to the tab");
+    } };
+    return Promise.resolve().then(() => {
+      active.check();
+      return dispatch(tabId, frameFromSession(tabId, target?.sessionId), method, fields(params), active);
+    });
+  }
+
+  async function dispatch(tabId: number, frameId: number, method: string, params: Fields, scope: DebuggerCommandScope): Promise<unknown> {
     // Runtime.disable must not drop the hook. It stays until the debugger detaches.
     if (method === "Page.enable" || method === "Page.disable" || method === "Runtime.disable" || method === "Runtime.terminateExecution") return {};
     if (method === "Page.getFrameTree") return frameTree(tabId, frameId);
@@ -131,8 +143,12 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       } finally { if (type === "mouseReleased") pointerFrames.delete(key); }
     }
     if (method === "Input.dispatchKeyEvent") {
-      const target = await inputFrame(tabId, frameId, 0, 0, true);
-      return run(tabId, target.frameId, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } });
+      const prepare = async () => (await inputFrame(tabId, frameId, 0, 0, true, scope.check)).frameId;
+      const dispatchKey = (target: number) => run(tabId, target, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } });
+      if (params.key === "Enter" && numberValue(params.modifiers) === 0) {
+        return enterInput.send(tabId, frameId, params.type === "keyUp", prepare, dispatchKey, scope);
+      }
+      return dispatchKey(await prepare());
     }
     if (method === "Input.dispatchTouchEvent") {
       const point = fields(arrayValue(params.touchPoints)[0]);
@@ -163,6 +179,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
 
   async function release(tabId: number, restore: boolean) {
     attached.delete(tabId);
+    enterInput.release(tabId);
     runtimeEnabled.delete(tabId);
     autoAttach.delete(tabId);
     contexts.delete(tabId);
@@ -215,19 +232,23 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     return { backendNodeId: frameOwnerNodeId(frame, siblings, listed) };
   }
 
-  async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false) {
+  async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false, check = () => {}) {
     // CDP pointer coordinates are relative to the target viewport. scripting input
     // must be dispatched in the hit frame so its listeners and receipt see it.
+    check();
     const frames = await readFrames(tabId);
+    check();
     const visited = new Set<number>();
     while (!visited.has(frameId)) {
       visited.add(frameId);
       const hit = fields(await run(tabId, frameId, { op: "inputFrame", x, y, active }));
+      check();
       if (!hit.backendNodeId) break;
       const candidates = frames.filter(frame => frame.parentFrameId === frameId);
       if (!candidates.length) break;
       // Reuse this dispatch's frame snapshot and one owner list per visited parent.
       const owners = fields(await run(tabId, frameId, { op: "owners" }));
+      check();
       const listed = arrayValue(owners.frames).map(fields);
       const siblings = [...candidates].sort((left, right) => left.frameId - right.frameId);
       const child = candidates.find(candidate => frameOwnerNodeId(candidate, siblings, listed) === hit.backendNodeId);
@@ -667,6 +688,7 @@ interface DebuggerApi {
   attach(target: DebugSource, version: string): Promise<void>;
   detach(target: DebugSource): Promise<void>;
   sendCommand(target: DebugSource, method: string, params?: object): Promise<unknown>;
+  sendCommandWithScope(target: DebugSource, method: string, params: object, scope: DebuggerCommandScope): Promise<unknown>;
 }
 interface DebuggerChrome {
   debugger?: DebuggerApi;
