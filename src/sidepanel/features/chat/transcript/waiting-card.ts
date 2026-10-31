@@ -166,10 +166,9 @@ function normalizeWaitCard(value: unknown): WaitCard {
   } else if (form.debuggerDetached) {
     form.title = debuggerDetachT("title");
     message = debuggerDetachT("message");
-  } else if (readJavaScriptDialogForm(form as unknown as Record<string, unknown>)) {
-    const dialog = readJavaScriptDialogForm(form as unknown as Record<string, unknown>)!;
-    form.title = dialog.message;
-    message = isWaitingTranscriptActive(entry) ? "" : dialog.message;
+  } else if (form.javascriptDialog) {
+    form.title = form.javascriptDialog.message;
+    message = isWaitingTranscriptActive(entry) ? "" : form.javascriptDialog.message;
   }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),
@@ -197,7 +196,7 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
     (field.type === "single_choice" || field.type === "multi_choice") && field.presentation === "cards")
     && entry.message === form.title;
   const message = repeatedCardTitle ? "" : entry.message || "";
-  const dialog = readJavaScriptDialogForm(form as unknown as Record<string, unknown>);
+  const dialog = form.javascriptDialog;
   const dialogType = dialog?.type || "";
   const hint = waiting
     ? (form.browserPermission ? permissionT("hint") : dialog ? javascriptDialogT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
