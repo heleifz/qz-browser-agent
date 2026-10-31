@@ -22,6 +22,7 @@ const cases = [
   { name: 'ordinary swallowed click remains a miss', path: '/eat.html', action: 'click', target: '#b', requests: 0, missed: true },
   { name: 'physically undelivered click remains a miss', path: '/eat.html?off=1', action: 'click', target: '#b', requests: 0, missed: true, drop: true },
   { name: 'press Enter after a normal focus click', path: '/keys.html', action: 'press', requests: 1, navigated: true },
+  { name: 'capture-stopped link navigates once', path: '/capture-link.html', action: 'click', target: '#link', requests: 1, navigated: true },
 ];
 
 test('input delivery follows submitted forms without replaying input', async ({}, testInfo) => {
@@ -63,6 +64,7 @@ test('input delivery follows submitted forms without replaying input', async ({}
     if (url.pathname === '/delayed.html') html = `<script>window.addEventListener('click',e=>{if(e.target.id==='go'){e.preventDefault();queueMicrotask(()=>f.requestSubmit())}},true)</script>` + html
       + `<script>f.addEventListener('submit',e=>{e.preventDefault();fetch('/submitted?'+new URLSearchParams(new FormData(f)))})</script>`;
     if (url.pathname === '/blind.html') html += `<a id="link" href="/fast.html?q=link">Next</a><script>for(const t of ['submit','beforeunload','pagehide'])window.addEventListener(t,e=>e.stopImmediatePropagation(),true)</script>`;
+    if (url.pathname === '/capture-link.html') html = `<!doctype html><title>Capture link</title><a id="link" href="/fast.html?q=capture">Next</a><script>for(const type of ['pointerdown','mousedown','touchstart','click'])window.addEventListener(type,event=>event.stopImmediatePropagation(),true)</script>`;
     res.end(html);
   });
   try {

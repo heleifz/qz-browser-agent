@@ -164,7 +164,8 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean, obs
         if (!doc.__qzInputReceiptsV4Bound) {
           doc.__qzInputReceiptsV4Bound = true;
           const pointers = ["pointerdown", "mousedown", "touchstart", "click"];
-          const submissions = ["submit", "beforeunload", "pagehide"];
+          // Same-document submit counts. beforeunload and pagehide do not.
+          const submissions = ["submit"];
           const count = (event: { isTrusted: boolean }, type: string) => {
             if (!event.isTrusted) {
               if (!acceptExtensionEvents) return;

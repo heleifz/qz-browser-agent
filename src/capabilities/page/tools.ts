@@ -14,7 +14,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, readPageInputReceipt } from "#sdk/background/browser";
+import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
 
 interface PageViewport { width: number; height: number }
@@ -548,10 +548,12 @@ registerTool({
         // Default actions can submit or navigate even when an earlier page listener
         // hid every pointer event. Keep the receipt alive through this bounded observation.
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
-        const delivered = await inputWasDelivered(tabId, receiptId);
+        const receipt = receiptId ? await readPageInputReceipt(tabId, receiptId) : null;
         receiptId = "";
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
-        if (!delivered && pageDelta.navigated !== true) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
+        if (!pageInputDelivered({ receipt, committed: pageDelta.navigated === true })) {
+          return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
+        }
         return {
           action: "click",
           target: resolvedTarget,

@@ -1,4 +1,5 @@
 import type { DebuggerCommandScope } from "../tools/cdp-runtime.js";
+import { pageInputDelivered } from "../tools/page-input-delivery.js";
 
 interface Press {
   tabId: number;
@@ -66,7 +67,9 @@ export function createFirefoxEnterInput(generations: ReadonlyMap<string, number>
     let committed = () => {};
     try {
       await observe(new Promise<void>((resolve, reject) => {
-        committed = () => { if (changed(press)) resolve(); };
+        committed = () => {
+          if (pageInputDelivered({ committed: changed(press) })) resolve();
+        };
         commits.add(committed);
         timer = setTimeout(() => reject(error), 1000);
         committed();

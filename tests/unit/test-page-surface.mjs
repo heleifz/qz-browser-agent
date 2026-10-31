@@ -19,6 +19,17 @@ globalThis.chrome = {
 };
 
 const { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } = await import("../../src/background/tools/page-surface.ts");
+const { pageInputDelivered } = await import("../../src/background/tools/page-input-delivery.ts");
+
+test("delivery is a receipt, a commit, or a same-document submit", () => {
+  assert.equal(pageInputDelivered({ receipt: 1, committed: false }), true);
+  assert.equal(pageInputDelivered({ receipt: 0, committed: true }), true);
+  assert.equal(pageInputDelivered({ receipt: 0, committed: false, submitted: true }), true);
+  assert.equal(pageInputDelivered({ receipt: 0, committed: false, submitted: false }), false);
+  assert.equal(pageInputDelivered({ receipt: null, committed: false }), true, "an unreadable receipt is not a miss");
+  assert.equal(pageInputDelivered({ committed: true }), true);
+  assert.equal(pageInputDelivered({ committed: false }), false, "beforeunload or pagehide alone is not delivery");
+});
 
 test("a zero outer size gets one warmup capture and the tab stays in the background", async () => {
   sizes.push({ width: 1200, height: 800 });
@@ -114,23 +125,22 @@ test("an old receipt flag does not block the versioned listener", async () => {
   }
 });
 
-for (const type of ['submit', 'beforeunload', 'pagehide']) {
-  for (const observeSubmission of [false, true]) test(`pointer ${type} evidence is opt-in (${observeSubmission})`, async () => {
-    runInPage = ({ func, args }) => func(...args);
-    try {
-      const page = installPage();
-      const id = await armPageInputReceipt(7, { observeSubmission });
-      const listener = page.listeners.find(item => item.type === type);
-      assert.ok(listener, `${type} receipt listener`);
-      listener.listener({ type, isTrusted: true });
-      assert.equal(await readPageInputReceipt(7, id), observeSubmission ? 1 : 0);
-    } finally {
-      runInPage = null;
-      delete globalThis.document;
-      delete globalThis.addEventListener;
-    }
-  });
-}
+for (const observeSubmission of [false, true]) test(`same-document submit evidence is opt-in (${observeSubmission})`, async () => {
+  runInPage = ({ func, args }) => func(...args);
+  try {
+    const page = installPage();
+    const id = await armPageInputReceipt(7, { observeSubmission });
+    const listener = page.listeners.find(item => item.type === "submit");
+    assert.ok(listener, "submit receipt listener");
+    listener.listener({ type: "submit", isTrusted: true });
+    assert.equal(await readPageInputReceipt(7, id), observeSubmission ? 1 : 0);
+    assert.equal(page.listeners.some(item => item.type === "beforeunload" || item.type === "pagehide"), false);
+  } finally {
+    runInPage = null;
+    delete globalThis.document;
+    delete globalThis.addEventListener;
+  }
+});
 
 test('field changes cannot confirm a click and need no keyboard listeners', async () => {
   runInPage = ({ func, args }) => func(...args);
@@ -150,16 +160,14 @@ test('field changes cannot confirm a click and need no keyboard listeners', asyn
   }
 });
 
-test('untrusted submit and lifecycle events cannot confirm delivery', async () => {
+test('an untrusted submit cannot confirm delivery', async () => {
   runInPage = ({ func, args }) => func(...args);
   try {
     const page = installPage();
     const id = await armPageInputReceipt(7, { observeSubmission: true });
-    for (const type of ['submit', 'beforeunload', 'pagehide']) {
-      const listener = page.listeners.find(item => item.type === type);
-      assert.ok(listener);
-      listener.listener({ type, isTrusted: false });
-    }
+    const listener = page.listeners.find(item => item.type === "submit");
+    assert.ok(listener);
+    listener.listener({ type: "submit", isTrusted: false });
     assert.equal(await readPageInputReceipt(7, id), 0);
   } finally {
     runInPage = null;

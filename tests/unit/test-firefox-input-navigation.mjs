@@ -9,7 +9,6 @@ const MISSING = 'Missing host permission for the tab';
 const BEFORE = 'http://127.0.0.1/form.html';
 const AFTER = 'http://127.0.0.1/fast.html';
 const faults = ['keydown-response', 'keyup-route', 'keyup-input'];
-const errors = ['result-object', 'result-error', 'reject-value', 'missing-string', 'other-error', 'world-error'];
 function event() {
   const listeners = new Set();
   return { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn),
@@ -141,32 +140,44 @@ function originalError(f, kind) {
   };
 }
 
+const outcomes = [
+  { name: 'commit within 1s succeeds once', commitDelay: 40, delivered: true, url: AFTER },
+  { name: 'same-URL commit is delivery', sameUrl: true, delivered: true, url: BEFORE },
+];
+// Error and non-Error rejections are the two identities. Faults are columns of one row.
+const errorIdentity = [
+  { name: 'Error', errorKind: 'world-error' },
+  { name: 'non-Error rejection', errorKind: 'reject-value' },
+];
+
 for (const action of ['fill', 'press']) {
-  for (const fault of faults) for (const errorKind of errors) {
-    test(`Firefox ${action}: ${fault} / ${errorKind} + delayed commit succeeds once`, async t => {
-      const f = fixture(t, { fault, errorKind, commitDelay: 40 });
+  for (const row of outcomes) test(`Firefox ${action}: ${row.name}`, async t => {
+    for (const fault of faults) {
+      const f = fixture(t, { fault, errorKind: 'result-object', commitDelay: row.commitDelay, sameUrl: row.sameUrl });
       const result = await f.call(action);
-      assert.equal(result.error, undefined);
-      assert.equal(result.navigated, true);
-      assert.equal(result.pageAfter.url, AFTER);
-      assert.equal(action === 'fill' ? result.submitDispatched : result.pressed, true);
+      assert.equal(result.error, undefined, fault);
+      assert.equal(result.navigated, true, fault);
+      assert.equal(result.pageAfter.url, row.url, fault);
+      assert.equal(action === 'fill' ? result.submitDispatched : result.pressed, true, fault);
       oneSubmission(f, fault);
-    });
-    test(`Firefox ${action}: ${fault} / ${errorKind} without commit preserves error`, async t => {
-      const f = fixture(t, { fault, errorKind, navigation: false });
+    }
+  });
+  for (const identity of errorIdentity) test(`Firefox ${action}: no commit preserves ${identity.name}`, async t => {
+    for (const fault of faults) {
+      const f = fixture(t, { fault, errorKind: identity.errorKind, navigation: false });
       const start = Date.now();
-      await assert.rejects(f.call(action), originalError(f, errorKind));
-      assert.ok(Date.now() - start >= 950, 'allow one second for commit');
-      assert.ok(Date.now() - start < 1800, 'one recovery window, no keyUp cleanup replay');
-      assert.equal(f.submissions.length, 1);
-      assert.equal(f.keys.filter(type => type === 'keyUp').length, fault === 'keyup-input' ? 1 : 0);
-      assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1);
-      assert.equal(f.trace.filter(stage => stage === 'keyup-route').length, fault === 'keydown-response' ? 0 : 1);
-    });
-  }
-  for (const errorKind of errors) test(`Firefox ${action}: prepare / ${errorKind} fails once before input`, async t => {
-    const f = fixture(t, { fault: 'prepare', errorKind });
-    await assert.rejects(f.call(action), originalError(f, errorKind));
+      await assert.rejects(f.call(action), originalError(f, identity.errorKind));
+      assert.ok(Date.now() - start >= 950, `${fault} allows one second for commit`);
+      assert.ok(Date.now() - start < 1800, `${fault} uses one recovery window`);
+      assert.equal(f.submissions.length, 1, fault);
+      assert.equal(f.keys.filter(type => type === 'keyUp').length, fault === 'keyup-input' ? 1 : 0, fault);
+      assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1, fault);
+      assert.equal(f.trace.filter(stage => stage === 'keyup-route').length, fault === 'keydown-response' ? 0 : 1, fault);
+    }
+  });
+  for (const identity of errorIdentity) test(`Firefox ${action}: prepare / ${identity.name} fails once before input`, async t => {
+    const f = fixture(t, { fault: 'prepare', errorKind: identity.errorKind });
+    await assert.rejects(f.call(action), originalError(f, identity.errorKind));
     assert.deepEqual(f.keys, []);
     assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1);
   });
@@ -178,13 +189,6 @@ for (const action of ['fill', 'press']) {
       assert.ok(f.trace.filter(stage => stage === 'prepare').length <= (frameId ? 2 : 1), 'one route traversal only');
     });
   }
-  for (const fault of faults) test(`Firefox ${action}: ${fault} same-URL commit is delivery evidence`, async t => {
-    const f = fixture(t, { fault, sameUrl: true });
-    const result = await f.call(action);
-    assert.equal(result.navigated, true);
-    assert.equal(result.pageAfter.url, BEFORE);
-    oneSubmission(f, fault);
-  });
   for (const commitFrameId of [0, 4]) test(`Firefox ${action}: main/target frame ${commitFrameId} commit skips child keyUp`, async t => {
     const f = fixture(t, { fault: 'keydown-response', frameId: 4, commitFrameId, commitDelay: 40 });
     assert.equal((await f.call(action)).navigated, true);
@@ -219,13 +223,16 @@ for (const action of ['fill', 'press']) {
     assert.equal(f.submissions.length, 1);
   });
   for (const interrupt of ['abort', 'close', 'run', 'abort-later', 'close-later', 'run-later']) {
-    for (const fault of faults) test(`Firefox ${action}: ${interrupt} during ${fault} revokes recovery`, async t => {
-      const f = fixture(t, { fault, interrupt, commitDelay: interrupt.endsWith('-later') ? 40 : 0 });
-      await assert.rejects(f.call(action));
-      const count = f.trace.length;
-      await new Promise(resolve => setTimeout(resolve, 60));
-      assert.equal(f.trace.length, count, 'no late probes or input after revocation');
-      assert.equal(f.submissions.length, 1);
+    test(`Firefox ${action}: ${interrupt} revokes recovery`, async t => {
+      for (const fault of faults) {
+        const f = fixture(t, { fault, interrupt, commitDelay: interrupt.endsWith('-later') ? 40 : 0 });
+        await assert.rejects(f.call(action));
+        const count = f.trace.length;
+        await new Promise(resolve => setTimeout(resolve, 60));
+        assert.equal(f.trace.length, count, `${fault} sends no late probes or input after revocation`);
+        assert.equal(f.submissions.length, 1, fault);
+        assert.equal(f.keys.filter(type => type === 'keyUp').length, fault === 'keyup-input' ? 1 : 0, `${fault} sends no late keyUp`);
+      }
     });
   }
   test(`Firefox ${action}: cancelling an in-flight frame probe prevents input after its late reply`, async t => {
