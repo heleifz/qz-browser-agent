@@ -31,9 +31,8 @@ export function installFirefoxTabNavigation(browser: NavigationHost) {
   // timestamp is then at or before the commit and must not re-arm pendingUrl.
   const committedAt = new Map<number, Map<string, number>>();
   const filter = { urls: ["<all_urls>"], types: ["main_frame"] };
-  const stampFor = (tabId: number, url: string) => committedAt.get(tabId)?.get(withoutFragment(url));
   const alreadyCommitted = (tabId: number, request: Request) => {
-    const stamp = stampFor(tabId, request.url);
+    const stamp = committedAt.get(tabId)?.get(withoutFragment(request.url));
     return typeof stamp === "number" && typeof request.timeStamp === "number" && stamp >= request.timeStamp;
   };
   requests.onBeforeRequest.addListener(details => {
