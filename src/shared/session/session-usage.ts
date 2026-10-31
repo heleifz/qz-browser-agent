@@ -16,7 +16,7 @@ const TOKEN_KEYS = [
 ] as const;
 const INCOMPLETE_COMPACT = new Set(["running", "failed", "aborted", "error"]);
 
-export interface SessionUsageSummary {
+interface SessionUsageSummary {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
@@ -32,7 +32,6 @@ interface RecordedCall {
   outputTokens: number;
   cachedTokens: number;
   costTicks: number | null;
-  recorded: boolean;
 }
 
 /** Keep the provider fields later snapshots need. Nested cache details become cached_tokens. */
@@ -64,7 +63,7 @@ export function summarizeSessionUsage({ conversation = null, transcript = null }
   transcript?: unknown;
 } = {}): SessionUsageSummary {
   const messages = messageRecords(conversation);
-  const entries = entryRecords(transcript);
+  const entries = Array.isArray(transcript) ? transcript.map(asRecord).filter(entry => typeof entry.type === "string") : [];
   const summary: SessionUsageSummary = {
     inputTokens: 0,
     outputTokens: 0,
@@ -79,7 +78,7 @@ export function summarizeSessionUsage({ conversation = null, transcript = null }
   for (const message of messages) {
     if (message.role === "system") continue;
     const call = readRecordedCall(message._usage);
-    if (!call.recorded) continue;
+    if (!call) continue;
     summary.inputTokens += call.inputTokens;
     summary.outputTokens += call.outputTokens;
     summary.cachedTokens += call.cachedTokens;
@@ -99,9 +98,8 @@ export function summarizeSessionUsage({ conversation = null, transcript = null }
   return summary;
 }
 
-function readRecordedCall(input: unknown): RecordedCall {
+function readRecordedCall(input: unknown): RecordedCall | null {
   const usage = asRecord(input);
-  const empty: RecordedCall = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costTicks: null, recorded: false };
   const cacheRead = firstToken(usage, ["cache_read_input_tokens", "cached_tokens", "prompt_cache_hit_tokens", "cacheRead"]) ?? cachedFromDetails(usage);
   const cacheWrite = firstToken(usage, ["cache_creation_input_tokens", "cacheWrite"]);
   const output = firstToken(usage, ["output_tokens", "completion_tokens", "total_completion_tokens", "output"]);
@@ -110,26 +108,21 @@ function readRecordedCall(input: unknown): RecordedCall {
   const split = inputTokens != null && ["cache_read_input_tokens", "cache_creation_input_tokens", "cacheRead", "cacheWrite"]
     .some(key => Object.hasOwn(usage, key));
   let promptTokens = 0;
-  let cached = 0;
+  const cached = cacheRead ?? 0;
   if (split) {
     promptTokens = inputTokens + (cacheWrite ?? 0);
-    cached = cacheRead ?? 0;
   } else if (prompt != null) {
-    cached = cacheRead ?? 0;
     promptTokens = Math.max(0, prompt - cached);
   } else if (inputTokens != null) {
     // Responses-style input_tokens includes cache reads. Anthropic and the Codex
     // adapter's disjoint input/cache fields take the split branch above.
-    cached = cacheRead ?? 0;
     promptTokens = Math.max(0, inputTokens - cached);
-  } else {
-    cached = cacheRead ?? 0;
   }
   const costTicks = readCostTicks(usage);
   const recorded = inputTokens != null || prompt != null || output != null || cacheRead != null || cacheWrite != null
     || costTicks != null || firstToken(usage, ["total_tokens", "total"]) != null;
-  if (!recorded) return empty;
-  return { inputTokens: promptTokens, outputTokens: output ?? 0, cachedTokens: cached, costTicks, recorded: true };
+  if (!recorded) return null;
+  return { inputTokens: promptTokens, outputTokens: output ?? 0, cachedTokens: cached, costTicks };
 }
 
 function readCostTicks(usage: Record<string, unknown>): number | null {
@@ -144,11 +137,9 @@ function readCostTicks(usage: Record<string, unknown>): number | null {
 function usdFromTicks(ticks: number): number {
   const rounded = Math.round(ticks);
   if (!Number.isFinite(rounded)) return 0;
-  const sign = rounded < 0 ? -1 : 1;
-  const abs = Math.abs(rounded);
-  const whole = Math.trunc(abs / USD_TICKS);
-  const fraction = abs % USD_TICKS;
-  return sign * (whole + fraction / USD_TICKS);
+  const whole = Math.trunc(rounded / USD_TICKS);
+  const fraction = rounded % USD_TICKS;
+  return whole + fraction / USD_TICKS;
 }
 
 function contextCompressions(entries: Record<string, unknown>[], messages: Record<string, unknown>[]): number {
@@ -221,7 +212,7 @@ function toolInvoked(entry: Record<string, unknown>): boolean {
 }
 
 function capturedScreenshot(entry: Record<string, unknown>): boolean {
-  if (!toolInvoked(entry) || entry.isError === true) return false;
+  if (entry.isError === true) return false;
   if (entry.isRunning === true || String(entry.phase || "").toLowerCase() === "running") return false;
   const name = String(entry.name || "").toLowerCase();
   if (name.includes("screenshot")) return true;
@@ -263,11 +254,6 @@ function messageRecords(conversation: unknown): Record<string, unknown>[] {
     if (typeof message.role === "string") messages.push(message);
   }
   return messages;
-}
-
-function entryRecords(transcript: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(transcript)) return [];
-  return transcript.map(asRecord).filter(entry => typeof entry.type === "string");
 }
 
 function firstToken(usage: Record<string, unknown>, keys: string[]): number | null {
