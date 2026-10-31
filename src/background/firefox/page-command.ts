@@ -487,7 +487,8 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       }
       const nextDepth = keep || name ? depth + 1 : depth;
       for (const child of children) visit(child, nextDepth, id);
-      if (nested) visit(nested, nextDepth, id);
+      // Child documents have independent isolated-world registries. The host
+      // grafts their AX trees through frame sessions, never parent-world nodes.
       for (const child of shadows) visit(child, nextDepth, id);
     };
     if (doc.documentElement) visit(doc.documentElement, 1, rootId);
@@ -630,6 +631,13 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
           scrollHeight: current.cssContentSize.height,
         };
       }
+      case "inputFrame": {
+        const target = command.active ? doc.activeElement : doc.elementFromPoint?.(command.x, command.y);
+        if (!target || !["IFRAME", "FRAME"].includes(String(target.nodeName).toUpperCase())) return {};
+        const rect = quad(target);
+        return { backendNodeId: idFor(target), x: command.x - rect.x - Number(target.clientLeft || 0),
+          y: command.y - rect.y - Number(target.clientTop || 0) };
+      }
       case "input": {
         const input = command.input;
         switch (input.kind) {
@@ -744,6 +752,7 @@ export type PageCommand =
   | { op: "layout" }
   | { op: "owners" }
   | { op: "scroll"; x?: number; y?: number }
+  | { op: "inputFrame"; x: number; y: number; active?: boolean }
   | { op: "input"; input: InputCommand };
 
 type InputCommand = MouseInput | KeyInput | { kind: "text"; text?: string } | TouchInput;
@@ -768,6 +777,7 @@ interface DomNode {
   contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
   shadowRoot?: DomNode | null; focus?(): void; closest?(selector: string): DomNode | null;
   ownerDocument?: DomNode; type?: string; matches?(selector: string): boolean; click?(): void;
+  clientLeft?: number; clientTop?: number;
   href?: string; target?: string; form?: { requestSubmit?(submitter?: DomNode): void } | null;
   value?: string; selectionStart?: number | null; selectionEnd?: number | null;
   disabled?: boolean; checked?: boolean; readOnly?: boolean; required?: boolean; isContentEditable?: boolean;

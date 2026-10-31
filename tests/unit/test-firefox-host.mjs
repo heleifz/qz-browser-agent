@@ -904,7 +904,7 @@ test("duplicate iframe src values follow the sibling index", async () => {
   });
 });
 
-test("auto-attach announces a cross-origin frame once and detaches it when it leaves", async () => {
+test("auto-attach announces every frame once and detaches it when it leaves", async () => {
   const events = [];
   let frames = [
     { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
@@ -923,7 +923,7 @@ test("auto-attach announces a cross-origin frame once and detaches it when it le
   await browser.debugger.attach({ tabId: 3 }, "1.3");
   await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
   await browser.debugger.sendCommand({ tabId: 3 }, "Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-  assert.deepEqual(events.filter(method => method === "Target.attachedToTarget"), ["Target.attachedToTarget", "Target.attachedToTarget"]);
+  assert.deepEqual(events.filter(method => method === "Target.attachedToTarget"), Array(3).fill("Target.attachedToTarget"));
   assert.equal(events.includes("Target.detachedFromTarget"), false);
   frames = frames.filter(frame => frame.frameId !== 9);
   await committed({ tabId: 3, frameId: 0, url: "https://example.test/" });
@@ -1093,7 +1093,7 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
     assert.ok(tree.nodes.some(node => values(node).includes("cross-origin nested frame is not included")));
     assert.ok(tree.nodes.some(node => values(node).includes("nested frame has no document")));
     assert.equal(tree.nodes.some(node => values(node).includes("nested frame document is not included")), false);
-    assert.ok(tree.nodes.some(node => node.role.value === "link"));
+    assert.equal(tree.nodes.some(node => node.role.value === "link"), false, "child document nodes are bound in their own frame session");
     delete globalThis.__qzFirefoxPage;
     const button = {
       nodeName: "BUTTON", nodeType: 1, textContent: "Go",
