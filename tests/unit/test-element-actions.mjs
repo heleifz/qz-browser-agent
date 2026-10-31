@@ -184,6 +184,25 @@ test("a committed URL still undergoes navigation security checks while resources
   } finally { chrome.tabs.get = get; }
 });
 
+for (const documentChanged of [false, true, null]) test(`Firefox Enter keeps pending and document evidence separate (${documentChanged})`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture(), get = chrome.tabs.get, execute = chrome.scripting.executeScript;
+  const pressed = () => f.commands.some(command => command.method === 'Input.dispatchKeyEvent');
+  t.mock.method(chrome.tabs, 'get', async (...args) => ({ ...await get(...args), ...(pressed() ? { status: 'loading', pendingUrl: 'https://example.test/' } : {}) }));
+  t.mock.method(chrome.scripting, 'executeScript', async options => (await execute(options)).map(frame => ({
+    ...frame, documentId: documentChanged === null ? undefined : pressed() && documentChanged ? 'new-document' : 'same-document',
+  })));
+  const pending = f.call({ action: 'press', key: 'Enter' });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(180);
+  await new Promise(setImmediate);
+  t.mock.timers.tick(10000);
+  const result = await pending;
+  assert.equal(result.urlChanged, false);
+  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigated, documentChanged === true ? true : null);
+});
+
 test("page changes during click preparation form the baseline instead of being attributed to the click", async t => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const f = fixture(), get = chrome.tabs.get;

@@ -253,6 +253,27 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     if (command === "copy" || command === "cut") throw new Error(`Firefox could not ${command}. The focused element has no selection, or the page has no clipboard permission.`);
     throw new Error("Firefox could not select all. The focused element is not editable.");
   };
+  const blocksImplicitSubmission = (node: DomNode) => String(node.nodeName).toUpperCase() === "INPUT"
+    && ["text", "search", "url", "tel", "email", "password", "date", "month", "week", "time", "datetime-local", "number"]
+      .includes(String(node.type || attr(node, "type") || "text").toLowerCase());
+  const implicitSubmit = (target: DomNode) => {
+    const form = target.form;
+    if (!form || !blocksImplicitSubmission(target) || target.disabled || target.matches?.(":disabled")) return;
+    // Tree order includes controls associated through form= outside the form.
+    // form.elements omits input[type=image], so inspect the owning document.
+    const controls = asList((target.ownerDocument || doc).querySelectorAll?.("input,button"))
+      .filter(node => node.form === form);
+    const submitter = controls.find(node => {
+      const tag = String(node.nodeName).toUpperCase();
+      const type = String(node.type || attr(node, "type") || (tag === "BUTTON" ? "submit" : "text")).toLowerCase();
+      return tag === "BUTTON" ? type === "submit" : type === "submit" || type === "image";
+    });
+    if (submitter) {
+      if (!submitter.disabled && !submitter.matches?.(":disabled")) submitter.click?.();
+    } else if (controls.filter(blocksImplicitSubmission).length === 1) {
+      form.requestSubmit?.();
+    }
+  };
   const key = (input: KeyInput) => {
     const releasing = input.type === "keyUp";
     const target = doc.activeElement || doc.body || doc.documentElement;
@@ -275,12 +296,22 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const ctor = page.KeyboardEvent;
     const event = typeof ctor === "function" ? new ctor(releasing ? "keyup" : "keydown", init) : { type: releasing ? "keyup" : "keydown", ...init };
     noted(event);
-    try { target.dispatchEvent(event); }
+    let allowed = true;
+    try { allowed = target.dispatchEvent(event) !== false; }
     catch (error) {
       const text = error instanceof Error ? error.message : String(error);
       throw new Error(`Firefox could not press ${label}: ${text}`);
     }
-    if (releasing) return {};
+    if (releasing || !allowed) return {};
+    if (input.key === "Enter" && modifiers === 0) {
+      const press = typeof ctor === "function" ? new ctor("keypress", init) : { type: "keypress", ...init };
+      noted(press);
+      if (target.dispatchEvent(press) === false) return {};
+      if (String(target.nodeName).toUpperCase() === "TEXTAREA" || target.isContentEditable) {
+        insertText(target, "\n", false);
+      } else implicitSubmit(target);
+      return {};
+    }
     if (input.text) insertText(target, String(input.text), false);
     for (const command of input.commands || []) {
       if (command === "selectAll" || command === "copy" || command === "paste" || command === "cut") applyCommand(command);
@@ -736,6 +767,7 @@ interface DomNode {
   querySelectorAll?(selector: string): ArrayLike<DomNode>; dispatchEvent?(event: unknown): boolean;
   contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
   shadowRoot?: DomNode | null; focus?(): void; closest?(selector: string): DomNode | null;
+  ownerDocument?: DomNode; type?: string; matches?(selector: string): boolean; click?(): void;
   href?: string; target?: string; form?: { requestSubmit?(submitter?: DomNode): void } | null;
   value?: string; selectionStart?: number | null; selectionEnd?: number | null;
   disabled?: boolean; checked?: boolean; readOnly?: boolean; required?: boolean; isContentEditable?: boolean;
