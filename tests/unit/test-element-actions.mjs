@@ -12,7 +12,7 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false, dialogs = [], observedNavigation = null } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, dialogs = [], observedNavigation = null, attached = true } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
@@ -70,7 +70,11 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
     async prepareKnownPageNavigation() { return null; },
     commitObservedPageNavigation: input => { observations.push(input); return observedNavigation; },
     sendCdp: async (_tabId, method, params) => send(method, params),
-    withDebugger: async (_tabId, callback) => callback({}, send),
+    getDebuggerConnectionId: () => attached ? 1 : null,
+    withDebugger: async (_tabId, callback) => {
+      assert.equal(attached, true, 'CSS selection must not attempt to attach');
+      return callback({}, send);
+    },
   });
   return { commands, messages, observations, controller, state, receipts, inspection, isGuardActive: () => guardActive,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
@@ -226,7 +230,7 @@ for (const method of ["href_navigation", "content_fallback"]) {
   }
 }
 
-test('select arms the dialog guard before dispatching Content change handlers without replay', async () => {
+test('select with an existing debugger arms the dialog guard before dispatching Content change handlers without replay', async () => {
   const f = fixture();
   f.onContent((action, params) => {
     if (action !== 'actOnElement') return;
@@ -236,6 +240,19 @@ test('select arms the dialog guard before dispatching Content change handlers wi
   });
   await assert.rejects(f.call({ action: 'select', value: 'choice' }), /selection response lost/);
   assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+});
+
+test('CSS select succeeds without a debugger connection or attachment permission', async () => {
+  const f = fixture({ attached: false });
+  f.onContent((action, params) => {
+    if (action !== 'actOnElement') return;
+    assert.equal(params.elementAction, 'select');
+    assert.equal(f.isGuardActive(), false);
+    return { selected: true };
+  });
+  assert.equal((await f.call({ action: 'select', value: 'choice' })).selected, true);
+  assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+  assert.deepEqual(f.commands, []);
 });
 
 const pressFields = ["action", "target", "selector", "uid", "index", "tabId", "key", "pressed", "method", "inputDelivered", "element"];

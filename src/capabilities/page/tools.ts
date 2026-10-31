@@ -8,7 +8,7 @@ import type { ToolContext } from "#sdk/background";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
-  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "withPageDialogGuard" | "attachPageDialogResults"
+  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getDebuggerConnectionId" | "withPageDialogGuard" | "attachPageDialogResults"
   | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
@@ -141,6 +141,7 @@ export function registerPageElementTools({
   clickNotReadyResult,
   sendCdp,
   withDebugger,
+  getDebuggerConnectionId,
   withPageDialogGuard,
   attachPageDialogResults,
   getPageContext,
@@ -854,8 +855,9 @@ registerTool({
       };
     };
     // Selecting dispatches input/change handlers, which can open a native dialog
-    // while the Content reply is still pending. Arm the guard before dispatch.
-    return normalizedAction === "select"
+    // while the Content reply is still pending. Guard existing debugger connections,
+    // but keep CSS-only selection independent of debugger availability.
+    return normalizedAction === "select" && getDebuggerConnectionId?.(tabId) != null
       ? runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, contentAction)
       : contentAction();
     }
