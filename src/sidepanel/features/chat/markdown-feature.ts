@@ -219,8 +219,11 @@ function createMarkdownParser(streamingSource?: string) {
       start(source) {
         // GFM tables interrupt paragraphs. Reserve the same boundary while the
         // trailing pipe header/delimiter is incomplete, before paragraph lexing
-        // can absorb it and bypass this tokenizer.
-        const index = source.indexOf("\n|");
+        // can absorb it and bypass this tokenizer. A paragraph ends at the first
+        // blank line, so avoid rescanning the rest of a long streamed answer.
+        const boundary = /\n[ \t]*\n/.exec(source);
+        const scope = boundary ? source.slice(0, boundary.index) : source;
+        const index = scope.indexOf("\n|");
         return index < 0 ? undefined : index + 1;
       },
       tokenizer(source) {
