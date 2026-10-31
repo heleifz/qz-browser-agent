@@ -625,6 +625,13 @@ registerTool({
       assertActive();
       const pageBefore = submit ? await getTabPageState(tabId) : null;
       const guardrails = submit ? await getSecurityGuardrails() : null;
+      // Revocation must reach an in-flight Content refresh even after its CDP
+      // lease is cancelled. This sends only the unguessable call-local token to
+      // existing Content listeners; it cannot inject, reattach or mutate a page.
+      const revokeFill = () => {
+        if (submit) void chrome.tabs.sendMessage(tabId, { action: "releaseElementFill", fillToken }).catch(() => {});
+      };
+      _signal?.addEventListener("abort", revokeFill, { once: true });
       return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
         assertActive();
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value,
@@ -710,6 +717,8 @@ registerTool({
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
         } finally { observation?.dispose(); }
       }).finally(async () => {
+        _signal?.removeEventListener("abort", revokeFill);
+        if (_signal?.aborted) { revokeFill(); return; }
         if (submit) {
           try { await sendToContent(tabId, "releaseElementFill", { fillToken }, bound, context); }
           catch { /* Navigation or cancellation may already have removed the document. */ }

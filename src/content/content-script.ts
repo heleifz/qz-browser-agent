@@ -2047,9 +2047,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     },
 
     async refreshElementFill({ fillToken = "", value = "" }) {
-      await settleElementAction();
       const saved = fillSubmissions.get(fillToken);
-      if (!saved) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
+      const active = () => !!saved && fillSubmissions.get(fillToken) === saved;
+      if (!active()) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
+      await settleElementAction();
+      if (!saved || !active()) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
       if (!saved.element.isConnected) {
         // Stay in the original document/shadow root and surviving container. Focus alone
         // is not identity: never refill an unrelated field that stole the focus.
@@ -2065,11 +2067,13 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         // Mounting may remove the old node before inserting its successor. Bound this wait.
         for (let attempt = 0; !candidates.length && attempt < 10; attempt++) {
           await new Promise(resolve => window.setTimeout(resolve, 50));
+          if (!active()) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
           candidates = findReplacement();
         }
         if (candidates.length !== 1) {
           return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus", getElementSummary(saved.element));
         }
+        if (!active()) return toolError("ELEMENT_FOCUS_FAILED", "Element could not receive focus");
         saved.element = candidates[0];
         const prepared = handlers.prepareElementFill({ action: "prepareElementFill", selector: saved.element, value } as unknown as ContentRequest);
         // Even a copied DOM value needs a native input event to reach the new component's model.

@@ -76,6 +76,47 @@ test("rich-text fill roots are released and do not keep disconnected elements", 
   expect(report.hasNext).toBe(true);
 });
 
+for (const phase of ['initial settle', 'replacement wait']) {
+  for (const revoke of ['release', 'replace token']) test(`submit recovery stops after ${revoke} during ${phase}`, async ({ page }) => {
+    await installContentScript(page);
+    const report = await page.evaluate(async ({ phase, revoke }) => {
+      const invoke = (node, payload) => window.__qzInvoke(node, payload);
+      const old = document.createElement('input'); old.name = 'search';
+      const other = document.createElement('input');
+      document.body.append(old, other);
+      const fillToken = 'submit:cancelled';
+      await invoke(old, { action: 'prepareElementFill', fillToken, submit: true });
+      old.remove();
+      // Hold the actual Content handler at each asynchronous boundary.
+      let resume, reached;
+      const waiting = new Promise(resolve => { reached = resolve; });
+      const timeout = window.setTimeout, raf = window.requestAnimationFrame;
+      let timers = 0;
+      window.requestAnimationFrame = () => 0;
+      window.setTimeout = (callback, ms, ...args) => {
+        if (ms === 50 && ++timers === (phase === 'initial settle' ? 1 : 2)) {
+          resume = () => callback(...args); reached(); return 0;
+        }
+        return timeout(callback, ms, ...args);
+      };
+      const pending = invoke(null, { action: 'refreshElementFill', fillToken, value: 'new' });
+      await waiting;
+      if (revoke === 'release') await invoke(null, { action: 'releaseElementFill', fillToken });
+      else await invoke(other, { action: 'prepareElementFill', fillToken, submit: true });
+      other.focus();
+      const replacement = document.createElement('input'); replacement.name = 'search';
+      const effects = [];
+      for (const method of ['focus', 'select', 'scrollIntoView']) replacement[method] = () => effects.push(method);
+      document.body.append(replacement);
+      window.setTimeout = timeout; window.requestAnimationFrame = raf;
+      resume();
+      const result = await pending;
+      return { code: result.code, effects, focusPreserved: document.activeElement === other };
+    }, { phase, revoke });
+    expect(report).toEqual({ code: 'ELEMENT_FOCUS_FAILED', effects: [], focusPreserved: true });
+  });
+}
+
 test("submit recovery is call-local, bounded and released even after the UID node is removed", async ({ page }) => {
   await installContentScript(page);
   const report = await page.evaluate(async () => {

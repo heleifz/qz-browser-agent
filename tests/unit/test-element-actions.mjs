@@ -34,6 +34,11 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
     if (action === "releaseElementFill") return { ok: true };
     return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
   };
+  chrome.tabs.sendMessage = async (tabId, message) => {
+    assert.equal(tabId, 7);
+    assert.equal(message.action, 'releaseElementFill', 'cancelled calls may only revoke their token');
+    return content(message.action, message);
+  };
   const send = async (method, params = {}) => {
     commands.push({ method, params });
     if (method === "Input.insertText") state.value = params.text;
@@ -80,6 +85,27 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
+
+test('fill cancellation revokes Content recovery before its pending reply settles', async () => {
+  const f = fixture();
+  let finishRefresh;
+  f.onContent(action => {
+    if (action === 'refreshElementFill') return new Promise(resolve => { finishRefresh = resolve; });
+  });
+  const pending = f.call({ action: 'fill', value: 'new', submit: true });
+  const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
+  await new Promise(setImmediate);
+  assert.equal(typeof finishRefresh, 'function');
+  f.controller.abort();
+  await new Promise(setImmediate);
+  const prepare = f.messages.find(message => message.action === 'prepareElementFill');
+  const release = f.messages.find(message => message.action === 'releaseElementFill');
+  assert.equal(release.params.fillToken, prepare.params.fillToken);
+  finishRefresh({ element: f.inspection(), refill: true });
+  await rejected;
+  assert.equal(f.commands.filter(command => command.method === 'Input.insertText').length, 1);
+  assert.equal(f.commands.some(command => command.params.key === 'Enter'), false);
+});
 
 function assertNoReplay(f) {
   assert.equal(f.messages.some(message => message.action === "actOnElement"), false,
