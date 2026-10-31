@@ -29,14 +29,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     messages.push({ action, params });
     const reply = await onContent(action, params);
     if (reply !== undefined) return reply;
-    if (action === "refreshElementFill") return { element: inspection(), refill: false };
-    if (action === "releaseElementFill") return { ok: true };
     return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
-  };
-  chrome.tabs.sendMessage = async (tabId, message) => {
-    assert.equal(tabId, 7);
-    assert.equal(message.action, 'releaseElementFill', 'cancelled calls may only revoke their token');
-    return content(message.action, message);
   };
   const send = async (method, params = {}) => {
     commands.push({ method, params });
@@ -77,27 +70,6 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
-
-test('fill cancellation revokes Content recovery before its pending reply settles', async () => {
-  const f = fixture();
-  let finishRefresh;
-  f.onContent(action => {
-    if (action === 'refreshElementFill') return new Promise(resolve => { finishRefresh = resolve; });
-  });
-  const pending = f.call({ action: 'fill', value: 'new', submit: true });
-  const rejected = assert.rejects(pending, { code: 'OPERATION_ABORTED' });
-  await new Promise(setImmediate);
-  assert.equal(typeof finishRefresh, 'function');
-  f.controller.abort();
-  await new Promise(setImmediate);
-  const prepare = f.messages.find(message => message.action === 'prepareElementFill');
-  const release = f.messages.find(message => message.action === 'releaseElementFill');
-  assert.equal(release.params.fillToken, prepare.params.fillToken);
-  finishRefresh({ element: f.inspection(), refill: true });
-  await rejected;
-  assert.equal(f.commands.filter(command => command.method === 'Input.insertText').length, 1);
-  assert.equal(f.commands.some(command => command.params.key === 'Enter'), false);
-});
 
 function assertNoReplay(f) {
   assert.equal(f.messages.some(message => message.action === "actOnElement"), false,
@@ -518,7 +490,7 @@ for (const boundary of ["prepare", "insert", "readback"]) {
     const f = fixture();
     f.onContent(action => {
       if ((boundary === "prepare" && action === "prepareElementFill")
-        || (boundary === "readback" && ["readElementActionState", "refreshElementFill"].includes(action))) f.controller.abort();
+        || (boundary === "readback" && action === "readElementActionState")) f.controller.abort();
     });
     f.onCommand(method => { if (boundary === "insert" && method === "Input.insertText") f.controller.abort(); });
     await assert.rejects(f.call({ action: "fill", value: "new", submit: true }));
@@ -528,46 +500,18 @@ for (const boundary of ["prepare", "insert", "readback"]) {
   });
 }
 
-for (const atRead of [1, 2]) test(`fill repairs a confirmed replacement at read ${atRead} without leaking private state`, async () => {
+test("a replaced field is not refilled or submitted", async () => {
   const f = fixture();
-  let reads = 0;
   f.onContent(action => {
-    if (action === "refreshElementFill" && ++reads === atRead) {
-      // The DOM value was copied, but the replacement still needs a native input event.
-      return { element: { value: "new", fillMode: "text" }, refill: true };
-    }
+    if (action !== "readElementActionState") return;
+    return { error: "Element not found", code: "ELEMENT_NOT_FOUND" };
   });
   const result = await f.call({ action: "fill", value: "new", submit: true });
-  assert.equal(result.filled, true);
-  assert.equal(result.submitDispatched, true);
-  assert.equal(result.value, "new");
-  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 2);
-  assert.equal(f.commands.filter(command => command.params.key === "Enter" && command.params.type === "keyDown").length, 1);
-  assert.equal(JSON.stringify(result).includes('refill'), false);
-  assert.equal(JSON.stringify(result).includes('fillToken'), false);
-  assert.equal(f.messages.at(-1).action, "releaseElementFill");
-  assert.equal(navigationListeners.size, 0);
-  assertNoReplay(f);
-});
-
-for (const failure of ["cancel", "lost response", "replacement loop"]) test(`fill recovery stops on ${failure} and releases its state`, async () => {
-  const f = fixture();
-  f.onContent(action => {
-    if (action !== "refreshElementFill") return;
-    if (failure === "cancel") f.controller.abort();
-    return { element: { value: "new", fillMode: "text" }, refill: true };
-  });
-  let inserts = 0;
-  f.onCommand(method => {
-    if (method === "Input.insertText" && ++inserts === 2 && failure === "lost response") throw new Error("replacement insert response lost");
-  });
-  const pending = f.call({ action: "fill", value: "new", submit: true });
-  if (failure === "replacement loop") assert.equal((await pending).code, "ELEMENT_FOCUS_FAILED");
-  else await assert.rejects(pending, failure === "cancel" ? { code: "OPERATION_ABORTED" } : /replacement insert response lost/);
-  assert.equal(inserts, failure === "cancel" ? 1 : failure === "lost response" ? 2 : 4);
+  assert.equal(result.code, "ELEMENT_NOT_FOUND");
+  assert.equal(result.submitDispatched, undefined);
+  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
   assert.equal(f.commands.some(command => command.params.key === "Enter"), false);
-  assert.equal(f.messages.at(-1).action, "releaseElementFill");
-  assert.equal(navigationListeners.size, 0);
+  assert.equal(f.messages.some(message => message.action === "refreshElementFill"), false);
   assertNoReplay(f);
 });
 
@@ -584,7 +528,7 @@ for (const submit of [false, true]) test(`ordinary fill keeps its result without
   assert.equal(result.value, "new");
   assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
   assert.deepEqual(Object.keys(result.element).sort(), ["checked", "clickablePoint", "clickablePointInViewport", "disabled", "editable", "focused", "inViewport", "readOnly", "tag", "type", "value"].sort());
-  assert.equal(f.messages.some(message => message.action === "refreshElementFill"), submit);
+  assert.equal(f.messages.some(message => message.action === "refreshElementFill" || message.action === "releaseElementFill"), false);
   assertNoReplay(f);
 });
 

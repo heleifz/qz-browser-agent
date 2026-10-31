@@ -384,7 +384,7 @@ for (const scenario of [
   { name: "missing successor", trigger: "observer", missing: true },
   { name: "pre-existing same-name field is not a successor", trigger: "observer", missing: true, existing: true },
   { name: "ambiguous successors", trigger: "observer", ambiguous: true },
-]) test(`fill submit follows an asynchronously replaced search input: ${scenario.name}`, async () => {
+]) test(`fill submit fails when the search input is replaced: ${scenario.name}`, async () => {
   const h = await createHarness("desktop");
   try {
     await h.page.setContent(`<!doctype html><title>Lazy search</title>
@@ -447,21 +447,16 @@ for (const scenario of [
       active: document.activeElement?.outerHTML.slice(0,500), events: window.searchEvents,
       enter: JSON.parse(sessionStorage.searchEnter || 'null'),
     }));
-    console.log("fill replacement evidence", JSON.stringify({ result, evidence }));
-    if (scenario.missing || scenario.ambiguous) {
-      expect(result).toMatchObject({ code: "ELEMENT_FOCUS_FAILED" });
-      expect(result.submitDispatched).not.toBe(true);
-      expect(evidence.enter).toBeNull();
-      expect(h.submissions).toHaveLength(0);
-      await expect(h.page.locator('#sink')).toHaveValue('untouched');
-      if (scenario.existing) await expect(h.page.locator('#existing')).toHaveValue('untouched');
-    } else {
-      expect(result).toMatchObject({ filled: true, submitDispatched: true, navigated: true, urlChanged: true });
-      expect(h.submissions).toHaveLength(1);
-      expect(evidence.enter).toMatchObject({ value: "灵隐寺", model: "灵隐寺", trusted: true, originalConnected: false });
-      expect(evidence.enter.events.length).toBeGreaterThan(0);
-      expect(evidence.enter.events.every(event => event.trusted)).toBe(true);
-    }
+    expect(result, JSON.stringify({ result, evidence })).toMatchObject({
+      code: scenario.uid ? "STALE_ELEMENT_UID" : "ELEMENT_NOT_FOUND",
+    });
+    expect(result.submitDispatched).not.toBe(true);
+    expect(result.navigated).not.toBe(true);
+    expect(evidence.enter).toBeNull();
+    expect(evidence.originalConnected).toBe(false);
+    expect(h.submissions).toHaveLength(0);
+    await expect(h.page.locator('#sink')).toHaveValue('untouched');
+    if (scenario.existing) await expect(h.page.locator('#existing')).toHaveValue('untouched');
   } finally { await h.close(); }
 });
 

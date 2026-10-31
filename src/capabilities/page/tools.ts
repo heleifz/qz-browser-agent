@@ -350,8 +350,8 @@ registerTool({
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
-    const fillToken = normalizedAction === "fill" && (ref.uid || submit)
-      ? `${ref.uid || "submit"}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : "";
+    const fillToken = normalizedAction === "fill" && ref.uid
+      ? `${ref.uid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : "";
     if (ref.uid) {
       return useElement(tabId, ref, context, async call => {
         bound = (actionName, params = {}) => call(actionName, normalizedAction === "fill" ? { ...params, editingHost: true, fillToken } : params);
@@ -604,86 +604,47 @@ registerTool({
       assertActive();
       const pageBefore = submit ? await getTabPageState(tabId) : null;
       const guardrails = submit ? await getSecurityGuardrails() : null;
-      // Revocation must reach an in-flight Content refresh even after its CDP
-      // lease is cancelled. This sends only the unguessable call-local token to
-      // existing Content listeners; it cannot inject, reattach or mutate a page.
-      const revokeFill = () => {
-        if (submit) void chrome.tabs.sendMessage(tabId, { action: "releaseElementFill", fillToken }).catch(() => {});
-      };
-      _signal?.addEventListener("abort", revokeFill, { once: true });
       return withDebugger(tabId, async (_target, send): Promise<Record<string, unknown>> => {
         assertActive();
         // Hidden Chrome tabs may accept insertText without a composited keyboard
         // input surface. Prepare it without activating the tab or clicking the field.
         if (submit) await ensurePageSurface(tabId, send, { frameId });
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value,
-          ...(submit ? { submit, fillToken } : {}) }, bound, context);
+          ...(submit ? { submit } : {}) }, bound, context);
         assertActive();
-        const tracked = submit && ["input", "textarea"].includes(String(inspected.tag))
-          && (prepared.fillMode === "text" || prepared.code === "ELEMENT_FOCUS_FAILED");
-        if (prepared.error && !tracked) return withElementActionHelp(prepared, normalizedAction);
+        if (prepared.error) return withElementActionHelp(prepared, normalizedAction);
         // Preparation may resolve an inherited contenteditable child to its editing host.
         const field = prepared.selector ? { selector: prepared.selector, index: 0 } : { selector, index };
-        const textInput = tracked || prepared.fillMode === "text";
+        const textInput = prepared.fillMode === "text";
         const inputKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_tabId, method, params) => {
           if (params.type !== "keyUp") assertActive();
           return send(method, params);
         } });
-        const insertText = async () => {
+        let fill: unknown;
+        if (textInput) {
           assertActive();
           if (value) await send("Input.insertText", { text: value });
           else await inputKeyboard.press(tabId, "Backspace", context);
           assertActive();
-        };
-        let recoveries = 0;
-        const refreshFill = async (): Promise<ElementReply> => {
-          for (;;) {
-            assertActive();
-            const refreshed = await sendToContent(tabId, "refreshElementFill", { fillToken, value }, bound, context);
-            assertActive();
-            if (refreshed.error) return refreshed;
-            const current = isElementReply(refreshed.element) ? refreshed.element : {};
-            if (!refreshed.refill) return prepared.error && !recoveries ? prepared : current;
-            if (++recoveries > 3) return { error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED" };
-            if (current.error) {
-              if (current.code === "ELEMENT_FOCUS_FAILED") continue;
-              return current;
-            }
-            // Only a confirmed replacement can replay text. Failed CDP commands are never retried.
-            await insertText();
-          }
-        };
-        let fill: unknown;
-        if (textInput) {
-          if (!prepared.error) await insertText();
         } else {
           // Rich-text paragraphs and non-keyboard fields retain their specialized writer.
           const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value, submit: false }, bound, context);
           if (result.error) return withElementActionHelp(result, normalizedAction);
           fill = result.fill;
         }
-        assertActive();
-        let actual = tracked ? await refreshFill()
-          : await sendToContent(tabId, "readElementActionState", field, bound, context);
-        assertActive();
-        if (actual.error) return withElementActionHelp(actual, normalizedAction);
-        // Chromium uses NBSP to preserve boundary spaces in contenteditable text.
-        const equivalentText = (text: string) => prepared.contentEditable ? text.replace(/\u00a0/g, " ") : text;
-        const valueMatches = () => !textInput || (typeof actual.value === "string"
-          && equivalentText(actual.value) === equivalentText(value.replace(/\r\n?/g, "\n")));
-        const valueMismatch = () => ({ ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
-          filled: false, value: actual.value, submitDispatched: false, element: actual });
-        if (!valueMatches()) return valueMismatch();
         const observation = submit ? await beginPageNavigationObservation(tabId, _signal) : null;
         try {
+          assertActive();
+          const actual = await sendToContent(tabId, "readElementActionState", field, bound, context);
+          assertActive();
+          if (actual.error) return withElementActionHelp(actual, normalizedAction);
+          // Chromium uses NBSP to preserve boundary spaces in contenteditable text.
+          const equivalentText = (text: string) => prepared.contentEditable ? text.replace(/\u00a0/g, " ") : text;
+          const valueMatches = !textInput || (typeof actual.value === "string"
+            && equivalentText(actual.value) === equivalentText(value.replace(/\r\n?/g, "\n")));
+          if (!valueMatches) return { ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
+            filled: false, value: actual.value, submitDispatched: false, element: actual };
           if (submit) {
-            // Observer setup is asynchronous too. Revalidate identity, value and focus afterwards.
-            if (tracked) {
-              actual = await refreshFill();
-              if (actual.error) return withElementActionHelp(actual, normalizedAction);
-              if (!valueMatches()) return valueMismatch();
-            }
-            assertActive();
             if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
               filled: true, value: actual.value, submitDispatched: false, element: actual };
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
@@ -698,14 +659,7 @@ registerTool({
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
         } finally { observation?.dispose(); }
-      }, context).finally(async () => {
-        _signal?.removeEventListener("abort", revokeFill);
-        if (_signal?.aborted) { revokeFill(); return; }
-        if (submit) {
-          try { await sendToContent(tabId, "releaseElementFill", { fillToken }, bound, context); }
-          catch { /* Navigation or cancellation may already have removed the document. */ }
-        }
-      });
+      }, context);
     }
 
     if (normalizedAction === "check" || normalizedAction === "uncheck") {

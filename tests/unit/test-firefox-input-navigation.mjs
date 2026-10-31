@@ -105,8 +105,6 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   const inspect = () => ({ tag: 'input', type: 'text', editable: true, focused: true, visible: true, value,
     clickablePoint: { x: 10, y: 10 }, inViewport: true });
   const content = async (_tabId, action) => {
-    if (action === 'releaseElementFill' && fault === 'release') throw new Error(MISSING);
-    if (action === 'refreshElementFill') return { element: inspect(), refill: false };
     return { ...inspect(), ...(action === 'prepareElementFill' ? { fillMode: 'text' } : {}) };
   };
   api.tabs.sendMessage = async () => ({});
@@ -215,7 +213,7 @@ for (const action of ['fill', 'press']) {
     await pending;
     assert.deepEqual(f.keys, ['keyDown']);
   });
-  for (const fault of ['observation', action === 'fill' ? 'release' : 'receipt']) test(`Firefox ${action}: ${fault} failure after input keeps navigation results`, async t => {
+  for (const fault of action === 'fill' ? ['observation'] : ['observation', 'receipt']) test(`Firefox ${action}: ${fault} failure after input keeps navigation results`, async t => {
     const f = fixture(t, { fault });
     assert.equal((await f.call(action)).navigated, true);
     assert.equal(f.submissions.length, 1);
