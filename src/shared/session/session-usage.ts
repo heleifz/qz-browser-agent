@@ -200,6 +200,7 @@ function toolEntriesFromMessages(messages: Record<string, unknown>[]): Record<st
       name: call.name,
       args: call.args,
       isError: Boolean(result.error),
+      result,
       phase: "done",
     });
   }
@@ -211,7 +212,9 @@ function toolInvoked(entry: Record<string, unknown>): boolean {
   if (entry.argsGenerating === true) return false;
   const phase = String(entry.phase || "").toLowerCase();
   const argsState = String(entry.argsState || "").toLowerCase();
-  return phase !== "preparing" && argsState !== "generating" && argsState !== "ready";
+  return phase !== "preparing" && phase !== "not_executed"
+    && argsState !== "generating" && argsState !== "ready" && argsState !== "not_executed"
+    && asRecord(parseJson(entry.result)).code !== "TOOL_NOT_EXECUTED";
 }
 
 function capturedScreenshot(entry: Record<string, unknown>): boolean {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { main } from "../../services/mcp-bridge/src/cli.mjs";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
-import { deserializeConversation, serializeConversation } from "../../src/shared/session/session-codec.js";
+import { deserializeConversation, serializeConversation, updateTranscriptWithAgentEvent } from "../../src/shared/session/session-codec.js";
 import { normalizeRecordedUsage, summarizeSessionUsage } from "../../src/shared/session/session-usage.js";
 
 const callA = {
@@ -206,6 +206,38 @@ test("tool counts use the transcript when it has tools, otherwise paired tool re
     role: "user", content: "failed", _kind: "compaction", _compact: { compactId: "bad", status: "failed" },
   }] });
   assert.equal(failedCompact.contextCompressions, 0);
+});
+
+test('tool usage excludes every explicit not-executed representation', () => {
+  for (const skipped of [
+    { phase: 'not_executed' }, { argsState: 'not_executed' },
+    { phase: 'done', result: { code: 'TOOL_NOT_EXECUTED' } },
+    { phase: 'done', result: JSON.stringify({ code: 'TOOL_NOT_EXECUTED' }) },
+  ]) {
+    const summary = summarizeSessionUsage({ transcript: [{ type: 'tool', name: 'screenshot', ...skipped }] });
+    assert.equal(summary.toolCalls, 0);
+    assert.equal(summary.screenshots, 0);
+  }
+});
+
+test('paired cancellation ledger and conversation fallback do not count skipped tools', () => {
+  let transcript = [];
+  const results = [{ ok: true }, { code: 'OPERATION_ABORTED', error: 'stopped' }, { code: 'TOOL_NOT_EXECUTED', error: 'not started' }];
+  for (const [index, result] of results.entries()) {
+    for (const type of ['tool_execution_start', 'tool_execution_end']) {
+      transcript = updateTranscriptWithAgentEvent(transcript, { type, runId: 'run', toolCallId: `call-${index}`,
+        toolName: 'screenshot', args: {}, result, isError: !!result.error }).transcript;
+    }
+  }
+  const conversation = [
+    { role: 'assistant', tool_calls: results.map((_, index) => ({ id: `call-${index}`, type: 'function', function: { name: 'screenshot', arguments: '{}' } })) },
+    ...results.map((result, index) => ({ role: 'tool', tool_call_id: `call-${index}`, content: JSON.stringify(result) })),
+  ];
+  for (const input of [{ transcript }, { conversation }, { conversation: serializeConversation(conversation) }]) {
+    const summary = summarizeSessionUsage(input);
+    assert.equal(summary.toolCalls, 2, 'an invoked failure counts, a synthetic skipped end does not');
+    assert.equal(summary.screenshots, 1);
+  }
 });
 
 function snapshotRuntime(messages, transcript) {
