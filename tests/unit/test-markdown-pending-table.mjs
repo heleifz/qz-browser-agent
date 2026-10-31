@@ -15,7 +15,16 @@ test("pending table start stays within the first paragraph", () => {
   }
 });
 
-test("bounded table start preserves every streaming prefix of mixed blocks", () => {
+test("bounded table start preserves every streaming prefix of mixed blocks", t => {
+  const previousDocument = globalThis.document;
+  t.after(() => {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  });
+  // Match the text-only DOM fixture in test-session-image-storage.mjs.
+  globalThis.document = { createElement: () => ({ textContent: "", get innerHTML() {
+    return this.textContent.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  } }) };
   const documents = [
     "说明：\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n后文",
     "first\n \t\nsecond\n| a | b |\n| - | - |\n| 1 | 2 |",
