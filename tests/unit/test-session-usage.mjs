@@ -226,7 +226,7 @@ test('paired cancellation ledger and conversation fallback do not count skipped 
   for (const [index, result] of results.entries()) {
     for (const type of ['tool_execution_start', 'tool_execution_end']) {
       transcript = updateTranscriptWithAgentEvent(transcript, { type, runId: 'run', toolCallId: `call-${index}`,
-        toolName: 'screenshot', args: {}, result, isError: !!result.error }).transcript;
+        toolName: 'screenshot', args: {}, result, isError: !!result.error, startedExecution: index < 2 }).transcript;
     }
   }
   const conversation = [

@@ -98,6 +98,10 @@ failure before handoff releases the reservation without repeatedly retrying the 
 Observers follow the Session across runs and return successfully when a snapshot shows completion,
 empty queues, and no pending execution. The snapshot's `usage` sums provider usage recorded on each
 model call and counts tool calls, screenshots, and context compressions from the transcript.
+Tool counts use the persisted `startedExecution` admission fact, so stopping queued calls does
+not count them as executed. Interrupted calls that started still count. Legacy transcripts without
+that fact retain the historical status-based interpretation; their aborted queues cannot be
+reconstructed reliably. This display metadata is not added to model messages.
 Messages accepted after that snapshot belong to later work.
 Removing a queued message also allows its waiting sender to finish without streaming an earlier
 answer. Failure, stop, timeout, and cancellation end observation without resubmitting messages.

@@ -345,7 +345,9 @@ export function updateTranscriptWithAgentEvent(transcript: readonly TranscriptEn
         entry.argsGenerating = !argsComplete;
         entry.argsState = argsComplete ? "ready" : "generating";
         entry.phase = event.phase || "preparing";
+        entry.startedExecution = false;
       } else if (event.type === "tool_execution_start") {
+        entry.startedExecution = event.startedExecution ?? true;
         finalizeTranscriptEntry(history, "thinking");
       } else if (event.type === "tool_execution_update") {
         const idx = findToolTranscriptIndex(history, { toolCallId, runId: eventRunId(event) });
@@ -1094,6 +1096,7 @@ function normalizeTranscriptEvent(input: unknown): TranscriptEntry | null {
       argsGenerating: argsState === "generating",
       argsState,
       phase,
+      ...(typeof event.startedExecution === "boolean" ? { startedExecution: event.startedExecution } : {}),
       statusText: typeof event.statusText === "string" ? event.statusText : "",
       rateLimit: event.rateLimit == null ? null : cloneJsonValue(event.rateLimit),
       result: event.result == null ? null : cloneJsonValue(event.result),

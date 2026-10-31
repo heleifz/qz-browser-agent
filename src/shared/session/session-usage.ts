@@ -209,6 +209,9 @@ function toolEntriesFromMessages(messages: Record<string, unknown>[]): Record<st
 
 function toolInvoked(entry: Record<string, unknown>): boolean {
   if (entry.type !== "tool") return false;
+  if (typeof entry.startedExecution === "boolean") return entry.startedExecution;
+  // Legacy records lack admission facts. Preserve their historical interpretation;
+  // an aborted status alone cannot distinguish queued work from interrupted work.
   if (entry.argsGenerating === true) return false;
   const phase = String(entry.phase || "").toLowerCase();
   const argsState = String(entry.argsState || "").toLowerCase();
