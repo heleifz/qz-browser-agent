@@ -55,7 +55,7 @@ test("a replaced document is not counted as a missed click", async () => {
     const id = await armPageInputReceipt(7);
     assert.equal(typeof id, "string");
     assert.notEqual(id, "");
-    const op = () => page.document.__qzInputReceiptsV3.ops[id];
+    const op = () => page.document.__qzInputReceiptsV4.ops[id];
     assert.equal(op().n, 0);
     const pointerdown = page.listeners.find(item => item.type === "pointerdown");
     assert.equal(pointerdown.capture, true);
@@ -73,10 +73,10 @@ test("a replaced document is not counted as a missed click", async () => {
 
     const follow = await armPageInputReceipt(7);
     pointerdown.listener({ isTrusted: true });
-    assert.ok(page.document.__qzInputReceiptsV3.ops[follow].n > 0);
+    assert.ok(page.document.__qzInputReceiptsV4.ops[follow].n > 0);
     const next = installPage();
     assert.equal(await readPageInputReceipt(7, follow), null);
-    assert.equal(next.document.__qzInputReceiptsV3Bound, undefined);
+    assert.equal(next.document.__qzInputReceiptsV4Bound, undefined);
   } finally {
     runInPage = null;
     delete globalThis.document;
@@ -100,12 +100,12 @@ test("an old receipt flag does not block the versioned listener", async () => {
     const installed = page.listeners.length;
     const id = await armPageInputReceipt(7);
     assert.notEqual(id, "");
-    assert.equal(page.document.__qzInputReceiptsV3Bound, true);
+    assert.equal(page.document.__qzInputReceiptsV4Bound, true);
     const click = page.listeners.slice(installed).find(item => item.type === "click");
     assert.ok(click, "the upgraded page installs its own listener");
     click.listener({ isTrusted: true });
     assert.equal(page.document.__qzInputReceipt, 0);
-    assert.ok(page.document.__qzInputReceiptsV3.ops[id].n > 0);
+    assert.ok(page.document.__qzInputReceiptsV4.ops[id].n > 0);
     assert.ok(await readPageInputReceipt(7, id) > 0);
   } finally {
     runInPage = null;
@@ -118,20 +118,96 @@ test('keyboard receipts ignore clicks, other keys and untrusted events', async (
   runInPage = ({ func, args }) => func(...args);
   try {
     const page = installPage();
-    page.document.__qzInputReceiptsV2Bound = true;
+    page.document.__qzInputReceiptsV3Bound = true;
+    page.document.__qzInputReceiptsV3 = { ops: {} };
     const missed = await armPageInputReceipt(7, 'Enter');
     const click = page.listeners.find(item => item.type === 'click').listener;
     const keydown = page.listeners.find(item => item.type === 'keydown').listener;
     click({ type: 'click', isTrusted: true });
     keydown({ type: 'keydown', key: 'Escape', isTrusted: true });
     keydown({ type: 'keydown', key: 'Enter', isTrusted: false });
-    assert.equal(await readPageInputReceipt(7, missed), 0);
+    assert.equal(await readPageInputReceipt(7, missed), null, 'a swallowed key event cannot prove non-delivery');
     const delivered = await armPageInputReceipt(7, 'Enter');
     const pointer = await armPageInputReceipt(7);
     keydown({ type: 'keydown', key: 'Enter', isTrusted: true });
     assert.equal(await readPageInputReceipt(7, delivered), 1);
     assert.equal(await readPageInputReceipt(7, pointer), 0);
     assert.equal(page.timers.size, 0);
+  } finally {
+    runInPage = null;
+    delete globalThis.document;
+    delete globalThis.addEventListener;
+  }
+});
+
+for (const type of ['submit', 'input', 'change', 'beforeunload', 'pagehide']) {
+  test(`a trusted ${type} is positive Enter delivery evidence`, async () => {
+    runInPage = ({ func, args }) => func(...args);
+    try {
+      const page = installPage();
+      const id = await armPageInputReceipt(7, 'Enter');
+      const listener = page.listeners.find(item => item.type === type);
+      assert.ok(listener, `${type} receipt listener`);
+      listener.listener({ type, isTrusted: true });
+      assert.ok(await readPageInputReceipt(7, id) > 0);
+    } finally {
+      runInPage = null;
+      delete globalThis.document;
+      delete globalThis.addEventListener;
+    }
+  });
+}
+
+for (const type of ['submit', 'beforeunload', 'pagehide']) {
+  for (const observeSubmission of [false, true]) test(`pointer ${type} evidence is opt-in (${observeSubmission})`, async () => {
+    runInPage = ({ func, args }) => func(...args);
+    try {
+      const page = installPage();
+      const id = await armPageInputReceipt(7, '', { observeSubmission });
+      const listener = page.listeners.find(item => item.type === type);
+      assert.ok(listener, `${type} receipt listener`);
+      listener.listener({ type, isTrusted: true });
+      assert.equal(await readPageInputReceipt(7, id), observeSubmission ? 1 : 0);
+    } finally {
+      runInPage = null;
+      delete globalThis.document;
+      delete globalThis.addEventListener;
+    }
+  });
+}
+
+test('only changes to the field after arming count as positive keyboard evidence', async () => {
+  runInPage = ({ func, args }) => func(...args);
+  try {
+    const page = installPage();
+    const field = { value: 'already filled' };
+    page.document.activeElement = field;
+    const unchanged = await armPageInputReceipt(7, 'Enter');
+    assert.equal(await readPageInputReceipt(7, unchanged), null);
+    const key = await armPageInputReceipt(7, 'Enter');
+    const pointer = await armPageInputReceipt(7, '', { observeSubmission: true });
+    field.value = 'changed by Enter';
+    assert.ok(await readPageInputReceipt(7, key) > 0);
+    assert.equal(await readPageInputReceipt(7, pointer), 0, 'value changes must not invent a delivered click');
+    assert.equal(page.timers.size, 0);
+  } finally {
+    runInPage = null;
+    delete globalThis.document;
+    delete globalThis.addEventListener;
+  }
+});
+
+test('untrusted submit and lifecycle events cannot confirm delivery', async () => {
+  runInPage = ({ func, args }) => func(...args);
+  try {
+    const page = installPage();
+    const id = await armPageInputReceipt(7, '', { observeSubmission: true });
+    for (const type of ['submit', 'input', 'change', 'beforeunload', 'pagehide']) {
+      const listener = page.listeners.find(item => item.type === type);
+      assert.ok(listener);
+      listener.listener({ type, isTrusted: false });
+    }
+    assert.equal(await readPageInputReceipt(7, id), 0);
   } finally {
     runInPage = null;
     delete globalThis.document;
@@ -237,7 +313,7 @@ test("a stalled receipt read returns unknown and releases its background entry",
     context.mock.timers.tick(1000);
     assert.equal(await pending, null, "unavailable delivery evidence is not a missed click");
     assert.equal(await readPageInputReceipt(7, id), null);
-    assert.equal(reads, 1, "a timed-out receipt is removed from armedFrames");
+    assert.equal(reads, 1, "a timed-out receipt is removed from armedReceipts");
   } finally { chrome.scripting.executeScript = original; }
 });
 
@@ -258,16 +334,16 @@ for (const delayedExecution of [false, true]) test(`a timed-out arm leaves no pe
     assert.equal(await pending, "");
     if (delayedExecution) {
       assert.equal(execute(), null, "an arm that starts after its deadline is rejected");
-      assert.equal(page.document.__qzInputReceiptsV3, undefined);
+      assert.equal(page.document.__qzInputReceiptsV4, undefined);
       assert.equal(page.timers.size, 0);
     } else {
-      assert.equal(Object.keys(page.document.__qzInputReceiptsV3.ops).length, 1);
+      assert.equal(Object.keys(page.document.__qzInputReceiptsV4.ops).length, 1);
       assert.equal(page.timers.size, 1);
       const [{ callback, delay }] = page.timers.values();
       assert.equal(delay, 30000);
       context.mock.timers.tick(delay);
       callback();
-      assert.deepEqual(page.document.__qzInputReceiptsV3.ops, {}, "expiry cleans an arm whose response was lost");
+      assert.deepEqual(page.document.__qzInputReceiptsV4.ops, {}, "expiry cleans an arm whose response was lost");
     }
     complete([{ frameId: 0, documentId: page.document.documentId, result: 0 }]);
   } finally {
@@ -294,14 +370,14 @@ test("firefox counts marked extension events and chrome still requires a trusted
     const listener = page.listeners.find(item => item.type === "pointerdown");
     const untrusted = { isTrusted: false };
     listener.listener(untrusted);
-    assert.equal(page.document.__qzInputReceiptsV3.ops[id].n, 0);
+    assert.equal(page.document.__qzInputReceiptsV4.ops[id].n, 0);
     const marked = new WeakSet();
     globalThis.__qzExtensionInputEvents = marked;
     listener.listener(untrusted);
-    assert.equal(page.document.__qzInputReceiptsV3.ops[id].n, 0);
+    assert.equal(page.document.__qzInputReceiptsV4.ops[id].n, 0);
     marked.add(untrusted);
     listener.listener(untrusted);
-    assert.ok(page.document.__qzInputReceiptsV3.ops[id].n > 0);
+    assert.ok(page.document.__qzInputReceiptsV4.ops[id].n > 0);
     assert.ok(await readPageInputReceipt(11, id) > 0);
 
     chrome.runtime = { getURL: () => "chrome-extension://id/" };
@@ -313,9 +389,9 @@ test("firefox counts marked extension events and chrome still requires a trusted
     const extensionEvent = { isTrusted: false };
     marked.add(extensionEvent);
     chromeListener.listener(extensionEvent);
-    assert.equal(chromePage.document.__qzInputReceiptsV3.ops[chromeId].n, 0);
+    assert.equal(chromePage.document.__qzInputReceiptsV4.ops[chromeId].n, 0);
     chromeListener.listener({ isTrusted: true });
-    assert.ok(chromePage.document.__qzInputReceiptsV3.ops[chromeId].n > 0);
+    assert.ok(chromePage.document.__qzInputReceiptsV4.ops[chromeId].n > 0);
     assert.ok(await readPageInputReceipt(12, chromeId) > 0);
   } finally {
     if (previousRuntime === undefined) delete chrome.runtime;

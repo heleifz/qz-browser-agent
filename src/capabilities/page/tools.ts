@@ -496,7 +496,7 @@ registerTool({
       });
       let observation: Awaited<ReturnType<typeof beginPageNavigationObservation>> | undefined;
       let touchInput = false;
-      let delivered = false;
+      let receiptId = "";
       let dispatched = false;
       let frameFailure: ElementReply | null = null;
       let frameViewportBlocked = false;
@@ -547,21 +547,19 @@ registerTool({
           const dispatchSend = remoteSend || send;
           const dispatchPoint = remoteSend && localPoint ? localPoint : point;
           touchInput = getPageContext(tabId).pageMode === "mobile";
-          const receiptId = await armPageInputReceipt(tabId);
-          try {
-            observation = await beginPageNavigationObservation(tabId, _signal);
-            if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
-            dispatched = true;
-            if (touchInput) { await touch(dispatchSend, dispatchPoint, { signal: _signal }); }
-            else {
-              await dispatchSend("Input.dispatchMouseEvent", {
-                type: "mousePressed", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
-              });
-              await dispatchSend("Input.dispatchMouseEvent", {
-                type: "mouseReleased", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
-              });
-            }
-          } finally { delivered = await inputWasDelivered(tabId, receiptId); }
+          receiptId = await armPageInputReceipt(tabId, "", { observeSubmission: true });
+          observation = await beginPageNavigationObservation(tabId, _signal);
+          if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
+          dispatched = true;
+          if (touchInput) { await touch(dispatchSend, dispatchPoint, { signal: _signal }); }
+          else {
+            await dispatchSend("Input.dispatchMouseEvent", {
+              type: "mousePressed", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
+            });
+            await dispatchSend("Input.dispatchMouseEvent", {
+              type: "mouseReleased", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
+            });
+          }
         });
         if (frameFailure) return withElementActionHelp(frameFailure, normalizedAction);
         if (frameViewportBlocked || !clickPointReady(current)) {
@@ -574,8 +572,13 @@ registerTool({
             resolved,
           });
         }
-        if (!delivered) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
+        // Default actions can submit or navigate even when an earlier page listener
+        // hid every pointer event. Keep the receipt alive through this bounded observation.
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
+        const delivered = await inputWasDelivered(tabId, receiptId);
+        receiptId = "";
+        if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
+        if (!delivered && pageDelta.navigated !== true) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
         return attachPageDialogResults({
           action: "click",
           target: resolvedTarget,
@@ -614,7 +617,10 @@ registerTool({
           ...pageDelta,
           ...(observedNavigation ? { observedNavigation } : {}),
         };
-      } finally { observation?.dispose(); }
+      } finally {
+        observation?.dispose();
+        if (receiptId) await readPageInputReceipt(tabId, receiptId);
+      }
     }
 
     const identity = { action: normalizedAction, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId };
@@ -696,6 +702,7 @@ registerTool({
           filled: false, value: actual.value, submitDispatched: false, element: actual });
         if (!valueMatches()) return valueMismatch();
         const observation = submit ? await beginPageNavigationObservation(tabId, _signal) : null;
+        let receiptId = "";
         try {
           if (submit) {
             // Observer setup is asynchronous too. Revalidate identity, value and focus afterwards.
@@ -708,23 +715,25 @@ registerTool({
             if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
               filled: true, value: actual.value, submitDispatched: false, element: actual };
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
-            const receiptId = await armPageInputReceipt(tabId, "Enter");
-            let delivered = false;
-            try {
-              await inputKeyboard.press(tabId, "Enter", context);
-            } finally { delivered = await inputWasDelivered(tabId, receiptId); }
+            receiptId = await armPageInputReceipt(tabId, "Enter");
+            await inputKeyboard.press(tabId, "Enter", context);
             assertActive();
-            if (!delivered) return { ...inputNotDelivered(identity), filled: true, value: actual.value,
-              submitDispatched: false, clickDispatched: false, element: actual };
           }
           const navigation = pageBefore && guardrails && observation
             ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;
+          const delivered = await inputWasDelivered(tabId, receiptId);
+          receiptId = "";
           assertActive();
+          if (!delivered && navigation?.pageDelta.navigated !== true) return { ...inputNotDelivered(identity), filled: true, value: actual.value,
+            submitDispatched: false, clickDispatched: false, element: actual };
           return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
             method: textInput ? "cdp" : "content", element: actual,
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
-        } finally { observation?.dispose(); }
+        } finally {
+          observation?.dispose();
+          if (receiptId) await readPageInputReceipt(tabId, receiptId);
+        }
       }).finally(async () => {
         _signal?.removeEventListener("abort", revokeFill);
         if (_signal?.aborted) { revokeFill(); return; }

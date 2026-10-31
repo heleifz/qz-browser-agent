@@ -402,6 +402,39 @@ for (const boundary of ["observer setup", "mouseReleased", "keyDown", "observati
   });
 }
 
+for (const navigated of [false, true]) test(`zero click receipts wait for navigation before denial (${navigated})`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture({ receiptCount: 0 });
+  t.mock.method(chrome.tabs, 'get', async () => ({
+    url: navigated && f.commands.some(command => command.params.type === 'mouseReleased')
+      ? 'https://example.test/done' : 'https://example.test/', title: 'Fixture', status: 'complete',
+  }));
+  const pending = f.call({ action: 'click' });
+  await new Promise(setImmediate);
+  assert.equal(f.receipts.size, 1, 'receipt stays armed until the navigation observation finishes');
+  t.mock.timers.tick(180);
+  const result = await pending;
+  assert.equal(result.code, navigated ? undefined : 'INPUT_NOT_DELIVERED');
+  if (navigated) assert.equal(result.navigated, true);
+  assert.equal(f.commands.filter(command => command.params.type === 'mouseReleased').length, 1);
+  assert.equal(f.receipts.size, 0);
+  assert.equal(navigationListeners.size, 0);
+  assertNoReplay(f);
+});
+
+for (const action of ['click', 'fill']) test(`${action} cancellation during final receipt read rejects success without replay`, async t => {
+  const f = fixture(), execute = chrome.scripting.executeScript;
+  t.mock.method(chrome.scripting, 'executeScript', async options => {
+    if (options.args?.[1] === false) f.controller.abort();
+    return execute(options);
+  });
+  await assert.rejects(f.call({ action, value: 'one', submit: true }), { code: 'OPERATION_ABORTED' });
+  assert.equal(f.receipts.size, 0);
+  assert.equal(navigationListeners.size, 0);
+  assert.equal(f.commands.filter(command => command.params.type === (action === 'fill' ? 'keyDown' : 'mouseReleased')).length, 1);
+  assertNoReplay(f);
+});
+
 test("press Enter disposes on a confirmed focusing-click miss without sending the key", async t => {
   const f = fixture();
   const execute = chrome.scripting.executeScript;
@@ -486,11 +519,9 @@ for (const receiptCount of [0, 1, null]) test(`fill submit reports Enter deliver
   const f = fixture({ receiptCount });
   const result = await f.call({ action: 'fill', value: '灵隐寺', submit: true });
   assert.equal(result.filled, true);
-  assert.equal(result.submitDispatched, receiptCount !== 0);
-  if (receiptCount === 0) {
-    assert.equal(result.code, 'INPUT_NOT_DELIVERED');
-    assert.equal(result.inputDelivered, false);
-  }
+  assert.equal(result.submitDispatched, true, 'zero key receipts remain unconfirmed, not explicitly undelivered');
+  assert.notEqual(result.code, 'INPUT_NOT_DELIVERED');
+  assert.equal(result.navigated, false);
   assert.equal(f.commands.filter(command => command.method === 'Input.dispatchKeyEvent'
     && command.params.key === 'Enter' && command.params.type === 'keyDown').length, 1);
   assert.equal(f.receipts.size, 0);
