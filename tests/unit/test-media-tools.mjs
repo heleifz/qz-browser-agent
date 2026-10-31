@@ -2095,10 +2095,8 @@ registerMediaTools({
   async sendCdp() { return {}; },
   async withDebugger() { throw new ToolExecutionError("SESSION_TAB_UNOWNED", "unowned"); },
 });
-const { pageDialogStub } = await import("../support/page-dialog-stub.mjs");
 const { registerPageElementTools } = await import("../../src/capabilities/page/tools.js");
 registerPageElementTools({
-  ...pageDialogStub,
   registerTool({ name, execute }) { fallbackDefinitions.set(name, { execute }); },
   ToolExecutionError,
   sendToContent: fallbackContent,

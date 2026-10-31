@@ -45,61 +45,6 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-for (const scheme of ['light', 'dark']) {
-  test(`page dialog hint appears once while waiting and history retains the question in ${scheme}`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    const hint = await page.evaluate(async () => {
-      const { javascriptDialogT } = await import('/extension/shared/javascript-dialog.js');
-      const f = window.waitFixture;
-      f.entry = { ...f.entry, message: 'Delete?', form: { javascriptDialog: { type: 'confirm', message: 'Delete?' } } };
-      f.cards.patch(f.el, f.entry, 'session-a');
-      return javascriptDialogT('hint');
-    });
-    const card = page.locator('.waiting-card');
-    expect((await card.innerText()).split(hint).length - 1).toBe(1);
-    await expect(page.locator('.waiting-title')).toHaveText('Delete?');
-    for (const status of ['resolved', 'cancelled', 'aborted']) {
-      await page.evaluate(status => {
-        const f = window.waitFixture;
-        f.cards.patch(f.el, { ...f.entry, status }, 'session-a');
-      }, status);
-      await expect(card).not.toContainText(hint);
-      await expect(page.locator('.waiting-message')).toHaveText('Delete?');
-      await expect(page.locator('[data-wait-action]')).toHaveCount(0);
-    }
-  });
-
-  test(`page dialog cards preserve prompt input and dialog actions in ${scheme}`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.evaluate(() => {
-      const f = window.waitFixture;
-      f.entry = { ...f.entry, form: {
-        javascriptDialog: { type: 'prompt', message: 'Name?', defaultPrompt: ' guest ' },
-        fields: [{ id: 'promptText', type: 'text', required: false, defaultValue: ' guest ' }],
-      } };
-      f.cards.patch(f.el, f.entry, 'session-a');
-    });
-    const input = page.locator('input[data-field-id="promptText"]');
-    await expect(input).toHaveValue(' guest ');
-    await input.fill(' Alice ');
-    await page.locator('[data-wait-action="continue"]').click();
-    expect(await page.evaluate(() => window.waitFixture.state.commands[0].payload.answers)).toEqual({ promptText: ' Alice ' });
-    await page.evaluate(() => {
-      const f = window.waitFixture;
-      f.cards.patch(f.el, { ...f.entry, waitId: 'alert', form: { javascriptDialog: { type: 'alert', message: '' } } }, 'session-a');
-    });
-    await expect(page.locator('[data-wait-action="cancel"]')).toHaveCount(0);
-    await expect(page.locator('[data-wait-action="continue"]')).toHaveCount(1);
-    const label = await page.evaluate(async () => {
-      const { debuggerDetachT } = await import('/extension/shared/debugger-detach.js');
-      const f = window.waitFixture;
-      f.cards.patch(f.el, { ...f.entry, waitId: 'detach', form: { debuggerDetached: true } }, 'session-a');
-      return debuggerDetachT('stop');
-    });
-    await expect(page.locator('[data-wait-action="cancel"]')).toHaveText(label);
-  });
-}
-
 test("identical snapshots preserve draft, focus and selection, including legacy missing status", async ({ page }) => {
   const result = await page.evaluate(() => {
     const { cards, entry, el } = window.waitFixture;

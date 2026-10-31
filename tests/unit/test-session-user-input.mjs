@@ -171,39 +171,6 @@ test('ordinary confirm/reject resolve only the addressed live wait', async () =>
   assert.equal(g.rejected.length, 1); assert.equal(g.resolved.length, 0);
 });
 
-test('page prompts validate and forward answers through sidebar and external replies', async () => {
-  for (const legacy of [false, true]) {
-    const f = fixture({
-      javascriptDialog: { type: 'prompt', message: 'Name?', defaultPrompt: ' guest ' },
-      fields: [{ id: 'promptText', type: 'text', required: false, defaultValue: ' guest ' }],
-    });
-    const input = f.api.get({ sessionId: 's1' });
-    assert.equal(input.kind, 'javascript_dialog');
-    assert.deepEqual(input.actions, ['submit', 'reject']);
-    assert.deepEqual(input.responseTemplate.answers, { promptText: ' guest ' });
-    assert.equal((await f.reply({ action: 'approve' })).code, 'ANSWERS_REQUIRED');
-    assert.equal((await f.reply({ action: 'submit', answers: { promptText: 42 } })).code, 'INVALID_ANSWERS');
-    const answers = { promptText: ' Alice ' };
-    const result = legacy
-      ? await f.api.continueWait({ sessionId: 's1', waitId: 'w1', payload: { submitted: true, answers } })
-      : await f.api.respond({ ...input.responseTemplate, answers });
-    assert.equal(result.accepted, true);
-    assert.deepEqual(f.resolved[0].payload.answers, answers);
-  }
-});
-
-test('Cancel/Stay resolves a page dialog as declined without rejecting the task wait', async () => {
-  for (const type of ['alert', 'confirm', 'prompt', 'beforeunload']) {
-    const f = fixture({ javascriptDialog: { type, message: 'Continue?' } });
-    assert.equal((await f.reply({ action: 'reject' })).accepted, true);
-    assert.deepEqual(f.resolved[0].payload, { continued: false, reason: 'cancelled' });
-    assert.equal(f.rejected.length, 0);
-    f.replace();
-    assert.equal((await f.reply({ action: 'reject' })).stale, true);
-    assert.equal(f.api.get({ sessionId: 's1' }).waitId, 'w2');
-  }
-});
-
 test('native Chrome permission keeps task paused through new and legacy entry points', async () => {
   const f = fixture({ browserPermission: 'history' });
   assert.equal(f.api.get({ sessionId: 's1' }).kind, 'browser_permission');

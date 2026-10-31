@@ -119,7 +119,8 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     const opened = await call("open_tab", { url: `http://127.0.0.1:${parent.address().port}/` });
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
     const page = browser.pages().find(item => item.url().startsWith("http://127.0.0.1:"));
-    page.on('dialog', () => {}); // The extension, not Playwright's default dismissal, owns answers.
+    const nativeDialogs = [];
+    page.on('dialog', dialog => { nativeDialogs.push(dialog); });
     await expect.poll(async () => page.frame({ name: "same" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
     await expect.poll(async () => page.frame({ name: "cross" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
     await expect.poll(async () => page.frame({ name: "fixed" })?.locator("button").count().catch(() => 0) ?? 0, { timeout: 15000 }).toBe(1);
@@ -222,67 +223,70 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     expect(await page.frame({ name: "cross" }).evaluate(() => window.clicks || 0)).toBe(1);
     expect(await page.frame({ name: "fixed" }).evaluate(() => window.clicks || 0)).toBe(0);
 
-    const clickDialog = call('act_on_element', { target: 'css:#dialog', action: 'click' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog)).toEqual({ type: 'confirm', message: '' });
-    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
-    expect(await clickDialog).toMatchObject({ dialog: { type: 'confirm', message: '', accepted: false }, inputDelivered: true });
+    async function nativeDialogStays(action, marker) {
+      const before = nativeDialogs.length;
+      const pending = call('act_on_element', action);
+      await expect.poll(() => nativeDialogs.length, { timeout: 15000 }).toBeGreaterThan(before);
+      const dialog = nativeDialogs[before];
+      expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
+      expect(await page.evaluate(name => Boolean(window[name]), marker)).toBe(false);
+      await dialog.dismiss();
+      const result = await pending;
+      expect(result, JSON.stringify(result)).not.toHaveProperty('dialog');
+      expect(result).not.toHaveProperty('dialogs');
+      expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
+      return { type: dialog.type(), message: dialog.message(), result };
+    }
+
+    const confirmDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' }, 'dialogAnswer');
+    expect(confirmDialog.type).toBe('confirm');
     expect(await page.evaluate(() => window.dialogAnswer)).toBe(false);
 
-    const keyDialog = call('act_on_element', { target: 'css:#prompt', action: 'press', key: 'Enter' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('prompt');
-    await worker.evaluate(() => elementHarness.answer({ submitted: true, answers: { promptText: ' Alice ' } }));
-    expect(await keyDialog).toMatchObject({ dialog: { type: 'prompt', accepted: true, promptText: ' Alice ' }, pressed: true });
-    expect(await page.evaluate(() => window.promptAnswer)).toBe(' Alice ');
-
-    const selection = call('act_on_element', { target: 'css:#select', action: 'select', value: 'new' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Change?');
-    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
-    expect(await selection).toMatchObject({ dialog: { type: 'confirm', message: 'Change?', accepted: false } });
-    expect(await page.evaluate(() => window.selectAnswer)).toBe(false);
-
-    const nativeDialog = page.waitForEvent('dialog');
-    const nativeClick = call('act_on_element', { target: 'css:#dialog', action: 'click' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('confirm');
-    await (await nativeDialog).accept();
-    expect(await nativeClick).toMatchObject({ dialog: { type: 'confirm', accepted: true }, inputDelivered: true });
-    expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
-    expect(await page.evaluate(() => window.dialogAnswer)).toBe(true);
+    const promptDialog = await nativeDialogStays({ target: 'css:#prompt', action: 'press', key: 'Enter' }, 'promptAnswer');
+    expect(promptDialog.type).toBe('prompt');
+    expect(promptDialog.message).toBe('Name?');
+    expect(await page.evaluate(() => window.promptAnswer)).toBe(null);
 
     await page.evaluate(() => {
-      document.querySelector('#dialog').onclick = () => {
-        window.firstAnswer = confirm('First');
-        window.secondAnswer = prompt('Second');
-      };
+      window.afterAlert = false;
+      document.querySelector('#dialog').onclick = () => { alert('Heads up'); window.afterAlert = true; };
     });
-    const firstNative = page.waitForEvent('dialog');
-    const sequentialDialogs = call('act_on_element', { target: 'css:#dialog', action: 'click' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('First');
-    await (await firstNative).dismiss();
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Second');
-    await worker.evaluate(() => elementHarness.answer({ answers: { promptText: 'second answer' } }));
-    expect(await sequentialDialogs).toMatchObject({ dialogs: [
-      { type: 'confirm', message: 'First', accepted: false },
-      { type: 'prompt', message: 'Second', accepted: true, promptText: 'second answer' },
-    ] });
-    expect(await page.evaluate(() => [window.firstAnswer, window.secondAnswer])).toEqual([false, 'second answer']);
-    await page.evaluate(() => { document.querySelector('#dialog').onclick = () => { window.dialogAnswer = confirm('Stop?'); }; });
+    const alertDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' }, 'afterAlert');
+    expect(alertDialog.type).toBe('alert');
+    expect(alertDialog.message).toBe('Heads up');
+    expect(await page.evaluate(() => window.afterAlert)).toBe(true);
 
-    await page.frame({ name: 'cross' }).evaluate(() => {
-      document.querySelector('button').onclick = () => { window.dialogAnswer = confirm('Child?'); };
+    await page.evaluate(() => {
+      window.left = false;
+      const link = document.createElement('a');
+      link.id = 'leave';
+      link.href = '/left';
+      link.textContent = 'Leave';
+      link.style.cssText = 'display:block;width:160px;height:36px';
+      document.body.append(link);
+      window.addEventListener('beforeunload', event => { event.preventDefault(); event.returnValue = ''; });
+      window.addEventListener('pagehide', () => { window.left = true; });
     });
-    const childClick = call('act_on_element', { target: found.cross, action: 'click' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.message)).toBe('Child?');
-    await worker.evaluate(() => elementHarness.answer({ reason: 'cancelled' }));
-    expect(await childClick).toMatchObject({ dialog: { type: 'confirm', message: 'Child?', accepted: false }, inputDelivered: true });
-    expect(await page.frame({ name: 'cross' }).evaluate(() => window.dialogAnswer)).toBe(false);
+    const unloadDialog = await nativeDialogStays({ target: 'css:#leave', action: 'click' }, 'left');
+    expect(unloadDialog.type).toBe('beforeunload');
+    expect(await page.evaluate(() => window.left)).toBe(false);
+    expect(page.url()).toContain(`127.0.0.1:${parent.address().port}`);
 
+    await page.evaluate(() => {
+      window.dialogAnswer = undefined;
+      document.querySelector('#dialog').onclick = () => { window.dialogAnswer = confirm('Stop?'); };
+    });
+    const beforeStop = nativeDialogs.length;
     const stoppedClick = call('act_on_element', { target: 'css:#dialog', action: 'click' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting?.form.javascriptDialog?.type)).toBe('confirm');
+    await expect.poll(() => nativeDialogs.length, { timeout: 15000 }).toBeGreaterThan(beforeStop);
+    expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
+    expect(await page.evaluate(() => window.dialogAnswer)).toBeUndefined();
     await worker.evaluate(() => elementHarness.abort());
-    expect(await stoppedClick).toMatchObject({ code: 'OPERATION_ABORTED' });
-    await expect.poll(() => worker.evaluate(() => elementHarness.waiting)).toBe(null);
-    // A real CDP command enforces the aborted call signal. Cleanup must still
-    // decline the native dialog or this page-thread read remains blocked.
+    expect(await page.evaluate(() => window.dialogAnswer)).toBeUndefined();
+    await nativeDialogs[beforeStop].dismiss();
+    const stopped = await stoppedClick;
+    expect(stopped, JSON.stringify(stopped)).not.toHaveProperty('dialog');
+    expect(stopped).not.toHaveProperty('dialogs');
     expect(await page.evaluate(() => window.dialogAnswer)).toBe(false);
   } finally {
     await close();

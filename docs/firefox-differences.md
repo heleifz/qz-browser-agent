@@ -176,11 +176,13 @@ Click, press, and `act_on_screen` send `Input.dispatchMouseEvent`, `Input.dispat
 
 ## Page dialogs
 
-Answer native `alert`, `confirm`, `prompt`, and `beforeunload` dialogs in Firefox itself.
-Firefox's extension APIs do not expose Chrome's dialog-opening events or dialog-answer command,
-so these dialogs do not produce sidebar wait cards or dialog receipts. The adapter leaves the
-page's synchronous dialog functions unchanged. A synchronous JavaScript replacement cannot wait
-for an asynchronous extension answer without blocking the page thread.
+Answer native `alert`, `confirm`, `prompt`, and `beforeunload` dialogs in the browser on both
+Chrome and Firefox. The agent cannot click them. Element actions do not open a sidebar wait card
+and do not return a dialog receipt. Stop leaves the dialog in place.
+
+Firefox's extension APIs do not expose Chrome's dialog-opening events or dialog-answer command.
+The adapter leaves the page's synchronous dialog functions unchanged. A synchronous JavaScript
+replacement cannot wait for an asynchronous extension answer without blocking the page thread.
 
 ## Screenshots
 

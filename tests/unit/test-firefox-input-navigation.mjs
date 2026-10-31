@@ -4,7 +4,6 @@ import { registerPageElementTools } from '../../src/capabilities/page/tools.js';
 import { installFirefoxDebugger } from '../../src/background/firefox/debugger-host.js';
 import { createCdpRuntime } from '../../src/background/tools/cdp-runtime.js';
 import { ToolExecutionError } from '../../src/background/tools/arguments.js';
-import { pageDialogStub } from '../support/page-dialog-stub.mjs';
 
 const MISSING = 'Missing host permission for the tab';
 const BEFORE = 'http://127.0.0.1/form.html';
@@ -112,7 +111,7 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   };
   api.tabs.sendMessage = async () => ({});
   registerPageElementTools({
-    ...pageDialogStub, ToolExecutionError,
+    ToolExecutionError,
     registerTool(definition) { if (definition.name === 'act_on_element') execute = definition.execute; },
     resolveElementReference: async (tabId, { target, index }) => ({ tabId, target, index, selector: '#q' }),
     elementTargetForSelector: selector => `css:${selector}`, getElementTargetDescription: () => 'fixture',

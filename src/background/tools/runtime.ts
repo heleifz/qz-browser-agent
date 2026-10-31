@@ -80,7 +80,6 @@ import {
 } from "../skills/skill-tool-runtime.js";
 import { createCdpRuntime } from "./cdp-runtime.js";
 import { confirmDebuggerReattach } from "./debugger-reattach.js";
-import { createJavaScriptDialogHandler } from "./javascript-dialog.js";
 import { createElementRuntime } from "./element-runtime.js";
 import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 
@@ -600,9 +599,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     try {
       result = await runToolWithTimeout(
         name,
-        async (signal, reportPartial, pauseDeadline) => {
+        async (signal, reportPartial) => {
           const args = executionArgs;
-          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial, pauseDeadline }, getToolRuntimeDependencies(context));
+          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial }, getToolRuntimeDependencies(context));
           if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
             callContext.prepareCreatedTab = async tab => {
               const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
@@ -1531,7 +1530,6 @@ const {
   setDebuggerRetention,
   releaseDebugger,
   confirmRunReattach,
-  dismissJavaScriptDialog,
   releaseRun: releaseRunDebuggerConnections,
   releaseSession: releaseSessionCdp,
   releaseTab: releaseTabCdp,
@@ -1541,12 +1539,6 @@ const {
   isRunCurrent: isCdpRunCurrent,
   authorizeRunTab: authorizeRunCdpTab,
   confirmUserReattach: access => confirmDebuggerReattach(access, getToolRuntimeDependencies(access.context)),
-});
-
-const pageDialogRuntime = createJavaScriptDialogHandler({
-  ToolExecutionError,
-  getToolRuntimeDependencies,
-  dismissDialog: dismissJavaScriptDialog,
 });
 
 function isCdpRunCurrent({ sessionId, runId, context = {} }: { sessionId: string; runId: string; context?: ToolContext }) {
@@ -1668,8 +1660,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
-  sendToContent, sendCdp, withDebugger, withPageDialogGuard: pageDialogRuntime.withDialogGuard,
-  attachPageDialogResults: pageDialogRuntime.attachDialogResults,
+  sendToContent, sendCdp, withDebugger,
   getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,

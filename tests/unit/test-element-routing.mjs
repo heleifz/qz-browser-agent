@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { pageDialogStub } from "../support/page-dialog-stub.mjs";
 import { describe, test } from "node:test";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 
@@ -98,7 +97,6 @@ const element = createElementRuntime({
 
 const tools = new Map();
 registerPageElementTools({
-  ...pageDialogStub,
   registerTool(definition) { tools.set(definition.name, definition); },
   ToolExecutionError,
   async sendToContent(tabId, action, params = {}) {

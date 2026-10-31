@@ -25,8 +25,6 @@ export interface ToolContext extends SkillActivationContext {
   prepareCreatedTab?(tab: import("../shared/tab-utils.js").TabReference): Promise<ToolContext>;
   /** Publish an immutable completed stage for this call's existing hard deadline. */
   reportPartial?(result: Record<string, unknown>, pending: string): void;
-  /** Suspend this call and its waiting ancestors during a host-owned user wait; release in finally. Cancellation stays active. */
-  pauseDeadline?(): () => void;
   /** Opaque live invocation identity carried only by nested script transports. */
   toolExecutionId?: string;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */
@@ -112,8 +110,6 @@ export interface ToolExtensionAPI extends Omit<PageNavigationHost, "commitObserv
   clickPointReady(inspection: ElementReply): inspection is ElementReply & { clickablePoint: PagePoint };
   clickNotReadyResult(input: { target: string; selector: string; index: number; inspection: ElementReply;
     originalInspection: ElementReply; resolved: ElementReply | null }): unknown;
-  withPageDialogGuard<T>(tabId: number, context: ToolContext, run: (send: CdpCommand, bind: (underlying: CdpCommand) => Promise<void>) => Promise<T>): Promise<{ value: T; dialogs: import("../shared/javascript-dialog.js").JavaScriptDialogResult[] }>;
-  attachPageDialogResults<T extends Fields>(result: T, dialogs: import("../shared/javascript-dialog.js").JavaScriptDialogResult[]): T;
   captureTabScreenshot(tabId: number, options?: ScreenshotOptions, context?: ToolContext): Promise<Screenshot>;
   enablePreNavigationNetworkWatch(tabId: number, options: NetworkWatchOptions, context: ToolContext): Promise<unknown>;
   publishSkillRegistryChange(reason: string, details: Fields, refresh: NonNullable<ToolSkillsRuntime["refreshRegistry"]>): Promise<unknown>;

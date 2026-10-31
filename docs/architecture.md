@@ -131,21 +131,14 @@ Native Chrome permission requests remain paused until the user grants access in 
 External approval checks the actual permission and returns `requiresUserAction` while it is absent.
 The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
 
-Chrome element-input dialog guards enable Page events before input, retain child debugger-session
-identity, and route native dialogs through the same wait lifecycle. A dialog wait suspends only its
-own tool deadline and the budgets of its waiting script ancestors until the user responds;
-browser acknowledgement uses the remaining deadline. Script bridges carry an opaque live parent-call
-ID; parent cancellation or settlement revokes descendant calls, including unawaited children.
-Settlement cancels only descendant authority, leaving the successful tool's own signal unchanged.
-Parent lookup requires the exact Session and run; an absent run and its empty wire value match only
-each other and still require the live opaque parent ID.
-Parallel dialogs queue their decisions within the same Session/run, suspending queued deadlines too;
-other Sessions and independent tool execution remain concurrent.
-Stop and run cancellation remain active. Cancel/Stay answers the page without rejecting the task wait.
-Answering the native Chrome dialog also retires its sidebar card, and debugger detachment cancels the
-wait. Cancellation can decline the pending dialog through a cleanup-only sender bound to the original
-connection and run; it cannot reattach or control a newer run. Prompt text is submitted unchanged.
-A failed browser answer produces no successful dialog receipt. Firefox keeps its native dialogs; see [Page dialogs](firefox-differences.md#page-dialogs).
+Native alert, confirm, prompt, and beforeunload dialogs stay in the browser for the user to answer.
+The agent does not click them. Element actions do not open a sidebar wait card and do not return a
+dialog receipt. Stop leaves the dialog in place. See [Page dialogs](firefox-differences.md#page-dialogs).
+
+Script bridges carry an opaque live parent-call ID; parent cancellation or settlement revokes
+descendant calls, including unawaited children. Settlement cancels only descendant authority, leaving
+the successful tool's own signal unchanged. Parent lookup requires the exact Session and run; an
+absent run and its empty wire value match only each other and still require the live opaque parent ID.
 
 ## Message transport
 

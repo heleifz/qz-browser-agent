@@ -129,7 +129,6 @@ export function createRunScriptBridge({
         sessionId,
         runId,
         runScriptToolDepth: depth,
-        pauseDeadline: parent?.pauseDeadline,
         source: "run_script",
         senderTabId: sender?.tab?.id || null,
       });

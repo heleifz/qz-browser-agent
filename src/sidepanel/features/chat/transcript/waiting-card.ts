@@ -2,22 +2,21 @@ import { isToolBrowserPermission, type ToolBrowserPermission } from "../../../..
 import { debuggerDetachT } from "../../../../shared/debugger-detach.js";
 import { firefoxExtension } from "../../../../shared/product-text.js";
 import { requestBrowserPermission, permissionT } from "../../../ui/browser-permissions.js";
-import { javascriptDialogT, readJavaScriptDialogForm } from "../../../../shared/javascript-dialog.js";
 import { t as backendT } from "../../../../shared/i18n/backend.js";
-import { t } from "../../../i18n/index.js";
+import { t, tHtml } from "../../../i18n/index.js";
 import { escapeHtml, escapeHtmlAttribute } from "../../../ui/ui-utils.js";
 import { record } from "../../../tools/renderer-input.js";
 import { renderResultChoice } from "../../../ui/result-choice.js";
 
 type Answer = string | string[];
-interface FieldBase { id: string; label: string; help: string; required: boolean; preserveWhitespace?: boolean }
+interface FieldBase { id: string; label: string; help: string; required: boolean }
 interface ChoiceOption { label: string; value: string; description: string; meta?: string[]; imageUrl?: string; url?: string }
 export type WaitingField = FieldBase & (
   | { type: "text" | "textarea"; placeholder: string; defaultValue: string }
   | { type: "single_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string }
   | { type: "multi_choice"; presentation?: "cards"; options: ChoiceOption[]; defaultValue: string[] }
 );
-interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; debuggerDetached?: boolean; javascriptDialog?: { type: string; message: string; defaultPrompt?: string }; title: string; submitLabel: string; fields: WaitingField[] }
+interface WaitingForm { locationConsent?: boolean; browserPermission?: ToolBrowserPermission; debuggerDetached?: boolean; title: string; submitLabel: string; fields: WaitingField[] }
 interface WaitCard {
   waitId: string; runId: string; title: string; message: string; status: string; reason: string; form: WaitingForm;
 }
@@ -166,9 +165,6 @@ function normalizeWaitCard(value: unknown): WaitCard {
   } else if (form.debuggerDetached) {
     form.title = debuggerDetachT("title");
     message = debuggerDetachT("message");
-  } else if (form.javascriptDialog) {
-    form.title = form.javascriptDialog.message;
-    message = isWaitingTranscriptActive(entry) ? "" : form.javascriptDialog.message;
   }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),
@@ -196,22 +192,9 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
     (field.type === "single_choice" || field.type === "multi_choice") && field.presentation === "cards")
     && entry.message === form.title;
   const message = repeatedCardTitle ? "" : entry.message || "";
-  const dialog = form.javascriptDialog;
-  const dialogType = dialog?.type || "";
   const hint = waiting
-    ? (form.browserPermission ? permissionT("hint") : dialog ? javascriptDialogT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
+    ? (form.browserPermission ? permissionT("hint") : form.debuggerDetached || hasResultChoices ? "" : hasForm ? t("agentAfterSubmit") : t("agentAfterAction"))
     : waitResolvedHint(entry);
-  const continueLabel = form.locationConsent ? t("dataConsentAccept")
-    : form.browserPermission ? permissionT("allow")
-      : dialogType === "beforeunload" ? javascriptDialogT("leave")
-        : dialog ? javascriptDialogT("ok")
-          : form.debuggerDetached ? debuggerDetachT("continue")
-            : hasForm ? form.submitLabel : t("doneContinue");
-  const cancelLabel = dialogType === "beforeunload" ? javascriptDialogT("stay")
-    : dialog ? javascriptDialogT("cancel")
-      : form.debuggerDetached ? debuggerDetachT("stop")
-        : t("cancel");
-  const showCancel = !dialog || dialogType !== "alert";
   return `
     <div class="waiting-card${statusClass} qz:relative qz:overflow-hidden qz:px-3 qz:pt-2.5 qz:pb-3">
       <div class="waiting-pulse"></div>
@@ -223,8 +206,8 @@ function renderWaitTranscriptHtml(entry: WaitCard) {
       </div>
       ${waiting ? `
         <div class="waiting-actions qz:flex qz:gap-1.5">
-          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(continueLabel)}</button>
-          ${showCancel ? `<button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${escapeHtml(cancelLabel)}</button>` : ""}
+          <button class="qz-btn qz-btn--primary qz-btn--sm waiting-continue-btn qz:flex-1" type="button" data-wait-action="continue">${escapeHtml(form.locationConsent ? t("dataConsentAccept") : form.browserPermission ? permissionT("allow") : form.debuggerDetached ? debuggerDetachT("continue") : hasForm ? form.submitLabel : t("doneContinue"))}</button>
+          <button class="qz-btn qz-btn--ghost qz-btn--sm waiting-cancel-btn" type="button" data-wait-action="cancel">${form.debuggerDetached ? escapeHtml(debuggerDetachT("stop")) : tHtml("cancel")}</button>
         </div>
       ` : ""}
     </div>
@@ -251,12 +234,10 @@ function waitResolvedHint(entry: WaitCard) {
 export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
   const form = record(value);
   const fields = Array.isArray(form.fields) ? form.fields : [];
-  const dialog = readJavaScriptDialogForm(form);
   return {
     ...(form.locationConsent === true ? { locationConsent: true } : {}),
     ...(isToolBrowserPermission(form.browserPermission) ? { browserPermission: form.browserPermission } : {}),
     ...(form.debuggerDetached === true ? { debuggerDetached: true } : {}),
-    ...(dialog ? { javascriptDialog: dialog } : {}),
     title: String(form.title || "").trim(),
     submitLabel: String(form.submitLabel || t("submit")).trim(),
     fields: fields.map((value: unknown, index): WaitingField => {
@@ -273,8 +254,7 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
           ...(typeof option.url === "string" ? { url: option.url } : {}),
         };
       }).filter(option => option.label && option.value) : [];
-      const base: FieldBase = { id, label: String(field.label || id).trim(), help: String(field.help || "").trim(), required: field.required !== false,
-        ...(dialog?.type === "prompt" && id === "promptText" ? { preserveWhitespace: true } : {}) };
+      const base: FieldBase = { id, label: String(field.label || id).trim(), help: String(field.help || "").trim(), required: field.required !== false };
       const presentation = field.presentation === "cards" ? { presentation: "cards" as const } : {};
       const defaultValue = Object.hasOwn(field, "defaultValue") ? field.defaultValue
         : Object.hasOwn(field, "defaultValues") ? field.defaultValues
@@ -285,7 +265,7 @@ export function normalizeWaitingForm(value: unknown = {}): WaitingForm {
       }
       const scalar = defaultValue == null ? "" : String(defaultValue);
       if (field.type === "single_choice" && options.length) return { ...base, ...presentation, type: "single_choice", options, defaultValue: scalar };
-      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: base.preserveWhitespace ? scalar : scalar.trim() };
+      return { ...base, type: field.type === "textarea" ? "textarea" : "text", placeholder: String(field.placeholder || "").trim(), defaultValue: scalar.trim() };
     }).filter(field => field.id && field.label),
   };
 }
@@ -371,8 +351,7 @@ function readWaitingFieldValue(wrap: HTMLElement | null, field: WaitingField) {
   if (field.type === "multi_choice") {
     return Array.from(wrap.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked')).map(input => input.value);
   }
-  const value = wrap.querySelector<HTMLInputElement | HTMLTextAreaElement>(".waiting-field-control")?.value || "";
-  return field.preserveWhitespace ? value : value.trim();
+  return wrap.querySelector<HTMLInputElement | HTMLTextAreaElement>(".waiting-field-control")?.value.trim() || "";
 }
 
 function markWaitingFieldInvalid(wrap: HTMLElement | null, field: WaitingField) {

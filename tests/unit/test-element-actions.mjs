@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerPageElementTools } from "../../src/capabilities/page/tools.js";
-import { pageDialogStub } from "../support/page-dialog-stub.mjs";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 
 const navigationListeners = new Set();
@@ -12,7 +11,7 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false, dialogs = [], observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
@@ -22,7 +21,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
     return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : receiptCount }];
   } };
   const state = { value: "old", checked };
-  let execute, guardActive = false, onCommand = async () => {}, onContent = async () => {};
+  let execute, onCommand = async () => {}, onContent = async () => {};
   const inspection = () => ({ tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
     clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
@@ -51,13 +50,6 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
     return produced === undefined ? {} : produced;
   };
   registerPageElementTools({
-    ...pageDialogStub,
-    async withPageDialogGuard(...args) {
-      guardActive = true;
-      try { return { ...await pageDialogStub.withPageDialogGuard(...args), dialogs }; }
-      finally { guardActive = false; }
-    },
-    attachPageDialogResults: (result, replies) => replies.length ? { ...result, dialog: replies[0] } : result,
     registerTool(definition) { if (definition.name === "act_on_element") execute = definition.execute; },
     ToolExecutionError,
     async resolveElementReference(tabId, { target, index }) {
@@ -81,7 +73,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, dialog
       return callback({}, send);
     },
   });
-  return { commands, messages, observations, controller, state, receipts, inspection, isGuardActive: () => guardActive,
+  return { commands, messages, observations, controller, state, receipts, inspection,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
@@ -275,16 +267,16 @@ for (const method of ["href_navigation", "content_fallback"]) {
   }
 }
 
-test('select with an existing debugger arms the dialog guard before dispatching Content change handlers without replay', async () => {
+test('select dispatches Content once and does not enable page events or replay a lost response', async () => {
   const f = fixture();
   f.onContent((action, params) => {
     if (action !== 'actOnElement') return;
     assert.equal(params.elementAction, 'select');
-    assert.equal(f.isGuardActive(), true);
     throw new Error('selection response lost');
   });
   await assert.rejects(f.call({ action: 'select', value: 'choice' }), /selection response lost/);
   assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
+  assert.equal(f.commands.some(command => command.method === 'Page.enable'), false);
 });
 
 test('CSS select succeeds without a debugger connection or attachment permission', async () => {
@@ -292,7 +284,6 @@ test('CSS select succeeds without a debugger connection or attachment permission
   f.onContent((action, params) => {
     if (action !== 'actOnElement') return;
     assert.equal(params.elementAction, 'select');
-    assert.equal(f.isGuardActive(), false);
     return { selected: true };
   });
   assert.equal((await f.call({ action: 'select', value: 'choice' })).selected, true);
@@ -304,30 +295,28 @@ const pressFields = ["action", "target", "selector", "uid", "index", "tabId", "k
 const navigationFields = ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "_pageUrl", "_pageTitle"];
 
 for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
-  for (const hidden of [false, true]) test(`press ${JSON.stringify(args)} observes before input (hidden=${hidden}) and appends navigation after dialogs`, async t => {
+  for (const hidden of [false, true]) test(`press ${JSON.stringify(args)} observes before input (hidden=${hidden}) and appends navigation`, async t => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
     const pageBefore = { url: "https://example.test/", title: "Fixture" };
     const pageAfter = hidden ? pageBefore : { url: "https://example.test/done", title: "Done" };
     const observedNavigation = hidden ? null : { url: pageAfter.url, rateLimitRecorded: false };
-    const dialog = { type: "alert", message: "Enter received", accepted: true };
-    const f = fixture({ hidden, dialogs: [dialog], observedNavigation });
+    const f = fixture({ hidden, observedNavigation });
     let changed = false;
     t.mock.method(chrome.tabs, "get", async () => ({ ...(changed ? pageAfter : pageBefore), status: "complete" }));
     const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
     f.onCommand(method => {
       if (!method.startsWith("Input.")) return;
       assert.equal(navigationListeners.size, 1, "observe before the focusing click as well as the key");
-      assert.equal(f.isGuardActive(), true);
       changed = true;
     });
     const pending = f.call({ action: "press", ...args });
     await new Promise(setImmediate);
     t.mock.timers.tick(180);
     const result = await pending;
-    assert.deepEqual(Object.keys(result), [...pressFields, "dialog", ...navigationFields, ...(hidden ? [] : ["observedNavigation"])]);
+    assert.deepEqual(Object.keys(result), [...pressFields, ...navigationFields, ...(hidden ? [] : ["observedNavigation"])]);
     assert.deepEqual(result, {
       action: "press", target: "css:#target", selector: "#target", uid: undefined, index: 0, tabId: 7,
-      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(), dialog,
+      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(),
       pageBefore, pageAfter, urlChanged: !hidden, titleChanged: !hidden, navigationPending: false, navigated: !hidden,
       _pageUrl: pageAfter.url, _pageTitle: pageAfter.title, ...(observedNavigation ? { observedNavigation } : {}),
     });
@@ -365,7 +354,6 @@ for (const boundary of ["mousePressed", "mouseReleased", "keyDown", "keyUp"]) {
     const f = fixture();
     f.onCommand((method, params) => {
       if (!method.startsWith("Input.")) return;
-      assert.equal(f.isGuardActive(), true);
       assert.equal(navigationListeners.size, 1);
       if (params.type === boundary) throw new Error("input response lost");
     });

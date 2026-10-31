@@ -8,7 +8,7 @@ import type { ToolContext } from "#sdk/background";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
-  | "clickNotReadyResult" | "sendCdp" | "withDebugger" | "getDebuggerConnectionId" | "withPageDialogGuard" | "attachPageDialogResults"
+  | "clickNotReadyResult" | "sendCdp" | "withDebugger"
   | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
@@ -96,30 +96,6 @@ async function remoteFrameInput(send: CdpCommand, frameId: string): Promise<CdpC
   return opened?.sessionId ? opened.send : null;
 }
 
-function runPageDebugger<T>(
-  host: Pick<PageElementHost, "withDebugger" | "withPageDialogGuard">,
-  tabId: number,
-  context: ToolContext,
-  run: (send: CdpCommand) => Promise<T>,
-) {
-  return host.withPageDialogGuard(tabId, context, (send, bind) =>
-    host.withDebugger(tabId, async (_target, cdpSend) => {
-      await bind(cdpSend);
-      return run(send);
-    }, context),
-  );
-}
-
-async function runPageDebuggerValue<T extends Record<string, unknown>>(
-  host: Pick<PageElementHost, "withDebugger" | "withPageDialogGuard" | "attachPageDialogResults">,
-  tabId: number,
-  context: ToolContext,
-  run: (send: CdpCommand) => Promise<T>,
-): Promise<T> {
-  const { value, dialogs } = await runPageDebugger(host, tabId, context, run);
-  return host.attachPageDialogResults(value, dialogs);
-}
-
 /** Registers page reading, element inspection/action, and scrolling tools. */
 export function registerPageElementTools({
   registerTool,
@@ -141,9 +117,6 @@ export function registerPageElementTools({
   clickNotReadyResult,
   sendCdp,
   withDebugger,
-  getDebuggerConnectionId,
-  withPageDialogGuard,
-  attachPageDialogResults,
   getPageContext,
 }: PageElementHost) {
 async function sendToContent(tabId: number | undefined, action: string, params: Record<string, unknown>, call?: (action: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>, context?: ToolContext): Promise<ElementReply> {
@@ -502,7 +475,7 @@ registerTool({
       let frameViewportBlocked = false;
       let movedFrameIntoPage = false;
       try {
-        const { dialogs } = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+        await withDebugger(tabId, async (_target, send) => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
           const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
@@ -560,7 +533,7 @@ registerTool({
               type: "mouseReleased", x: dispatchPoint.x, y: dispatchPoint.y, button: "left", clickCount: 1,
             });
           }
-        });
+        }, context);
         if (frameFailure) return withElementActionHelp(frameFailure, normalizedAction);
         if (frameViewportBlocked || !clickPointReady(current)) {
           return clickNotReadyResult({
@@ -579,7 +552,7 @@ registerTool({
         receiptId = "";
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
         if (!delivered && pageDelta.navigated !== true) return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
-        return attachPageDialogResults({
+        return {
           action: "click",
           target: resolvedTarget,
           selector,
@@ -596,7 +569,7 @@ registerTool({
           ...(observedNavigation ? { observedNavigation } : {}),
           element: current,
           originalElement: current !== inspected ? inspected : undefined,
-        }, dialogs);
+        };
       } catch (err) {
         rethrowStaleElement(err);
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
@@ -638,7 +611,7 @@ registerTool({
         if (submit) void chrome.tabs.sendMessage(tabId, { action: "releaseElementFill", fillToken }).catch(() => {});
       };
       _signal?.addEventListener("abort", revokeFill, { once: true });
-      return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
+      return withDebugger(tabId, async (_target, send): Promise<Record<string, unknown>> => {
         assertActive();
         // Hidden Chrome tabs may accept insertText without a composited keyboard
         // input surface. Prepare it without activating the tab or clicking the field.
@@ -725,7 +698,7 @@ registerTool({
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
         } finally { observation?.dispose(); }
-      }).finally(async () => {
+      }, context).finally(async () => {
         _signal?.removeEventListener("abort", revokeFill);
         if (_signal?.aborted) { revokeFill(); return; }
         if (submit) {
@@ -745,7 +718,7 @@ registerTool({
       if (inspected.type === "radio" && !desired) {
         return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
       }
-      return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
+      return withDebugger(tabId, async (_target, send): Promise<Record<string, unknown>> => {
         assertActive();
         await ensurePageSurface(tabId, send, { frameId });
         const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound, context);
@@ -787,7 +760,7 @@ registerTool({
         if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...identity, error: t("elementCheckStateMismatch"),
           code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, element: actual };
         return { ...identity, checked: desired, changed: true, method: "cdp", inputDelivered: true, element: actual };
-      });
+      }, context);
     }
 
     if (normalizedAction === "press") {
@@ -819,7 +792,7 @@ registerTool({
       let dispatched = false;
       try {
         let delivered = !inspected.clickablePoint;
-        const { dialogs: pressDialogs } = await runPageDebugger({ withDebugger, withPageDialogGuard }, tabId, context, async send => {
+        await withDebugger(tabId, async (_target, send) => {
           if (inspected.clickablePoint) {
             await ensurePageSurface(tabId, send, { frameId });
             const refreshed = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
@@ -844,9 +817,9 @@ registerTool({
             const guardedKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_id, method, params) => send(method, params) });
             await guardedKeyboard.press(tabId!, preparedKey, context);
           }
-        });
+        }, context);
         if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
-        const result = attachPageDialogResults({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected }, pressDialogs);
+        const result = { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected };
         return observeNavigation ? await finishPress(result) : result;
       } catch (err) {
         rethrowStaleElement(err);
@@ -872,12 +845,7 @@ registerTool({
         element: fallback.element || inspected,
       };
     };
-    // Selecting dispatches input/change handlers, which can open a native dialog
-    // while the Content reply is still pending. Guard existing debugger connections,
-    // but keep CSS-only selection independent of debugger availability.
-    return normalizedAction === "select" && getDebuggerConnectionId?.(tabId) != null
-      ? runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, contentAction)
-      : contentAction();
+    return contentAction();
     }
   },
 });
