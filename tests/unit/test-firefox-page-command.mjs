@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { before, after } from 'node:test';
 import { chromium } from 'playwright';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ import { auditReviewableCode } from '../../scripts/check-reviewable-code.mjs';
 let browser, directory, firefoxPageCommand, installFirefoxDebugger, outputDir;
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'qz-firefox-input-'));
+  // Keep generated JS in ESM scope so tsx cannot add helpers that break page serialization.
+  await writeFile(join(directory, 'package.json'), JSON.stringify({ type: 'module' }));
   ({ outputDir } = await buildExtension({ browser: 'firefox', mode: 'production', outputDir: join(directory, 'extension') }));
   ({ firefoxPageCommand } = await import(pathToFileURL(join(outputDir, 'background/firefox/page-command.js'))));
   ({ installFirefoxDebugger } = await import(pathToFileURL(join(outputDir, 'background/firefox/debugger-host.js'))));
