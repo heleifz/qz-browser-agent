@@ -3,8 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { minify } from "terser";
-import { transform } from "esbuild";
-import { inspectJavaScript, assertReviewableCode } from "../../scripts/check-reviewable-code.mjs";
+import { buildExtension } from "../../scripts/build-extension.mjs";
+import { auditReviewableCode, inspectJavaScript, assertReviewableCode } from "../../scripts/check-reviewable-code.mjs";
 
 const failures = source => inspectJavaScript(source).findings.filter(item => !item.reviewed);
 for (const source of [
@@ -24,32 +24,46 @@ for (const source of [
   'const _0xa33 = ["hidden", "behavior"];',
 ]) assert.ok(failures(source).length, source);
 
-// The disabled-option repair is a fixed node predicate, not a general execution exemption.
-const axSource = await readFile(new URL('../../src/capabilities/accessibility/tools.ts', import.meta.url), 'utf8');
-const { code: axCode } = await transform(axSource, { loader: 'ts', format: 'esm', target: 'chrome114' });
-const axPath = 'capabilities/accessibility/tools.js';
-const cdpFindings = (code, file = axPath) => inspectJavaScript(code, file).findings.filter(item => item.rule === 'cdp-execution');
-assert.equal(cdpFindings(axCode).length, 1);
-assert.ok(cdpFindings(axCode)[0].reviewed);
-assert.ok(cdpFindings(axCode, 'background/service-worker.js')[0].reviewed);
-assert.equal(cdpFindings(axCode, 'unrelated.js')[0].reviewed, undefined);
-const mutatedAxCode = axCode.replace("this.matches(':disabled')", "this.matches(pageControlledSelector)");
-assert.notEqual(mutatedAxCode, axCode);
-assert.equal(cdpFindings(mutatedAxCode)[0].reviewed, undefined);
-assert.equal(cdpFindings(`${axCode}\nsend('Runtime.callFunctionOn', { functionDeclaration: remoteCode });`).filter(item => !item.reviewed).length, 1);
+// Audit the real production pipeline, including product overrides and embedded
+// scripts. A standalone TS transform does not produce the shipped fingerprints.
+const buildRoot = await mkdtemp(join(tmpdir(), 'qz-review-build-'));
+const cdpFindings = (code, file) => inspectJavaScript(code, file).findings.filter(item => item.rule === 'cdp-execution');
+try {
+  for (const [browser, bundle] of [['chrome', false], ['chrome', true], ['firefox', true]]) {
+    const outputDir = join(buildRoot, `${browser}-${bundle ? 'bundled' : 'unbundled'}`);
+    await buildExtension({ mode: 'production', bundle, browser, outputDir });
+    const findings = (await auditReviewableCode(outputDir)).flatMap(item => item.findings);
+    assert.ok(findings.length > 0);
+    assert.deepEqual(findings.filter(item => !item.reviewed), []);
 
-// Parent-call identity is serialized as data into the existing reviewed script
-// bridge. Changing its source or moving an execution sink must require review.
-const scriptSource = await readFile(new URL('../../src/capabilities/script/tools.ts', import.meta.url), 'utf8');
-const { code: scriptCode } = await transform(scriptSource, { loader: 'ts', format: 'esm', target: 'chrome114' });
-const scriptPath = 'capabilities/script/tools.js';
-assert.equal(cdpFindings(scriptCode, scriptPath).length, 3);
-assert.ok(cdpFindings(scriptCode, scriptPath).every(item => item.reviewed));
-assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
-const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
-assert.notEqual(mutatedScriptCode, scriptCode);
-assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
-assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
+    // Parent-call identity is data, not source. Changing its origin, adding a
+    // sink, or moving the code outside its reviewed output path requires review.
+    const scriptPath = bundle ? 'background/service-worker.js' : 'capabilities/script/tools.js';
+    const scriptCode = await readFile(join(outputDir, scriptPath), 'utf8');
+    const scriptFindings = cdpFindings(scriptCode, scriptPath);
+    assert.equal(scriptFindings.length, bundle ? 10 : 3);
+    assert.ok(scriptFindings.every(item => item.reviewed));
+    assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
+    const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
+    assert.notEqual(mutatedScriptCode, scriptCode);
+    assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+    assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
+
+    if (!bundle) {
+      // The disabled-option repair is a fixed node predicate, not a general execution exemption.
+      const axPath = 'capabilities/accessibility/tools.js';
+      const axCode = await readFile(join(outputDir, axPath), 'utf8');
+      assert.equal(cdpFindings(axCode, axPath).length, 1);
+      assert.ok(cdpFindings(axCode, axPath)[0].reviewed);
+      assert.ok(cdpFindings(axCode, 'background/service-worker.js')[0].reviewed);
+      assert.equal(cdpFindings(axCode, 'unrelated.js')[0].reviewed, undefined);
+      const mutatedAxCode = axCode.replace("this.matches(':disabled')", "this.matches(pageControlledSelector)");
+      assert.notEqual(mutatedAxCode, axCode);
+      assert.equal(cdpFindings(mutatedAxCode, axPath)[0].reviewed, undefined);
+      assert.equal(cdpFindings(`${axCode}\nsend('Runtime.callFunctionOn', { functionDeclaration: remoteCode });`, axPath).filter(item => !item.reviewed).length, 1);
+    }
+  }
+} finally { await rm(buildRoot, { recursive: true, force: true }); }
 
 // Real rejected upstream inputs, including the worker's unrelated local numeric GT binding.
 for (const file of ["pdf.mjs", "pdf.worker.mjs"]) {

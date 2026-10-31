@@ -76,7 +76,10 @@ exemptions. Whitespace/comments and esbuild's numeric name suffixes do not alter
 Changes to a reviewed function require a new review and fingerprint. Three CDP functions
 (`createScriptTools`, `invokeBound`, and page-mode `apply`) have separate bundled and unbundled
 fingerprints: only esbuild's shorthand-property expansion after renaming differs between the forms.
-This is a source-change gate, not a whole-program data-flow proof.
+This is a source-change gate, not a whole-program data-flow proof. Regression tests audit real
+production builds (unbundled Chrome, bundled Chrome and Firefox) in temporary directories, then
+mutate those artifacts to verify identity-source, extra-sink and output-path rejection. Standalone
+TypeScript transforms do not substitute for the production pipeline when reviewing fingerprints.
 
 | Sink | Reason |
 | --- | --- |

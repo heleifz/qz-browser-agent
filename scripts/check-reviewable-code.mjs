@@ -55,7 +55,7 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function.",
   }],
-  ["cdp-execution:a3407c544c5e12a4424f42929f6e016b6c605e03b63aec8e81c6b0d7231791da", {
+  ["cdp-execution:e2f317664c8f22585c687339240b5fa6400b1515ae838e69259566344c16a2d3", {
     files: /^capabilities\/script\/tools\.js$/u,
     reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion.",
   }],
