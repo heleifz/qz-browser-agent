@@ -50,26 +50,23 @@ export async function ensurePageSurface(tabId: number, send: Send, { frameId = "
   }
 }
 
-interface ReceiptOp {
-  n: number; expiresAt: number; timer: number; key: string; observeSubmission: boolean;
-  field?: { value?: unknown } | null; value?: string;
-}
+interface ReceiptOp { n: number; expiresAt: number; timer: number; observeSubmission: boolean }
 interface ReceiptBook { ops: Record<string, ReceiptOp> }
 interface ArmedFrame { frameId: number; documentId: string }
 interface ReceiptFrame { frameId: number; documentId: string; result: unknown }
 
 // The previous extension stored `__qzInputReceiptBound` and its own listeners.
 // Reusing that flag skips installation, so every later count stays at zero.
-const armedReceipts = new Map<string, { frames: ArmedFrame[]; key: string }>();
+const armedReceipts = new Map<string, ArmedFrame[]>();
 
 /** Arm one operation in every frame. An empty id means the page could not be armed. */
-export async function armPageInputReceipt(tabId: number, key = "", { observeSubmission = false } = {}) {
+export async function armPageInputReceipt(tabId: number, { observeSubmission = false } = {}) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  const frames = await receiptFrames(tabId, id, true, key, observeSubmission);
+  const frames = await receiptFrames(tabId, id, true, observeSubmission);
   const armed = frames.filter(frame => Number.isInteger(frame.frameId) && frame.frameId >= 0
     && typeof frame.result === "number" && Number.isFinite(frame.result));
   if (!armed.length) return "";
-  armedReceipts.set(id, { key, frames: armed.map(frame => ({ frameId: frame.frameId, documentId: frame.documentId })) });
+  armedReceipts.set(id, armed.map(frame => ({ frameId: frame.frameId, documentId: frame.documentId })));
   return id;
 }
 
@@ -77,12 +74,9 @@ export async function armPageInputReceipt(tabId: number, key = "", { observeSubm
 export async function readPageInputReceipt(tabId: number, receiptId = "") {
   if (!receiptId) return null;
   const expected = armedReceipts.get(receiptId);
-  if (!expected?.frames.length) return null;
+  if (!expected?.length) return null;
   try {
-    const count = aggregateReceipts(expected.frames, await receiptFrames(tabId, receiptId, false));
-    // Earlier page capture listeners can hide keydown without cancelling its default
-    // action. Zero alone cannot distinguish that from genuinely undelivered input.
-    return expected.key && count === 0 ? null : count;
+    return aggregateReceipts(expected, await receiptFrames(tabId, receiptId, false));
   } finally {
     armedReceipts.delete(receiptId);
   }
@@ -131,23 +125,22 @@ function receiptWorld(): "MAIN" | "ISOLATED" {
   }
 }
 
-async function receiptFrames(tabId: number, receiptId: string, arm: boolean, key = "", observeSubmission = false): Promise<ReceiptFrame[]> {
+async function receiptFrames(tabId: number, receiptId: string, arm: boolean, observeSubmission = false): Promise<ReceiptFrame[]> {
   return probe(async () => {
     const world = receiptWorld();
     const details = {
       target: { tabId, allFrames: true },
       world,
       injectImmediately: true,
-      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS, world === "ISOLATED", key, observeSubmission] as [string, boolean, number, boolean, string, boolean],
-      func: (opId: string, shouldArm: boolean, armDeadline: number, acceptExtensionEvents = false, expectedKey = "", watchSubmission = false) => {
+      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS, world === "ISOLATED", observeSubmission] as [string, boolean, number, boolean, boolean],
+      func: (opId: string, shouldArm: boolean, armDeadline: number, acceptExtensionEvents = false, watchSubmission = false) => {
         const root = globalThis as unknown as {
-          addEventListener: (type: string, listener: (event: { isTrusted: boolean; type?: string; key?: string }) => void, capture: boolean) => void;
+          addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
           document: {
             defaultView: {
               setTimeout: (callback: () => void, delay: number) => number;
               clearTimeout: (timer: number) => void;
             } | null;
-            activeElement?: { value?: unknown } | null;
             __qzInputReceiptsV4Bound?: boolean;
             __qzInputReceiptsV4?: ReceiptBook;
           };
@@ -161,8 +154,7 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean, key
           const op = book?.[opId];
           // This document never armed the operation. Navigation is not a missed click.
           if (!book || !op || typeof op.n !== "number") return null;
-          const changed = op.key && typeof op.value === "string" && typeof op.field?.value === "string" && op.field.value !== op.value;
-          const count = op.expiresAt <= Date.now() ? null : op.n + (changed ? 1 : 0);
+          const count = op.expiresAt <= Date.now() ? null : op.n;
           doc.defaultView.clearTimeout(op.timer);
           delete book[opId];
           return count;
@@ -173,7 +165,7 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean, key
           doc.__qzInputReceiptsV4Bound = true;
           const pointers = ["pointerdown", "mousedown", "touchstart", "click"];
           const submissions = ["submit", "beforeunload", "pagehide"];
-          const count = (event: { isTrusted: boolean; key?: string }, type: string) => {
+          const count = (event: { isTrusted: boolean }, type: string) => {
             if (!event.isTrusted) {
               if (!acceptExtensionEvents) return;
               const marked = (globalThis as { __qzExtensionInputEvents?: { has?(value: object): boolean } }).__qzExtensionInputEvents;
@@ -182,22 +174,17 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean, key
             const open = ops();
             if (!open) return;
             for (const op of Object.values(open)) {
-              if (op && typeof op.n === "number" && (op.key
-                ? (type === "keydown" && event.key === op.key) || submissions.includes(type) || type === "input" || type === "change"
-                : pointers.includes(type) || (op.observeSubmission && submissions.includes(type)))) op.n += 1;
+              if (op && typeof op.n === "number"
+                && (pointers.includes(type) || (op.observeSubmission && submissions.includes(type)))) op.n += 1;
             }
           };
           // pointerdown preventDefault suppresses mousedown; the click still runs.
-          for (const type of [...pointers, ...submissions, "keydown", "input", "change"]) root.addEventListener(type, event => count(event, type), true);
+          for (const type of [...pointers, ...submissions]) root.addEventListener(type, event => count(event, type), true);
         }
         const book = doc.__qzInputReceiptsV4 || (doc.__qzInputReceiptsV4 = { ops: {} });
-        const field = expectedKey ? doc.activeElement : null;
         // A timed-out arm has no receipt id to read back. Expire it in the page.
         book.ops[opId] = {
-          key: expectedKey,
           observeSubmission: watchSubmission,
-          field,
-          value: typeof field?.value === "string" ? field.value : undefined,
           n: 0,
           expiresAt: Date.now() + 30000,
           timer: doc.defaultView.setTimeout(() => { delete book.ops[opId]; }, 30000),

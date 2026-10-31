@@ -114,56 +114,12 @@ test("an old receipt flag does not block the versioned listener", async () => {
   }
 });
 
-test('keyboard receipts ignore clicks, other keys and untrusted events', async () => {
-  runInPage = ({ func, args }) => func(...args);
-  try {
-    const page = installPage();
-    page.document.__qzInputReceiptsV3Bound = true;
-    page.document.__qzInputReceiptsV3 = { ops: {} };
-    const missed = await armPageInputReceipt(7, 'Enter');
-    const click = page.listeners.find(item => item.type === 'click').listener;
-    const keydown = page.listeners.find(item => item.type === 'keydown').listener;
-    click({ type: 'click', isTrusted: true });
-    keydown({ type: 'keydown', key: 'Escape', isTrusted: true });
-    keydown({ type: 'keydown', key: 'Enter', isTrusted: false });
-    assert.equal(await readPageInputReceipt(7, missed), null, 'a swallowed key event cannot prove non-delivery');
-    const delivered = await armPageInputReceipt(7, 'Enter');
-    const pointer = await armPageInputReceipt(7);
-    keydown({ type: 'keydown', key: 'Enter', isTrusted: true });
-    assert.equal(await readPageInputReceipt(7, delivered), 1);
-    assert.equal(await readPageInputReceipt(7, pointer), 0);
-    assert.equal(page.timers.size, 0);
-  } finally {
-    runInPage = null;
-    delete globalThis.document;
-    delete globalThis.addEventListener;
-  }
-});
-
-for (const type of ['submit', 'input', 'change', 'beforeunload', 'pagehide']) {
-  test(`a trusted ${type} is positive Enter delivery evidence`, async () => {
-    runInPage = ({ func, args }) => func(...args);
-    try {
-      const page = installPage();
-      const id = await armPageInputReceipt(7, 'Enter');
-      const listener = page.listeners.find(item => item.type === type);
-      assert.ok(listener, `${type} receipt listener`);
-      listener.listener({ type, isTrusted: true });
-      assert.ok(await readPageInputReceipt(7, id) > 0);
-    } finally {
-      runInPage = null;
-      delete globalThis.document;
-      delete globalThis.addEventListener;
-    }
-  });
-}
-
 for (const type of ['submit', 'beforeunload', 'pagehide']) {
   for (const observeSubmission of [false, true]) test(`pointer ${type} evidence is opt-in (${observeSubmission})`, async () => {
     runInPage = ({ func, args }) => func(...args);
     try {
       const page = installPage();
-      const id = await armPageInputReceipt(7, '', { observeSubmission });
+      const id = await armPageInputReceipt(7, { observeSubmission });
       const listener = page.listeners.find(item => item.type === type);
       assert.ok(listener, `${type} receipt listener`);
       listener.listener({ type, isTrusted: true });
@@ -176,18 +132,15 @@ for (const type of ['submit', 'beforeunload', 'pagehide']) {
   });
 }
 
-test('only changes to the field after arming count as positive keyboard evidence', async () => {
+test('field changes cannot confirm a click and need no keyboard listeners', async () => {
   runInPage = ({ func, args }) => func(...args);
   try {
     const page = installPage();
     const field = { value: 'already filled' };
     page.document.activeElement = field;
-    const unchanged = await armPageInputReceipt(7, 'Enter');
-    assert.equal(await readPageInputReceipt(7, unchanged), null);
-    const key = await armPageInputReceipt(7, 'Enter');
-    const pointer = await armPageInputReceipt(7, '', { observeSubmission: true });
+    const pointer = await armPageInputReceipt(7, { observeSubmission: true });
     field.value = 'changed by Enter';
-    assert.ok(await readPageInputReceipt(7, key) > 0);
+    assert.equal(page.listeners.some(({ type }) => ['keydown', 'input', 'change'].includes(type)), false);
     assert.equal(await readPageInputReceipt(7, pointer), 0, 'value changes must not invent a delivered click');
     assert.equal(page.timers.size, 0);
   } finally {
@@ -201,8 +154,8 @@ test('untrusted submit and lifecycle events cannot confirm delivery', async () =
   runInPage = ({ func, args }) => func(...args);
   try {
     const page = installPage();
-    const id = await armPageInputReceipt(7, '', { observeSubmission: true });
-    for (const type of ['submit', 'input', 'change', 'beforeunload', 'pagehide']) {
+    const id = await armPageInputReceipt(7, { observeSubmission: true });
+    for (const type of ['submit', 'beforeunload', 'pagehide']) {
       const listener = page.listeners.find(item => item.type === type);
       assert.ok(listener);
       listener.listener({ type, isTrusted: false });

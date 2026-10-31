@@ -422,16 +422,16 @@ for (const navigated of [false, true]) test(`zero click receipts wait for naviga
   assertNoReplay(f);
 });
 
-for (const action of ['click', 'fill']) test(`${action} cancellation during final receipt read rejects success without replay`, async t => {
+test('click cancellation during final receipt read rejects success without replay', async t => {
   const f = fixture(), execute = chrome.scripting.executeScript;
   t.mock.method(chrome.scripting, 'executeScript', async options => {
     if (options.args?.[1] === false) f.controller.abort();
     return execute(options);
   });
-  await assert.rejects(f.call({ action, value: 'one', submit: true }), { code: 'OPERATION_ABORTED' });
+  await assert.rejects(f.call({ action: 'click' }), { code: 'OPERATION_ABORTED' });
   assert.equal(f.receipts.size, 0);
   assert.equal(navigationListeners.size, 0);
-  assert.equal(f.commands.filter(command => command.params.type === (action === 'fill' ? 'keyDown' : 'mouseReleased')).length, 1);
+  assert.equal(f.commands.filter(command => command.params.type === 'mouseReleased').length, 1);
   assertNoReplay(f);
 });
 
@@ -515,18 +515,6 @@ for (const outcome of ["success", "error reply", "throw", "cancel", "observation
   });
 }
 
-for (const receiptCount of [0, 1, null]) test(`fill submit reports Enter delivery (receipt=${receiptCount})`, async () => {
-  const f = fixture({ receiptCount });
-  const result = await f.call({ action: 'fill', value: '灵隐寺', submit: true });
-  assert.equal(result.filled, true);
-  assert.equal(result.submitDispatched, true, 'zero key receipts remain unconfirmed, not explicitly undelivered');
-  assert.notEqual(result.code, 'INPUT_NOT_DELIVERED');
-  assert.equal(result.navigated, false);
-  assert.equal(f.commands.filter(command => command.method === 'Input.dispatchKeyEvent'
-    && command.params.key === 'Enter' && command.params.type === 'keyDown').length, 1);
-  assert.equal(f.receipts.size, 0);
-});
-
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();
   f.onCommand(method => { if (method === "Input.insertText") throw new Error("lost insert response"); });
@@ -595,9 +583,14 @@ for (const failure of ["cancel", "lost response", "replacement loop"]) test(`fil
   assertNoReplay(f);
 });
 
-for (const submit of [false, true]) test(`ordinary fill keeps its result and single native insertion (submit=${submit})`, async () => {
+for (const submit of [false, true]) test(`ordinary fill keeps its result without input receipts (submit=${submit})`, async t => {
   const f = fixture();
+  const injections = t.mock.method(chrome.scripting, 'executeScript');
   const result = await f.call({ action: "fill", value: "new", submit });
+  assert.equal(result.code, undefined);
+  if (submit) assert.equal(result.navigated, false);
+  assert.equal(injections.mock.calls.some(call => call.arguments[0].target?.allFrames), false);
+  assert.equal(f.commands.filter(command => command.params.key === 'Enter' && command.params.type === 'keyDown').length, Number(submit));
   assert.equal(result.filled, true);
   assert.equal(result.submitDispatched, submit);
   assert.equal(result.value, "new");

@@ -216,7 +216,7 @@ for (const action of ['fill', 'press']) {
     await pending;
     assert.deepEqual(f.keys, ['keyDown']);
   });
-  for (const fault of ['receipt', 'observation', 'release']) test(`Firefox ${action}: ${fault} failure after input keeps navigation results`, async t => {
+  for (const fault of ['observation', action === 'fill' ? 'release' : 'receipt']) test(`Firefox ${action}: ${fault} failure after input keeps navigation results`, async t => {
     const f = fixture(t, { fault });
     assert.equal((await f.call(action)).navigated, true);
     assert.equal(f.submissions.length, 1);

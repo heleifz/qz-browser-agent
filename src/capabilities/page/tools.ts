@@ -547,7 +547,7 @@ registerTool({
           const dispatchSend = remoteSend || send;
           const dispatchPoint = remoteSend && localPoint ? localPoint : point;
           touchInput = getPageContext(tabId).pageMode === "mobile";
-          receiptId = await armPageInputReceipt(tabId, "", { observeSubmission: true });
+          receiptId = await armPageInputReceipt(tabId, { observeSubmission: true });
           observation = await beginPageNavigationObservation(tabId, _signal);
           if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
           dispatched = true;
@@ -702,7 +702,6 @@ registerTool({
           filled: false, value: actual.value, submitDispatched: false, element: actual });
         if (!valueMatches()) return valueMismatch();
         const observation = submit ? await beginPageNavigationObservation(tabId, _signal) : null;
-        let receiptId = "";
         try {
           if (submit) {
             // Observer setup is asynchronous too. Revalidate identity, value and focus afterwards.
@@ -715,25 +714,17 @@ registerTool({
             if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
               filled: true, value: actual.value, submitDispatched: false, element: actual };
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
-            receiptId = await armPageInputReceipt(tabId, "Enter");
             await inputKeyboard.press(tabId, "Enter", context);
             assertActive();
           }
           const navigation = pageBefore && guardrails && observation
             ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;
-          const delivered = await inputWasDelivered(tabId, receiptId);
-          receiptId = "";
           assertActive();
-          if (!delivered && navigation?.pageDelta.navigated !== true) return { ...inputNotDelivered(identity), filled: true, value: actual.value,
-            submitDispatched: false, clickDispatched: false, element: actual };
           return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
             method: textInput ? "cdp" : "content", element: actual,
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
-        } finally {
-          observation?.dispose();
-          if (receiptId) await readPageInputReceipt(tabId, receiptId);
-        }
+        } finally { observation?.dispose(); }
       }).finally(async () => {
         _signal?.removeEventListener("abort", revokeFill);
         if (_signal?.aborted) { revokeFill(); return; }
