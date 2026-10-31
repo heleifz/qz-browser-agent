@@ -214,7 +214,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const siblings = all.filter(item => item.parentFrameId === frame.parentFrameId).sort((left, right) => left.frameId - right.frameId);
     const index = siblings.findIndex(item => item.frameId === frame.frameId);
     const at = index >= 0 ? listed[index] : undefined;
-    const match = listed.find(item => item.childUrl && item.childUrl === frame.url)
+    const match = preferOwner(listed.filter(item => item.childUrl && item.childUrl === frame.url), at)
       || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
       || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
       || at;

@@ -9,6 +9,9 @@ import { buildExtension } from '../../scripts/build-extension.mjs';
 import { auditReviewableCode } from '../../scripts/check-reviewable-code.mjs';
 
 let browser, directory, firefoxPageCommand, installFirefoxDebugger, outputDir;
+let registerAccessibilityTools, ToolExecutionError;
+const debuggerListeners = { event: [], detach: [] };
+let nextTabId = 50;
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'qz-firefox-input-'));
   // Keep generated JS in ESM scope so tsx cannot add helpers that break page serialization.
@@ -16,6 +19,19 @@ before(async () => {
   ({ outputDir } = await buildExtension({ browser: 'firefox', mode: 'production', outputDir: join(directory, 'extension') }));
   ({ firefoxPageCommand } = await import(pathToFileURL(join(outputDir, 'background/firefox/page-command.js'))));
   ({ installFirefoxDebugger } = await import(pathToFileURL(join(outputDir, 'background/firefox/debugger-host.js'))));
+  // The production AX grafting module subscribes to debugger events at import time.
+  const previousChrome = globalThis.chrome;
+  try {
+    globalThis.chrome = { debugger: {
+      onEvent: { addListener(listener) { debuggerListeners.event.push(listener); } },
+      onDetach: { addListener(listener) { debuggerListeners.detach.push(listener); } },
+    } };
+    ({ registerAccessibilityTools } = await import('../../src/capabilities/accessibility/tools.js'));
+    ({ ToolExecutionError } = await import('../../src/background/tools/arguments.js'));
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
   browser = await chromium.launch({ headless: true });
 });
 after(async () => { await browser?.close(); await rm(directory, { recursive: true, force: true }); });
@@ -109,6 +125,153 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
   assert.ok(events.some(event => event.method === 'Runtime.executionContextDestroyed' && event.source.sessionId === session));
   await send('Runtime.releaseObjectGroup', { objectGroup: 'test' }, session);
   await api.debugger.detach({ tabId: 5 });
+});
+
+async function duplicateFrameFixture(t, kind, unrelatedFirst = false) {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  const base = 'http://127.0.0.1:43911';
+  const childHtml = '<!doctype html><button>Inner</button>';
+  const source = kind === 'srcdoc' ? `srcdoc="${childHtml}"` : `src="${kind === 'blank' ? 'about:blank' : '/inner'}"`;
+  const html = `<!doctype html><title>Outer</title>
+    <style>iframe { display:block; width:300px; height:120px; margin:20px; border:3px solid; padding:0; }</style>
+    ${unrelatedFirst ? '<iframe id=other name=other src="/other"></iframe>' : ''}
+    <iframe id=first name=first aria-label="First frame" ${source}></iframe>
+    <iframe id=second name=second aria-label="Second frame" ${source}></iframe>`;
+  await page.route(`${base}/**`, route => route.fulfill({
+    contentType: 'text/html', body: new URL(route.request().url()).pathname === '/outer' ? html : childHtml,
+  }));
+  await page.goto(`${base}/outer`);
+  const children = ['first', 'second'].map(name => page.frames().find(frame => frame.name() === name));
+  const expectedUrl = kind === 'srcdoc' ? 'about:srcdoc' : kind === 'blank' ? 'about:blank' : `${base}/inner`;
+  for (const [index, frame] of children.entries()) {
+    // Write inside the child: document.open() from the parent can copy its URL.
+    if (kind === 'blank') await frame.evaluate(content => {
+      document.open();
+      document.write(content);
+      document.close();
+    }, childHtml);
+    await frame.waitForSelector('button');
+    assert.equal(frame.url(), expectedUrl);
+    assert.equal(await frame.evaluate(() => location.href), expectedUrl);
+    await frame.evaluate(label => {
+      document.title = `${label} document`;
+      const button = document.querySelector('button');
+      button.id = `${label.toLowerCase()}-button`;
+      button.textContent = `${label} button`;
+    }, index ? 'Second' : 'First');
+  }
+  const frames = new Map([[0, page.mainFrame()], [7, children[0]], [8, children[1]]]);
+  if (unrelatedFirst) frames.set(9, page.frames().find(frame => frame.name() === 'other'));
+  for (const frame of frames.values()) await frame.evaluate(() => {
+    window.clicks = [];
+    document.addEventListener('click', event => clicks.push(event.target.id));
+  });
+  const tabId = nextTabId++;
+  const api = {
+    runtime: { id: 'duplicate-frame-test', onMessage: { addListener() {} } },
+    tabs: { async get() { return { url: page.url() }; } },
+    webNavigation: {
+      onCommitted: { addListener() {} },
+      async getAllFrames() { return [...frames].map(([frameId, frame]) => ({
+        frameId, parentFrameId: frameId ? 0 : -1, url: frame.url(),
+      })); },
+    },
+    scripting: { async executeScript({ target, func, args }) {
+      if (func.name !== 'firefoxPageCommand') return [{ result: undefined }];
+      const result = await frames.get(target.frameIds[0]).evaluate(async ({ source, args }) => {
+        const command = (0, eval)(`(${source})`);
+        return command(...args);
+      }, { source: func.toString(), args });
+      return [{ result }];
+    } },
+  };
+  installFirefoxDebugger(api);
+  api.debugger.onEvent.addListener((...args) => {
+    for (const listener of debuggerListeners.event) listener(...args);
+  });
+  await api.debugger.attach({ tabId });
+  t.after(async () => {
+    for (const listener of debuggerListeners.detach) listener({ tabId });
+    await api.debugger.detach({ tabId });
+  });
+  const send = (method, params = {}, sessionId) => api.debugger.sendCommand({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params);
+  send.tabId = tabId;
+  send.connectionId = 1;
+  send.inSession = sessionId => (method, params) => send(method, params, sessionId);
+  const { root } = await send('DOM.getDocument');
+  const backendIds = async selector => {
+    const { nodeIds } = await send('DOM.querySelectorAll', { nodeId: root.nodeId, selector });
+    return Promise.all(nodeIds.map(async nodeId => (await send('DOM.describeNode', { nodeId })).node.backendNodeId));
+  };
+  const expectedOwners = await backendIds('#first,#second');
+  assert.equal(expectedOwners.length, 2);
+  assert.ok(expectedOwners.every(id => id > 0));
+  assert.notEqual(expectedOwners[0], expectedOwners[1]);
+  return { page, children, send, tabId, expectedOwners, backendIds };
+}
+
+for (const kind of ['srcdoc', 'blank', 'same-src']) test(`Firefox duplicate iframe URLs: ${kind}`, async t => {
+  const { page, children, send, tabId, expectedOwners } = await duplicateFrameFixture(t, kind);
+  // Separate checks retain evidence for reading and input even when ownership fails.
+  await t.test('getFrameOwner identifies each iframe element', async () => {
+    const owners = await Promise.all([7, 8].map(async frameId => (await send('DOM.getFrameOwner', { frameId: String(frameId) })).backendNodeId));
+    assert.deepEqual(owners, expectedOwners);
+  });
+  await t.test('AX sessions graft under their corresponding iframe', async () => {
+    const outer = await send('Accessibility.getFullAXTree');
+    assert.deepEqual(outer.nodes.filter(node => node.role?.value === 'Iframe').map(node => node.backendDOMNodeId), expectedOwners);
+    assert.equal(outer.nodes.some(node => node.role?.value === 'button'), false);
+    const childButtons = [];
+    for (const [index, frameId] of [7, 8].entries()) {
+      const tree = await send('Accessibility.getFullAXTree', {}, `ff-${tabId}-${frameId}`);
+      const buttons = tree.nodes.filter(node => node.role?.value === 'button');
+      assert.deepEqual(buttons.map(node => node.name.value), [index ? 'Second button' : 'First button']);
+      childButtons.push(buttons[0].backendDOMNodeId);
+    }
+    let definition;
+    const refs = [];
+    registerAccessibilityTools({
+      registerTool: value => { definition = value; }, ToolExecutionError,
+      clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
+      makeSnapshotId: () => 'snapshot', elementTargetForUid: uid => `uid:${uid}`,
+      registerElementRef: ref => refs.push(ref),
+      sendToContent: async () => ({ title: 'Outer', url: page.url(), actions: [] }),
+      withDebugger: async (_id, run) => run({}, send), elementTargetGrammar: 'target grammar',
+    });
+    const result = await definition.execute({ tabId, scope: 'full' }, undefined, { sessionId: 'owner' });
+    assert.equal(result.snapshot.replace(/target=uid:\S+ /g, ''), [
+      'RootWebArea "Outer"',
+      ' Iframe "First frame"',
+      '  RootWebArea "First document"',
+      '   button "First button"',
+      ' Iframe "Second frame"',
+      '  RootWebArea "Second document"',
+      '   button "Second button"',
+    ].join('\n'));
+    assert.deepEqual(refs.filter(ref => ref.role === 'button').map(ref => ({ frameId: ref.frameId, backendNodeId: ref.backendNodeId })),
+      childButtons.map((backendNodeId, index) => ({ frameId: String(index + 7), backendNodeId })));
+  });
+  await t.test('root-coordinate click reaches only the second frame', async () => {
+    const point = await page.evaluate(() => {
+      const frame = document.querySelector('#second'), outer = frame.getBoundingClientRect();
+      const inner = frame.contentDocument.querySelector('button').getBoundingClientRect();
+      return { x: outer.x + frame.clientLeft + inner.x + inner.width / 2, y: outer.y + frame.clientTop + inner.y + inner.height / 2 };
+    });
+    for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, ...point, button: 'left', clickCount: 1 });
+    assert.deepEqual(await children[0].evaluate(() => clicks), []);
+    assert.deepEqual(await children[1].evaluate(() => clicks), ['second-button']);
+    assert.deepEqual(await page.evaluate(() => clicks), []);
+  });
+});
+
+test('Firefox frame owner URL matches outrank an unrelated sibling position', async t => {
+  // Frame IDs can follow creation order while the DOM order differs. A conflicting
+  // sibling position must not override either a unique match or the matching set.
+  const { send, expectedOwners, backendIds } = await duplicateFrameFixture(t, 'srcdoc', true);
+  const [other] = await backendIds('#other');
+  assert.equal((await send('DOM.getFrameOwner', { frameId: '7' })).backendNodeId, expectedOwners[0]);
+  assert.equal((await send('DOM.getFrameOwner', { frameId: '9' })).backendNodeId, other);
 });
 
 const cases = [
