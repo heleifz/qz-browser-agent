@@ -634,6 +634,9 @@ registerTool({
       _signal?.addEventListener("abort", revokeFill, { once: true });
       return runPageDebuggerValue({ withDebugger, withPageDialogGuard, attachPageDialogResults }, tabId, context, async (send): Promise<Record<string, unknown>> => {
         assertActive();
+        // Hidden Chrome tabs may accept insertText without a composited keyboard
+        // input surface. Prepare it without activating the tab or clicking the field.
+        if (submit) await ensurePageSurface(tabId, send, { frameId });
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value,
           ...(submit ? { submit, fillToken } : {}) }, bound, context);
         assertActive();
@@ -705,8 +708,14 @@ registerTool({
             if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
               filled: true, value: actual.value, submitDispatched: false, element: actual };
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
-            await inputKeyboard.press(tabId, "Enter", context);
+            const receiptId = await armPageInputReceipt(tabId, "Enter");
+            let delivered = false;
+            try {
+              await inputKeyboard.press(tabId, "Enter", context);
+            } finally { delivered = await inputWasDelivered(tabId, receiptId); }
             assertActive();
+            if (!delivered) return { ...inputNotDelivered(identity), filled: true, value: actual.value,
+              submitDispatched: false, clickDispatched: false, element: actual };
           }
           const navigation = pageBefore && guardrails && observation
             ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;

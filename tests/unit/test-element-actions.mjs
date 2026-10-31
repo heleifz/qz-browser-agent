@@ -12,14 +12,14 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false, dialogs = [], observedNavigation = null, attached = true } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, dialogs = [], observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
     if (!args) return [{ frameId: 0, documentId: "fixture", result: { width: 800, height: 600 } }];
     const [id, arm] = args;
     if (arm) receipts.add(id); else receipts.delete(id);
-    return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : 1 }];
+    return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : receiptCount }];
   } };
   const state = { value: "old", checked };
   let execute, guardActive = false, onCommand = async () => {}, onContent = async () => {};
@@ -462,6 +462,20 @@ for (const outcome of ["success", "error reply", "throw", "cancel", "observation
     assert.equal(f.receipts.size, 0);
   });
 }
+
+for (const receiptCount of [0, 1, null]) test(`fill submit reports Enter delivery (receipt=${receiptCount})`, async () => {
+  const f = fixture({ receiptCount });
+  const result = await f.call({ action: 'fill', value: '灵隐寺', submit: true });
+  assert.equal(result.filled, true);
+  assert.equal(result.submitDispatched, receiptCount !== 0);
+  if (receiptCount === 0) {
+    assert.equal(result.code, 'INPUT_NOT_DELIVERED');
+    assert.equal(result.inputDelivered, false);
+  }
+  assert.equal(f.commands.filter(command => command.method === 'Input.dispatchKeyEvent'
+    && command.params.key === 'Enter' && command.params.type === 'keyDown').length, 1);
+  assert.equal(f.receipts.size, 0);
+});
 
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();

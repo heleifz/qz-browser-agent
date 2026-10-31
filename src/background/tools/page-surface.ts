@@ -50,7 +50,7 @@ export async function ensurePageSurface(tabId: number, send: Send, { frameId = "
   }
 }
 
-interface ReceiptOp { n: number; expiresAt: number; timer: number }
+interface ReceiptOp { n: number; expiresAt: number; timer: number; key: string }
 interface ReceiptBook { ops: Record<string, ReceiptOp> }
 interface ArmedFrame { frameId: number; documentId: string }
 interface ReceiptFrame { frameId: number; documentId: string; result: unknown }
@@ -60,9 +60,9 @@ interface ReceiptFrame { frameId: number; documentId: string; result: unknown }
 const armedFrames = new Map<string, ArmedFrame[]>();
 
 /** Arm one operation in every frame. An empty id means the page could not be armed. */
-export async function armPageInputReceipt(tabId: number) {
+export async function armPageInputReceipt(tabId: number, key = "") {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  const frames = await receiptFrames(tabId, id, true);
+  const frames = await receiptFrames(tabId, id, true, key);
   const armed = frames.filter(frame => Number.isInteger(frame.frameId) && frame.frameId >= 0
     && typeof frame.result === "number" && Number.isFinite(frame.result));
   if (!armed.length) return "";
@@ -125,30 +125,30 @@ function receiptWorld(): "MAIN" | "ISOLATED" {
   }
 }
 
-async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Promise<ReceiptFrame[]> {
+async function receiptFrames(tabId: number, receiptId: string, arm: boolean, key = ""): Promise<ReceiptFrame[]> {
   return probe(async () => {
     const world = receiptWorld();
     const details = {
       target: { tabId, allFrames: true },
       world,
       injectImmediately: true,
-      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS, world === "ISOLATED"] as [string, boolean, number, boolean],
-      func: (opId: string, shouldArm: boolean, armDeadline: number, acceptExtensionEvents = false) => {
+      args: [receiptId, arm, Date.now() + PROBE_TIMEOUT_MS, world === "ISOLATED", key] as [string, boolean, number, boolean, string],
+      func: (opId: string, shouldArm: boolean, armDeadline: number, acceptExtensionEvents = false, expectedKey = "") => {
         const root = globalThis as unknown as {
-          addEventListener: (type: string, listener: (event: { isTrusted: boolean }) => void, capture: boolean) => void;
+          addEventListener: (type: string, listener: (event: { isTrusted: boolean; type?: string; key?: string }) => void, capture: boolean) => void;
           document: {
             defaultView: {
               setTimeout: (callback: () => void, delay: number) => number;
               clearTimeout: (timer: number) => void;
             } | null;
-            __qzInputReceiptsV2Bound?: boolean;
-            __qzInputReceiptsV2?: ReceiptBook;
+            __qzInputReceiptsV3Bound?: boolean;
+            __qzInputReceiptsV3?: ReceiptBook;
           };
           __qzExtensionInputEvents?: { has?(value: object): boolean };
         };
         const doc = root.document;
         if (!doc?.defaultView) return null;
-        const ops = () => doc.__qzInputReceiptsV2?.ops;
+        const ops = () => doc.__qzInputReceiptsV3?.ops;
         if (!shouldArm) {
           const book = ops();
           const op = book?.[opId];
@@ -161,9 +161,9 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
         }
         // executeScript can finish after the caller timed out or navigated away.
         if (Date.now() >= armDeadline) return null;
-        if (!doc.__qzInputReceiptsV2Bound) {
-          doc.__qzInputReceiptsV2Bound = true;
-          const count = (event: { isTrusted: boolean }) => {
+        if (!doc.__qzInputReceiptsV3Bound) {
+          doc.__qzInputReceiptsV3Bound = true;
+          const count = (event: { isTrusted: boolean; type?: string; key?: string }) => {
             if (!event.isTrusted) {
               if (!acceptExtensionEvents) return;
               const marked = (globalThis as { __qzExtensionInputEvents?: { has?(value: object): boolean } }).__qzExtensionInputEvents;
@@ -172,15 +172,17 @@ async function receiptFrames(tabId: number, receiptId: string, arm: boolean): Pr
             const open = ops();
             if (!open) return;
             for (const op of Object.values(open)) {
-              if (op && typeof op.n === "number") op.n += 1;
+              if (op && typeof op.n === "number"
+                && (op.key ? event.type === "keydown" && event.key === op.key : event.type !== "keydown")) op.n += 1;
             }
           };
           // pointerdown preventDefault suppresses mousedown; the click still runs.
-          for (const type of ["pointerdown", "mousedown", "touchstart", "click"]) root.addEventListener(type, count, true);
+          for (const type of ["pointerdown", "mousedown", "touchstart", "click", "keydown"]) root.addEventListener(type, count, true);
         }
-        const book = doc.__qzInputReceiptsV2 || (doc.__qzInputReceiptsV2 = { ops: {} });
+        const book = doc.__qzInputReceiptsV3 || (doc.__qzInputReceiptsV3 = { ops: {} });
         // A timed-out arm has no receipt id to read back. Expire it in the page.
         book.ops[opId] = {
+          key: expectedKey,
           n: 0,
           expiresAt: Date.now() + 30000,
           timer: doc.defaultView.setTimeout(() => { delete book.ops[opId]; }, 30000),
