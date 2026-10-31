@@ -212,13 +212,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const owners = fields(await run(tabId, frame.parentFrameId, { op: "owners" }));
     const listed = arrayValue(owners.frames).map(fields);
     const siblings = all.filter(item => item.parentFrameId === frame.parentFrameId).sort((left, right) => left.frameId - right.frameId);
-    const index = siblings.findIndex(item => item.frameId === frame.frameId);
-    const at = index >= 0 ? listed[index] : undefined;
-    const match = preferOwner(listed.filter(item => item.childUrl && item.childUrl === frame.url), at)
-      || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
-      || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
-      || at;
-    return { backendNodeId: numberValue(match?.backendNodeId) };
+    return { backendNodeId: frameOwnerNodeId(frame, siblings, listed) };
   }
 
   async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false) {
@@ -230,11 +224,13 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       visited.add(frameId);
       const hit = fields(await run(tabId, frameId, { op: "inputFrame", x, y, active }));
       if (!hit.backendNodeId) break;
-      let child: FrameInfo | undefined;
-      for (const candidate of frames.filter(frame => frame.parentFrameId === frameId)) {
-        const owner = await frameOwner(tabId, String(candidate.frameId));
-        if (owner.backendNodeId === hit.backendNodeId) { child = candidate; break; }
-      }
+      const candidates = frames.filter(frame => frame.parentFrameId === frameId);
+      if (!candidates.length) break;
+      // Reuse this dispatch's frame snapshot and one owner list per visited parent.
+      const owners = fields(await run(tabId, frameId, { op: "owners" }));
+      const listed = arrayValue(owners.frames).map(fields);
+      const siblings = [...candidates].sort((left, right) => left.frameId - right.frameId);
+      const child = candidates.find(candidate => frameOwnerNodeId(candidate, siblings, listed) === hit.backendNodeId);
       if (!child) break;
       frameId = child.frameId;
       x = numberValue(hit.x);
@@ -589,6 +585,17 @@ function stackFrame(stack: unknown) {
   const chrome = /at (.*?) \((.*?):(\d+):(\d+)\)/.exec(line || "");
   if (chrome) return { functionName: chrome[1], url: chrome[2], lineNumber: Number(chrome[3]) - 1, columnNumber: Number(chrome[4]) - 1 };
   return { functionName: line || "", url: "", lineNumber: 0, columnNumber: 0 };
+}
+
+/** Match DOM owners using siblings in ascending frame-id order. */
+function frameOwnerNodeId(frame: FrameInfo, siblings: FrameInfo[], listed: Fields[]): number {
+  const index = siblings.findIndex(item => item.frameId === frame.frameId);
+  const at = index >= 0 ? listed[index] : undefined;
+  const match = preferOwner(listed.filter(item => item.childUrl && item.childUrl === frame.url), at)
+    || preferOwner(listed.filter(item => item.url && frame.url === item.url), at)
+    || preferOwner(listed.filter(item => item.url && frame.url && frame.url.startsWith(String(item.url)) && frame.url !== item.url), at)
+    || at;
+  return numberValue(match?.backendNodeId);
 }
 
 function preferOwner(matches: Fields[], at: Fields | undefined): Fields | undefined {

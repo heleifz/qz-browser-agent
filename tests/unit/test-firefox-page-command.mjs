@@ -168,17 +168,22 @@ async function duplicateFrameFixture(t, kind, unrelatedFirst = false) {
     document.addEventListener('click', event => clicks.push(event.target.id));
   });
   const tabId = nextTabId++;
+  const inputReads = { getAllFrames: 0, owners: [] };
   const api = {
     runtime: { id: 'duplicate-frame-test', onMessage: { addListener() {} } },
     tabs: { async get() { return { url: page.url() }; } },
     webNavigation: {
       onCommitted: { addListener() {} },
-      async getAllFrames() { return [...frames].map(([frameId, frame]) => ({
-        frameId, parentFrameId: frameId ? 0 : -1, url: frame.url(),
-      })); },
+      async getAllFrames() {
+        inputReads.getAllFrames++;
+        return [...frames].map(([frameId, frame]) => ({
+          frameId, parentFrameId: [...frames].find(([, parent]) => parent === frame.parentFrame())?.[0] ?? -1, url: frame.url(),
+        }));
+      },
     },
     scripting: { async executeScript({ target, func, args }) {
       if (func.name !== 'firefoxPageCommand') return [{ result: undefined }];
+      if (args[0].op === 'owners') inputReads.owners.push(target.frameIds[0]);
       const result = await frames.get(target.frameIds[0]).evaluate(async ({ source, args }) => {
         const command = (0, eval)(`(${source})`);
         return command(...args);
@@ -208,7 +213,7 @@ async function duplicateFrameFixture(t, kind, unrelatedFirst = false) {
   assert.equal(expectedOwners.length, 2);
   assert.ok(expectedOwners.every(id => id > 0));
   assert.notEqual(expectedOwners[0], expectedOwners[1]);
-  return { page, children, send, tabId, expectedOwners, backendIds };
+  return { page, children, frames, send, tabId, expectedOwners, backendIds, inputReads };
 }
 
 for (const kind of ['srcdoc', 'blank', 'same-src']) test(`Firefox duplicate iframe URLs: ${kind}`, async t => {
@@ -272,6 +277,106 @@ test('Firefox frame owner URL matches outrank an unrelated sibling position', as
   const [other] = await backendIds('#other');
   assert.equal((await send('DOM.getFrameOwner', { frameId: '7' })).backendNodeId, expectedOwners[0]);
   assert.equal((await send('DOM.getFrameOwner', { frameId: '9' })).backendNodeId, other);
+});
+
+async function elementCenter(locator) {
+  const box = await locator.boundingBox();
+  assert.ok(box);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+async function measureInput(fixture, method, params) {
+  fixture.inputReads.getAllFrames = 0;
+  fixture.inputReads.owners.length = 0;
+  await fixture.send(method, params);
+  return { command: params.type || method, getAllFrames: fixture.inputReads.getAllFrames, owners: [...fixture.inputReads.owners] };
+}
+
+for (const inChild of [true, false]) test(`Firefox dispatch owner reads: ${inChild ? 'last sibling' : 'main document'}`, async t => {
+  const f = await duplicateFrameFixture(t, 'srcdoc');
+  const target = inChild ? f.children[1] : f.page.mainFrame();
+  if (!inChild) await target.evaluate(() => document.body.insertAdjacentHTML('afterbegin', '<button id=main-button>Main</button>'));
+  const point = await elementCenter(target.locator('button'));
+  const counts = [];
+  for (const type of ['mousePressed', 'mouseReleased']) counts.push(await measureInput(f, 'Input.dispatchMouseEvent', {
+    type, ...point, button: 'left', clickCount: 1,
+  }));
+  assert.deepEqual(await target.evaluate(() => clicks), [inChild ? 'second-button' : 'main-button']);
+  assert.deepEqual(await f.children[0].evaluate(() => clicks), []);
+  assert.deepEqual(await (inChild ? f.page : f.children[1]).evaluate(() => clicks), []);
+  await target.evaluate(() => {
+    document.body.insertAdjacentHTML('beforeend', '<input id=field>');
+    document.querySelector('#field').focus();
+    window.keys = [];
+    for (const type of ['keydown', 'keyup']) document.addEventListener(type, event => keys.push([event.type, event.key]));
+  });
+  for (const type of ['keyDown', 'keyUp']) counts.push(await measureInput(f, 'Input.dispatchKeyEvent', { type, key: 'ArrowRight', code: 'ArrowRight' }));
+  counts.push(await measureInput(f, 'Input.insertText', { text: 'delivered' }));
+  assert.equal(await target.locator('#field').inputValue(), 'delivered');
+  assert.deepEqual(await target.evaluate(() => keys), [['keydown', 'ArrowRight'], ['keyup', 'ArrowRight']]);
+  t.diagnostic(JSON.stringify(counts));
+  assert.deepEqual(counts, counts.map(({ command }) => ({ command, getAllFrames: 1, owners: inChild ? [0] : [] })));
+});
+
+test('Firefox dispatch owner reads: iframe replacement starts a fresh lookup', async t => {
+  const f = await duplicateFrameFixture(t, 'srcdoc');
+  const oldFrame = f.children[1];
+  await oldFrame.evaluate(() => {
+    document.body.innerHTML = '<input id=field>';
+    document.querySelector('#field').focus();
+  });
+  const counts = [await measureInput(f, 'Input.insertText', { text: 'before' })];
+  assert.equal(await oldFrame.locator('#field').inputValue(), 'before');
+  await f.page.evaluate(() => {
+    const old = document.querySelector('#second');
+    const replacement = old.cloneNode(false);
+    replacement.srcdoc = '<input id=field>';
+    old.replaceWith(replacement);
+  });
+  const handle = await f.page.locator('#second').elementHandle();
+  const replacement = await handle.contentFrame();
+  await handle.dispose();
+  await replacement.waitForSelector('#field');
+  assert.ok(oldFrame.isDetached());
+  // webNavigation assigns a new frame identity to the replacement, even at the same URL.
+  f.frames.delete(8);
+  f.frames.set(9, replacement);
+  await replacement.locator('#field').focus();
+  counts.push(await measureInput(f, 'Input.insertText', { text: 'after' }));
+  assert.equal(await replacement.locator('#field').inputValue(), 'after');
+  assert.notEqual((await f.backendIds('#second'))[0], f.expectedOwners[1]);
+  t.diagnostic(JSON.stringify(counts));
+  assert.deepEqual(counts, counts.map(({ command }) => ({ command, getAllFrames: 1, owners: [0] })));
+});
+
+test('Firefox dispatch owner reads: each nested parent is read once', async t => {
+  const f = await duplicateFrameFixture(t, 'srcdoc');
+  await f.children[1].evaluate(() => {
+    document.body.innerHTML = `<iframe style="display:block;height:30px" srcdoc="<button id=nested-first>First</button>"></iframe>
+      <iframe style="display:block;height:30px" srcdoc="<button id=nested-second>Second</button>"></iframe>`;
+  });
+  const nested = [];
+  for (const index of [0, 1]) {
+    const handle = await f.children[1].locator('iframe').nth(index).elementHandle();
+    const frame = await handle.contentFrame();
+    await handle.dispose();
+    await frame.waitForSelector('button');
+    await frame.evaluate(() => {
+      window.clicks = [];
+      document.addEventListener('click', event => clicks.push(event.target.id));
+    });
+    f.frames.set(index + 10, frame);
+    nested.push(frame);
+  }
+  const point = await elementCenter(nested[1].locator('button'));
+  const counts = [];
+  for (const type of ['mousePressed', 'mouseReleased']) counts.push(await measureInput(f, 'Input.dispatchMouseEvent', {
+    type, ...point, button: 'left', clickCount: 1,
+  }));
+  assert.deepEqual(await nested[1].evaluate(() => clicks), ['nested-second']);
+  for (const frame of [f.page.mainFrame(), ...f.children, nested[0]]) assert.deepEqual(await frame.evaluate(() => clicks), []);
+  t.diagnostic(JSON.stringify(counts));
+  assert.deepEqual(counts, counts.map(({ command }) => ({ command, getAllFrames: 1, owners: [0, 8] })));
 });
 
 const cases = [
