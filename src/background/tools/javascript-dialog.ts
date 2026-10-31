@@ -74,11 +74,11 @@ export function createJavaScriptDialogHandler({ ToolExecutionError, getToolRunti
     };
     if (collectClosed()) return;
     if (!sessionId || !runId || !sessions?.beginUserWait || !sessions.resolveUserWait || !emit) {
-      await dismiss();
+      void dismiss();
       throw new ToolExecutionError("JAVASCRIPT_DIALOG_USER_WAIT_UNAVAILABLE", "A page dialog opened but user wait is unavailable", { tabId, type, message });
     }
     if (sessions.isWaitingForUser?.(sessionId)) {
-      await dismiss();
+      void dismiss();
       throw new ToolExecutionError("JAVASCRIPT_DIALOG_WAIT_CONFLICT", "Answer the pending sidebar request before handling this page dialog", { sessionId, runId, tabId });
     }
     const resolveUserWait = sessions.resolveUserWait;
@@ -115,7 +115,7 @@ export function createJavaScriptDialogHandler({ ToolExecutionError, getToolRunti
       await send("Page.handleJavaScriptDialog", { accept, ...(type === "prompt" && accept ? { promptText } : {}) });
       collected.push({ type, message, accepted: accept, ...(type === "prompt" && accept ? { promptText } : {}) });
     } catch (error) {
-      await dismiss();
+      void dismiss();
       throw error;
     } finally {
       dialog.settleClosed = undefined;
@@ -185,7 +185,21 @@ export function createJavaScriptDialogHandler({ ToolExecutionError, getToolRunti
         // A Session has one user-input slot. Queue only dialog decisions, not
         // independent tool execution, and suspend queued dialogs' deadlines too.
         ...reserveWait(context),
-        dismiss: () => dismissal ??= Promise.resolve().then(() => dialog.closed ? undefined : dismissDialog(dialogSend)).catch(() => {}),
+        dismiss: () => {
+          // Cleanup is never human decision time and must not delay the original
+          // failure. Keep the original narrow sender, with a bounded best effort.
+          dialog.releaseWait();
+          return dismissal ??= (async () => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                Promise.resolve().then(() => dialog.closed ? undefined : dismissDialog(dialogSend)),
+                new Promise<void>(resolve => { timer = setTimeout(resolve, 1000); }),
+              ]);
+            } catch { /* Preserve the original failure. */ }
+            finally { clearTimeout(timer); }
+          })();
+        },
       };
       pendingDialogs.push(dialog);
       chain = chain.then(() => handleOpening(tabId, dialogSend, record(params), context, controller.signal, collected, dialog))

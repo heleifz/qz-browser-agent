@@ -20,6 +20,7 @@ import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { CdpCommand } from "./cdp-runtime.js";
 import type { ScreenshotOptions, PageState } from "./page-observation.js";
 import type { ToolExtensionAPI, ToolExtensionRuntime, NetworkWatchOptions, PreparedNavigation } from "../../sdk/background.js";
+import { withToolCallLifecycle } from "./call-lifecycle.js";
 import contributions from "#capabilities/tools";
 import type { ElementReply, PagePoint } from "../../shared/contracts/page-content.js";
 type Fields = Record<string, unknown>;
@@ -631,7 +632,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
           }
           if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-          return selectedDefinition.execute(args, signal, callContext);
+          return withToolCallLifecycle(callContext, async scoped => selectedDefinition.execute(args, scoped.signal,
+            withToolRuntimeContext(scoped, getToolRuntimeDependencies(callContext))));
         },
         signal,
         timeoutMs,

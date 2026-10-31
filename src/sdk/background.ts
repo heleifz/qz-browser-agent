@@ -25,8 +25,10 @@ export interface ToolContext extends SkillActivationContext {
   prepareCreatedTab?(tab: import("../shared/tab-utils.js").TabReference): Promise<ToolContext>;
   /** Publish an immutable completed stage for this call's existing hard deadline. */
   reportPartial?(result: Record<string, unknown>, pending: string): void;
-  /** Suspend this call's deadline during a host-owned user wait; release in finally. Cancellation stays active. */
+  /** Suspend this call and its waiting ancestors during a host-owned user wait; release in finally. Cancellation stays active. */
   pauseDeadline?(): () => void;
+  /** Opaque live invocation identity carried only by nested script transports. */
+  toolExecutionId?: string;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */
   measurePhase?(phase: ToolExecutionPhase): () => void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */

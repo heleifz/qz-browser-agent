@@ -488,6 +488,45 @@ test('parallel dialogs queue per Session without expiring or dismissing the seco
   assert.equal(listeners.size, 0);
 });
 
+for (const stage of ['unavailable', 'conflict', 'emit']) {
+  for (const cleanup of ['stalls', 'rejects']) test(`dialog ${stage} preserves its error when automatic dismissal ${cleanup}`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const { sessions, supervisor } = runtimeFixture();
+    await activeSession(supervisor);
+    if (stage === 'conflict') void sessions.beginUserWait('s1', { waitId: 'existing', runId: 'r1' });
+    let paused = 0, dismissals = 0;
+    const handler = createJavaScriptDialogHandler({
+      ToolExecutionError,
+      getToolRuntimeDependencies: () => ({
+        sessions: stage === 'unavailable' ? {} : sessions,
+        emit: () => { if (stage === 'emit') throw Object.assign(new Error('publish failed'), { code: 'PUBLISH_FAILED' }); },
+      }),
+      dismissDialog: async () => {
+        assert.equal(paused, 0, 'resume before attempting browser cleanup');
+        dismissals++;
+        if (cleanup === 'rejects') throw new Error('cleanup failed');
+        return new Promise(() => {});
+      },
+    });
+    const pending = handler.withDialogGuard(9, { sessionId: 's1', runId: 'r1', pauseDeadline() {
+      paused++; return () => { paused--; };
+    } }, async (_send, bind) => {
+      await bind(async () => ({}));
+      dispatchDebugger(9, 'Page.javascriptDialogOpening', { type: 'confirm' });
+      return new Promise(() => {});
+    });
+    await assert.rejects(pending, { code: { unavailable: 'JAVASCRIPT_DIALOG_USER_WAIT_UNAVAILABLE', conflict: 'JAVASCRIPT_DIALOG_WAIT_CONFLICT', emit: 'PUBLISH_FAILED' }[stage] });
+    assert.equal(paused, 0);
+    assert.equal(dismissals, 1);
+    assert.equal(listeners.size, 0);
+    assert.equal(sessions.isWaitingForUser('s1'), stage === 'conflict');
+    if (stage === 'conflict') sessions.resolveUserWait({ sessionId: 's1', waitId: 'existing', payload: {} });
+    t.mock.timers.tick(1000);
+    await new Promise(setImmediate);
+    assert.equal(dismissals, 1);
+  });
+}
+
 test("waiting card normalizes javascriptDialog form metadata", () => {
   const form = normalizeWaitingForm({
     title: "ignored",

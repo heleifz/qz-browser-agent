@@ -129,7 +129,9 @@ The [CLI guide](cli.md#respond-to-a-task) covers input and response commands.
 
 Chrome element-input dialog guards enable Page events before input, retain child debugger-session
 identity, and route native dialogs through the same wait lifecycle. A dialog wait suspends only its
-own tool deadline until the user responds; browser acknowledgement uses the remaining deadline.
+own tool deadline and the budgets of its waiting script ancestors until the user responds;
+browser acknowledgement uses the remaining deadline. Script bridges carry an opaque live parent-call
+ID; parent cancellation or settlement revokes descendant calls, including unawaited children.
 Parallel dialogs queue their decisions within the same Session/run, suspending queued deadlines too;
 other Sessions and independent tool execution remain concurrent.
 Stop and run cancellation remain active. Cancel/Stay answers the page without rejecting the task wait.
@@ -267,8 +269,9 @@ same-URL reload, so a navigation timeout cannot turn into a successful read of t
 Committed documents remain readable while subresources load. Firefox's host supplies its missing
 `pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
 replaced requests. A commit delivered before its request does not re-arm `pendingUrl` when the
-request timestamp is at or before that commit, and a completed tab already showing the pending URL
-drops it. A newer request, including a same-URL reload, stays pending until its own commit.
+request timestamp is at or before that commit. Each tab retains the newest 64 destination timestamps.
+Without commit evidence, a complete tab showing the same URL does not retire a request. A newer
+request, including a same-URL reload, stays pending until its own commit.
 Readers need no Session-level navigation registry. Content reads inject
 immediately into the main frame. The initial presence ping has a short probe budget; installation
 and its acknowledgement use the call's existing deadline and cancellation signal. The installed bridge

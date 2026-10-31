@@ -31,10 +31,12 @@ export async function runToolWithTimeout(
       remaining = Math.max(0, remaining - (Date.now() - startedAt));
       clearTimeout(timer);
     }
+    const resumeParent = context.pauseDeadline?.();
     let resumed = false;
     return () => {
       if (resumed) return;
       resumed = true;
+      resumeParent?.();
       if (--pauses === 0 && !settled && !timedOut && !controller.signal.aborted) armDeadline();
     };
   };
