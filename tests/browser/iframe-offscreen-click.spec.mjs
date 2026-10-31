@@ -223,13 +223,13 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     expect(await page.frame({ name: "cross" }).evaluate(() => window.clicks || 0)).toBe(1);
     expect(await page.frame({ name: "fixed" }).evaluate(() => window.clicks || 0)).toBe(0);
 
-    async function nativeDialogStays(action, marker) {
+    async function nativeDialogStays(action) {
       const before = nativeDialogs.length;
       const pending = call('act_on_element', action);
       await expect.poll(() => nativeDialogs.length, { timeout: 15000 }).toBeGreaterThan(before);
       const dialog = nativeDialogs[before];
       expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
-      expect(await page.evaluate(name => Boolean(window[name]), marker)).toBe(false);
+      // A native dialog blocks page script. Read the page only after the user dismisses it.
       await dialog.dismiss();
       const result = await pending;
       expect(result, JSON.stringify(result)).not.toHaveProperty('dialog');
@@ -238,11 +238,11 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
       return { type: dialog.type(), message: dialog.message(), result };
     }
 
-    const confirmDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' }, 'dialogAnswer');
+    const confirmDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' });
     expect(confirmDialog.type).toBe('confirm');
     expect(await page.evaluate(() => window.dialogAnswer)).toBe(false);
 
-    const promptDialog = await nativeDialogStays({ target: 'css:#prompt', action: 'press', key: 'Enter' }, 'promptAnswer');
+    const promptDialog = await nativeDialogStays({ target: 'css:#prompt', action: 'press', key: 'Enter' });
     expect(promptDialog.type).toBe('prompt');
     expect(promptDialog.message).toBe('Name?');
     expect(await page.evaluate(() => window.promptAnswer)).toBe(null);
@@ -251,7 +251,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
       window.afterAlert = false;
       document.querySelector('#dialog').onclick = () => { alert('Heads up'); window.afterAlert = true; };
     });
-    const alertDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' }, 'afterAlert');
+    const alertDialog = await nativeDialogStays({ target: 'css:#dialog', action: 'click' });
     expect(alertDialog.type).toBe('alert');
     expect(alertDialog.message).toBe('Heads up');
     expect(await page.evaluate(() => window.afterAlert)).toBe(true);
@@ -267,7 +267,7 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
       window.addEventListener('beforeunload', event => { event.preventDefault(); event.returnValue = ''; });
       window.addEventListener('pagehide', () => { window.left = true; });
     });
-    const unloadDialog = await nativeDialogStays({ target: 'css:#leave', action: 'click' }, 'left');
+    const unloadDialog = await nativeDialogStays({ target: 'css:#leave', action: 'click' });
     expect(unloadDialog.type).toBe('beforeunload');
     expect(await page.evaluate(() => window.left)).toBe(false);
     expect(page.url()).toContain(`127.0.0.1:${parent.address().port}`);
@@ -280,10 +280,10 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     const stoppedClick = call('act_on_element', { target: 'css:#dialog', action: 'click' });
     await expect.poll(() => nativeDialogs.length, { timeout: 15000 }).toBeGreaterThan(beforeStop);
     expect(await worker.evaluate(() => elementHarness.waiting)).toBe(null);
-    expect(await page.evaluate(() => window.dialogAnswer)).toBeUndefined();
+    const stopDialog = nativeDialogs[beforeStop];
     await worker.evaluate(() => elementHarness.abort());
-    expect(await page.evaluate(() => window.dialogAnswer)).toBeUndefined();
-    await nativeDialogs[beforeStop].dismiss();
+    expect(stopDialog.type()).toBe('confirm');
+    await stopDialog.dismiss();
     const stopped = await stoppedClick;
     expect(stopped, JSON.stringify(stopped)).not.toHaveProperty('dialog');
     expect(stopped).not.toHaveProperty('dialogs');
