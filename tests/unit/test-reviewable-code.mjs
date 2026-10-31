@@ -38,6 +38,19 @@ assert.notEqual(mutatedAxCode, axCode);
 assert.equal(cdpFindings(mutatedAxCode)[0].reviewed, undefined);
 assert.equal(cdpFindings(`${axCode}\nsend('Runtime.callFunctionOn', { functionDeclaration: remoteCode });`).filter(item => !item.reviewed).length, 1);
 
+// Parent-call identity is serialized as data into the existing reviewed script
+// bridge. Changing its source or moving an execution sink must require review.
+const scriptSource = await readFile(new URL('../../src/capabilities/script/tools.ts', import.meta.url), 'utf8');
+const { code: scriptCode } = await transform(scriptSource, { loader: 'ts', format: 'esm', target: 'chrome114' });
+const scriptPath = 'capabilities/script/tools.js';
+assert.equal(cdpFindings(scriptCode, scriptPath).length, 3);
+assert.ok(cdpFindings(scriptCode, scriptPath).every(item => item.reviewed));
+assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
+const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
+assert.notEqual(mutatedScriptCode, scriptCode);
+assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
+
 // Real rejected upstream inputs, including the worker's unrelated local numeric GT binding.
 for (const file of ["pdf.mjs", "pdf.worker.mjs"]) {
   const source = await readFile(new URL(import.meta.resolve(`pdfjs-dist/legacy/build/${file}`)), "utf8");
