@@ -15,6 +15,7 @@ interface NavigationHost {
   webNavigation?: { onCommitted: Event<{ tabId: number; frameId: number; url: string; timeStamp?: number }> };
 }
 
+const COMMIT_HISTORY_LIMIT = 64;
 const installed = new WeakSet<object>();
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
@@ -34,10 +35,6 @@ export function installFirefoxTabNavigation(browser: NavigationHost) {
   const alreadyCommitted = (tabId: number, request: Request) => {
     const stamp = stampFor(tabId, request.url);
     return typeof stamp === "number" && typeof request.timeStamp === "number" && stamp >= request.timeStamp;
-  };
-  const followsCommit = (tabId: number, request: Request) => {
-    const stamp = stampFor(tabId, request.url);
-    return typeof stamp === "number" && typeof request.timeStamp === "number" && request.timeStamp > stamp;
   };
   requests.onBeforeRequest.addListener(details => {
     if (details.tabId >= 0 && !alreadyCommitted(details.tabId, details)) pending.set(details.tabId, { ...details });
@@ -61,9 +58,16 @@ export function installFirefoxTabNavigation(browser: NavigationHost) {
       const key = withoutFragment(details.url);
       const previous = urls.get(key);
       if (previous == null || details.timeStamp >= previous) urls.set(key, details.timeStamp);
+      // Retain several destinations for out-of-order requests and redirects, but
+      // bound long-lived tabs. Evict by event time, not delivery order.
+      if (urls.size > COMMIT_HISTORY_LIMIT) {
+        const oldest = [...urls].reduce((a, b) => a[1] <= b[1] ? a : b);
+        urls.delete(oldest[0]);
+      }
     }
     const current = pending.get(details.tabId);
-    if (current && withoutFragment(current.url) === withoutFragment(details.url)) pending.delete(details.tabId);
+    if (current && withoutFragment(current.url) === withoutFragment(details.url)
+      && (current.timeStamp == null || details.timeStamp == null || alreadyCommitted(details.tabId, current))) pending.delete(details.tabId);
   });
   tabs.onRemoved.addListener(id => {
     pending.delete(id);
@@ -73,11 +77,9 @@ export function installFirefoxTabNavigation(browser: NavigationHost) {
     const id = tab.id;
     const current = id == null ? undefined : pending.get(id);
     if (id == null || !current || tab.pendingUrl) return tab;
-    const loadedHere = tab.status === "complete" && !!tab.url && withoutFragment(tab.url) === withoutFragment(current.url);
-    // A completed tab already showing this URL has finished the pending
-    // document. A request newer than the last commit of that URL, such as a
-    // same-URL reload that has not flipped status yet, stays pending.
-    if (alreadyCommitted(id, current) || (loadedHere && !followsCommit(id, current))) {
+    // An existing complete document is not commit evidence for a reload. After
+    // adapter startup (or history eviction), unknown timestamps stay pending.
+    if (alreadyCommitted(id, current)) {
       pending.delete(id);
       return tab;
     }
