@@ -169,7 +169,7 @@ function normalizeWaitCard(value: unknown): WaitCard {
   } else if (readJavaScriptDialogForm(form as unknown as Record<string, unknown>)) {
     const dialog = readJavaScriptDialogForm(form as unknown as Record<string, unknown>)!;
     form.title = dialog.message;
-    message = javascriptDialogT("hint");
+    message = isWaitingTranscriptActive(entry) ? "" : dialog.message;
   }
   return {
     waitId: String(entry.waitId || ""), runId: String(entry.runId || ""),

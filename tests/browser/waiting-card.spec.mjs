@@ -46,6 +46,29 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const scheme of ['light', 'dark']) {
+  test(`page dialog hint appears once while waiting and history retains the question in ${scheme}`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    const hint = await page.evaluate(async () => {
+      const { javascriptDialogT } = await import('/extension/shared/javascript-dialog.js');
+      const f = window.waitFixture;
+      f.entry = { ...f.entry, message: 'Delete?', form: { javascriptDialog: { type: 'confirm', message: 'Delete?' } } };
+      f.cards.patch(f.el, f.entry, 'session-a');
+      return javascriptDialogT('hint');
+    });
+    const card = page.locator('.waiting-card');
+    expect((await card.innerText()).split(hint).length - 1).toBe(1);
+    await expect(page.locator('.waiting-title')).toHaveText('Delete?');
+    for (const status of ['resolved', 'cancelled', 'aborted']) {
+      await page.evaluate(status => {
+        const f = window.waitFixture;
+        f.cards.patch(f.el, { ...f.entry, status }, 'session-a');
+      }, status);
+      await expect(card).not.toContainText(hint);
+      await expect(page.locator('.waiting-message')).toHaveText('Delete?');
+      await expect(page.locator('[data-wait-action]')).toHaveCount(0);
+    }
+  });
+
   test(`page dialog cards preserve prompt input and dialog actions in ${scheme}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await page.evaluate(() => {
