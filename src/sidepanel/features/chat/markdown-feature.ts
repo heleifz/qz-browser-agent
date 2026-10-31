@@ -216,6 +216,13 @@ function createMarkdownParser(streamingSource?: string) {
     }, {
       name: "pendingTable",
       level: "block",
+      start(source) {
+        // GFM tables interrupt paragraphs. Reserve the same boundary while the
+        // trailing pipe header/delimiter is incomplete, before paragraph lexing
+        // can absorb it and bypass this tokenizer.
+        const index = source.indexOf("\n|");
+        return index < 0 ? undefined : index + 1;
+      },
       tokenizer(source) {
         const table = parser.defaults.tokenizer!.table(source);
         // Automatic column sizing needs every row. Reveal a table at its block
