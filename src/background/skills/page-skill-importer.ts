@@ -2,10 +2,10 @@ import { t } from "../../shared/i18n/backend.js";
 import { isBuiltinSkillName } from "../../shared/skills/builtin-skills.js";
 import { withoutGitSkillOrigin } from "../../shared/skills/git-skill-sources.js";
 import { importSkillsZip } from "../../shared/skills/skill-package.js";
+import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
 import {
   normalizeModernSkill,
   normalizeSkillLookup,
-  preserveStoredSkillId,
 } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import { downloadGitArchiveFromTab, resolveDownloadDebuggerScope } from "./git-skill-sources.js";
@@ -135,23 +135,26 @@ export function createPageSkillImportService(options: PageImportOptions) {
       const existingSkills = Object.values(snapshot.skills || {})
         .map(skill => normalizeModernSkill(skill))
         .filter(skill => skill.name);
-      rows = rows.map(skill => preserveStoredSkillId(skill, existingSkills));
-      const reconciledDuplicate = findDuplicateSkillName(rows);
-      if (reconciledDuplicate) {
-        throw new PageSkillImportError(
-          "PAGE_SKILL_ZIP_DUPLICATE",
-          t("skill.pageZipDuplicate", { name: String(reconciledDuplicate) }),
-          { name: reconciledDuplicate, url, tabId },
-        );
+      const identity = preserveThenValidateImportedSkills(rows, existingSkills);
+      if (!identity.ok) {
+        if (identity.reason === "duplicate") {
+          throw new PageSkillImportError(
+            "PAGE_SKILL_ZIP_DUPLICATE",
+            t("skill.pageZipDuplicate", { name: String(identity.name) }),
+            { name: identity.name, url, tabId },
+          );
+        }
+        if (identity.reason === "builtin") {
+          throw new PageSkillImportError(
+            "SKILL_READ_ONLY",
+            t("skill.pageZipBuiltin", { name: String(identity.name) }),
+            { name: identity.name, url, tabId },
+          );
+        }
+        const unexpected: never = identity.reason;
+        throw new Error(unexpected);
       }
-      const reconciledBuiltin = rows.find(skill => isBuiltinSkillName(skill.name))?.name;
-      if (reconciledBuiltin) {
-        throw new PageSkillImportError(
-          "SKILL_READ_ONLY",
-          t("skill.pageZipBuiltin", { name: String(reconciledBuiltin) }),
-          { name: reconciledBuiltin, url, tabId },
-        );
-      }
+      rows = identity.skills;
       const conflicts = rows
         .filter(incoming => existingSkills.some(existing => (
           normalizeSkillLookup(existing.name) === normalizeSkillLookup(incoming.name)

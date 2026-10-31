@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { preserveThenValidateImportedSkills } from "../../src/shared/skills/skill-import-identity.js";
 import {
   getSkillDisplayName,
   isValidAgentSkillName,
@@ -131,6 +132,48 @@ assert.equal(
   preserveStoredSkillId(prettyIncoming, [normalizeModernSkill({ name: "other-skill", displayName: "Travel Booking", content: "other" })]).name,
   "travel-booking",
 );
+
+const reimported = preserveThenValidateImportedSkills([incomingAlpha], [legacyAlpha]);
+assert.equal(reimported.ok, true);
+if (reimported.ok) {
+  assert.equal(reimported.skills[0].name, prefix);
+  assert.equal(getSkillDisplayName(reimported.skills[0]), alpha);
+}
+const distinctLongNames = preserveThenValidateImportedSkills([
+  normalizeModernSkill({ name: alpha, content: "alpha body" }),
+  normalizeModernSkill({ name: beta, content: "beta body" }),
+], []);
+assert.equal(distinctLongNames.ok, true);
+if (distinctLongNames.ok) {
+  assert.notEqual(distinctLongNames.skills[0].name, distinctLongNames.skills[1].name);
+  assert.ok(distinctLongNames.skills.every(skill => isValidAgentSkillName(skill.name) && skill.name.length <= 64));
+}
+const ambiguousDisplayName = preserveThenValidateImportedSkills([incomingAlpha], [
+  legacyAlpha,
+  normalizeModernSkill({ name: "other-alpha", displayName: alpha, content: "other" }),
+]);
+assert.equal(ambiguousDisplayName.ok, true);
+if (ambiguousDisplayName.ok) assert.equal(ambiguousDisplayName.skills[0].name, toAgentSkillName(alpha));
+const sharedPrefix = preserveThenValidateImportedSkills(
+  [incomingAlpha],
+  [normalizeModernSkill({ name: prefix, content: "real prefix" })],
+);
+assert.equal(sharedPrefix.ok, true);
+if (sharedPrefix.ok) assert.equal(sharedPrefix.skills[0].name, toAgentSkillName(alpha));
+const collapsed = preserveThenValidateImportedSkills([
+  normalizeModernSkill({ name: alpha, content: "one" }),
+  normalizeModernSkill({ name: `${alpha}-again`, displayName: alpha, content: "two" }),
+], [legacyAlpha]);
+assert.equal(collapsed.ok, false);
+if (!collapsed.ok) assert.equal(collapsed.reason, "duplicate");
+const builtin = preserveThenValidateImportedSkills([
+  normalizeModernSkill({ name: "qingzhou-documents", content: "builtin" }),
+], []);
+assert.equal(builtin.ok, false);
+if (!builtin.ok) {
+  assert.equal(builtin.reason, "builtin");
+  assert.equal(builtin.name, "qingzhou-documents");
+}
 
 const storage = {
   _skills: {

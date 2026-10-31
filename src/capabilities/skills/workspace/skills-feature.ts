@@ -11,7 +11,7 @@ import {
   normalizeSkill,
   skillMatchesName,
   normalizeSkillLookup,
-  preserveStoredSkillId,
+  preserveThenValidateImportedSkills,
   SKILL_SCOPE_GLOBAL,
   SKILL_SCOPE_RESIDENT,
   SKILL_SCOPE_SITE,
@@ -680,11 +680,20 @@ export function createSkillsFeature(options: SkillsOptions) {
     const snapshot = await request("get_skill_workspace", {}, 10000);
     if (!Array.isArray(snapshot.skills)) throw new Error(t("invalidSkillListResponsePleaseTryAgain"));
     const existingModern = snapshot.skills;
-    rows = rows.map(skill => preserveStoredSkillId(skill, existingModern));
-    const builtinNames = rows.filter(skill => isBuiltinSkillName(skill.name)).map(skill => skill.name);
-    if (builtinNames.length) {
-      setSkillsStatus(t("importFailedIsABuiltInSkillAndCannotBe", { name: String(builtinNames[0]) }), "error");
-      return { ok: false as const, count: 0, names: [] };
+    const identity = preserveThenValidateImportedSkills(rows, existingModern);
+    rows = identity.skills;
+    if (!identity.ok) {
+      switch (identity.reason) {
+        case "builtin":
+          setSkillsStatus(t("importFailedIsABuiltInSkillAndCannotBe", { name: String(identity.name) }), "error");
+          return { ok: false as const, count: 0, names: [] };
+        case "duplicate":
+          break;
+        default: {
+          const unexpected: never = identity.reason;
+          throw new Error(unexpected);
+        }
+      }
     }
     const expected = Object.fromEntries(rows.map(skill => [skill.name, existingModern.find(item => skillMatchesName(item, skill.name)) || null]));
     const conflictNames = rows

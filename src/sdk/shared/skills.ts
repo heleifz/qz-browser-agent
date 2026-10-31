@@ -7,5 +7,7 @@ export type { SkillManifest, SkillMcpServer } from "../../shared/skills/skill-ma
 export { createZip, exportSkillsZip, importSkillsFromFileList, importSkillsZip, parseSkillMarkdownFrontmatter, readSkillYamlString, readSkillYamlStringList, skillToSkillMarkdown } from "../../shared/skills/skill-package.js";
 export type { ImportFile } from "../../shared/skills/skill-package.js";
 export { SKILL_SCOPE_GLOBAL, SKILL_SCOPE_RESIDENT, SKILL_SCOPE_SITE, getSkillDisplayName, isBase64SkillResource, isSkillDocumentResource, isValidAgentSkillName, matchSiteSkillsForUrls, matchesSkillSearch, modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkill, normalizeSkillLookup, preserveStoredSkillId, skillMatchesName, skillResourceByteSize } from "../../shared/skills/skill-utils.js";
+export { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
+export type { ImportedSkillIdentity } from "../../shared/skills/skill-import-identity.js";
 export type { SkillRecord, SkillResource } from "../../shared/skills/skill-utils.js";
 export { listSkillRendererDefinitions } from "../../shared/skills/skill-renderers.js";

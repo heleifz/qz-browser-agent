@@ -2,7 +2,8 @@ import { t } from "../../shared/i18n/backend.js";
 import { createSkillStateRepository, sameSkillRecord, skillWriteConflict } from "./skill-repository.js";
 import { listSkills, validateSkillMcpConfig, validateSkillManifest } from "./runtime.js";
 import { isBuiltinSkillName, mergeBuiltinSkills } from "../../shared/skills/builtin-skills.js";
-import { modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkillLookup, preserveStoredSkillId, skillMatchesName } from "../../shared/skills/skill-utils.js";
+import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
+import { modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkillLookup, skillMatchesName } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import type { SkillRecord } from "../../shared/skills/skill-utils.js";
 import type { SkillWorkspaceSnapshot, SkillWorkspaceResult } from "../../shared/contracts/skill-workspace.js";
@@ -38,9 +39,26 @@ export function createSkillWorkspaceService({
     const original = modernSkillValuesFromRecord(next);
     const name = String(request.name || "");
     const imported = (Array.isArray(request.skills) ? request.skills : []).map(normalizeModernSkill);
-    const rows = action === "import"
-      ? imported.map(skill => preserveStoredSkillId(skill, original))
-      : action === "save" ? [normalizeModernSkill(request.skill)] : [];
+    let rows: SkillRecord[];
+    if (action === "import") {
+      const identity = preserveThenValidateImportedSkills(imported, original);
+      if (!identity.ok) {
+        if (identity.reason === "duplicate") throw new Error(t("skill.duplicateNames"));
+        if (identity.reason === "builtin") {
+          throw Object.assign(new Error(t("skill.builtinReadOnly", { name: String(identity.name) })), { code: "SKILL_READ_ONLY" });
+        }
+        const unexpected: never = identity.reason;
+        throw new Error(unexpected);
+      }
+      rows = identity.skills;
+    } else if (action === "save") {
+      rows = [normalizeModernSkill(request.skill)];
+    } else if (action === "delete") {
+      rows = [];
+    } else {
+      const unexpected: never = action;
+      throw new Error(unexpected);
+    }
     if (action !== "delete" && (!rows.length || rows.some(skill => !skill.name))) throw new Error(t("skill.nothingToSave"));
     const names = action === "delete" ? [name] : rows.map(skill => skill.name);
     if (!names.every(Boolean)) throw new Error(t("skill.nameMissing"));

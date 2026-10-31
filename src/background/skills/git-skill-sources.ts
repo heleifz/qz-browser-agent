@@ -15,12 +15,12 @@ import {
   withoutGitSkillOrigin,
 } from "../../shared/skills/git-skill-sources.js";
 import { importSkillsZip, skillToSkillMarkdown } from "../../shared/skills/skill-package.js";
+import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
 import {
   getSkillDisplayName,
   modernSkillValuesFromRecord,
   normalizeModernSkill,
   normalizeSkillLookup,
-  preserveStoredSkillId,
 } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 
@@ -318,18 +318,21 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
     const previousSource = snapshot.sources[sourceId] || null;
     const existingSkills = modernSkillValuesFromRecord(snapshot.skills);
     const ownedSkills = existingSkills.filter(skill => gitSkillBelongsToSource(skill, sourceId));
-    rows = rows.map(skill => preserveStoredSkillId(skill, ownedSkills));
-    const reconciledDuplicate = findDuplicateSkillName(rows);
-    if (reconciledDuplicate) {
-      throw new GitSkillSourceError(
-        "GIT_ARCHIVE_DUPLICATE_SKILL",
-        t("git.duplicateSkill", { name: String(reconciledDuplicate) }),
-      );
+    const importedIdentity = preserveThenValidateImportedSkills(rows, ownedSkills);
+    if (!importedIdentity.ok) {
+      if (importedIdentity.reason === "duplicate") {
+        throw new GitSkillSourceError(
+          "GIT_ARCHIVE_DUPLICATE_SKILL",
+          t("git.duplicateSkill", { name: String(importedIdentity.name) }),
+        );
+      }
+      if (importedIdentity.reason === "builtin") {
+        throw new GitSkillSourceError("GIT_ARCHIVE_BUILTIN_CONFLICT", t("git.builtinSkill", { name: String(importedIdentity.name) }));
+      }
+      const unexpected: never = importedIdentity.reason;
+      throw new Error(unexpected);
     }
-    const reconciledBuiltin = rows.find(skill => isBuiltinSkillName(skill.name))?.name;
-    if (reconciledBuiltin) {
-      throw new GitSkillSourceError("GIT_ARCHIVE_BUILTIN_CONFLICT", t("git.builtinSkill", { name: String(reconciledBuiltin) }));
-    }
+    rows = importedIdentity.skills;
     const incomingDigests: Record<string, string> = {};
     for (const skill of rows) incomingDigests[skill.name] = await skillDigest(skill, digest);
     if (subpath) {
