@@ -9,6 +9,8 @@ import { pageDialogStub } from '../support/page-dialog-stub.mjs';
 const MISSING = 'Missing host permission for the tab';
 const BEFORE = 'http://127.0.0.1/form.html';
 const AFTER = 'http://127.0.0.1/fast.html';
+const faults = ['keydown-response', 'keyup-route', 'keyup-input'];
+const errors = ['result-object', 'result-error', 'reject-value', 'missing-string', 'other-error', 'world-error'];
 function event() {
   const listeners = new Set();
   return { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn),
@@ -17,16 +19,24 @@ function event() {
 
 // Real page action, keyboard, CDP lease and Firefox adapter. Only browser APIs and
 // Content replies are simulated; no Firefox 151 behavior substitutes for 158.
-function fixture(t, { fault = '', navigation = true, sameUrl = false, failCount = 1, interrupt = '',
-  commitDelay = 0, message = MISSING } = {}) {
+function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt = '',
+  commitDelay = 0, errorKind = 'result-object', commitDuringPrepare = '', frameId = 0,
+  commitFrameId = frameId, commitTabId = 7, key = 'Enter' } = {}) {
   const previous = globalThis.chrome;
   t.after(() => { globalThis.chrome = previous; });
   const controller = new AbortController();
-  const trace = [], submissions = [], keys = [];
-  let value = '', committed = false, removed = false, current = true, failures = 0, execute, method = '', finishProbe;
+  const trace = [], submissions = [], keys = [], keyFrames = [], hostErrors = [];
+  const original = errorKind === 'missing-string' ? MISSING : errorKind === 'reject-value' ? { reason: 'unloading' }
+    : new Error(errorKind === 'world-error' ? 'ISOLATED world disappeared' : 'unrelated failure');
+  let value = '', committed = false, scheduled = false, removed = false, current = true, execute, method = '', finishProbe;
   const timers = new Set();
   const later = (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); };
   t.after(() => { for (const timer of timers) clearTimeout(timer); });
+  const revoke = () => {
+    if (interrupt.startsWith('abort')) controller.abort(new ToolExecutionError('OPERATION_ABORTED', 'cancelled'));
+    if (interrupt.startsWith('close')) { removed = true; api.tabs.onRemoved.emit(7); }
+    if (interrupt.startsWith('run')) current = false;
+  };
   const api = {
     runtime: { getURL: () => 'moz-extension://fixture/', onMessage: event() },
     storage: { local: { async get() { return {}; } } },
@@ -35,9 +45,10 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, failCount 
       return { id: 7, url: committed && !sameUrl ? AFTER : BEFORE, title: committed ? 'After' : 'Before', status: 'complete' };
     } },
     webNavigation: { onCommitted: event(), async getAllFrames() {
-      return [{ frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url }];
+      return [{ frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url },
+        ...(frameId ? [{ frameId, parentFrameId: 0, url: BEFORE }] : [])];
     } },
-    scripting: { async executeScript({ args }) {
+    scripting: { async executeScript({ args, target }) {
       const command = args?.[0], op = command?.op, input = command?.input;
       const stage = op === 'inputFrame' && method === 'Input.dispatchKeyEvent' ? (keys.length ? 'keyup-route' : 'prepare')
         : op === 'input' && input?.kind === 'key' ? (input.type === 'keyUp' ? 'keyup-input' : 'keydown-response')
@@ -46,41 +57,49 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, failCount 
       if (op === 'input' && input?.kind === 'text') value = input.text;
       if (op === 'input' && input?.kind === 'key') {
         keys.push(input.type);
+        keyFrames.push(target.frameIds[0]);
         if (input.type !== 'keyUp') {
           submissions.push(value);
           if (!['keyup-route', 'keyup-input'].includes(fault)) commit();
         }
       }
-      if (stage === fault && (stage !== 'observation' || keys.length) && failures++ < failCount) {
+      if (stage === 'prepare' && commitDuringPrepare) {
+        commit();
+        if (commitDuringPrepare === 'failure') throw original;
+      }
+      if (stage === fault && (stage !== 'observation' || keys.length)) {
         if (interrupt === 'defer') return new Promise(resolve => { finishProbe = () => resolve([{ frameId: 0, result: {} }]); });
         if (keys.length) commit();
-        const revoke = () => {
-          if (interrupt.startsWith('abort')) controller.abort(new ToolExecutionError('OPERATION_ABORTED', 'cancelled'));
-          if (interrupt.startsWith('close')) { removed = true; api.tabs.onRemoved.emit(7); }
-          if (interrupt.startsWith('run')) current = false;
-        };
         if (interrupt.endsWith('-later')) later(revoke, 10); else revoke();
-        throw new Error(message);
+        if (errorKind.startsWith('result-')) return [{ frameId: target.frameIds[0],
+          error: errorKind === 'result-object' ? { message: 'old document unloading' } : new Error('old document unloading') }];
+        throw original;
       }
-      if (stage === fault && interrupt === 'hang' && failures > 1) return new Promise(() => {});
-      return [{ frameId: 0, documentId: committed ? 'after' : 'before', result: op ? {}
-        : args ? (args[1] ? 0 : 1) : { width: 800, height: 600 } }];
+      const result = op === 'inputFrame' && frameId && target.frameIds[0] === 0 ? { backendNodeId: 42 }
+        : op === 'owners' ? { frames: [{ backendNodeId: 42, url: BEFORE }] }
+          : op ? {} : args ? (args[1] ? 0 : 1) : { width: 800, height: 600 };
+      return [{ frameId: target.frameIds?.[0] ?? 0, documentId: committed ? 'after' : 'before', result }];
     } },
   };
   function commit() {
-    if (!navigation || committed) return;
+    if (!navigation || scheduled) return;
+    scheduled = true;
     const publish = () => {
-      committed = true;
-      api.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: sameUrl ? BEFORE : AFTER });
-      api.tabs.onUpdated.emit(7, { status: 'complete', url: sameUrl ? BEFORE : AFTER });
+      committed = commitTabId === 7 && (commitFrameId === 0 || commitFrameId === frameId);
+      api.webNavigation.onCommitted.emit({ tabId: commitTabId, frameId: commitFrameId, url: sameUrl ? BEFORE : AFTER });
+      if (committed) api.tabs.onUpdated.emit(7, { status: 'complete', url: sameUrl ? BEFORE : AFTER });
     };
     if (commitDelay) later(publish, commitDelay); else publish();
   }
   globalThis.chrome = api;
   installFirefoxDebugger(api);
   for (const name of ['sendCommand', 'sendCommandWithScope']) {
-    const original = api.debugger[name]?.bind(api.debugger);
-    if (original) api.debugger[name] = (target, command, ...args) => { method = command; return original(target, command, ...args); };
+    const originalSend = api.debugger[name].bind(api.debugger);
+    api.debugger[name] = async (target, command, ...args) => {
+      method = command;
+      try { return await originalSend(target, command, ...args); }
+      catch (error) { if (command === 'Input.dispatchKeyEvent') hostErrors.push(error); throw error; }
+    };
   }
   const cdp = createCdpRuntime({ ToolExecutionError, debuggerApi: api.debugger, isRunCurrent: () => current });
   const context = { sessionId: 'owner', runId: 'run', signal: controller.signal, runProfile: { platform: { os: 'mac' } } };
@@ -105,83 +124,145 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, failCount 
     getDebuggerConnectionId: cdp.getDebuggerConnectionId, sendCdp: cdp.sendCdp, withDebugger: cdp.withDebugger,
   });
   t.after(() => cdp.releaseSession('owner'));
-  return { trace, keys, submissions, get failures() { return failures; }, get finishProbe() { return finishProbe; },
+  return { trace, keys, keyFrames, submissions, original, hostErrors, get finishProbe() { return finishProbe; },
     abort: () => controller.abort(new ToolExecutionError('OPERATION_ABORTED', 'cancelled')),
-    call: action => execute({ tabId: 7, target: 'css:#q', action, value: 'one', submit: true, key: 'Enter' }, controller.signal, context) };
+    call: (action, value = 'one') => execute({ tabId: 7, target: 'css:#q', action, value, submit: true, key }, controller.signal, context) };
+}
+
+function oneSubmission(f, fault, navigated = true) {
+  assert.equal(f.submissions.length, 1, 'never replay Enter');
+  assert.deepEqual(f.keys, fault === 'keyup-input' || !navigated ? ['keyDown', 'keyUp'] : ['keyDown']);
+  assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1);
+  assert.ok(f.trace.filter(stage => stage === 'keyup-route').length <= 1, 'no route retry');
+}
+function originalError(f, kind) {
+  return error => {
+    assert.equal(error, f.hostErrors[0], 'preserve the original host error');
+    if (kind.startsWith('result-')) assert.equal(error.message, 'Firefox page command failed');
+    else assert.equal(error, f.original, 'preserve non-Error rejection identity too');
+    return true;
+  };
 }
 
 for (const action of ['fill', 'press']) {
-  for (const fault of ['keyup-route', 'keyup-input', 'keydown-response']) {
-    for (const sameUrl of [false, true]) test(`Firefox ${action}: ${fault} after ${sameUrl ? 'same-URL commit' : 'navigation'} preserves one submission`, async t => {
-      const f = fixture(t, { fault, sameUrl });
+  for (const fault of faults) for (const errorKind of errors) {
+    test(`Firefox ${action}: ${fault} / ${errorKind} + delayed commit succeeds once`, async t => {
+      const f = fixture(t, { fault, errorKind, commitDelay: 40 });
       const result = await f.call(action);
       assert.equal(result.error, undefined);
       assert.equal(result.navigated, true);
-      assert.equal(result.pageAfter.url, sameUrl ? BEFORE : AFTER);
+      assert.equal(result.pageAfter.url, AFTER);
       assert.equal(action === 'fill' ? result.submitDispatched : result.pressed, true);
+      oneSubmission(f, fault);
+    });
+    test(`Firefox ${action}: ${fault} / ${errorKind} without commit preserves error`, async t => {
+      const f = fixture(t, { fault, errorKind, navigation: false });
+      const start = Date.now();
+      await assert.rejects(f.call(action), originalError(f, errorKind));
+      assert.ok(Date.now() - start >= 950, 'allow one second for commit');
+      assert.ok(Date.now() - start < 1800, 'one recovery window, no keyUp cleanup replay');
       assert.equal(f.submissions.length, 1);
-      assert.equal(f.keys.filter(type => type !== 'keyUp').length, 1, 'never replay Enter');
+      assert.equal(f.keys.filter(type => type === 'keyUp').length, fault === 'keyup-input' ? 1 : 0);
+      assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1);
+      assert.equal(f.trace.filter(stage => stage === 'keyup-route').length, fault === 'keydown-response' ? 0 : 1);
     });
   }
-  test(`Firefox ${action}: transient read-only input-frame failures retry before dispatch`, async t => {
-    const f = fixture(t, { fault: 'prepare', failCount: 2 });
+  for (const errorKind of errors) test(`Firefox ${action}: prepare / ${errorKind} fails once before input`, async t => {
+    const f = fixture(t, { fault: 'prepare', errorKind });
+    await assert.rejects(f.call(action), originalError(f, errorKind));
+    assert.deepEqual(f.keys, []);
+    assert.equal(f.trace.filter(stage => stage === 'prepare').length, 1);
+  });
+  for (const commitDuringPrepare of ['success', 'failure']) for (const frameId of [0, 4]) {
+    test(`Firefox ${action}: document ${frameId} changes during ${commitDuringPrepare} prepare, no dispatch`, async t => {
+      const f = fixture(t, { commitDuringPrepare, frameId });
+      await assert.rejects(f.call(action), commitDuringPrepare === 'failure' ? error => error === f.original : undefined);
+      assert.deepEqual(f.keys, []);
+      assert.ok(f.trace.filter(stage => stage === 'prepare').length <= (frameId ? 2 : 1), 'one route traversal only');
+    });
+  }
+  for (const fault of faults) test(`Firefox ${action}: ${fault} same-URL commit is delivery evidence`, async t => {
+    const f = fixture(t, { fault, sameUrl: true });
     const result = await f.call(action);
     assert.equal(result.navigated, true);
-    assert.ok(f.failures >= 2);
-    assert.equal(f.submissions.length, 1);
+    assert.equal(result.pageAfter.url, BEFORE);
+    oneSubmission(f, fault);
   });
-  test(`Firefox ${action}: delayed commit confirms a lost keyDown response without replay`, async t => {
-    const f = fixture(t, { fault: 'keydown-response', commitDelay: 120 });
-    const result = await f.call(action);
-    assert.equal(result.navigated, true);
-    assert.equal(f.submissions.length, 1);
+  for (const commitFrameId of [0, 4]) test(`Firefox ${action}: main/target frame ${commitFrameId} commit skips child keyUp`, async t => {
+    const f = fixture(t, { fault: 'keydown-response', frameId: 4, commitFrameId, commitDelay: 40 });
+    assert.equal((await f.call(action)).navigated, true);
+    assert.deepEqual(f.keys, ['keyDown']);
+    assert.deepEqual(f.keyFrames, [4]);
   });
-  test(`Firefox ${action}: unrelated input errors are not hidden by navigation`, async t => {
-    const f = fixture(t, { fault: 'keydown-response', message: 'unrelated failure' });
-    await assert.rejects(f.call(action), /unrelated failure/);
-    assert.equal(f.submissions.length, 1);
+  for (const unrelated of [{ commitFrameId: 9 }, { commitTabId: 8 }]) {
+    test(`Firefox ${action}: unrelated commit ${JSON.stringify(unrelated)} cannot confirm input`, async t => {
+      const f = fixture(t, { fault: 'keydown-response', ...unrelated });
+      await assert.rejects(f.call(action), originalError(f, 'result-object'));
+      assert.deepEqual(f.keys, ['keyDown']);
+    });
+  }
+  test(`Firefox ${action}: commit after one second does not recover an error`, async t => {
+    const f = fixture(t, { fault: 'keydown-response', commitDelay: 1200 });
+    await assert.rejects(f.call(action), originalError(f, 'result-object'));
+    assert.deepEqual(f.keys, ['keyDown']);
+  });
+  test(`Firefox ${action}: commit during successful keyUp probe skips dispatch`, async t => {
+    const f = fixture(t, { fault: 'keyup-route', interrupt: 'defer' });
+    const pending = f.call(action);
+    await new Promise(setImmediate);
+    // The probe is in flight; publish the commit before its successful reply.
+    globalThis.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: AFTER });
+    f.finishProbe();
+    await pending;
+    assert.deepEqual(f.keys, ['keyDown']);
   });
   for (const fault of ['receipt', 'observation', 'release']) test(`Firefox ${action}: ${fault} failure after input keeps navigation results`, async t => {
     const f = fixture(t, { fault });
-    const result = await f.call(action);
-    assert.equal(result.navigated, true);
-    assert.equal(f.submissions.length, 1);
-  });
-  for (const fault of ['keyup-route', 'keyup-input', 'keydown-response']) test(`Firefox ${action}: ${fault} without navigation does not invent success or replay`, async t => {
-    const f = fixture(t, { fault, navigation: false, failCount: Infinity });
-    await assert.rejects(f.call(action), new RegExp(MISSING));
+    assert.equal((await f.call(action)).navigated, true);
     assert.equal(f.submissions.length, 1);
   });
   for (const interrupt of ['abort', 'close', 'run', 'abort-later', 'close-later', 'run-later']) {
-    for (const fault of ['prepare', 'keydown-response']) test(`Firefox ${action}: ${interrupt} during ${fault} revokes recovery`, async t => {
-      const f = fixture(t, { fault, interrupt, failCount: Infinity, navigation: !interrupt.endsWith('-later') });
+    for (const fault of faults) test(`Firefox ${action}: ${interrupt} during ${fault} revokes recovery`, async t => {
+      const f = fixture(t, { fault, interrupt, commitDelay: interrupt.endsWith('-later') ? 40 : 0 });
       await assert.rejects(f.call(action));
       const count = f.trace.length;
-      await new Promise(resolve => setTimeout(resolve, 70));
+      await new Promise(resolve => setTimeout(resolve, 60));
       assert.equal(f.trace.length, count, 'no late probes or input after revocation');
-      assert.equal(f.submissions.length, fault === 'prepare' ? 0 : 1);
+      assert.equal(f.submissions.length, 1);
     });
   }
-  test(`Firefox ${action}: cancelling an in-flight frame probe prevents input after its late reply`, { timeout: 1500 }, async t => {
+  test(`Firefox ${action}: cancelling an in-flight frame probe prevents input after its late reply`, async t => {
     const f = fixture(t, { fault: 'prepare', interrupt: 'defer' });
     const pending = f.call(action);
     const rejected = assert.rejects(pending);
     await new Promise(setImmediate);
-    assert.equal(typeof f.finishProbe, 'function');
     f.abort();
     await rejected;
     const count = f.trace.length;
     f.finishProbe();
     await new Promise(setImmediate);
     assert.equal(f.trace.length, count);
-    assert.equal(f.submissions.length, 0);
+    assert.deepEqual(f.keys, []);
   });
-  for (const interrupt of ['', 'hang']) test(`Firefox ${action}: ${interrupt ? 'stalled retry' : 'permanent permission denial'} is bounded before any input`, { timeout: 2500 }, async t => {
-    const f = fixture(t, { fault: 'prepare', failCount: interrupt ? 1 : Infinity, interrupt });
-    const started = Date.now();
-    await assert.rejects(f.call(action), new RegExp(MISSING));
-    assert.ok(Date.now() - started < 2000, 'retry budget is at most one second');
-    assert.equal(f.submissions.length, 0);
-    assert.ok(f.trace.filter(stage => stage === 'prepare').length <= 25, 'bounded probe count');
+  test(`Firefox ${action}: no navigation, no error sends exactly one keyDown/keyUp`, async t => {
+    const f = fixture(t, { navigation: false });
+    assert.equal((await f.call(action)).navigated, false);
+    oneSubmission(f, '', false);
   });
 }
+
+test('Firefox fill: 12 unique submits, two keyUp injections fail while the old document unloads', async t => {
+  for (let i = 1; i <= 12; i++) await t.test(`submit ${i}`, async t => {
+    const f = fixture(t, { fault: [4, 7].includes(i) ? 'keyup-input' : '', commitDelay: [4, 7].includes(i) ? 40 : 0 });
+    const result = await f.call('fill', `unique-${i}`);
+    assert.equal(result.submitDispatched, true);
+    assert.equal(result.navigated, true);
+    assert.deepEqual(f.submissions, [`unique-${i}`]);
+    assert.ok(f.keys.filter(type => type === 'keyUp').length <= 1);
+  });
+});
+
+test('Firefox modified Enter retains failure even with a navigation commit', async t => {
+  const f = fixture(t, { fault: 'keydown-response', key: 'Shift+Enter' });
+  await assert.rejects(f.call('press'), originalError(f, 'result-object'));
+});

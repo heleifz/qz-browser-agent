@@ -30,7 +30,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   const autoAttach = new Set<number>();
   const contexts = new Map<number, ContextRecord[]>();
   const generations = new Map<string, number>();
-  const enterInput = createFirefoxEnterInput((tabId, frameId) => generations.get(`${tabId}:${frameId}`) || 0);
+  const enterInput = createFirefoxEnterInput(generations);
   const emulation = new Map<number, { userAgent: string; touch: boolean }>();
   const savedWindows = new Map<number, SavedWindow>();
   const announced = new Map<number, Map<string, string>>();
@@ -54,6 +54,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const frameId = Number(details.frameId);
     if (!attached.has(tabId)) return;
     bump(generations, tabId, frameId);
+    enterInput.committed();
     if (runtimeEnabled.has(tabId)) {
       void replaceFrameContext(tabId, frameId, String(details.url || ""));
       void installConsole(tabId).catch(() => {});
@@ -82,6 +83,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const tabId = tabIdOf(target);
     const active: DebuggerCommandScope = { signal: scope?.signal, check() {
       scope?.check();
+      scope?.signal?.throwIfAborted();
       if (!attached.has(tabId)) throw new Error("Debugger is not attached to the tab");
     } };
     return Promise.resolve().then(() => {
@@ -143,9 +145,10 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       } finally { if (type === "mouseReleased") pointerFrames.delete(key); }
     }
     if (method === "Input.dispatchKeyEvent") {
-      const prepare = async () => (await inputFrame(tabId, frameId, 0, 0, true, scope.check)).frameId;
-      const dispatchKey = (target: number) => run(tabId, target, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } });
-      if (params.key === "Enter" && numberValue(params.modifiers) === 0) {
+      const enter = params.key === "Enter" && numberValue(params.modifiers) === 0;
+      const prepare = async () => (await inputFrame(tabId, frameId, 0, 0, true, scope.check, !enter)).frameId;
+      const dispatchKey = (target: number) => run(tabId, target, { op: "input", input: { kind: "key", type: String(params.type || ""), key: String(params.key || ""), code: String(params.code || ""), keyCode: numberValue(params.windowsVirtualKeyCode), modifiers: numberValue(params.modifiers), text: String(params.text || ""), commands: stringList(params.commands) } }, "ISOLATED", !enter);
+      if (enter) {
         return enterInput.send(tabId, frameId, params.type === "keyUp", prepare, dispatchKey, scope);
       }
       return dispatchKey(await prepare());
@@ -232,7 +235,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     return { backendNodeId: frameOwnerNodeId(frame, siblings, listed) };
   }
 
-  async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false, check = () => {}) {
+  async function inputFrame(tabId: number, frameId: number, x: number, y: number, active = false, check = () => {}, retryWorld = true) {
     // CDP pointer coordinates are relative to the target viewport. scripting input
     // must be dispatched in the hit frame so its listeners and receipt see it.
     check();
@@ -241,13 +244,13 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const visited = new Set<number>();
     while (!visited.has(frameId)) {
       visited.add(frameId);
-      const hit = fields(await run(tabId, frameId, { op: "inputFrame", x, y, active }));
+      const hit = fields(await run(tabId, frameId, { op: "inputFrame", x, y, active }, "ISOLATED", retryWorld));
       check();
       if (!hit.backendNodeId) break;
       const candidates = frames.filter(frame => frame.parentFrameId === frameId);
       if (!candidates.length) break;
       // Reuse this dispatch's frame snapshot and one owner list per visited parent.
-      const owners = fields(await run(tabId, frameId, { op: "owners" }));
+      const owners = fields(await run(tabId, frameId, { op: "owners" }, "ISOLATED", retryWorld));
       check();
       const listed = arrayValue(owners.frames).map(fields);
       const siblings = [...candidates].sort((left, right) => left.frameId - right.frameId);
@@ -551,18 +554,19 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     return {};
   }
 
-  async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED") {
-    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command, world]);
+  async function run(tabId: number, frameId: number, command: PageCommand, world: ScriptWorld = "ISOLATED", retryWorld = true) {
+    const [result] = await execute({ tabId, frameIds: [frameId] }, world, firefoxPageCommand, [command, world], retryWorld);
     return result;
   }
 
-  async function execute<Args extends unknown[]>(target: ScriptTarget, world: ScriptWorld, func: (...args: Args) => unknown, args: Args): Promise<unknown[]> {
+  async function execute<Args extends unknown[]>(target: ScriptTarget, world: ScriptWorld, func: (...args: Args) => unknown, args: Args, retryWorld = true): Promise<unknown[]> {
     const scripting = chromeApi.scripting;
     if (!scripting?.executeScript) throw new Error("scripting.executeScript is unavailable");
     let results: ScriptResult[];
     try {
       results = await scripting.executeScript({ target, world, injectImmediately: true, args, func });
     } catch (error) {
+      if (!retryWorld) throw error;
       const message = error instanceof Error ? error.message : String(error);
       if (!/world|MAIN|ISOLATED/i.test(message)) throw error;
       results = await scripting.executeScript({ target, injectImmediately: true, args, func });
