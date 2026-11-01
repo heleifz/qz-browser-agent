@@ -903,7 +903,7 @@ export function createSkillsFeature(options: SkillsOptions) {
   }
 
   function showSkillDetail(name: string) {
-    const rawSkill = allSkillsCache.find(s => skillMatchesName(s, name));
+    const rawSkill = allSkillsCache.find(s => s.name === name) || allSkillsCache.find(s => skillMatchesName(s, name));
     if (!rawSkill) return false;
     const skill = normalizeSkill(rawSkill);
     const displayName = getSkillDisplayName(skill) || skill.name;
@@ -2817,7 +2817,7 @@ export function createSkillsFeature(options: SkillsOptions) {
 
   $<HTMLButtonElement>("#btn-delete-skill").addEventListener("click", async () => {
     const name = currentSkillName || $("#skill-detail-name").textContent;
-    const current = allSkillsCache.find(s => skillMatchesName(s, name));
+    const current = allSkillsCache.find(s => s.name === name);
     if (isBuiltinSkill(current)) {
       setSkillsStatus(t("builtInSkillsCannotBeDeleted"), "error");
       return;

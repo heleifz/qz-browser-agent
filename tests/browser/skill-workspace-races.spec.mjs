@@ -69,6 +69,30 @@ async function save(page, value) {
   await expect.poll(() => page.evaluate(() => window.__skillsTest.calls.filter(call => call.type === "save_workspace_skill").length)).toBeGreaterThan(0);
 }
 
+test("deleting a selected ID preserves siblings sharing its title or using that ID as a title", async ({ page }) => {
+  await page.evaluate(async () => {
+    const { normalizeModernSkill } = await import("/extension/shared/skills/skill-utils.js");
+    const state = window.__skillsTest;
+    const rows = [
+      normalizeModernSkill({ name: "alpha", displayName: "beta", content: "keep alpha" }),
+      normalizeModernSkill({ name: "gamma", displayName: "Shared title", content: "keep gamma" }),
+      normalizeModernSkill({ name: "beta", displayName: "Shared title", content: "delete beta" }),
+    ];
+    await state.storage.set({ _skills: Object.fromEntries(rows.map(row => [row.name, row])) });
+    state.lifetime.abort();
+    state.feature = await state.remount();
+    state.feature.showDetail("beta");
+  });
+  await expect(page.locator("#skill-detail-name")).toHaveText("Shared title");
+  await page.locator("#btn-skill-actions").click();
+  await page.locator("#btn-delete-skill").click();
+  await expect.poll(() => page.evaluate(() => Object.keys(window.__skillsTest.storage.snapshot()._skills))).toEqual(["alpha", "gamma"]);
+  expect(await page.evaluate(() => {
+    const call = window.__skillsTest.calls.find(call => call.type === "delete_workspace_skill");
+    return { name: call.payload.name, expected: call.payload.expected.name };
+  })).toEqual({ name: "beta", expected: "beta" });
+});
+
 test("saving preserves newer edits and uses the saved snapshot for the next save", async ({ page }) => {
   await save(page, "first edit");
   await page.locator("#skill-body-text").fill("newer edit");

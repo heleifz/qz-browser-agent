@@ -51,6 +51,27 @@ test('skill lists and workspace snapshots dedupe user names, not display names',
   }
 });
 
+test('workspace save, import and delete use IDs without removing display-name siblings', async () => {
+  const neighbours = [
+    normalizeModernSkill({ name: 'sibling', displayName: 'target', content: 'keep', createdAt: 'sibling-only' }),
+    normalizeModernSkill({ name: 'same-title', displayName: 'Shared title', content: 'keep too' }),
+  ];
+  for (const action of ['save', 'import']) {
+    const { workspace, storage } = setup(Object.fromEntries(neighbours.map(row => [row.name, row])));
+    const incoming = normalizeModernSkill({ name: 'target', displayName: 'Shared title', content: 'new' });
+    const write = expected => action === 'save'
+      ? workspace.save({ name: 'target', expected, skill: incoming })
+      : workspace.import({ skills: [incoming], expected: { target: expected } });
+    await write(null);
+    const created = storage.snapshot()._skills.target;
+    assert.notEqual(created.createdAt, 'sibling-only');
+    await write(created);
+    for (const row of neighbours) assert.deepEqual(storage.snapshot()._skills[row.name], row);
+    await workspace.remove({ name: 'target', expected: storage.snapshot()._skills.target });
+    assert.deepEqual(storage.snapshot()._skills, Object.fromEntries(neighbours.map(row => [row.name, row])));
+  }
+});
+
 test('concurrent unrelated edits merge; a stale edit/delete cannot overwrite the same Skill', async () => {
   const { workspace } = setup({ alpha: skill('alpha'), beta: skill('beta') });
   const { skills } = await workspace.read();
