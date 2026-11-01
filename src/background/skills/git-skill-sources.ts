@@ -15,7 +15,6 @@ import {
   withoutGitSkillOrigin,
 } from "../../shared/skills/git-skill-sources.js";
 import { importSkillsZip, skillToSkillMarkdown } from "../../shared/skills/skill-package.js";
-import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
 import {
   getSkillDisplayName,
   modernSkillValuesFromRecord,
@@ -294,7 +293,7 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
       if (record(error).code === "OPERATION_ABORTED" || record(error).name === "AbortError") throw error;
       throw new GitSkillSourceError("GIT_ARCHIVE_INVALID", t("git.invalidSkillZip", { reason: String(errorMessage(error)) }));
     }
-    let rows = (Array.isArray(imported) ? imported : [])
+    const rows = (Array.isArray(imported) ? imported : [])
       .map(normalizeModernSkill)
       .filter(skill => skill.name);
     if (!rows.length) {
@@ -316,23 +315,6 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
     const checkedAt = now();
     const snapshot = await repository.readSnapshot();
     const previousSource = snapshot.sources[sourceId] || null;
-    const existingSkills = modernSkillValuesFromRecord(snapshot.skills);
-    const ownedSkills = existingSkills.filter(skill => gitSkillBelongsToSource(skill, sourceId));
-    const importedIdentity = preserveThenValidateImportedSkills(rows, ownedSkills);
-    if (!importedIdentity.ok) {
-      if (importedIdentity.reason === "duplicate") {
-        throw new GitSkillSourceError(
-          "GIT_ARCHIVE_DUPLICATE_SKILL",
-          t("git.duplicateSkill", { name: String(importedIdentity.name) }),
-        );
-      }
-      if (importedIdentity.reason === "builtin") {
-        throw new GitSkillSourceError("GIT_ARCHIVE_BUILTIN_CONFLICT", t("git.builtinSkill", { name: String(importedIdentity.name) }));
-      }
-      const unexpected: never = importedIdentity.reason;
-      throw new Error(unexpected);
-    }
-    rows = importedIdentity.skills;
     const incomingDigests: Record<string, string> = {};
     for (const skill of rows) incomingDigests[skill.name] = await skillDigest(skill, digest);
     if (subpath) {
@@ -358,6 +340,8 @@ export function createGitSkillSourceService(options: GitSourceOptions) {
       checkedAt,
       updatedAt: checkedAt,
     });
+    const existingSkills = modernSkillValuesFromRecord(snapshot.skills);
+    const ownedSkills = existingSkills.filter(skill => gitSkillBelongsToSource(skill, sourceId));
     const ownedKeys = new Set(ownedSkills.map(skill => normalizeSkillLookup(skill.name)));
     const nameConflicts = [];
     for (const incoming of rows) {

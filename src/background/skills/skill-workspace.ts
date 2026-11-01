@@ -2,7 +2,6 @@ import { t } from "../../shared/i18n/backend.js";
 import { createSkillStateRepository, sameSkillRecord, skillWriteConflict } from "./skill-repository.js";
 import { listSkills, validateSkillMcpConfig, validateSkillManifest } from "./runtime.js";
 import { isBuiltinSkillName, mergeBuiltinSkills } from "../../shared/skills/builtin-skills.js";
-import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
 import { modernSkillValuesFromRecord, normalizeModernSkill, normalizeSkillLookup, skillMatchesName } from "../../shared/skills/skill-utils.js";
 import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import type { SkillRecord } from "../../shared/skills/skill-utils.js";
@@ -38,27 +37,9 @@ export function createSkillWorkspaceService({
     const next = { ...snapshot._skills };
     const original = modernSkillValuesFromRecord(next);
     const name = String(request.name || "");
-    const imported = (Array.isArray(request.skills) ? request.skills : []).map(normalizeModernSkill);
-    let rows: SkillRecord[];
-    if (action === "import") {
-      const identity = preserveThenValidateImportedSkills(imported, original);
-      if (!identity.ok) {
-        if (identity.reason === "duplicate") throw new Error(t("skill.duplicateNames"));
-        if (identity.reason === "builtin") {
-          throw Object.assign(new Error(t("skill.builtinReadOnly", { name: String(identity.name) })), { code: "SKILL_READ_ONLY" });
-        }
-        const unexpected: never = identity.reason;
-        throw new Error(unexpected);
-      }
-      rows = identity.skills;
-    } else if (action === "save") {
-      rows = [normalizeModernSkill(request.skill)];
-    } else if (action === "delete") {
-      rows = [];
-    } else {
-      const unexpected: never = action;
-      throw new Error(unexpected);
-    }
+    const rows = action === "import"
+      ? (Array.isArray(request.skills) ? request.skills : []).map(normalizeModernSkill)
+      : action === "save" ? [normalizeModernSkill(request.skill)] : [];
     if (action !== "delete" && (!rows.length || rows.some(skill => !skill.name))) throw new Error(t("skill.nothingToSave"));
     const names = action === "delete" ? [name] : rows.map(skill => skill.name);
     if (!names.every(Boolean)) throw new Error(t("skill.nameMissing"));
@@ -66,7 +47,7 @@ export function createSkillWorkspaceService({
     for (const candidate of [name, ...names].filter(Boolean)) {
       if (isBuiltinSkillName(candidate)) throw Object.assign(new Error(t("skill.builtinReadOnly", { name: String(candidate) })), { code: "SKILL_READ_ONLY" });
     }
-    const readSet = new Set([name, ...names, ...(action === "import" ? imported.map(skill => skill.name) : [])].filter(Boolean));
+    const readSet = new Set([name, ...names].filter(Boolean));
     const find = (key: string) => original.find(skill => skillMatchesName(skill, key)) || null;
     const remove = (key: string) => {
       for (const [id, value] of Object.entries(next)) {
@@ -74,10 +55,9 @@ export function createSkillWorkspaceService({
       }
     };
     const expectations = action === "import" ? fields(request.expected) : { [name]: request.expected };
-    for (const [index, target] of (action === "import" ? names : [name]).entries()) {
-      const expectedKey = action === "import" ? imported[index].name : target;
-      if (!Object.hasOwn(expectations, expectedKey) || expectations[expectedKey] === undefined) throw new TypeError("Skill writes require an expected record");
-      const expected = expectations[expectedKey] === null ? null : normalizeModernSkill(expectations[expectedKey]);
+    for (const target of action === "import" ? names : [name]) {
+      if (!Object.hasOwn(expectations, target) || expectations[target] === undefined) throw new TypeError("Skill writes require an expected record");
+      const expected = expectations[target] === null ? null : normalizeModernSkill(expectations[target]);
       if (!sameSkillRecord(find(target), expected)) throw skillWriteConflict(target);
     }
     let saved: SkillRecord | undefined;

@@ -2,7 +2,6 @@ import { t } from "../../shared/i18n/backend.js";
 import { isBuiltinSkillName } from "../../shared/skills/builtin-skills.js";
 import { withoutGitSkillOrigin } from "../../shared/skills/git-skill-sources.js";
 import { importSkillsZip } from "../../shared/skills/skill-package.js";
-import { preserveThenValidateImportedSkills } from "../../shared/skills/skill-import-identity.js";
 import {
   normalizeModernSkill,
   normalizeSkillLookup,
@@ -104,7 +103,7 @@ export function createPageSkillImportService(options: PageImportOptions) {
         );
       }
 
-      let rows = (Array.isArray(imported) ? imported : [])
+      const rows = (Array.isArray(imported) ? imported : [])
         .map(skill => withoutGitSkillOrigin(normalizeModernSkill(skill)))
         .filter(skill => skill.name);
       if (!rows.length) {
@@ -135,26 +134,6 @@ export function createPageSkillImportService(options: PageImportOptions) {
       const existingSkills = Object.values(snapshot.skills || {})
         .map(skill => normalizeModernSkill(skill))
         .filter(skill => skill.name);
-      const identity = preserveThenValidateImportedSkills(rows, existingSkills);
-      if (!identity.ok) {
-        if (identity.reason === "duplicate") {
-          throw new PageSkillImportError(
-            "PAGE_SKILL_ZIP_DUPLICATE",
-            t("skill.pageZipDuplicate", { name: String(identity.name) }),
-            { name: identity.name, url, tabId },
-          );
-        }
-        if (identity.reason === "builtin") {
-          throw new PageSkillImportError(
-            "SKILL_READ_ONLY",
-            t("skill.pageZipBuiltin", { name: String(identity.name) }),
-            { name: identity.name, url, tabId },
-          );
-        }
-        const unexpected: never = identity.reason;
-        throw new Error(unexpected);
-      }
-      rows = identity.skills;
       const conflicts = rows
         .filter(incoming => existingSkills.some(existing => (
           normalizeSkillLookup(existing.name) === normalizeSkillLookup(incoming.name)
