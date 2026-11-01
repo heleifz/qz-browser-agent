@@ -15,7 +15,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { scriptTimeout } from "#sdk/background/tools";
+import { publishTimeoutTrace, scriptTimeout } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -339,12 +339,7 @@ registerTool({
     }
     const resolvedTabId = resolveRunScriptTargetTabId(tabId, context);
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ skill, script, context });
-    const releasePageTrace = beginPageScriptTrace(context, resolvedTabId);
-    try {
-      return await runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal);
-    } finally {
-      releasePageTrace();
-    }
+    return runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal);
   },
 });
 
@@ -413,15 +408,8 @@ registerTool({
       }
 
       try {
-        // The isolated-world listener only streams traces already collected.
-        try {
-          await ensureRunScriptToolBridge(resolvedTabId, context);
-        } catch (installError) {
-          if (errorCode(installError) === "OPERATION_ABORTED") throw installError;
-          if (signal?.aborted) throw makeRunScriptAbortedError(resolvedTabId, "tool_bridge_install");
-        }
         const evalResult = await evaluateCdpScript(resolvedTabId, {
-          expression: buildCdpTraceExpression(code, { tabId: resolvedTabId, parentCallId: context.toolExecutionId || "", reason: "cdp", scriptArgs, securityGuardrails }),
+          expression: buildCdpTraceExpression(code, { tabId: resolvedTabId, reason: "cdp", scriptArgs, securityGuardrails }),
           returnByValue: true,
           awaitPromise: true,
           generatePreview: true,
@@ -437,12 +425,7 @@ registerTool({
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
-    const releasePageTrace = beginPageScriptTrace(context, resolvedTabId);
-    try {
-      return await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run));
-    } finally {
-      releasePageTrace();
-    }
+    return isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run);
   },
 });
 
@@ -461,37 +444,8 @@ function withoutToolAccess(result: Fields): Fields {
 }
 
 const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
-const SCRIPT_TRACE_PENDING = "script outcome confirmation";
-const runScriptInnerPendingByRequestId = new Map<string, {
-  resolve(value: unknown): void;
-  reject(error: unknown): void;
-  noteTrace?(rows: unknown[]): void;
-}>();
-const runScriptPageTraceByCallId = new Map<string, (rows: unknown[]) => void>();
-
-function clipScriptTrace(rows: unknown) {
-  return (Array.isArray(rows) ? rows : []).filter(row => Boolean(row) && typeof row === "object").slice(-5);
-}
-
-function publishScriptTrace(context: ToolContext, rows: unknown[], tabId?: number) {
-  if (typeof context.reportPartial !== "function") return;
-  const numeric = Number(tabId);
-  context.reportPartial({
-    ...(Number.isFinite(numeric) && numeric > 0 ? { tabId: numeric } : {}),
-    status: "unconfirmed",
-    trace: clipScriptTrace(rows),
-  }, SCRIPT_TRACE_PENDING);
-}
-
-function beginPageScriptTrace(context: ToolContext, tabId: number) {
-  const callId = String(context.toolExecutionId || "");
-  if (!callId) return () => {};
-  const publish = (rows: unknown[]) => publishScriptTrace(context, rows, tabId);
-  runScriptPageTraceByCallId.set(callId, publish);
-  return () => {
-    if (runScriptPageTraceByCallId.get(callId) === publish) runScriptPageTraceByCallId.delete(callId);
-  };
-}
+const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
+const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
 function makeRunScriptAbortedError(tabId: number, phase = "run") {
   return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
@@ -617,7 +571,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       scriptArgs,
       securityGuardrails,
       fetchBridge,
-    }, signal, rows => publishScriptTrace(context, rows));
+    }, signal);
     const envelope = record(response);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
@@ -657,7 +611,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
   }
 }
 
-async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal, noteTrace?: (rows: unknown[]) => void) {
+async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) {
   const requestId = String(message?.requestId || "");
   if (!requestId) {
     throw new ToolExecutionError("INNER_RUNNER_INVALID_REQUEST", "run_script inner requires requestId.", {
@@ -681,21 +635,24 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal, 
         runScriptInnerPendingByRequestId.delete(requestId);
         reject(error);
       },
-      noteTrace,
     });
   });
   abortHandler = () => {
     const pending = runScriptInnerPendingByRequestId.get(requestId);
-    if (pending) {
-      chrome.runtime.sendMessage({
-        type: "run_script_inner_cancel",
-        requestId,
-      }).catch(() => {});
-      pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running inner script", {
-        engine: "offscreen_inner",
-        requestId,
-      }));
+    if (!pending) return;
+    if (record(signal?.reason).code === "TOOL_TIMEOUT") {
+      const read = requestInnerTraceSnapshot(requestId);
+      publishTimeoutTrace(signal, read);
+      void read.finally(() => {
+        chrome.runtime.sendMessage({ type: "run_script_inner_cancel", requestId }).catch(() => {});
+      });
+    } else {
+      chrome.runtime.sendMessage({ type: "run_script_inner_cancel", requestId }).catch(() => {});
     }
+    pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running inner script", {
+      engine: "offscreen_inner",
+      requestId,
+    }));
   };
   if (signal) {
     signal.addEventListener("abort", abortHandler, { once: true });
@@ -720,16 +677,28 @@ function isNestedRunScriptContext(context: ToolContext = {}) {
   return Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0)) > 0;
 }
 
+function requestInnerTraceSnapshot(requestId: string): Promise<unknown[]> {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (rows: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      runScriptInnerTraceWaiters.delete(requestId);
+      resolve(Array.isArray(rows) ? rows.slice(-5) : []);
+    };
+    const timer = setTimeout(() => finish([]), 800);
+    runScriptInnerTraceWaiters.set(requestId, finish);
+    chrome.runtime.sendMessage({ type: "run_script_inner_trace_snapshot", requestId }).catch(() => finish([]));
+  });
+}
+
 function handleRunScriptInnerRuntimeMessage(msg: Fields = {}) {
+  if (msg?.type === "run_script_inner_trace_snapshot_result") {
+    runScriptInnerTraceWaiters.get(String(msg.requestId || ""))?.(msg.trace);
+    return { ok: true, handled: true };
+  }
   if (msg?.type === "run_script_inner_trace") {
-    return { ok: true, handled: true };
-  }
-  if (msg?.type === "run_script_inner_script_trace") {
-    runScriptInnerPendingByRequestId.get(String(msg.requestId || ""))?.noteTrace?.(clipScriptTrace(msg.trace));
-    return { ok: true, handled: true };
-  }
-  if (msg?.type === "run_script_page_trace") {
-    runScriptPageTraceByCallId.get(String(msg.parentCallId || ""))?.(clipScriptTrace(msg.trace));
     return { ok: true, handled: true };
   }
   if (msg?.type === "run_script_inner_result") {
@@ -814,10 +783,22 @@ async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {
   }
 }
 
+function holdScriptTrace(body: string) {
+  return `
+(() => {
+  const __qzTrace = [];
+  const __qzPromise = (async () => {
+${body}
+  })();
+  try { Object.defineProperty(__qzPromise, "__qzTrace", { value: __qzTrace }); } catch (_e) {}
+  return __qzPromise;
+})()
+`;
+}
+
 function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, parentCallId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
   const source = wrapRunScriptSource(String(code || ""));
-  return `
-(async () => {
+  return holdScriptTrace(`
   const __qzSourceTabId = ${JSON.stringify(tabId)};
   const __qzSessionId = ${JSON.stringify(sessionId)};
   const __qzRunId = ${JSON.stringify(runId || "")};
@@ -898,21 +879,16 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
     },
   });
   const tabId = __qzSourceTabId;
-  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails, parentCallId })}
-})()
-`;
+  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails })}
+`);
 }
 
-function buildCdpTraceExpression(code: string, { tabId, reason = "cdp", scriptArgs = {}, securityGuardrails = {}, parentCallId = "" }: ScriptOptions = {}) {
+function buildCdpTraceExpression(code: string, { tabId, reason = "cdp", scriptArgs = {}, securityGuardrails = {} }: ScriptOptions = {}) {
   const source = wrapRunScriptSource(String(code || ""));
-  return `
-(async () => {
-  ${runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails, parentCallId })}
-})()
-`;
+  return holdScriptTrace(runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails }));
 }
 
-function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {}, parentCallId = "" }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
+function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {} }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
   return `
   ${defineInputBindings ? `
   const tabId = ${JSON.stringify(tabId || null)};
@@ -920,8 +896,6 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
   const args = input;
   const $plugin = input.$plugin || {};
   ` : ""}
-  const __qzTraceParentCallId = ${JSON.stringify(parentCallId || "")};
-  const __qzTrace = [];
   const __qzArtifacts = [];
   const __qzMaxTrace = ${MAX_SCRIPT_TRACE_ENTRIES};
   const __qzStartedAt = Date.now();
@@ -945,15 +919,6 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
     });
     if (__qzTrace.length > __qzMaxTrace) __qzTrace.splice(0, __qzTrace.length - __qzMaxTrace);
-    if (__qzTraceParentCallId) {
-      try {
-        window.postMessage({
-          source: "qz-run-script-trace",
-          parentCallId: __qzTraceParentCallId,
-          trace: __qzTrace.slice(-5),
-        }, "*");
-      } catch (_e) {}
-    }
   }
   function trace(...items) { __qzPushTrace("trace", items); }
   const log = trace;
@@ -1035,7 +1000,6 @@ async function runScriptAsFunctionBody(tabId: number, code: string, cdpEvalError
       reason: "cdp_function_body",
       scriptArgs,
       securityGuardrails,
-      parentCallId: context.toolExecutionId || "",
     }),
     returnByValue: true,
     awaitPromise: true,

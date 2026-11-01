@@ -41,7 +41,7 @@ try {
     const scriptPath = bundle ? 'background/service-worker.js' : 'capabilities/script/tools.js';
     const scriptCode = await readFile(join(outputDir, scriptPath), 'utf8');
     const scriptFindings = cdpFindings(scriptCode, scriptPath);
-    assert.equal(scriptFindings.length, bundle ? 10 : 3);
+    assert.equal(scriptFindings.length, bundle ? 11 : 3);
     assert.ok(scriptFindings.every(item => item.reviewed));
     assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');

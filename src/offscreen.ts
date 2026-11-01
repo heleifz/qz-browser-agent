@@ -78,6 +78,22 @@ chrome.runtime.onMessage.addListener((input: unknown, _sender, sendResponse) => 
       }));
     return false;
   }
+  if (msg?.type === "run_script_inner_trace_snapshot") {
+    const requestId = String(msg.requestId || "");
+    const pending = pendingRuns.has(requestId);
+    sendResponse({ ok: true, accepted: pending, requestId });
+    if (!pending) return false;
+    try {
+      postToSandbox({ type: "trace_snapshot", requestId });
+    } catch {
+      chrome.runtime.sendMessage({
+        type: "run_script_inner_trace_snapshot_result",
+        requestId,
+        trace: [],
+      }).catch(() => {});
+    }
+    return false;
+  }
   if (msg?.type === "run_script_inner_cancel") {
     cancelInnerRun(String(msg.requestId || ""), "cancelled");
     sendResponse({ ok: true, cancelled: true });
@@ -142,12 +158,10 @@ window.addEventListener("message", (event) => {
     });
     return;
   }
-  if (data.type === "script_trace") {
-    const requestId = String(data.requestId || "");
-    if (!pendingRuns.has(requestId)) return;
+  if (data.type === "trace_snapshot") {
     chrome.runtime.sendMessage({
-      type: "run_script_inner_script_trace",
-      requestId,
+      type: "run_script_inner_trace_snapshot_result",
+      requestId: String(data.requestId || ""),
       trace: Array.isArray(data.trace) ? data.trace : [],
     }).catch(() => {});
   }

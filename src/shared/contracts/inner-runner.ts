@@ -15,9 +15,10 @@ export interface ScriptEnvelope {
 export interface WorkerExecute { type: 'execute'; requestId?: string; source?: string; scriptArgs?: Record<string, unknown>; securityGuardrails?: unknown; fetchBridge?: boolean }
 export type InnerWorkerInput = WorkerExecute
   | { type: 'tool_response'; callId: string; response?: ToolBridgeResponse }
-  | { type: 'fetch_response'; callId: string; response?: FetchBridgeResponse };
+  | { type: 'fetch_response'; callId: string; response?: FetchBridgeResponse }
+  | { type: 'trace_snapshot'; requestId?: string };
 export type InnerWorkerOutput = { type: 'tool_call'; callId: string; toolName: string; args: MessageValue }
   | { type: 'fetch_call'; callId: string; request: FetchRequest }
   | { type: 'fetch_cancel'; callId: string }
-  | { type: 'script_trace'; trace: TraceRow[] }
+  | { type: 'trace_snapshot'; requestId: string; trace: TraceRow[] }
   | { type: 'result'; result: ScriptEnvelope };

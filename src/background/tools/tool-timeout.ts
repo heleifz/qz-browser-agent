@@ -1,6 +1,7 @@
 import type { ToolContext } from "../../sdk/background.js";
 import { ToolExecutionError } from "./arguments.js";
 import { diagnosticTrace, formatTraceFields } from "../trace.js";
+import { takeTimeoutTrace } from "./script-timeout-trace.js";
 
 type Fields = Record<string, unknown>;
 export interface ToolPartialResult { result: Fields; pending: string }
@@ -34,15 +35,21 @@ export async function runToolWithTimeout(
   const timeout = new Promise<unknown>((resolve, reject) => {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
     timer = setTimeout(() => {
-      timedOut = true;
-      const error = new ToolExecutionError("TOOL_TIMEOUT", `${name} timed out after ${timeoutMs}ms`, { name, timeout: timeoutMs });
-      diagnosticTrace(`${timeoutTrace || "tool_timeout"}${formatTraceFields({ phase: "tool.timeout", name,
-        session: context.sessionId, run: context.runId, call: context.toolCallId, timeoutMs })}`);
-      // Capture the slot before abort listeners run. Timeout owns settlement from this point.
-      const saved = partial;
-      controller.abort(error);
-      if (saved) resolve(fallback(saved, error));
-      else reject(error);
+      void (async () => {
+        timedOut = true;
+        const error = new ToolExecutionError("TOOL_TIMEOUT", `${name} timed out after ${timeoutMs}ms`, { name, timeout: timeoutMs });
+        diagnosticTrace(`${timeoutTrace || "tool_timeout"}${formatTraceFields({ phase: "tool.timeout", name,
+          session: context.sessionId, run: context.runId, call: context.toolCallId, timeoutMs })}`);
+        // Capture the slot before abort listeners run. Timeout owns settlement from this point.
+        const saved = partial;
+        controller.abort(error);
+        try {
+          const trace = await takeTimeoutTrace(controller.signal);
+          if (saved && Array.isArray(trace) && trace.length) saved.result = { ...saved.result, trace: trace.slice(-5) };
+        } catch { /* A missing trace still settles the deadline. */ }
+        if (saved) resolve(fallback(saved, error));
+        else reject(error);
+      })();
     }, timeoutMs);
   });
   const never = () => new Promise<never>(() => {});

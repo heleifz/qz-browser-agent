@@ -320,6 +320,16 @@ Connect with `qz connect`. An external client uses the URL from `qz mcp`. That d
 
 相对 `55a2fe74`，`src/capabilities/script/tool-messages.ts` 和 `src/capabilities/script/messages.ts` 的 `run_script` 文案没有差异。直驱专用措辞留在说明书里。内置 Agent 仍看到基线里的 inner 说明、`runScriptTarget`、`workingTabRecovery`、`useTargetPageWithAWorkingTabForPage` 和 `forDataStoreProcessingFileGenerationOrPureJs`。
 
+超时结果多了一个字段。`timeoutResult` 仍是 `kind: "action"`，`pending` 仍是 `script outcome confirmation`。这一项内置 Agent 能看到。直驱投影同样只留最后 5 条。
+
+旧文：超时结果没有 `trace`。中文和英文都没有这个字段。
+
+新文：超时前执行环境里已经记下的 trace，只取最后 5 条，放进 `trace`。没有记下 trace 时不带这个字段。字段名中英文相同，没有另写句子。
+
+中文：无独立句子。新字段名 `trace`。
+
+英文：无独立句子。新字段名 `trace`。
+
 ## 文档工具 timeout
 
 这一项内置 Agent 能看到。文档宿主工具是名字以 `qingzhou_documents__` 开头、runtime 为 host 的工具。省略 `timeout` 时仍按 120 秒执行。其他脚本工具仍必须传入 `timeout`，描述仍用下面的旧句。
@@ -362,7 +372,67 @@ en：
 >
 > Message: This tool cannot be called in a direct-drive session.
 
-另外 10 种语言有译文，这里只列语言名：阿拉伯语、德语、西班牙语、法语、印地语、日语、韩语、葡萄牙语（巴西）、俄语、繁体中文。
+另外 10 种语言。旧文都是：没有这个错误码，没有标题，也没有正文。新文如下。
+
+### ar 阿拉伯语
+
+> 标题：لا يمكن للقيادة المباشرة استدعاء هذه الأداة
+>
+> 正文：لا يمكن استدعاء هذه الأداة في جلسة قيادة مباشرة.
+
+### de 德语
+
+> 标题：Direktsteuerung kann dieses Werkzeug nicht aufrufen
+>
+> 正文：Dieses Werkzeug kann in einer Direktsteuerungssitzung nicht aufgerufen werden.
+
+### es 西班牙语
+
+> 标题：La conducción directa no puede llamar a esta herramienta
+>
+> 正文：Esta herramienta no se puede llamar en una sesión de conducción directa.
+
+### fr 法语
+
+> 标题：Le pilotage direct ne peut pas appeler cet outil
+>
+> 正文：Cet outil ne peut pas être appelé dans une session de pilotage direct.
+
+### hi 印地语
+
+> 标题：डायरेक्ट ड्राइव यह टूल नहीं चला सकता
+>
+> 正文：इस टूल को डायरेक्ट-ड्राइव सत्र में नहीं चलाया जा सकता।
+
+### ja 日语
+
+> 标题：直接操作ではこのツールを呼び出せません
+>
+> 正文：このツールは直接操作のセッションでは呼び出せません。
+
+### ko 韩语
+
+> 标题：직접 구동에서는 이 도구를 호출할 수 없습니다
+>
+> 正文：이 도구는 직접 구동 세션에서 호출할 수 없습니다.
+
+### pt-BR 葡萄牙语（巴西）
+
+> 标题：O controle direto não pode chamar esta ferramenta
+>
+> 正文：Esta ferramenta não pode ser chamada em uma sessão de controle direto.
+
+### ru 俄语
+
+> 标题：Прямое управление не может вызвать этот инструмент
+>
+> 正文：Этот инструмент нельзя вызвать в сеансе прямого управления.
+
+### zh-TW 繁体中文
+
+> 标题：直驅不能呼叫此工具
+>
+> 正文：這個工具不能在直驅工作階段裡呼叫。
 
 等用户确认。
 
@@ -418,7 +488,127 @@ en：
 
 这 5 行是新的。旧文：页面上没有这 5 行。区域标签仍用原来的 `sessions.externalDrive`：中文「外部直驱」，英文「External」。只读句见文首，没有改。
 
-另外 10 种语言有这 5 行的译文，这里只列语言名：阿拉伯语、德语、西班牙语、法语、印地语、日语、韩语、葡萄牙语（巴西）、俄语、繁体中文。
+另外 10 种语言有这 5 行。旧文都是：页面上没有这 5 行。新文如下。键名与上面相同。
+
+### ar 阿拉伯语
+
+> 标题：يتحكم فيه وكيل خارجي
+>
+> 正文：يتحكم وكيل خارجي في هذه الجلسة عبر MCP أو واجهة qz. شغّل هذا الأمر في الطرفية لإتمام الربط.
+>
+> 命令说明：ربط هذا المتصفح
+>
+> 复制：نسخ
+>
+> 已复制：تم النسخ
+
+### de 德语
+
+> 标题：Von einem externen Agenten gesteuert
+>
+> 正文：Ein externer Agent steuert diese Sitzung über MCP oder die qz-CLI. Führen Sie diesen Befehl im Terminal aus, um die Verbindung herzustellen.
+>
+> 命令说明：Diesen Browser koppeln
+>
+> 复制：Kopieren
+>
+> 已复制：Kopiert
+
+### es 西班牙语
+
+> 标题：Operado por un agente externo
+>
+> 正文：Un agente externo opera esta sesión por MCP o la CLI de qz. Ejecuta este comando en la terminal para conectarlo.
+>
+> 命令说明：Emparejar este navegador
+>
+> 复制：Copiar
+>
+> 已复制：Copiado
+
+### fr 法语
+
+> 标题：Piloté par un agent externe
+>
+> 正文：Un agent externe pilote cette session via MCP ou la CLI qz. Exécutez cette commande dans un terminal pour le connecter.
+>
+> 命令说明：Associer ce navigateur
+>
+> 复制：Copier
+>
+> 已复制：Copié
+
+### hi 印地语
+
+> 标题：बाहरी एजेंट द्वारा संचालित
+>
+> 正文：इस सत्र को कोई बाहरी एजेंट MCP या qz CLI से सीधे चलाता है। जोड़ने के लिए टर्मिनल में यह कमांड चलाएँ।
+>
+> 命令说明：यह ब्राउज़र जोड़ें
+>
+> 复制：कॉपी करें
+>
+> 已复制：कॉपी हो गया
+
+### ja 日语
+
+> 标题：外部エージェントが直接操作します
+>
+> 正文：このセッションは外部エージェントが MCP または qz CLI から直接操作します。ターミナルで次のコマンドを実行して接続します。
+>
+> 命令说明：このブラウザを接続
+>
+> 复制：コピー
+>
+> 已复制：コピーしました
+
+### ko 韩语
+
+> 标题：외부 에이전트가 직접 조작합니다
+>
+> 正文：이 세션은 외부 에이전트가 MCP 또는 qz CLI로 직접 조작합니다. 터미널에서 아래 명령을 실행해 연결하세요.
+>
+> 命令说明：이 브라우저 연결
+>
+> 复制：복사
+>
+> 已复制：복사됨
+
+### pt-BR 葡萄牙语（巴西）
+
+> 标题：Controlado por um agente externo
+>
+> 正文：Um agente externo controla esta sessão por MCP ou pela CLI qz. Execute este comando no terminal para conectá-lo.
+>
+> 命令说明：Parear este navegador
+>
+> 复制：Copiar
+>
+> 已复制：Copiado
+
+### ru 俄语
+
+> 标题：Управляется внешним агентом
+>
+> 正文：Эту сессию напрямую ведёт внешний агент через MCP или CLI qz. Выполните эту команду в терминале, чтобы подключить его.
+>
+> 命令说明：Привязать этот браузер
+>
+> 复制：Копировать
+>
+> 已复制：Скопировано
+
+### zh-TW 繁体中文
+
+> 标题：由外部 agent 直接操作
+>
+> 正文：這個工作階段由外部 agent 透過 MCP 或 qz CLI 直接操作。在終端機執行下面的命令完成綁定。
+>
+> 命令说明：綁定目前的瀏覽器
+>
+> 复制：複製
+>
+> 已复制：已複製
 
 ### 标题 externalDriveWelcomeTitle
 
@@ -549,6 +739,62 @@ en 新文：
 ### qz exec
 
 帮助正文相对基线没有改。选项列表新增 `--session`（短选项 `-s`）。`qz script` 和 `qz tools` 也有这个选项。
+
+## 模型可见的新错误
+
+这三句旧文都是：没有这句。它们只有英文，没有中文译文。
+
+### The browser operation timed out.
+
+`src/background/mcp/mcp-bridge.ts`，错误码 `BRIDGE_REQUEST_TIMEOUT`。模型在直驱请求超时后能看到。
+
+> The browser operation timed out.
+
+中文：无。
+
+### The drive call was aborted.
+
+`src/background/mcp/mcp-runtime.ts`，错误码 `OPERATION_ABORTED`。
+
+> The drive call was aborted.
+
+中文：无。
+
+### Document tool timeout must be a number of seconds
+
+`src/background/skills/skill-tool-runtime.ts`，错误码 `INVALID_TIMEOUT`。这一项内置 Agent 也能看到。抛出的原文是下面这句英文。内置 Agent 的失败载荷会按既有的 `INVALID_TIMEOUT` 规则改写成「{tool} 的 timeout 参数无效：脚本工具需传秒数，<= 0 表示无限等待。」或英文「Invalid timeout for {tool}: script timeouts use seconds; <= 0 means wait indefinitely.」原文留在 `originalError`。
+
+> Document tool timeout must be a number of seconds
+
+中文：无这句原文。
+
+## CLI 错误和提示
+
+这些句子只有英文。旧文都是：没有这句。中文：无。
+
+> --lang requires a language, such as zh-CN or en.
+
+> --profile must be full or drive.
+
+> Use qz script [FILE|-].
+
+> Use qz tools [NAME].
+
+> Use qz skill.
+
+> Could not read FILE. Use qz script [FILE|-].
+
+文件名换进 `FILE`。源码是 ``Could not read ${options.file}. Use qz script [FILE|-].``
+
+> The script is empty. Use qz script [FILE|-].
+
+> qz-drive guide is missing. Looked in PLACES.
+
+查找过的路径换进 `PLACES`。源码是 ``qz-drive guide is missing. Looked in ${errors.join(", ")}.``
+
+> qz-drive guide is missing the SECTION section.
+
+节名换进 `SECTION`。源码是 ``qz-drive guide is missing the ${key} section.``
 
 ## docs/cli.md
 

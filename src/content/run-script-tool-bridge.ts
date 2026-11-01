@@ -8,14 +8,6 @@ if (!bridgeScope.__QZ_RUN_SCRIPT_TOOL_BRIDGE_INSTALLED__) {
     const data: unknown = event.data;
     if (!data || typeof data !== 'object') return;
     const message = data as Record<string, unknown>;
-    if (message.source === 'qz-run-script-trace') {
-      chrome.runtime.sendMessage({
-        type: 'run_script_page_trace',
-        parentCallId: String(message.parentCallId || ''),
-        trace: Array.isArray(message.trace) ? message.trace.slice(-5) : [],
-      });
-      return;
-    }
     if (message.source !== 'qz-run-script-tool-call' || !message.id) return;
     chrome.runtime.sendMessage({
       type: 'run_script_tool_call',

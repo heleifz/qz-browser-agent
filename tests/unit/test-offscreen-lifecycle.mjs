@@ -69,6 +69,24 @@ test("cancelling before ready settles once and never starts the late script", as
   assert.equal(results(f).length, 1);
 });
 
+test("a timeout snapshot asks the live worker and leaves the run pending", async () => {
+  const f = fixture();
+  f.send(execute("snap"));
+  f.sandbox({ type: "ready" });
+  await tick();
+  const ack = f.send({ type: "run_script_inner_trace_snapshot", requestId: "snap" });
+  assert.equal(ack.accepted, true);
+  assert.equal(f.posted.some(message => message.type === "trace_snapshot" && message.requestId === "snap"), true);
+  f.sandbox({ type: "trace_snapshot", requestId: "snap", trace: [{ level: "trace", message: "row" }] });
+  await tick();
+  const snapshot = f.sent.find(message => message.type === "run_script_inner_trace_snapshot_result");
+  assert.equal(snapshot.requestId, "snap");
+  assert.equal(snapshot.trace[0].message, "row");
+  assert.equal(results(f).length, 0);
+  const missing = f.send({ type: "run_script_inner_trace_snapshot", requestId: "missing" });
+  assert.equal(missing.accepted, false);
+});
+
 test("tool relay preserves identity and drops responses after run cancellation", async () => {
   const f = fixture(); let release;
   f.setTool(() => new Promise(resolve => { release = resolve; }));
@@ -80,24 +98,6 @@ test("tool relay preserves identity and drops responses after run cancellation",
   f.send({ type: "run_script_inner_cancel", requestId: "tool" });
   release({ ok: true, result: "late" }); await tick();
   assert.equal(f.posted.some(message => message.type === "tool_response"), false);
-});
-
-test("script traces already collected are forwarded before the run finishes", async () => {
-  const f = fixture();
-  const rows = Array.from({ length: 6 }, (_, index) => ({ level: "trace", message: `row-${index}` }));
-  f.send(execute("trace"));
-  f.sandbox({ type: "ready" });
-  await tick();
-  f.sandbox({ type: "script_trace", requestId: "trace", trace: rows });
-  await tick();
-  const forwarded = f.sent.filter(message => message.type === "run_script_inner_script_trace");
-  assert.equal(forwarded.length, 1);
-  assert.equal(forwarded[0].requestId, "trace");
-  assert.deepEqual(forwarded[0].trace, rows);
-  assert.equal(results(f).length, 0);
-  f.sandbox({ type: "script_trace", requestId: "missing", trace: rows });
-  await tick();
-  assert.equal(f.sent.filter(message => message.type === "run_script_inner_script_trace").length, 1);
 });
 
 test("foreign windows cannot mark the owned sandbox ready or complete a run", async () => {

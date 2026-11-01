@@ -86,10 +86,10 @@ TypeScript transforms do not substitute for the production pipeline when reviewi
 | `renderSessionExchangeScript` | An inert `application/json` element, with JSON escaping; not executable code. |
 | `renderSessionExportRuntime` | Offline HTML contains only escaped localized messages and the recursively audited, build-time export UI runtime. |
 | `loadMathRuntime` | The script source is the literal packaged `vendor/mathjax/startup.js`; browser fixtures use a same-origin test-server URL. |
-| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. |
-| Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. |
-| `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. |
-| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. Parent invocation IDs are JSON-serialized into the existing bridge messages; they are resolved against live Background calls and do not supply executable source. |
+| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. A timeout asks that worker for its trace once. The reply is forwarded and the worker keeps running until the existing cancel path. |
+| Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. Trace rows stay in the worker. A timeout message returns the last five. Nothing is posted on each `trace()` call. |
+| `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. When a page script times out, one fixed `Runtime.callFunctionOn` reads `__qzTrace` from the promise object CDP is already awaiting, then `Runtime.terminateExecution` runs. The declaration is a literal in this function. It does not compile page or model text. |
+| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. Parent invocation IDs are JSON-serialized into the existing bridge messages; they are resolved against live Background calls and do not supply executable source. Page trace rows stay in the script closure, on a property of the promise CDP holds. They are not posted to the page. |
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
 | `contentContextId`, `invokeBound` | Static isolated-world identity probe and literal bridge function; arguments travel as CDP values rather than code. |
 | Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. It compiles the declaration with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
@@ -101,7 +101,7 @@ On the Firefox-integrated branch, `contentContextId` and `invokeBound` read thei
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
 fingerprints do not cover those constants, so changes to that module need the same review.
 
-The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
+The eleven CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
 `run_script target:"page"` deliberately executes user/Agent source in a page through CDP; it is not
 made static or policy-safe merely because there is no `eval` token. This capability has the same
