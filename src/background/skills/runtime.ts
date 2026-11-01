@@ -98,6 +98,14 @@ export async function loadSkill(name = "", language = getLanguage()) {
   return found ? normalizeSkill(found.skill) : null;
 }
 
+/** Find an existing user Skill by storage identity, never by display name. */
+export async function loadSkillByIdentity(name = "") {
+  const skills = await _getAll();
+  const found = skillEntriesByIdentity(skills, normalizeModernSkill({ name }).name)
+    .find(({ skill }) => isModernSkillRecord(skill));
+  return found ? normalizeSkill(found.skill) : null;
+}
+
 /** Create or update a Skill. */
 export async function saveSkill(name = "", description: string, content: string, metadata: Fields = {}) {
   if (isBuiltinSkillName(name)) {

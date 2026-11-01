@@ -189,6 +189,49 @@ const shared = ["rt1", "rt2"].map(name => normalizeModernSkill({
 }));
 const candidates = shared.map(({ name, displayName }) => ({ name, displayName }));
 const seed = rows => { storage._skills = Object.fromEntries(rows.map(row => [row.name, structuredClone(row)])); };
+const create = name => toolRuntime.execute("manage_skill", {
+  action: "create", name, description: "new skill", content: "new body",
+}, undefined, { ...host, language: "zh-CN" });
+const rt6 = normalizeModernSkill({
+  name: "rt6", displayName: "rt5", description: "existing skill", content: "keep rt6",
+  metadata: { privateMarker: "rt6-only" }, createdAt: "2026-01-01 00:00:00",
+  resources: [{ path: "notes.md", content: "rt6 resource" }],
+});
+seed([rt6]);
+const createdRt5 = await create("rt5");
+assert.equal(createdRt5.saved, true);
+assert.equal(createdRt5.name, "rt5");
+assert.deepEqual(storage._skills.rt6, rt6);
+assert.equal(storage._skills.rt5.content, "new body");
+assert.equal(storage._skills.rt5.description, "new skill");
+assert.deepEqual(storage._skills.rt5.metadata, {});
+assert.deepEqual(storage._skills.rt5.resources, []);
+assert.notEqual(storage._skills.rt5.createdAt, rt6.createdAt);
+const afterCreate = structuredClone(storage._skills);
+for (const name of ["rt6", "R T 6", "rt-6", "RT_6"]) {
+  assert.deepEqual(await create(name), {
+    action: "create", error: "技能已存在：rt5，请改用更新技能或编辑技能资源。", code: "SKILL_ALREADY_EXISTS",
+    details: { name: "rt6", displayName: "rt5", originalCode: "SKILL_ALREADY_EXISTS", originalError: `技能已存在：${name}` },
+    codeLabel: "技能已存在",
+  });
+  assert.deepEqual(storage._skills, afterCreate);
+}
+for (const rows of [shared, [...shared].reverse()]) {
+  seed(rows);
+  assert.equal((await create("Shared title")).saved, true);
+  assert.equal(storage._skills["shared-title"].content, "new body");
+  assert.deepEqual(storage._skills["shared-title"].resources, []);
+  for (const row of rows) assert.deepEqual(storage._skills[row.name], row);
+}
+// Repeated non-canonical names must check the same identity saveSkill writes.
+seed([]);
+assert.equal((await create(alpha)).saved, true);
+assert.equal((await create(alpha)).code, "SKILL_ALREADY_EXISTS");
+const beforeBuiltinCreate = structuredClone(storage._skills);
+const builtinName = listBuiltinSkills()[0].name;
+assert.equal((await create(builtinName)).code, "SKILL_READ_ONLY");
+assert.deepEqual(storage._skills, beforeBuiltinCreate);
+
 const ambiguous = name => error => {
   assert.equal(error.code, "SKILL_NAME_AMBIGUOUS");
   assert.deepEqual(error.details, { name, candidates });
