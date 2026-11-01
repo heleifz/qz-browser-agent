@@ -82,6 +82,24 @@ test("tool relay preserves identity and drops responses after run cancellation",
   assert.equal(f.posted.some(message => message.type === "tool_response"), false);
 });
 
+test("script traces already collected are forwarded before the run finishes", async () => {
+  const f = fixture();
+  const rows = Array.from({ length: 6 }, (_, index) => ({ level: "trace", message: `row-${index}` }));
+  f.send(execute("trace"));
+  f.sandbox({ type: "ready" });
+  await tick();
+  f.sandbox({ type: "script_trace", requestId: "trace", trace: rows });
+  await tick();
+  const forwarded = f.sent.filter(message => message.type === "run_script_inner_script_trace");
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0].requestId, "trace");
+  assert.deepEqual(forwarded[0].trace, rows);
+  assert.equal(results(f).length, 0);
+  f.sandbox({ type: "script_trace", requestId: "missing", trace: rows });
+  await tick();
+  assert.equal(f.sent.filter(message => message.type === "run_script_inner_script_trace").length, 1);
+});
+
 test("foreign windows cannot mark the owned sandbox ready or complete a run", async () => {
   const f = fixture(); f.send(execute("owned"));
   f.sandbox({ type: "ready" }, {}); await tick();

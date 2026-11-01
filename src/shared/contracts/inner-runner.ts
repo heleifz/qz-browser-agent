@@ -19,4 +19,5 @@ export type InnerWorkerInput = WorkerExecute
 export type InnerWorkerOutput = { type: 'tool_call'; callId: string; toolName: string; args: MessageValue }
   | { type: 'fetch_call'; callId: string; request: FetchRequest }
   | { type: 'fetch_cancel'; callId: string }
+  | { type: 'script_trace'; trace: TraceRow[] }
   | { type: 'result'; result: ScriptEnvelope };

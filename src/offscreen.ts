@@ -140,6 +140,16 @@ window.addEventListener("message", (event) => {
     relayInnerFetchCancel(data).catch(() => {
       // The request may already have completed; cancellation is best-effort.
     });
+    return;
+  }
+  if (data.type === "script_trace") {
+    const requestId = String(data.requestId || "");
+    if (!pendingRuns.has(requestId)) return;
+    chrome.runtime.sendMessage({
+      type: "run_script_inner_script_trace",
+      requestId,
+      trace: Array.isArray(data.trace) ? data.trace : [],
+    }).catch(() => {});
   }
 });
 

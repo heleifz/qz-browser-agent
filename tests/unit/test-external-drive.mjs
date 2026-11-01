@@ -131,6 +131,27 @@ test("named drive projection compacts scripts and this session's tabs, then caps
   assert.equal(huge.value.limitChars, DRIVE_RESULT_CHAR_LIMIT);
   assert.equal(huge.value.totalChars > DRIVE_RESULT_CHAR_LIMIT, true);
   assert.equal(huge.value.preview.length, DRIVE_RESULT_CHAR_LIMIT);
+  assert.equal(String(huge.value.preview).startsWith('{"ok":true,"result":'), false);
+
+  const hugeScript = projectNamedDriveResult("run_script", { target: "inner" }, {
+    ok: true,
+    result: { text: "y".repeat(DRIVE_RESULT_CHAR_LIMIT) },
+    __runScriptEnvelope: true,
+  });
+  assert.equal(hugeScript.value.truncated, true);
+  assert.equal(hugeScript.value.totalChars > DRIVE_RESULT_CHAR_LIMIT, true);
+  assert.equal(String(hugeScript.value.preview).startsWith('{"ok":true,"result":'), false);
+  assert.equal(String(hugeScript.value.preview).startsWith('{"text":'), true);
+
+  const timedOut = projectNamedDriveResult("run_script", {}, {
+    code: "TOOL_TIMEOUT",
+    error: "run_script 执行超时。",
+    status: "unconfirmed",
+    trace: traces,
+  });
+  assert.equal(timedOut.value.ok, false);
+  assert.equal(timedOut.value.code, "TOOL_TIMEOUT");
+  assert.deepEqual(timedOut.value.trace, traces.slice(-5));
 });
 
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {

@@ -44,6 +44,10 @@ assert.match(sandbox, /event\.source !== parent/, "sandbox should accept host me
 assert.match(offscreen, /run_script_inner_fetch_cancel/, "offscreen should relay per-request fetch cancellation to Background");
 assert.match(offscreen, /sendResponse\(\{\s*ok:\s*true,\s*accepted:\s*true[\s\S]*publishInnerRunResult/s, "offscreen should ack inner execute immediately and publish results separately");
 assert.match(source, /handleRunScriptInnerRuntimeMessage[\s\S]*run_script_inner_result[\s\S]*pending\.resolve\(msg\.result\)/s, "background should resolve the real inner envelope, not wrap it in a transport ack");
+assert.match(source, /run_script_inner_script_trace[\s\S]*noteTrace/, "background should keep inner traces that arrive before the script result");
+assert.match(source, /qz-run-script-trace/, "page scripts should publish traces before they return");
+assert.match(offscreen, /run_script_inner_script_trace/, "offscreen should forward collected script traces");
+assert.match(sandbox, /type === "script_trace"/, "sandbox should forward script traces without ending the worker");
 assert.doesNotMatch(source, /pending\.resolve\(\{\s*ok:\s*true,\s*result:\s*msg\.result\s*\}\)/, "inner transport ack must not leak into the run_script result protocol");
 assert.match(source, /const envelope = record\(response\);[\s\S]*compactRunScriptEnvelope\(envelope,\s*"offscreen_inner"\)/, "inner runner should consume the resolved response as the final run_script envelope");
 assert.match(source, /runScriptInnerPendingByRequestId/, "background should own inner runner pending requests instead of waiting on offscreen sendResponse");
@@ -104,6 +108,22 @@ assert.doesNotThrow(() => {
   assert.equal(safe.proxy.__qz_uncloneable, 'object');
   assert.equal(safe.cycle.self.__qz_circular, true);
   assertCloneSafe(envelope, 'inner sanitized envelope');
+}
+
+{
+  const { events } = await runInnerWorker(compiledWorker, `
+    trace("one");
+    trace("two");
+    trace("three");
+    trace("four");
+    trace("five");
+    trace("six");
+    return 1;
+  `);
+  const streamed = events.filter(event => event.type === "script_trace");
+  assert.ok(streamed.length >= 6, "inner worker should publish traces as they are written");
+  assert.deepEqual(streamed.at(-1).trace.map(row => row.message), ["two", "three", "four", "five", "six"]);
+  assert.ok(events.findIndex(event => event.type === "script_trace") < events.findIndex(event => event.type === "result"));
 }
 
 assert.ok(

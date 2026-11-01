@@ -115,6 +115,15 @@ function startWorkerRun(data: Record<string, unknown>) {
       }, "*");
       return;
     }
+    if (message.type === "script_trace") {
+      parent.postMessage({
+        source: SANDBOX_SOURCE,
+        type: "script_trace",
+        requestId,
+        trace: Array.isArray(message.trace) ? message.trace : [],
+      }, "*");
+      return;
+    }
     if (message.type === "result") {
       workers.delete(requestId);
       worker.terminate();

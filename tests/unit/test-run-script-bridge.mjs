@@ -338,6 +338,7 @@ const driveBridge = createRunScriptBridge({
       { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
       { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
     ],
+    getTabAliases: () => ({ page: 7 }),
     async execute(name) {
       driveExecutions.push(name);
       if (name === "list_tabs") {
@@ -379,7 +380,7 @@ const driveTabs = await driveBridge.handleToolCall({
   runId: "drive-1",
 });
 assert.deepEqual(driveTabs.result, {
-  tabs: [{ id: 7, title: "Owned", url: "https://httpbin.org/html" }],
+  tabs: [{ id: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html" }],
   count: 1,
   foreign: 1,
 });

@@ -24,6 +24,7 @@ interface BridgeHost {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
     resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior> } | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
+    getTabAliases?(sessionId: string): Readonly<Record<string, number>>;
   };
   collectArtifacts(name: string, args: Fields, result: unknown): Fields[];
   appendArtifacts?(input: { sessionId: string; runId: string; toolCallId: string; sourceTool: string; artifacts: Fields[] }): Promise<unknown>;
@@ -173,7 +174,9 @@ export function createRunScriptBridge({
         }
       }
       const projected = driveRun && toolName === "list_tabs"
-        ? projectNamedDriveResult(toolName, toolArgs, result).value
+        ? projectNamedDriveResult(toolName, toolArgs, result, null, {
+          aliases: toolRuntime.getTabAliases?.(sessionId),
+        }).value
         : result;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {

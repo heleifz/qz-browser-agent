@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test, expect } from './fixtures.mjs';
 import { ensureTestExtension } from '../support/extension-build.mjs';
 
-test('local page scripts overlap without a bridge; tool scripts remain barriers and errors never replay', async ({}, testInfo) => {
+test('local page scripts overlap without tool calls; tool scripts remain barriers and errors never replay', async ({}, testInfo) => {
   test.setTimeout(90_000);
   const server = createServer((req, res) => {
     const index = /^\/page-(\d+)$/.exec(req.url || '')?.[1];
@@ -106,7 +106,7 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
       expect(result.ends.every(e => e.result.result.text.length === 200)).toBe(true);
       expect(result.owned).toEqual(tabs); expect(result.working).toBe(tabs.at(-1));
       expect(result.ids).toEqual(calls.map(c => c.id));
-      expect(result.bridgeInstalls).toBe(0); expect(result.bridgeCalls).toBe(0);
+      expect(result.bridgeInstalls).toBe(6); expect(result.bridgeCalls).toBe(0);
       expect(result.peak).toBe(budget === 1 ? 1 : 6);
       trials.push({ trial, budget, ms: result.ms, peak: result.peak, bridgeInstalls: result.bridgeInstalls, intervals: result.intervals });
     }
@@ -129,7 +129,7 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
     expect(failed.ends[0].result.code).toBe('RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     expect(failed.ends[0].result.details.automaticReplay).toBe(false);
     expect(failed.ends[0].result.diagnostic.suggestedNextStep).toContain('tools.name');
-    expect(failed.bridgeInstalls).toBe(0); expect(failed.bridgeCalls).toBe(0);
+    expect(failed.bridgeInstalls).toBe(1); expect(failed.bridgeCalls).toBe(0);
     expect(await worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: id },
       func: () => document.body.dataset.attempts }))[0].result, tabs[0])).toBe('1');
     const evidence = { trials, serialMedian, parallelMedian, sameTab: { ms: sameTab.ms, peak: sameTab.peak },

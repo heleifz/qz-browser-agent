@@ -137,16 +137,19 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null, 
 
 export const DRIVE_RESULT_CHAR_LIMIT = 48_000;
 
+const SCRIPT_SUCCESS_PREFIX = '{"ok":true,"result":';
+
 function capDriveValue(value: unknown): unknown {
   let text = "";
   try { text = JSON.stringify(value) ?? ""; }
   catch { return value; }
   if (text.length <= DRIVE_RESULT_CHAR_LIMIT) return value;
+  const previewText = text.startsWith(SCRIPT_SUCCESS_PREFIX) ? text.slice(SCRIPT_SUCCESS_PREFIX.length) : text;
   return {
     truncated: true,
     totalChars: text.length,
     limitChars: DRIVE_RESULT_CHAR_LIMIT,
-    preview: text.slice(0, DRIVE_RESULT_CHAR_LIMIT),
+    preview: previewText.slice(0, DRIVE_RESULT_CHAR_LIMIT),
   };
 }
 

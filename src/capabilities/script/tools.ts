@@ -339,7 +339,12 @@ registerTool({
     }
     const resolvedTabId = resolveRunScriptTargetTabId(tabId, context);
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ skill, script, context });
-    return runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal);
+    const releasePageTrace = beginPageScriptTrace(context, resolvedTabId);
+    try {
+      return await runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal);
+    } finally {
+      releasePageTrace();
+    }
   },
 });
 
@@ -408,8 +413,15 @@ registerTool({
       }
 
       try {
+        // The isolated-world listener only streams traces already collected.
+        try {
+          await ensureRunScriptToolBridge(resolvedTabId, context);
+        } catch (installError) {
+          if (errorCode(installError) === "OPERATION_ABORTED") throw installError;
+          if (signal?.aborted) throw makeRunScriptAbortedError(resolvedTabId, "tool_bridge_install");
+        }
         const evalResult = await evaluateCdpScript(resolvedTabId, {
-          expression: buildCdpTraceExpression(code, { tabId: resolvedTabId, reason: "cdp", scriptArgs, securityGuardrails }),
+          expression: buildCdpTraceExpression(code, { tabId: resolvedTabId, parentCallId: context.toolExecutionId || "", reason: "cdp", scriptArgs, securityGuardrails }),
           returnByValue: true,
           awaitPromise: true,
           generatePreview: true,
@@ -425,7 +437,12 @@ registerTool({
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
-    return isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run);
+    const releasePageTrace = beginPageScriptTrace(context, resolvedTabId);
+    try {
+      return await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run));
+    } finally {
+      releasePageTrace();
+    }
   },
 });
 
@@ -444,7 +461,37 @@ function withoutToolAccess(result: Fields): Fields {
 }
 
 const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
-const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
+const SCRIPT_TRACE_PENDING = "script outcome confirmation";
+const runScriptInnerPendingByRequestId = new Map<string, {
+  resolve(value: unknown): void;
+  reject(error: unknown): void;
+  noteTrace?(rows: unknown[]): void;
+}>();
+const runScriptPageTraceByCallId = new Map<string, (rows: unknown[]) => void>();
+
+function clipScriptTrace(rows: unknown) {
+  return (Array.isArray(rows) ? rows : []).filter(row => Boolean(row) && typeof row === "object").slice(-5);
+}
+
+function publishScriptTrace(context: ToolContext, rows: unknown[], tabId?: number) {
+  if (typeof context.reportPartial !== "function") return;
+  const numeric = Number(tabId);
+  context.reportPartial({
+    ...(Number.isFinite(numeric) && numeric > 0 ? { tabId: numeric } : {}),
+    status: "unconfirmed",
+    trace: clipScriptTrace(rows),
+  }, SCRIPT_TRACE_PENDING);
+}
+
+function beginPageScriptTrace(context: ToolContext, tabId: number) {
+  const callId = String(context.toolExecutionId || "");
+  if (!callId) return () => {};
+  const publish = (rows: unknown[]) => publishScriptTrace(context, rows, tabId);
+  runScriptPageTraceByCallId.set(callId, publish);
+  return () => {
+    if (runScriptPageTraceByCallId.get(callId) === publish) runScriptPageTraceByCallId.delete(callId);
+  };
+}
 
 function makeRunScriptAbortedError(tabId: number, phase = "run") {
   return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
@@ -570,7 +617,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       scriptArgs,
       securityGuardrails,
       fetchBridge,
-    }, signal);
+    }, signal, rows => publishScriptTrace(context, rows));
     const envelope = record(response);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
@@ -610,7 +657,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
   }
 }
 
-async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) {
+async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal, noteTrace?: (rows: unknown[]) => void) {
   const requestId = String(message?.requestId || "");
   if (!requestId) {
     throw new ToolExecutionError("INNER_RUNNER_INVALID_REQUEST", "run_script inner requires requestId.", {
@@ -634,6 +681,7 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) 
         runScriptInnerPendingByRequestId.delete(requestId);
         reject(error);
       },
+      noteTrace,
     });
   });
   abortHandler = () => {
@@ -674,6 +722,14 @@ function isNestedRunScriptContext(context: ToolContext = {}) {
 
 function handleRunScriptInnerRuntimeMessage(msg: Fields = {}) {
   if (msg?.type === "run_script_inner_trace") {
+    return { ok: true, handled: true };
+  }
+  if (msg?.type === "run_script_inner_script_trace") {
+    runScriptInnerPendingByRequestId.get(String(msg.requestId || ""))?.noteTrace?.(clipScriptTrace(msg.trace));
+    return { ok: true, handled: true };
+  }
+  if (msg?.type === "run_script_page_trace") {
+    runScriptPageTraceByCallId.get(String(msg.parentCallId || ""))?.(clipScriptTrace(msg.trace));
     return { ok: true, handled: true };
   }
   if (msg?.type === "run_script_inner_result") {
@@ -842,21 +898,21 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
     },
   });
   const tabId = __qzSourceTabId;
-  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails })}
+  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails, parentCallId })}
 })()
 `;
 }
 
-function buildCdpTraceExpression(code: string, { tabId, reason = "cdp", scriptArgs = {}, securityGuardrails = {} }: ScriptOptions = {}) {
+function buildCdpTraceExpression(code: string, { tabId, reason = "cdp", scriptArgs = {}, securityGuardrails = {}, parentCallId = "" }: ScriptOptions = {}) {
   const source = wrapRunScriptSource(String(code || ""));
   return `
 (async () => {
-  ${runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails })}
+  ${runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails, parentCallId })}
 })()
 `;
 }
 
-function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {} }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
+function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {}, parentCallId = "" }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
   return `
   ${defineInputBindings ? `
   const tabId = ${JSON.stringify(tabId || null)};
@@ -864,6 +920,7 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
   const args = input;
   const $plugin = input.$plugin || {};
   ` : ""}
+  const __qzTraceParentCallId = ${JSON.stringify(parentCallId || "")};
   const __qzTrace = [];
   const __qzArtifacts = [];
   const __qzMaxTrace = ${MAX_SCRIPT_TRACE_ENTRIES};
@@ -888,6 +945,15 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
     });
     if (__qzTrace.length > __qzMaxTrace) __qzTrace.splice(0, __qzTrace.length - __qzMaxTrace);
+    if (__qzTraceParentCallId) {
+      try {
+        window.postMessage({
+          source: "qz-run-script-trace",
+          parentCallId: __qzTraceParentCallId,
+          trace: __qzTrace.slice(-5),
+        }, "*");
+      } catch (_e) {}
+    }
   }
   function trace(...items) { __qzPushTrace("trace", items); }
   const log = trace;
@@ -969,6 +1035,7 @@ async function runScriptAsFunctionBody(tabId: number, code: string, cdpEvalError
       reason: "cdp_function_body",
       scriptArgs,
       securityGuardrails,
+      parentCallId: context.toolExecutionId || "",
     }),
     returnByValue: true,
     awaitPromise: true,

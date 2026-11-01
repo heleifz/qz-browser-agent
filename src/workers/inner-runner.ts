@@ -89,6 +89,7 @@ async function runInnerScript(payload: WorkerExecute) {
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
     });
     if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
+    send({ type: "script_trace", trace: traceRows.slice(-5) });
   }
 
   function trace(...items: unknown[]) { pushTrace("trace", items); }

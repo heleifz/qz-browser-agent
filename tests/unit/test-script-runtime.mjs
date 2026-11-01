@@ -42,11 +42,12 @@ async function fixture(mode) {
 }
 
 for (const mode of ['development', 'production']) {
-  test(`${mode}: input-only scripts use the no-bridge path and missing tools never replay side effects`, async () => {
+  test(`${mode}: input-only scripts install the trace bridge and missing tools never replay side effects`, async () => {
     const f = await fixture(mode);
+    const bridges = () => f.calls.filter(c => c.kind === 'bridge').length;
     const result = await f.run('async () => input.value + args.extra', { args: { value: 4, extra: 8 } });
     assert.equal(result.result, 12); assert.equal(result.ok, true);
-    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
+    assert.equal(bridges(), 1);
     runInContext('globalThis.attempts = 0; globalThis.missingTools = () => tools.$list();', f.context);
     const failed = await f.run('async () => { globalThis.attempts++; return globalThis.missingTools(); }');
     assert.equal(failed.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
@@ -54,12 +55,12 @@ for (const mode of ['development', 'production']) {
     assert.equal(failed.details.mayHaveTakenEffect, true);
     assert.match(failed.diagnostic.suggestedNextStep, /tools\.name/);
     assert.equal(f.context.attempts, 1);
-    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
+    assert.equal(bridges(), 2);
     const shape = await f.run('async () => { globalThis.shapeAttempts = (globalThis.shapeAttempts || 0) + 1; throw new Error("Illegal return statement"); }');
     assert.equal(shape.ok, false); assert.equal(f.context.shapeAttempts, 1, 'a runtime error is not a compile-time shape retry');
     const bridged = await f.run('async () => typeof tools.$list');
     assert.equal(bridged.result, 'function');
-    assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 1);
+    assert.equal(bridges(), 4);
     f.restored();
   });
 
@@ -144,7 +145,7 @@ for (const mode of ['development', 'production']) {
       assert.equal(result.code, 'SECURITY_GUARDRAIL_BLOCKED', call);
       assert.match(result.error, /安全护栏已阻止 run_script 访问 blocked\.test 及其子域名。/);
       assert.equal(result.details.source, source);
-      assert.equal(f.calls.length, 0, 'blocked requests must not invoke the original transport');
+      assert.equal(f.calls.filter(call => call.kind !== 'bridge').length, 0, 'blocked requests must not invoke the original transport');
       f.restored();
     }
     const result = await f.run(`async () => {
@@ -156,13 +157,14 @@ for (const mode of ['development', 'production']) {
     }`);
     assert.equal(result.ok, true, result.error);
     assert.deepEqual(structuredClone(result.result), { fetched: 'fetched', opened: 'opened', beacon: true });
-    assert.deepEqual(f.calls.map(call => call.kind), ['fetch', 'xhr', 'beacon', 'fetch']);
-    assert.equal(f.calls[0].args[0].href, 'https://blocked.test/allowed/fetch');
-    assert.equal(f.calls[0].args[1].method, 'POST');
-    assert.deepEqual(f.calls[1].args, ['POST', 'https://blocked.test/allowed/xhr', false, 'user', 'pass']);
-    assert.equal(f.calls[1].receiver instanceof f.context.XMLHttpRequest, true);
-    assert.equal(f.calls[2].receiver, f.context.navigator);
-    assert.deepEqual(f.calls[2].args, ['https://blocked.test/allowed/beacon', 'payload']);
+    const transports = f.calls.filter(call => call.kind !== 'bridge');
+    assert.deepEqual(transports.map(call => call.kind), ['fetch', 'xhr', 'beacon', 'fetch']);
+    assert.equal(transports[0].args[0].href, 'https://blocked.test/allowed/fetch');
+    assert.equal(transports[0].args[1].method, 'POST');
+    assert.deepEqual(transports[1].args, ['POST', 'https://blocked.test/allowed/xhr', false, 'user', 'pass']);
+    assert.equal(transports[1].receiver instanceof f.context.XMLHttpRequest, true);
+    assert.equal(transports[2].receiver, f.context.navigator);
+    assert.deepEqual(transports[2].args, ['https://blocked.test/allowed/beacon', 'payload']);
     f.restored();
     assert.equal((await f.run(`async () => { throw new Error('application failure'); }`)).ok, false);
     f.restored();

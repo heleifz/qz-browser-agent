@@ -110,7 +110,7 @@ async () => {
 - `OPERATION_ABORTED`：调用被取消或超时。先看页面是否已经变化，再决定要不要重试。
 - `BRIDGE_REQUEST_TIMEOUT`：桥接超时。浏览器里的操作可能还在跑。先看会话，不要立刻重发。
 
-不能直驱的名字：`ask_llm`、`manage_sessions`、`manage_settings`、`manage_guardrails`、`manage_skill_settings`、`qingzhou_call`、`create_skill`、`update_skill`、`delete_skill`、`manage_skill`、`edit_skill_resource`、`import_skill_from_page_zip`、`import_git_skill_repository`、`install_skill_to_git`、`import_page_zip`、`import_git_repository`、`manage_bookmarks`、`wait_for_user`、`ask_user`、`send_message`，以及任何 `mcp_` 开头的名字。侧栏对直驱会话只查看。不要改那两句拒绝文案，也不要通过脚本绕过黑名单。
+不能直驱的名字：`ask_llm`、`manage_sessions`、`manage_settings`、`manage_guardrails`、`manage_skill_settings`、`qingzhou_call`、`create_skill`、`update_skill`、`delete_skill`、`manage_skill`、`edit_skill_resource`、`import_skill_from_page_zip`、`import_git_skill_repository`、`install_skill_to_git`、`import_page_zip`、`import_git_repository`、`manage_bookmarks`、`wait_for_user`、`ask_user`、`send_message`，以及任何 `mcp_` 开头的名字。侧栏对直驱会话只查看。不要通过脚本绕过黑名单。
 
 一轮请求长什么样。MCP 默认先 `qingzhou_guide`，之后每一轮尽量只有一次 `qingzhou_execute_tool`：
 
