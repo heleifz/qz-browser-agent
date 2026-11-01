@@ -162,6 +162,8 @@ export function createSessionRepository({
         titleSource: existing?.titleSource || normalizeTitleSource(input.titleSource, parentSessionId),
         parentSessionId,
         source: normalizeSessionSource(input.source || existing?.source),
+        driveGroupTitle: normalizeDriveGroupTitle(input.driveGroupTitle || existing?.driveGroupTitle),
+        keepDriveTabs: input.keepDriveTabs === true || existing?.keepDriveTabs === true,
         automationId: normalizeSessionId(input.automationId || existing?.automationId),
         automationRunId: normalizeSessionId(input.automationRunId || existing?.automationRunId),
         listSummary: normalizeSessionListSummary(
@@ -642,6 +644,8 @@ function normalizeMetadataMap(value: unknown): Record<string, SessionMetadata> {
 function cleanMetadata<T extends Fields>(session: T): T {
   const next = { ...session };
   if (!next.source) delete next.source;
+  if (!next.driveGroupTitle) delete next.driveGroupTitle;
+  if (next.keepDriveTabs !== true) delete next.keepDriveTabs;
   if (!next.automationId) delete next.automationId;
   if (!next.automationRunId) delete next.automationRunId;
   return next;
@@ -654,7 +658,12 @@ function normalizeTitleSource(value: unknown, parentSessionId: unknown) {
 }
 
 function normalizeSessionSource(value: unknown) {
-  return String(value || "").trim() === "automation" ? "automation" : "";
+  const source = String(value || "").trim();
+  return source === "automation" || source === "external-drive" ? source : "";
+}
+
+function normalizeDriveGroupTitle(value: unknown) {
+  return String(value || "").replace(/\s+/gu, " ").trim().slice(0, 80);
 }
 
 function hasListSummary(summary: SessionListSummary | null | undefined) {

@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { noteExternalDriveStopped } from "../mcp/external-drive.js";
 import type { Agent, AgentEvent, DynamicContext } from "../agent/agent.js";
 import type { createSessionSupervisor, SessionTask } from "./supervisor.js";
 import type { createSessionRepository } from "./repository.js";
@@ -245,6 +246,7 @@ async function createSessionMetadataRuntime({
   parentSessionId = ROOT_SESSION_ID,
   titleSource = "",
   source = "",
+  driveGroupTitle = "",
   automationId = "",
   automationRunId = "",
   composerDraft = null,
@@ -264,6 +266,7 @@ async function createSessionMetadataRuntime({
       parentSessionId: normalizedParentId,
       titleSource: titleSource || (normalizedParentId === ROOT_SESSION_ID ? "first_message" : "fixed"),
       source,
+      driveGroupTitle,
       automationId,
       automationRunId,
     });
@@ -1921,6 +1924,14 @@ async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?:
 async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
+  noteExternalDriveStopped(id);
+  if (meta.keepTabs === true) {
+    try {
+      await sessionRepository.updateMetadata(id, session => ({ ...session, keepDriveTabs: true }));
+    } catch (_error) {
+      // A missing session has no tabs to keep.
+    }
+  }
 
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
@@ -2006,6 +2017,12 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   }
 
   if (!hadRuntime) {
+    const sessions = await getSessions();
+    if (sessions[id]?.source === "external-drive") {
+      sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session").catch((err) => {
+        console.debug("[轻舟] close stopped session owned tabs failed:", errorMessage(err));
+      });
+    }
     return {
       sessionId: id,
       stopped: false,

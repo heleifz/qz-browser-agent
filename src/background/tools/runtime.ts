@@ -255,7 +255,8 @@ async function settleToolState(result: unknown, context: ToolContext, signal?: A
   ticket.settling = true;
   try {
     if (signal) {
-      if (signal.aborted || ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", context.runId || "") === false)
+      const runId = String(context.runId || "");
+      if (signal.aborted || (runId && ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", runId) === false))
         throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before ordered commit");
       await ticket.commit(signal);
     }

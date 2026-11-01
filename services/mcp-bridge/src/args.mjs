@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
 import { browserName } from "./browser-registry.mjs";
-import { COMMANDS, commandOptions } from "./commands.mjs";
+import { COMMANDS, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
   throw new QzError("invalid_arguments", message);
@@ -141,6 +141,9 @@ export function parseCommand(argv) {
     id = words[0];
     if (command === "submit") options.args = words[1];
     if (command === "watch") options.wait = true;
+  } else if (command === "exec") {
+    if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
+    else options.payload = words[0] ?? "-";
   } else if (command === "tasks") {
     if (words.length) invalid("Use qz tasks to list tasks, qz create PROMPT, qz show ID, or qz cancel ID.");
     action = "list";

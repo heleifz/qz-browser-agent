@@ -78,8 +78,16 @@ export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetc
 
 export function resultValue(result) {
   if (result.structuredContent != null) return result.structuredContent;
-  if (result.content?.length === 1 && result.content[0].type === "text") {
-    try { return JSON.parse(result.content[0].text); } catch { return result.content[0].text; }
+  const blocks = Array.isArray(result.content) ? result.content : [];
+  const texts = blocks.filter(block => block?.type === "text");
+  const images = blocks.filter(block => block?.type === "image" && typeof block.data === "string");
+  if (texts.length === 1 && images.length + texts.length === blocks.length) {
+    let value;
+    try { value = JSON.parse(texts[0].text); } catch { value = texts[0].text; }
+    if (images.length && value && typeof value === "object" && !Array.isArray(value)) {
+      return { ...value, images: images.map(image => ({ mimeType: image.mimeType, data: image.data })) };
+    }
+    if (!images.length) return value;
   }
   return { content: result.content || [] };
 }

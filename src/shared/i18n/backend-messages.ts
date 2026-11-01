@@ -940,4 +940,13 @@ export const backendMessages = defineMessages("backend", {
   "browser.selfUnloadCause": {"zh-CN": "run_script 内部调用了会让当前 tab 点击、提交、导航或关闭的工具，页面卸载会打断脚本。", "en": "run_script called a tool that can click, submit, navigate, or close its own tab. Unloading the page interrupts the script."},
   "browser.selfUnloadRecovery": {"zh-CN": "把这个动作拆成普通工具调用；等待页面稳定后，再用 run_script 做读取、解析或落库。", "en": "Run this action as a separate tool call. Once the page settles, use run_script to read, parse, or save data."},
   "session.toolAborted": {"zh-CN": "工具调用已被中止，未返回结果。", "en": "The tool call was aborted; no result was returned."},
+  "drive.sessionBusy": {"zh-CN": "这个会话正在跑上一批。等它结束，或先停止该会话。", "en": "This session is already running a batch. Wait for it to finish, or stop the session."},
+  "drive.remoteNode": {"zh-CN": "现在只有本机。nodeId 请用 local。", "en": "Only this machine is available. Use nodeId local."},
+  "drive.skillCapture": {"zh-CN": "这次不会把流程存成 Skill。", "en": "This run will not save the workflow as a Skill."},
+  "drive.nameOrCalls": {"zh-CN": "请只传 name 或 calls 中的一个。", "en": "Pass either name or calls, not both."},
+  "drive.callShape": {"zh-CN": "calls 的每一项都要包含 id 和 name。请补全后再试。", "en": "Each item in calls needs an id and a name. Add them and try again."},
+  "drive.tooManyCalls": {"zh-CN": "一批最多 {limit} 个调用。请减少 calls 后再试。", "en": "A batch can contain at most {limit} calls. Send fewer calls and try again."},
+  "drive.toolForbidden": {"zh-CN": "不能通过直驱调用 {name}。请改用 open_tab、get_ax_tree 或 act_on_element。", "en": "Direct drive cannot call {name}. Use open_tab, get_ax_tree, or act_on_element."},
+  "drive.sendMessageRejected": {"zh-CN": "这个会话由外部客户端直接操作。先停止该会话，再发送消息。", "en": "An external client is driving this session. Stop the session before sending a message."},
+  "drive.batchTimeout": {"zh-CN": "这一批超时了。请加大 limits.timeoutSeconds 后再试。", "en": "This batch timed out. Increase limits.timeoutSeconds and try again."},
 });

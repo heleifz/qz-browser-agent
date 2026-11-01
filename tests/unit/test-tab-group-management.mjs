@@ -173,11 +173,25 @@ async function assertInvalidPreferredGroupIsNotAdopted() {
   }
 }
 
+async function assertCustomDriveTitleDoesNotReuseAgentGroup() {
+  const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
+  const state = installChromeMock({
+    tabs: [{ id: 701, windowId: 7, groupId: 3 }],
+    groups: [{ id: 3, windowId: 7, title: "轻舟任务" }],
+  });
+  globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
+  const result = await ensureQingzhouTabGroupForWindow([701], { preferredGroupId: 3, title: "轻舟 · CLI" });
+  assert.notEqual(result.groupId, 3);
+  assert.equal(result.group.title, "轻舟 · CLI");
+  assert.equal(state.groups.get(3).title, "轻舟任务");
+}
+
 assertToolExposure();
 await assertDuplicateGroupsMerge();
 await assertCreatesGroupWhenMissing();
 await assertManagedGroupSurvivesLanguageSwitch();
 await assertManagedGroupSurvivesLegacyBranding();
 await assertInvalidPreferredGroupIsNotAdopted();
+await assertCustomDriveTitleDoesNotReuseAgentGroup();
 
 console.log("tab group management tests passed");

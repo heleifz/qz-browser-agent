@@ -1,4 +1,5 @@
 const request = ["timeout", "client"];
+export const EXEC_JSON_MESSAGE = "Pass one JSON object with name and args, or with calls. Quote it safely by piping stdin: qz exec <<'JSON'";
 const waiting = [...request, "wait", "stream"];
 const output = ["json", "plain", "no-color", "help"];
 const filename = options => options.filename ? { filename: options.filename } : {};
@@ -108,6 +109,15 @@ export const COMMANDS = {
   },
   status: { options: [], summary: "Check the connection",
     help: ["qz status", "Show the local service and browser connection status."],
+  },
+  exec: { options: [...request], summary: "Run one browser tool or one batch",
+    help: [
+      "qz exec [JSON|-]",
+      "Run an existing browser tool through the connected browser. This is transport for qingzhou_execute_tool. It does not add tools or start a model.",
+      EXEC_JSON_MESSAGE,
+      "stdout is JSON. Exit 0 when the tool succeeds, 2 when the JSON is invalid, and 1 when the tool fails.",
+      "qz connect",
+    ],
   },
   mcp: { options: [], summary: "Print the MCP URL",
     help: ["qz mcp [--json]", "Print the running service's MCP URL for an external agent.", "Run qz connect first."],

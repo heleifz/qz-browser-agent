@@ -190,6 +190,7 @@ test("MCP tools dispatch the original wire messages and preserve run/session ide
   assert.equal(request.method, "execute_tool");
   assert.deepEqual(request.params, {
     name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", runId: "run-1", timeoutSeconds: 3,
+    clientName: "bridge-test",
   });
   assert.equal(request.timeoutMs, 3000);
   const wrongProfile = await post(bridge, "/v1/qingzhou/result", {

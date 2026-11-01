@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { GUIDE_URL, INSTALL_URL, QzError, withToolClient, readHealth } from "./client.mjs";
 import { ensureDaemon, findDaemon, stopDaemon } from "./daemon.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { parseCommand } from "./args.mjs";
+import { EXEC_JSON_MESSAGE } from "./commands.mjs";
 import { renderError, renderHelp, renderResult, renderInputNotice, sanitizeTerminalText } from "./terminal.mjs";
 import { TASK_NOT_FOUND_MESSAGE, waitForTask } from "./task-stream.mjs";
 import { createLiveOutput, outputMode } from "./output.mjs";
@@ -66,6 +69,46 @@ function selectClient(health, selector = "", { allowEmpty = false } = {}) {
 
 function connectionRequired() {
   return new QzError("not_connected", "Run qz connect to start the local service and connect Chrome. If qz is not installed, run qz install.");
+}
+
+function parseExecPayload(source) {
+  let value;
+  try { value = JSON.parse(source); }
+  catch { throw new QzError("invalid_arguments", EXEC_JSON_MESSAGE); }
+  if (!value || Array.isArray(value) || typeof value !== "object") throw new QzError("invalid_arguments", EXEC_JSON_MESSAGE);
+  return value;
+}
+
+async function readExecStdin(dependencies) {
+  const stdin = dependencies.stdin || process.stdin;
+  if (stdin.isTTY) throw new QzError("invalid_arguments", EXEC_JSON_MESSAGE);
+  return (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
+}
+
+function materializeExecImages(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result) || !Array.isArray(result.images)) return result;
+  const images = result.images.filter(image => image && typeof image.data === "string");
+  if (!images.length) return result;
+  const directory = mkdtempSync(join(tmpdir(), "qz-exec-"));
+  const paths = images.map((image, index) => {
+    const extension = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png";
+    const path = join(directory, `${index}.${extension}`);
+    writeFileSync(path, Buffer.from(image.data, "base64"));
+    return path;
+  });
+  return { ...result, images: paths };
+}
+
+function execFailed(result) {
+  if (!result || typeof result !== "object") return false;
+  if (result.isError === true || result.ok === false) return true;
+  if (Array.isArray(result.results) && result.results.some(item => item?.isError === true || item?.ok === false)) return true;
+  const inner = result.result;
+  if (inner && typeof inner === "object") {
+    if (typeof inner.error === "string" && inner.error) return true;
+    if (inner.isError === true || inner.ok === false) return true;
+  }
+  return false;
 }
 
 function recoveryCommand(command, sessionId, clientId, stream = false) {
@@ -164,6 +207,14 @@ async function dispatchCommand(parsed, dependencies) {
     throw new QzError("connection_pending", "qz is waiting for Chrome. Open the connection URL in the Chrome profile with qz installed and confirm the connection in qz. Then run qz connect again.", { url: connectUrl });
   }
   // Validate JSON before connecting; malformed arguments cannot cause browser actions.
+  let execPayload = null;
+  if (command === "exec") {
+    if (options.payloadError) throw new QzError("invalid_arguments", options.payloadError);
+    const source = options.payload === "-" || options.payload == null
+      ? await readExecStdin(dependencies)
+      : options.payload;
+    execPayload = parseExecPayload(source);
+  }
   let args = {};
   if (command === "submit" || (command === "settings" && action === "set" && id === undefined)) {
     const source = options.args === "-" ? await (dependencies.readStdin || stdinText)({ signal: dependencies.signal }) : options.args ?? "{}";
@@ -198,6 +249,11 @@ async function dispatchCommand(parsed, dependencies) {
   options["client-id"] = clientId;
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
+  if (command === "exec") {
+    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...common }, requestOptions);
+    const failed = execFailed(result);
+    return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
+  }
   const startedAt = Date.now();
   const readSnapshot = async (sessionId, seconds, signal) => {
     try {
@@ -340,6 +396,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { help } })}\n` : help);
       return 0;
     }
+    if (parsed.command === "exec") mode = { ...mode, json: true };
     if (parsed.options.wait) live = createLiveOutput(parsed, { stdout, stderr, ...mode });
     const result = await executeCommand(parsed, { ...dependencies,
       onTaskCreated: async task => { live?.created(task); await dependencies.onTaskCreated?.(task); },
@@ -353,6 +410,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     stdout.write(result.text ?? (mode.json ? `${JSON.stringify({ ok: true, result: result.result })}\n`
       : renderResult({ ...parsed, presentation: { ...parsed.presentation, streamed: live?.streamed } }, result.result, mode)));
     const status = result.result?.snapshot?.status || result.result?.snapshot?.runtime?.status;
+    if (Number.isInteger(result.exitCode) && result.exitCode > 0) return result.exitCode;
     if (result.result?.accepted === false && !result.result?.requiresUserAction) return 1;
     return ["error", "failed", "aborted", "cancelled", "canceled", "interrupted"].includes(status) ? 1 : 0;
   } catch (error) {
