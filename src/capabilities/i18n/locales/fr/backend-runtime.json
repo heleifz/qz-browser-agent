@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "L’onglet du dépôt n’est pas disponible. Rouvrez-le et réessayez",
   "backend.git.repository": "Dépôt",
   "backend.git.localChanges": "Les Skills liés ont des modifications locales. Confirmez avant de les écraser lors d’une mise à jour",
-  "backend.git.nameConflict": "Le dépôt contient des Skills portant le même nom que des Skills locaux"
+  "backend.git.nameConflict": "Le dépôt contient des Skills portant le même nom que des Skills locaux",
+  "backend.drive.sessionBusy": "Cette session exécute déjà un lot. Attendez qu’il se termine, ou arrêtez la session.",
+  "backend.drive.sessionOccupied": "Cette session a déjà une tâche, elle ne peut donc pas être pilotée directement. Utilisez un nouveau sessionId.",
+  "backend.drive.nameOrCalls": "Indiquez name ou calls, pas les deux.",
+  "backend.drive.callShape": "Chaque élément de calls doit contenir un id et un name. Ajoutez-les et réessayez.",
+  "backend.drive.tooManyCalls": "Un lot peut contenir au plus {limit} appels. Envoyez moins de calls et réessayez.",
+  "backend.drive.toolForbidden": "Le pilotage direct ne peut pas appeler {name}.",
+  "backend.drive.sendMessageRejected": "Un client externe pilote cette session. Cette vue est en lecture seule.",
+  "backend.drive.batchTimeout": "Ce lot a expiré. Augmentez limits.timeoutSeconds et réessayez."
 }

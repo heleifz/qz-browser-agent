@@ -406,14 +406,16 @@ Use `-t` for `--title`. Run `qz help COMMAND` or `qz COMMAND --help` for command
 
 MCP clients can inspect browser tool schemas with `qingzhou_list_tools` and `qingzhou_get_tool`,
 then call `qingzhou_execute_tool` in a task. Set `wait: false` to receive a job ID and read the result
-with `qingzhou_get_tool_job`. Pass `runId` to bind execution to a particular task run. MCP also
-provides `qingzhou_get_trace` and `qingzhou_clear_trace` for diagnostics.
+with `qingzhou_get_tool_job`. MCP also
+provides `qingzhou_get_trace` and `qingzhou_clear_trace` for diagnostics. An MCP connection that
+omits `sessionId` keeps one generated id for that connection.
 
 `qz exec` is transport for that same tool. It does not add tools or start a model. Pass one JSON
 object with `name` and `args`, or with `calls`. Quote it safely by piping stdin:
 `qz exec <<'JSON'`. stdout is JSON. Exit 0 when the tool succeeds, 2 when the JSON is invalid, and
 1 when the tool fails. Screenshot bytes are written to temporary files and the JSON lists those paths.
-Run `qz connect` first. `qz exec --help` prints the same usage.
+Omit `sessionId` to start a new drive session; the result includes that `sessionId` for later calls.
+Each parallel path uses its own `sessionId`. Run `qz connect` first. `qz exec --help` prints the same usage.
 
 If a request times out or its connection is interrupted, an operation already started in the
 browser may still be running. Check the task before repeating it. Disconnected MCP requests are

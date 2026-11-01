@@ -64,7 +64,8 @@ export default function (qz: UiExtensionAPI) {
     setAutomationsVisible: visible => automations?.setVisible(visible),
     closeAutomationsEditor: () => automations?.closeEditor(),
     showToast: qz.showToast, flashAction: qz.chat.flashAction, syncKeepAlive: qz.syncKeepAlive,
-    renderCurrentGoalStrip: qz.chat.renderGoal, liveElapsedTickMs: 100,
+    renderCurrentGoalStrip: qz.chat.renderGoal, syncExternalDriveChrome: () => qz.chat.syncExternalDriveChrome?.(),
+    liveElapsedTickMs: 100,
   });
   automations = automationsEnabled ? createAutomationsFeature({
     root: qz.root, signal: qz.signal, request,

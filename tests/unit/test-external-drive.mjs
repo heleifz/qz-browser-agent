@@ -39,20 +39,33 @@ test("drive titles and request sentences stay on the existing tool", () => {
     const forbidden = parseDriveRequest({ name: "ask_llm", args: {} });
     assert.equal(forbidden.ok, false);
     assert.equal(forbidden.error.code, "DRIVE_TOOL_FORBIDDEN");
-    assert.equal(forbidden.error.message, "不能通过直驱调用 ask_llm。请改用 open_tab、get_ax_tree 或 act_on_element。");
+    assert.equal(forbidden.error.message, "不能通过直驱调用 ask_llm。");
+    for (const name of [
+      "delete_skill", "manage_bookmarks", "manage_skill_settings", "import_page_zip",
+      "qingzhou_skill_author__create_skill", "qingzhou_skill_author__delete_skill", "mcp_browser", "qingzhou_x__mcp_remote",
+    ]) {
+      const blocked = parseDriveRequest({ name, args: {} });
+      assert.equal(blocked.ok, false, name);
+      assert.equal(blocked.error.code, "DRIVE_TOOL_FORBIDDEN", name);
+    }
 
     assert.equal(parseDriveRequest({ name: "open_tab", args: { url: "https://example.com" } }).mode, "single");
     assert.equal(parseDriveRequest({ name: "document_fetch", args: {} }).mode, "single");
     assert.equal(parseDriveRequest({ name: "qingzhou_documents__document_fetch", args: {} }).mode, "single");
     assert.equal(parseDriveRequest({ name: "read_dom", args: {} }).mode, "single");
-    assert.equal(parseDriveRequest({ name: "qingzhou_skill_author__create_skill", args: {} }).mode, "single");
+    assert.equal(parseDriveRequest({ name: "browse_history", args: {} }).mode, "single");
+    assert.equal(parseDriveRequest({ name: "list_skills", args: {} }).mode, "single");
     const readBatch = parseDriveRequest({ calls: [{ id: "a", name: "read_dom", args: {} }] });
     assert.equal(readBatch.ok, true);
     assert.equal(readBatch.mode, "batch");
     assert.equal(t("drive.sessionOccupied"), "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。");
+    assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "不能通过直驱调用 ask_llm。");
+    assert.equal(t("drive.sendMessageRejected"), "这个会话由外部客户端直接操作，这里只能查看。");
   });
   withLanguage("en", () => {
     assert.equal(t("drive.sessionOccupied"), "This session already has a task, so it cannot be driven directly. Use a new sessionId.");
+    assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "Direct drive cannot call ask_llm.");
+    assert.equal(t("drive.sendMessageRejected"), "An external client is driving this session. This view is read-only.");
   });
 });
 
@@ -327,8 +340,6 @@ test("one external session is created only when metadata is missing", async () =
   assert.deepEqual(stored.s1, { runId: "agent-run", status: "running" });
   assert.equal(stops.length, 0);
 
-  await assert.rejects(runtime.sendMessage({ sessionId: "drive-1", text: "hello" }), (error) => error.code === "DRIVE_MODEL_DISABLED"
-    && error.message === "这个会话由外部客户端直接操作。先停止该会话，再发送消息。");
   const sent = await runtime.sendMessage({ sessionId: "s1", text: "hello" });
   assert.equal(sent.accepted, true);
 

@@ -98,4 +98,14 @@ test("the task list hides the external drive tab until a drive session exists", 
   expect(ids).toEqual(expect.arrayContaining(["drive-1", "drive-2"]));
   expect(ids.every((id) => id.startsWith("drive-"))).toBe(true);
   await page.locator("#sessions-panel").screenshot({ path: presentShot });
+
+  await page.evaluate(async () => {
+    const { applyExternalDriveChrome } = await import("/extension/sidepanel/features/chat/chat-workspace-feature.js");
+    document.querySelector("#sessions-panel")?.classList.add("hidden");
+    document.querySelector("#chat-dock")?.classList.remove("hidden");
+    applyExternalDriveChrome(document, true);
+  });
+  await expect(page.locator("#input-area")).toBeHidden();
+  await expect(page.locator("#external-drive-readonly")).toBeVisible();
+  await expect(page.locator("#external-drive-readonly")).toContainText("只能查看");
 });

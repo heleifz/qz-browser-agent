@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "儲存庫分頁無法使用，請重新開啟後再試",
   "backend.git.repository": "儲存庫",
   "backend.git.localChanges": "已連結的 Skill 有本機變更，請先確認再用更新覆寫",
-  "backend.git.nameConflict": "儲存庫中有與本機 Skill 同名的 Skill"
+  "backend.git.nameConflict": "儲存庫中有與本機 Skill 同名的 Skill",
+  "backend.drive.sessionBusy": "這個工作階段正在跑上一批。等它結束，或先停止該工作階段。",
+  "backend.drive.sessionOccupied": "這個工作階段已有任務在用，不能直接操作。請換一個新的 sessionId。",
+  "backend.drive.nameOrCalls": "請只傳 name 或 calls 其中一個。",
+  "backend.drive.callShape": "calls 的每一項都要包含 id 和 name。請補全後再試。",
+  "backend.drive.tooManyCalls": "一批最多 {limit} 個呼叫。請減少 calls 後再試。",
+  "backend.drive.toolForbidden": "不能透過直驅呼叫 {name}。",
+  "backend.drive.sendMessageRejected": "這個工作階段由外部用戶端直接操作，這裡只能查看。",
+  "backend.drive.batchTimeout": "這一批逾時了。請加大 limits.timeoutSeconds 後再試。"
 }

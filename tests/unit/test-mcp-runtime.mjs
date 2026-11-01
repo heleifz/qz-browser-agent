@@ -83,6 +83,7 @@ const sessions = {
   getRuntime: () => ({ ...runtimeState }),
 };
 
+const runProfiles = [];
 const toolRuntime = {
   getSchemas: () => [{
     type: "function",
@@ -97,7 +98,10 @@ const toolRuntime = {
 const tools = {
   ready: async reason => { toolReadinessReasons.push(reason); },
   canManageSessions: async () => true,
-  buildRunProfile: async ({ sessionId }) => ({ sessionId }),
+  buildRunProfile: async (input) => {
+    runProfiles.push(input);
+    return { sessionId: input.sessionId };
+  },
   runtime: toolRuntime,
   loadedSkillNames: (_sessionId, extra) => ["existing", ...extra],
   recordLoadedSkillNames: (...args) => loadedNames.push(args),
@@ -216,7 +220,16 @@ assert.equal((await runtime.getMessages("s1", { tail: true, num: 1 })).num, 1);
 
 const listedTools = await runtime.listTools({ sessionId: "s1", loadedPluginSkillNames: ["extra"] });
 assert.deepEqual(listedTools.tools.map(tool => tool.name), ["read_dom"]);
-assert.deepEqual(toolReadinessReasons, ["mcp_list_tools"]);
+assert.equal(runProfiles.at(-1).externalDrive, false);
+await runtime.listTools({ sessionId: "" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+await runtime.listTools({ sessionId: "not-created" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+assert.equal(Object.hasOwn(metadata, "not-created"), false);
+metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
+await runtime.listTools({ sessionId: "drive-listed" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools"]);
 const inputContext = { marker: true };
 const occupiedBefore = executed.length;
 await assert.rejects(
@@ -241,7 +254,7 @@ await assert.rejects(
 );
 assert.equal(loadedNames.length, loadedBeforeDrive, "a built-in session rejects direct drive before recording a skill");
 assert.equal(executed.at(-1).name, "read_dom");
-assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_execute_tool"]);
+assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_execute_tool"]);
 
 const listedSkills = await runtime.listSkills({ scope: "global", query: "guide" });
 assert.equal(listedSkills.count, 1);

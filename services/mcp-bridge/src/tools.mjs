@@ -178,13 +178,24 @@ function withoutImages(value) {
   return rest;
 }
 
-function imageBlock(image, callId) {
+function imageBlock(image, meta) {
   return {
     type: "image",
     data: image.data,
     mimeType: image.mimeType,
-    ...(callId ? { _meta: { id: callId } } : {}),
+    ...(meta && Object.keys(meta).length ? { _meta: meta } : {}),
   };
+}
+
+function peelCallImages(value, callId, startIndex, sink) {
+  const images = imageEntries(value);
+  if (!images.length) return { value, nextIndex: startIndex };
+  const placeholders = images.map((image, offset) => {
+    const meta = { ...(callId ? { id: callId } : {}), index: startIndex + offset };
+    sink.push(imageBlock(image, meta));
+    return meta;
+  });
+  return { value: { ...withoutImages(value), images: placeholders }, nextIndex: startIndex + images.length };
 }
 
 export function resultToContent(result) {
@@ -199,13 +210,12 @@ export function resultToContent(result) {
       results: result.results.map(item => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return item;
         const callId = String(item.id || "");
-        for (const image of imageEntries(item)) nested.push(imageBlock(image, callId));
-        const innerImages = imageEntries(item.result);
-        for (const image of innerImages) nested.push(imageBlock(image, callId));
-        const next = withoutImages(item);
-        return innerImages.length && next.result && typeof next.result === "object"
-          ? { ...next, result: withoutImages(next.result) }
-          : next;
+        const peeled = peelCallImages(item, callId, 0, nested);
+        let next = peeled.value;
+        if (next.result && typeof next.result === "object" && !Array.isArray(next.result)) {
+          next = { ...next, result: peelCallImages(next.result, callId, peeled.nextIndex, nested).value };
+        }
+        return next;
       }),
     };
   }
@@ -215,12 +225,15 @@ export function resultToContent(result) {
   }
   return [
     { type: "text", text: JSON.stringify(withoutImages(body), null, 2) },
-    ...top.map(image => imageBlock(image, "")),
+    ...top.map(image => imageBlock(image)),
     ...nested,
   ];
 }
 
+const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
+
 export function createMcpServer(state, { clientName = "" } = {}) {
+  let driveSessionId = "";
   const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
     capabilities: { tools: {} }, instructions: "Control qz tasks and browser tools through the local bridge.",
   });
@@ -229,7 +242,12 @@ export function createMcpServer(state, { clientName = "" } = {}) {
     try {
       let progress = 0;
       const progressToken = request.params._meta?.progressToken;
-      const result = await executeMcpTool(state, request.params.name, request.params.arguments || {}, { signal: extra.signal, clientName,
+      const input = { ...(request.params.arguments || {}) };
+      if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
+        if (!driveSessionId) driveSessionId = crypto.randomUUID().replaceAll("-", "");
+        input.sessionId = driveSessionId;
+      }
+      const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,
         onTaskUpdate: progressToken === undefined ? undefined : event => extra.sendNotification({
           method: "notifications/progress", params: { progressToken, progress: ++progress,
             message: ["text", "replace"].includes(event.type) ? event.text : JSON.stringify(event),

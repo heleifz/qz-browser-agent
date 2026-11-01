@@ -10,6 +10,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { TOOL_CATALOG, executeMcpTool, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
+import { resultValue } from "../../services/mcp-bridge/src/client.mjs";
+import { materializeExecImages } from "../../services/mcp-bridge/src/cli.mjs";
 
 const extensionOrigin = `chrome-extension://${"a".repeat(32)}`;
 const routingStub = { resolveClient: async id => ({ id, controller: new AbortController() }), signal: signal => signal || new AbortController().signal };
@@ -183,13 +185,13 @@ test("MCP tools dispatch the original wire messages and preserve run/session ide
   const bridge = await withBridge(t);
   const client = await withClient(t, bridge);
   const running = client.callTool({ name: "qingzhou_execute_tool", arguments: {
-    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", runId: "run-1", timeoutSeconds: 3,
+    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", timeoutSeconds: 3,
   } });
   const poll = await post(bridge, "/v1/qingzhou/poll", { client: { id: "browser", pollTimeoutMs: 1000 } });
   const [request] = (await poll.json()).requests;
   assert.equal(request.method, "execute_tool");
   assert.deepEqual(request.params, {
-    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", runId: "run-1", timeoutSeconds: 3,
+    name: "inspect_page", args: { tabId: 7 }, sessionId: "session-1", timeoutSeconds: 3,
     clientName: "bridge-test",
   });
   assert.equal(request.timeoutMs, 3000);
@@ -266,12 +268,12 @@ test("async execute_tool jobs survive their initial MCP response and expose succ
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
   const job = unpack(await client.callTool({ name: "qingzhou_execute_tool", arguments: {
-    name: "ask_user", args: { message: "choose" }, sessionId: "session-job", runId: "run-job", wait: false,
+    name: "ask_user", args: { message: "choose" }, sessionId: "session-job", wait: false,
   } }));
   assert.equal(job.done, false);
   const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(request.params.sessionId, "session-job");
-  assert.equal(request.params.runId, "run-job");
+  assert.equal(Object.hasOwn(request.params, "runId"), false);
   completeBrowser(bridge.state, request.id, { ok: true, result: { selectedIds: ["one"] } });
   await waitUntil(() => bridge.state.getJob(job.jobId).done);
   const done = unpack(await client.callTool({ name: "qingzhou_get_tool_job", arguments: { jobId: job.jobId } }));
@@ -465,7 +467,74 @@ test("MCP result content retains FastMCP list/string/null serialization", () => 
   });
   assert.equal(batch[0].type, "text");
   assert.equal(batch[0].text.includes("YQ=="), false);
-  assert.deepEqual(batch[1], { type: "image", data: "YQ==", mimeType: "image/png", _meta: { id: "shot" } });
+  assert.deepEqual(JSON.parse(batch[0].text).results[1].images, [{ id: "shot", index: 0 }]);
+  assert.deepEqual(batch[1], { type: "image", data: "YQ==", mimeType: "image/png", _meta: { id: "shot", index: 0 } });
+  const single = resultToContent({
+    toolName: "screenshot", result: { ok: true }, images: [{ mimeType: "image/png", data: "YQ==" }],
+  });
+  assert.equal(single[0].text.includes("YQ=="), false);
+  assert.equal(single[0].text.includes('"images"'), false);
+  assert.deepEqual(single[1], { type: "image", data: "YQ==", mimeType: "image/png" });
+});
+
+test("a batch of two screenshots keeps each image with its call", () => {
+  const first = Buffer.from("one").toString("base64");
+  const second = Buffer.from("two").toString("base64");
+  const content = resultToContent({
+    sessionId: "s",
+    results: [
+      { id: "s1", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: first }] },
+      { id: "s2", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: second }] },
+    ],
+  });
+  assert.equal(content[0].type, "text");
+  assert.equal(content[0].text.includes(first), false);
+  assert.equal(content[0].text.includes(second), false);
+  const text = JSON.parse(content[0].text);
+  assert.deepEqual(text.results[0].images, [{ id: "s1", index: 0 }]);
+  assert.deepEqual(text.results[1].images, [{ id: "s2", index: 0 }]);
+  assert.equal(Object.hasOwn(text, "images"), false);
+  assert.deepEqual(content.slice(1).map(block => block._meta), [{ id: "s1", index: 0 }, { id: "s2", index: 0 }]);
+  const restored = resultValue({ content });
+  assert.equal(restored.results[0].images[0].data, first);
+  assert.equal(restored.results[1].images[0].data, second);
+  assert.equal(Object.hasOwn(restored, "images"), false);
+  const files = materializeExecImages(restored);
+  assert.equal(readFileSync(files.results[0].images[0]).toString(), "one");
+  assert.equal(readFileSync(files.results[1].images[0]).toString(), "two");
+});
+
+test("one MCP connection reuses one generated drive session id", async t => {
+  const bridge = await withBridge(t);
+  await pairBrowser(bridge.state, { id: "browser" });
+  const client = await withClient(t, bridge);
+  const other = await withClient(t, bridge);
+  async function driveCall(caller, name, args) {
+    const pending = caller.callTool({ name, arguments: args });
+    const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+    const tool = name === "qingzhou_get_tool"
+      ? { name: args.name, description: "List", parameters: {} }
+      : { ok: true };
+    const result = name === "qingzhou_get_tool" ? { tools: [tool] } : tool;
+    completeBrowser(bridge.state, request.id, { ok: true, result });
+    await pending;
+    return request;
+  }
+  const first = await driveCall(client, "qingzhou_execute_tool", { name: "list_tabs", args: {} });
+  const listed = await driveCall(client, "qingzhou_list_tools", {});
+  const inspected = await driveCall(client, "qingzhou_get_tool", { name: "list_tabs" });
+  const explicit = await driveCall(client, "qingzhou_execute_tool", { name: "list_tabs", args: {}, sessionId: "kept-id" });
+  const second = await driveCall(other, "qingzhou_execute_tool", { name: "list_tabs", args: {} });
+  assert.match(first.params.sessionId, /^[0-9a-f]{32}$/);
+  assert.notEqual(first.params.sessionId, "default");
+  assert.equal(listed.method, "list_tools");
+  assert.equal(listed.params.sessionId, first.params.sessionId);
+  assert.equal(inspected.method, "list_tools");
+  assert.equal(inspected.params.sessionId, first.params.sessionId);
+  assert.equal(explicit.params.sessionId, "kept-id");
+  assert.match(second.params.sessionId, /^[0-9a-f]{32}$/);
+  assert.notEqual(second.params.sessionId, first.params.sessionId);
+  assert.equal(Object.hasOwn(first.params, "runId"), false);
 });
 
 test("MCP session deletion cancels pending work and invalidates the old session", async t => {

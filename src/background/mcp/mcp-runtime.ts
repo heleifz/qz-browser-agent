@@ -212,10 +212,6 @@ export function createMcpRuntime({
   async function sendMessage(params: Fields = {}, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const sessionId = sessions.requireId(params.sessionId, "send_message");
-    const metadata = await sessions.listMetadata();
-    if (metadata[sessionId]?.source === "external-drive") {
-      throw Object.assign(new Error(t("drive.sendMessageRejected")), { code: "DRIVE_MODEL_DISABLED" });
-    }
     if (params.steer !== undefined && typeof params.steer !== "boolean") {
       throw Object.assign(new Error("steer must be a boolean."), { code: "INVALID_ARGUMENTS" });
     }
@@ -356,7 +352,9 @@ export function createMcpRuntime({
     const sessionId = sessions.normalizeId(params.sessionId);
     const canManageSessions = await tools.canManageSessions(sessionId);
     const listedMetadata = sessionId ? await sessions.listMetadata() : {};
-    const externalDrive = listedMetadata[sessionId]?.source === "external-drive";
+    const known = sessionId ? listedMetadata[sessionId] : undefined;
+    // A session that does not exist yet can only be opened by direct drive.
+    const externalDrive = !known || known.source === "external-drive";
     const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
     const runtime = sessions.getRuntime(sessionId);
     const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);

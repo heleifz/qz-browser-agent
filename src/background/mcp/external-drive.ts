@@ -9,8 +9,11 @@ export const DRIVE_MAX_CALLS = 10;
 const DRIVE_IDLE_MS = 30 * 60 * 1000;
 
 const FORBIDDEN = new Set([
-  "ask_llm", "manage_sessions", "manage_settings", "manage_guardrails",
-  "qingzhou_call", "create_skill", "wait_for_user", "ask_user", "send_message",
+  "ask_llm", "manage_sessions", "manage_settings", "manage_guardrails", "manage_skill_settings",
+  "qingzhou_call", "create_skill", "update_skill", "delete_skill", "manage_skill",
+  "edit_skill_resource", "import_skill_from_page_zip", "import_git_skill_repository",
+  "install_skill_to_git", "import_page_zip", "import_git_repository", "manage_bookmarks",
+  "wait_for_user", "ask_user", "send_message",
 ]);
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
@@ -34,8 +37,14 @@ export function driveGroupTitle(clientName: unknown) {
   return `轻舟 · ${display}`;
 }
 
+function toolLocalName(name: string) {
+  const separator = name.lastIndexOf("__");
+  return separator >= 0 ? name.slice(separator + 2) : name;
+}
+
 function forbidden(name: string) {
-  return FORBIDDEN.has(name) || name.startsWith("mcp_");
+  const local = toolLocalName(name);
+  return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
 }
 
 function positiveSeconds(value: unknown) {

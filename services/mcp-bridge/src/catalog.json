@@ -283,7 +283,7 @@
     "description": "列出当前 session 可用的轻舟内置工具和插件工具 schema。",
     "inputSchema": {
       "properties": {
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -340,7 +340,7 @@
   },
   {
     "name": "qingzhou_execute_tool",
-    "description": "在已连接的浏览器里执行现有工具。单次传 name 和 args。同一轮并行或带 tabAlias、tabRef 时改传 calls（每项含 id、name、args），不要拆成多次请求。不要用来配置模型。",
+    "description": "在已连接的浏览器里执行现有工具。单次传 name 和 args。同一轮并行或带 tabAlias、tabRef 时改传 calls（每项含 id、name、args），不要拆成多次请求。",
     "inputSchema": {
       "properties": {
         "name": {"title": "Name", "type": "string"},
@@ -366,8 +366,7 @@
             "maxCalls": {"type": "number"}
           }
         },
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
-        "runId": {"default": "", "title": "Runid", "type": "string"},
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "wait": {"default": true, "title": "Wait", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
@@ -398,7 +397,7 @@
       "type": "object",
       "properties": {
         "name": {"type": "string", "minLength": 1},
-        "sessionId": {"type": "string", "default": "default"},
+        "sessionId": {"type": "string"},
         "timeoutSeconds": {"type": ["number", "null"], "default": null},
         "clientId": {"type": "string", "default": ""}
       },

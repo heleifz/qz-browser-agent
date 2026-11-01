@@ -106,7 +106,7 @@ function imageFilePaths(images, directory, prefix) {
   });
 }
 
-function materializeExecImages(result) {
+export function materializeExecImages(result) {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
   const nested = Array.isArray(result.results) && result.results.some(item => Array.isArray(item?.images) && item.images.some(image => typeof image?.data === "string"));
   const topLevel = Array.isArray(result.images) && result.images.some(image => typeof image?.data === "string");

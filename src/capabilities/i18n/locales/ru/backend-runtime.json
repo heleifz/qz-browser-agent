@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "Вкладка репозитория недоступна. Откройте её заново и повторите попытку",
   "backend.git.repository": "Репозиторий",
   "backend.git.localChanges": "В связанных Skills есть локальные изменения. Подтвердите их перезапись при обновлении",
-  "backend.git.nameConflict": "В репозитории есть Skills с такими же именами, как у локальных"
+  "backend.git.nameConflict": "В репозитории есть Skills с такими же именами, как у локальных",
+  "backend.drive.sessionBusy": "Эта сессия уже выполняет пакет. Дождитесь окончания или остановите сессию.",
+  "backend.drive.sessionOccupied": "В этой сессии уже есть задача, поэтому её нельзя вести напрямую. Используйте новый sessionId.",
+  "backend.drive.nameOrCalls": "Передайте либо name, либо calls, но не оба.",
+  "backend.drive.callShape": "Каждому элементу calls нужны id и name. Добавьте их и повторите попытку.",
+  "backend.drive.tooManyCalls": "В пакете может быть не больше {limit} вызовов. Отправьте меньше calls и повторите попытку.",
+  "backend.drive.toolForbidden": "Прямое управление не может вызвать {name}.",
+  "backend.drive.sendMessageRejected": "Эту сессию напрямую ведёт внешний клиент. Здесь можно только просматривать.",
+  "backend.drive.batchTimeout": "Время этого пакета истекло. Увеличьте limits.timeoutSeconds и повторите попытку."
 }

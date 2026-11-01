@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "علامة تبويب المستودع غير متاحة. أعد فتحها وحاول مجددًا",
   "backend.git.repository": "المستودع",
   "backend.git.localChanges": "توجد تغييرات محلية في Skills المرتبطة. أكّد قبل استبدالها بتحديث",
-  "backend.git.nameConflict": "يحتوي المستودع على Skills بأسماء مطابقة لـ Skills محلية"
+  "backend.git.nameConflict": "يحتوي المستودع على Skills بأسماء مطابقة لـ Skills محلية",
+  "backend.drive.sessionBusy": "هذه الجلسة تنفّذ دفعة بالفعل. انتظر حتى تنتهي أو أوقف الجلسة.",
+  "backend.drive.sessionOccupied": "هذه الجلسة مستخدمة بمهمة بالفعل، لذا لا يمكن تشغيلها مباشرة. استخدم sessionId جديدًا.",
+  "backend.drive.nameOrCalls": "مرّر name أو calls، وليس كليهما.",
+  "backend.drive.callShape": "يحتاج كل عنصر في calls إلى id وname. أضفهما ثم أعد المحاولة.",
+  "backend.drive.tooManyCalls": "يمكن أن تحتوي الدفعة على {limit} استدعاءات كحد أقصى. أرسل عددًا أقل من calls ثم أعد المحاولة.",
+  "backend.drive.toolForbidden": "لا يمكن للتشغيل المباشر استدعاء {name}.",
+  "backend.drive.sendMessageRejected": "يتحكم عميل خارجي في هذه الجلسة مباشرة. هذه الواجهة للعرض فقط.",
+  "backend.drive.batchTimeout": "انتهت مهلة هذه الدفعة. زِد limits.timeoutSeconds ثم أعد المحاولة."
 }

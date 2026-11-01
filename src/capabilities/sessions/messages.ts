@@ -178,6 +178,7 @@ export default defineMessages("sessions", {
   "documentLibrary": { "zh-CN": "文档库", en: "Document library" },
   "regularTasks": { "zh-CN": "普通任务", en: "Tasks" },
   "externalDrive": { "zh-CN": "外部直驱", en: "External" },
+  "externalDriveReadOnly": { "zh-CN": "这个会话由外部客户端直接操作，这里只能查看。", en: "An external client is driving this session. This view is read-only." },
   "new": { "zh-CN": "新建", en: "New" },
   "import": { "zh-CN": "导入", en: "Import" },
   "frequency": { "zh-CN": "频率", en: "Frequency" },

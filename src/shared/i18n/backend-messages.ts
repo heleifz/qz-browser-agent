@@ -945,7 +945,7 @@ export const backendMessages = defineMessages("backend", {
   "drive.nameOrCalls": {"zh-CN": "请只传 name 或 calls 中的一个。", "en": "Pass either name or calls, not both."},
   "drive.callShape": {"zh-CN": "calls 的每一项都要包含 id 和 name。请补全后再试。", "en": "Each item in calls needs an id and a name. Add them and try again."},
   "drive.tooManyCalls": {"zh-CN": "一批最多 {limit} 个调用。请减少 calls 后再试。", "en": "A batch can contain at most {limit} calls. Send fewer calls and try again."},
-  "drive.toolForbidden": {"zh-CN": "不能通过直驱调用 {name}。请改用 open_tab、get_ax_tree 或 act_on_element。", "en": "Direct drive cannot call {name}. Use open_tab, get_ax_tree, or act_on_element."},
-  "drive.sendMessageRejected": {"zh-CN": "这个会话由外部客户端直接操作。先停止该会话，再发送消息。", "en": "An external client is driving this session. Stop the session before sending a message."},
+  "drive.toolForbidden": {"zh-CN": "不能通过直驱调用 {name}。", "en": "Direct drive cannot call {name}."},
+  "drive.sendMessageRejected": {"zh-CN": "这个会话由外部客户端直接操作，这里只能查看。", "en": "An external client is driving this session. This view is read-only."},
   "drive.batchTimeout": {"zh-CN": "这一批超时了。请加大 limits.timeoutSeconds 后再试。", "en": "This batch timed out. Increase limits.timeoutSeconds and try again."},
 });

@@ -19,6 +19,7 @@ import {
   settleImportedTranscript,
 } from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
+import { t } from "../../src/shared/i18n/backend.js";
 
 await creationRunAndHistoryFlow();
 await duplicateAcceptedPromptIsIdempotent();
@@ -52,6 +53,7 @@ await stopBeforeStartDropsUnstartedPrompt();
 await stopPortOrderingAndIdleNoOp();
 await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
+await externalDriveSessionsRejectBuiltInMessages();
 
 console.log("session command runtime integration tests passed");
 
@@ -1987,6 +1989,26 @@ async function serializedSessionDraftMutations() {
   })).draft.text, "latest", "creation and lifecycle sync must share the Session write order");
 }
 
+async function externalDriveSessionsRejectBuiltInMessages() {
+  const fixture = createFixture();
+  await fixture.repository.createMetadata({ id: "drive-view", title: "Drive", source: "external-drive" });
+  await fixture.repository.createMetadata({ id: "normal-view", title: "Normal" });
+  const message = t("drive.sendMessageRejected");
+  for (const run of [
+    () => fixture.commands.submitSessionMessageRuntime({ sessionId: "drive-view", text: "hello" }),
+    () => fixture.commands.followUpSessionRuntime({ sessionId: "drive-view", text: "hello" }),
+    () => fixture.commands.resendSessionMessageRuntime({ sessionId: "drive-view", text: "hello", clientMessageId: "m1" }),
+    () => fixture.commands.startSessionPromptTask({ sessionId: "drive-view", text: "hello" }),
+  ]) {
+    await assert.rejects(run(), error => error.code === "DRIVE_MODEL_DISABLED" && error.message === message);
+  }
+  assert.equal(fixture.agents.has("drive-view"), false);
+  const admitted = await fixture.commands.submitSessionMessageRuntime({ sessionId: "normal-view", text: "still works" });
+  assert.equal(admitted.disposition, "started");
+  assert.equal(fixture.agents.has("normal-view"), true);
+  await admitted.promise;
+}
+
 function createFixture(options = {}) {
   const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
@@ -2063,6 +2085,8 @@ function createFixture(options = {}) {
   const supervisor = {
     withRuntime: (_id, operation) => operation(),
     isRunCurrent: (id, runId) => runtimes.get(normalizeId(id))?.runId === runId,
+    takeDriveRunForRelease() { return ""; },
+    finishDriveRunRelease() {},
     getRuntime: id => runtimes.get(normalizeId(id)) || null,
     getTask: id => tasks.get(normalizeId(id)) || null,
     has: id => agents.has(normalizeId(id)) || runtimes.has(normalizeId(id)),

@@ -38,8 +38,10 @@ test("qz exec reads one JSON object and prints JSON", async () => {
   assert.equal(await main(["exec"], deps), 0);
   assert.equal(calls[0].name, "qingzhou_execute_tool");
   assert.equal(calls[0].args.name, "list_tabs");
+  assert.equal(calls[0].args.sessionId, undefined);
   assert.equal(calls[0].args.clientId, "fixture");
   const body = JSON.parse(deps.stdout.text);
+  assert.equal(body.result.sessionId, "s");
   assert.equal(body.ok, true);
   assert.equal(body.result.result.tabs.length, 0);
   assert.equal(deps.stderr.text, "");

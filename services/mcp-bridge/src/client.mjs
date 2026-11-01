@@ -76,6 +76,44 @@ export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetc
   return health;
 }
 
+function restoreCallImages(value, blocks) {
+  const tagged = blocks.map((block, position) => ({
+    mimeType: block.mimeType,
+    data: block.data,
+    id: String(block._meta?.id || ""),
+    index: Number.isInteger(block._meta?.index) ? block._meta.index : position,
+  }));
+  const bytes = image => ({ mimeType: image.mimeType, data: image.data });
+  if (!Array.isArray(value.results)) return { ...value, images: tagged.map(bytes) };
+  const used = new Set();
+  const results = value.results.map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const id = String(item.id || "");
+    const owned = tagged.filter(image => image.id && image.id === id);
+    for (const image of owned) used.add(image);
+    if (!owned.length) return item;
+    owned.sort((left, right) => left.index - right.index);
+    return assignCallImages(item, owned.map(bytes));
+  });
+  const leftover = tagged.filter(image => !image.id || !used.has(image));
+  return { ...value, results, ...(leftover.length ? { images: leftover.map(bytes) } : {}) };
+}
+
+function assignCallImages(item, images) {
+  const itemCount = Array.isArray(item.images) ? item.images.length : 0;
+  const resultCount = item.result && typeof item.result === "object" && Array.isArray(item.result.images)
+    ? item.result.images.length : 0;
+  if (itemCount && resultCount) {
+    return {
+      ...item,
+      images: images.slice(0, itemCount),
+      result: { ...item.result, images: images.slice(itemCount, itemCount + resultCount) },
+    };
+  }
+  if (resultCount && !itemCount) return { ...item, result: { ...item.result, images } };
+  return { ...item, images };
+}
+
 export function resultValue(result) {
   if (result.structuredContent != null) return result.structuredContent;
   const blocks = Array.isArray(result.content) ? result.content : [];
@@ -84,9 +122,7 @@ export function resultValue(result) {
   if (texts.length === 1 && images.length + texts.length === blocks.length) {
     let value;
     try { value = JSON.parse(texts[0].text); } catch { value = texts[0].text; }
-    if (images.length && value && typeof value === "object" && !Array.isArray(value)) {
-      return { ...value, images: images.map(image => ({ mimeType: image.mimeType, data: image.data })) };
-    }
+    if (images.length && value && typeof value === "object" && !Array.isArray(value)) return restoreCallImages(value, images);
     if (!images.length) return value;
   }
   return { content: result.content || [] };

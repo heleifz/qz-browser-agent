@@ -690,8 +690,16 @@ function createSessionAgentTaskSpec({
   };
 }
 
+async function rejectExternalDriveComposer(sessionId: string) {
+  if (!sessionId) return;
+  const sessions = await getSessions();
+  if (sessions[sessionId]?.source !== "external-drive") return;
+  throw Object.assign(new Error(t("drive.sendMessageRejected")), { code: "DRIVE_MODEL_DISABLED" });
+}
+
 async function startSessionPromptTask(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
+  await rejectExternalDriveComposer(normalizeSessionId(params.sessionId));
   const prompt = prepareSessionPrompt(params);
   const existing = await sessionSupervisor.withAgent(prompt.sessionId, agent => (
     agent.findAcceptedUserMessage?.(prompt.clientMessageId) || null
@@ -721,6 +729,7 @@ async function startSessionPromptTask(params: PromptInput = {}, signal?: AbortSi
 
 async function submitSessionMessageRuntime(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
+  await rejectExternalDriveComposer(normalizeSessionId(params.sessionId));
   const deliveryMode = params.deliveryMode || "follow_up";
   if (!["follow_up", "steer"].includes(deliveryMode)) throw new Error("Invalid message deliveryMode");
   let resolveAcceptance: (message: unknown) => void = () => {};
@@ -922,6 +931,7 @@ function createUiSessionFromApi(params: Fields = {}) {
 async function followUpSessionRuntime(params: PromptInput = {}, signal?: AbortSignal) {
   signal?.throwIfAborted();
   const sessionId = requireExplicitSessionId(params.sessionId, "follow_up");
+  await rejectExternalDriveComposer(sessionId);
   const documents = assertMessageDocumentOwnership(params.documents, {
     sessionId,
     messageId: params.clientMessageId,
@@ -1009,6 +1019,7 @@ async function steerSessionFollowUpRuntime(params: Fields = {}) {
 
 async function resendSessionMessageRuntime(params: PromptInput = {}) {
   const sessionId = requireExplicitSessionId(params.sessionId, "resend_prompt");
+  await rejectExternalDriveComposer(sessionId);
   const documents = assertMessageDocumentOwnership(params.documents, {
     sessionId,
     messageId: params.clientMessageId,

@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "रिपॉज़िटरी टैब उपलब्ध नहीं है। उसे फिर खोलकर कोशिश करें",
   "backend.git.repository": "रिपॉज़िटरी",
   "backend.git.localChanges": "लिंक किए गए Skills में स्थानीय बदलाव हैं। अपडेट से उन्हें बदलने से पहले पुष्टि करें",
-  "backend.git.nameConflict": "रिपॉज़िटरी में कुछ Skills के नाम स्थानीय Skills जैसे हैं"
+  "backend.git.nameConflict": "रिपॉज़िटरी में कुछ Skills के नाम स्थानीय Skills जैसे हैं",
+  "backend.drive.sessionBusy": "यह सत्र पहले से एक बैच चला रहा है। इसके खत्म होने का इंतज़ार करें, या सत्र रोक दें।",
+  "backend.drive.sessionOccupied": "इस सत्र में पहले से एक कार्य है, इसलिए इसे सीधे नहीं चलाया जा सकता। नया sessionId इस्तेमाल करें।",
+  "backend.drive.nameOrCalls": "name या calls में से एक ही भेजें, दोनों नहीं।",
+  "backend.drive.callShape": "calls की हर वस्तु में id और name होना चाहिए। उन्हें जोड़कर फिर कोशिश करें।",
+  "backend.drive.tooManyCalls": "एक बैच में अधिकतम {limit} कॉल हो सकते हैं। calls कम करके फिर कोशिश करें।",
+  "backend.drive.toolForbidden": "सीधे संचालन से {name} नहीं बुलाया जा सकता।",
+  "backend.drive.sendMessageRejected": "यह सत्र बाहरी क्लाइंट सीधे चला रहा है। यहाँ केवल देखा जा सकता है।",
+  "backend.drive.batchTimeout": "यह बैच समय समाप्त हो गया। limits.timeoutSeconds बढ़ाकर फिर कोशिश करें।"
 }

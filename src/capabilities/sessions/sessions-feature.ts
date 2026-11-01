@@ -34,6 +34,7 @@ interface SessionsOptions {
   scheduleAutomationsRefresh?(options: RefreshOptions): void; setAutomationsVisible?(visible: boolean): void; closeAutomationsEditor?(): void;
   showToast?: UiExtensionAPI["showToast"]; flashAction?(element: HTMLElement, text: string): void;
   renderCurrentGoalStrip?(): void;
+  syncExternalDriveChrome?(): void;
   runStatusText?(runtime: Runtime): string; isChatActive?(): boolean; syncKeepAlive?(): void;
 }
 const fields = (input: unknown): Fields => input && typeof input === "object" && !Array.isArray(input) ? input as Fields : {};
@@ -997,6 +998,7 @@ async function loadSessionsList({ requestFreshState = false } = {}) {
 
 function rememberSessionListRecords(list: Session[] = []) {
   sessionState.mergeRecords(Array.isArray(list) ? list : []);
+  options.syncExternalDriveChrome?.();
 }
 
 function hasRunningSessionInList(list: Session[] = []) {

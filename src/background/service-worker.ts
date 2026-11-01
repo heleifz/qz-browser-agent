@@ -1054,7 +1054,7 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
   }).catch(() => {});
 });
 
-chrome.debugger?.onDetach.addListener((source, reason) => {
+chrome.debugger?.onDetach?.addListener((source, reason) => {
   const tabId = source.tabId;
   if (reason !== "canceled_by_user" || typeof tabId !== "number") return;
   const owner = sessionTabs.findOwner(tabId);

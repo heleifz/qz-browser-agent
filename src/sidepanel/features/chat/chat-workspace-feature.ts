@@ -45,6 +45,12 @@ import { createTranscriptProjection } from "./transcript/projection.js";
 import { createTranscriptReconcileFeature } from "./transcript/recovery.js";
 import { createTranscriptRenderer } from "./transcript/renderer.js";
 
+export function applyExternalDriveChrome(root: ParentNode, readOnly: boolean) {
+  root.querySelector("#app")?.toggleAttribute("data-external-drive", readOnly);
+  root.querySelector("#external-drive-readonly")?.classList.toggle("hidden", !readOnly);
+  root.querySelector("#input-area")?.classList.toggle("hidden", readOnly);
+}
+
 export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
   const root = options.root || document;
   const extensions = options.extensions;
@@ -361,6 +367,16 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
     return options.getCurrentTab?.() === options.tabs.CHAT;
   }
 
+  function syncExternalDriveChrome() {
+    const id = String(options.getCurrentSessionId?.() || "");
+    const record = id ? options.sessionState.getRecord(id) : null;
+    const readOnly = record?.source === "external-drive";
+    applyExternalDriveChrome(root, readOnly);
+    if (readOnly && root.activeElement === inputEl) inputEl.blur();
+  }
+
+  syncExternalDriveChrome();
+
   return {
     elements: {
       messagesEl,
@@ -398,5 +414,6 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
     reconcile,
     start: reconcile.start,
     stop: reconcile.stop,
+    syncExternalDriveChrome,
   };
 }

@@ -35,6 +35,7 @@ interface NavigationOptions {
     renderCurrent(options: { intent: string }): void; hasTranscript(id: string): boolean;
   };
   onUiEvent?(event: PortMessage): void;
+  syncExternalDriveChrome?(): void;
   sessionTitleBar?: HTMLElement | null; currentSessionTitle?: HTMLElement | null;
   sessionTitleEditButton?: HTMLButtonElement | null; sessionTitleInput?: HTMLInputElement | null;
   showToast?(message: string, options: { tone: string; anchorEl?: Element | null }): void;
@@ -86,6 +87,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
     if (previous !== next) closeSessionTitleEditor();
     options.composer?.handleSessionChanged(previous, next, composerDraft);
     options.setCurrentSessionIdValue?.(next || null);
+    options.syncExternalDriveChrome?.();
     if (previous !== next) options.onUiEvent?.({ type: "ui_session_changed", sessionId: next || null });
     if (previous !== next && pendingSessionRevealId !== next) pendingSessionRevealId = null;
     if (previous !== next) options.chatSearch?.close({ restoreFocus: false });

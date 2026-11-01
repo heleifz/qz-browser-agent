@@ -87,7 +87,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
 
     await expect(callTool(environment.bridge.endpoint, "qingzhou_send_message", {
       sessionId, text: "hello", timeoutSeconds: 15,
-    }, { timeoutMs: 20_000 })).rejects.toThrow(/外部客户端|Stop the session/);
+    }, { timeoutMs: 20_000 })).rejects.toThrow(/只能查看|read-only/);
 
     const batchSession = `drive-batch-${Date.now().toString(36)}`;
     const batch = await exec(dependencies, stdout, stderr, {
