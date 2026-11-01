@@ -1,4 +1,4 @@
-import { isDriveToolForbidden } from "../mcp/external-drive.js";
+import { isDriveToolForbidden, projectNamedDriveResult } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -172,10 +172,13 @@ export function createRunScriptBridge({
           logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
         }
       }
+      const projected = driveRun && toolName === "list_tabs"
+        ? projectNamedDriveResult(toolName, toolArgs, result).value
+        : result;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {
         ok: true,
-        result: stripNestedToolPresentation(result, Boolean(observation)),
+        result: stripNestedToolPresentation(projected, Boolean(observation)),
         ...(observation ? { observation } : {}),
         artifacts,
         isError: Boolean(output.error),

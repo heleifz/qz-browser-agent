@@ -16,7 +16,7 @@ import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
 import { driveGuide } from "./drive-guide.mjs";
-import { buildScriptRequest, presentScriptResult } from "./script-call.mjs";
+import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
 
 export const HELP = renderHelp();
 
@@ -296,15 +296,28 @@ async function dispatchCommand(parsed, dependencies) {
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
   if (command === "exec") {
+    const route = catalogExecRoute(execPayload);
+    if (route) {
+      const sessionId = String(route.args.sessionId || options.session || "").trim();
+      const result = await call(running.endpoint, route.tool, {
+        ...route.args,
+        ...(sessionId ? { sessionId } : {}),
+        ...common,
+      }, requestOptions);
+      return { result, exitCode: 0 };
+    }
     const session = options.session && !execPayload.sessionId ? { sessionId: options.session } : {};
     const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...session, ...common }, requestOptions);
     const failed = execFailed(result);
     return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
   }
   if (command === "script") {
-    const scriptSeconds = options.timeout === undefined ? 120 : timeoutSeconds;
-    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: scriptSeconds, sessionId: options.session });
-    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...request, ...common }, requestOptions);
+    const budgets = scriptTimeouts({ timeoutOption: options.timeout, timeoutSeconds });
+    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session });
+    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...request, ...common, timeoutSeconds: budgets.requestSeconds }, {
+      ...requestOptions,
+      timeoutMs: budgets.requestSeconds * 1000,
+    });
     return presentScriptResult(result);
   }
   if (command === "tools") {

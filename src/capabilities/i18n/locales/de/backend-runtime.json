@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "Tab gehört nicht zu dieser Aufgabe",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "Diese Aufgabe kann keine anderen Aufgaben verwalten",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "Diese Aufgabe kann keine anderen oder geplanten Aufgaben verwalten.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "Direktsteuerung kann dieses Werkzeug nicht aufrufen",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "Dieses Werkzeug kann in einer Direktsteuerungssitzung nicht aufgerufen werden.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "Skill bereits vorhanden",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "Binäre Skill-Ressourcen können nicht als Text bearbeitet werden",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "Inhalt des neuen Skills fehlt",

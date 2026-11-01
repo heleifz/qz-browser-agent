@@ -55,8 +55,9 @@ test("drive MCP lists the guide and five tools; qz-cli keeps the full catalog", 
   assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
   const names = driveToolCatalog().map(tool => tool.name);
   assert.deepEqual(names, ["qingzhou_guide", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
-  assert.match(driveToolCatalog()[1].description, /先读说明书/);
-  assert.match(driveToolCatalog()[1].description, /run_script/);
+  assert.match(driveToolCatalog()[0].description, /先读说明书/);
+  assert.doesNotMatch(driveToolCatalog()[1].description, /先读说明书/);
+  assert.match(driveToolCatalog()[1].description, /在已连接的浏览器里执行现有工具/);
 });
 
 test("Node bridge exposes the existing catalog through a real MCP SDK client", async t => {

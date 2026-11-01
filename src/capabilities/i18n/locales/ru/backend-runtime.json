@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "Вкладка не принадлежит этой задаче",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "Эта задача не может управлять другими задачами",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "Эта задача не может управлять другими или запланированными задачами.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "Прямое управление не может вызвать этот инструмент",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "Этот инструмент нельзя вызвать в сеансе прямого управления.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "Навык уже существует",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "Двоичные ресурсы навыка нельзя редактировать как текст",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "Отсутствует содержимое нового навыка",

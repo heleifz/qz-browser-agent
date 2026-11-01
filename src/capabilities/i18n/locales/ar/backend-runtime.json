@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "التبويب لا يتبع هذه المهمة",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "لا يمكن لهذه المهمة إدارة مهام أخرى",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "لا يمكن لهذه المهمة إدارة مهام أخرى أو مهام مجدولة.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "لا يمكن للقيادة المباشرة استدعاء هذه الأداة",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "لا يمكن استدعاء هذه الأداة في جلسة قيادة مباشرة.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "المهارة موجودة بالفعل",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "لا يمكن تعديل موارد المهارة الثنائية كنص",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "محتوى المهارة الجديدة مفقود",

@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "A aba não pertence a esta tarefa",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "Esta tarefa não pode gerenciar outras tarefas",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "Esta tarefa não pode gerenciar outras tarefas nem tarefas agendadas.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "O controle direto não pode chamar esta ferramenta",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "Esta ferramenta não pode ser chamada em uma sessão de controle direto.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "A habilidade já existe",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "Recursos binários de habilidades não podem ser editados como texto",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "Falta o conteúdo da nova habilidade",

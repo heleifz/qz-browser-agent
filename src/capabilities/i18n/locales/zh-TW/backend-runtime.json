@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "分頁不屬於此任務",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "此任務無法管理其他任務",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "此任務無法管理其他任務或排程任務。",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "直驅不能呼叫此工具",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "這個工具不能在直驅工作階段裡呼叫。",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "技能已存在",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "二進位技能資源不能以文字編輯",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "缺少新技能內容",

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { driveGuide } from "../../services/mcp-bridge/src/drive-guide.mjs";
-import { buildScriptRequest, presentScriptResult } from "../../services/mcp-bridge/src/script-call.mjs";
+import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "../../services/mcp-bridge/src/script-call.mjs";
 
 const CHARS_PER_TOKEN = 23156 / 5700;
 
@@ -47,4 +47,19 @@ test("qz script wraps an inner run_script and prints only the returned value", (
     error: "blocked",
     trace: traces.slice(-5),
   });
+  const truncated = { truncated: true, totalChars: 100000, limitChars: 48000, preview: "x".repeat(32) };
+  const capped = presentScriptResult({ sessionId: "s", result: truncated });
+  assert.equal(capped.exitCode, 0);
+  assert.equal(capped.stderr, "sessionId s\n");
+  assert.deepEqual(JSON.parse(capped.text), truncated);
+  assert.deepEqual(scriptTimeouts({}), { scriptSeconds: 120, requestSeconds: 180 });
+  assert.deepEqual(scriptTimeouts({ timeoutOption: "5", timeoutSeconds: 5 }), { scriptSeconds: 5, requestSeconds: 65 });
+  assert.deepEqual(catalogExecRoute({ name: "list_tools" }), { tool: "qingzhou_list_tools", args: {} });
+  assert.deepEqual(catalogExecRoute({ name: "get_tool", args: { name: "open_tab" }, sessionId: "s" }), {
+    tool: "qingzhou_get_tool",
+    args: { name: "open_tab", sessionId: "s" },
+  });
+  assert.equal(catalogExecRoute({ name: "capabilities" }).tool, "qingzhou_list_capabilities");
+  assert.equal(catalogExecRoute({ calls: [{ id: "a", name: "list_tools" }] }), null);
+  assert.equal(catalogExecRoute({ name: "open_tab" }), null);
 });

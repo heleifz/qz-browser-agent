@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "タブはこのタスクに属していません",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "このタスクはほかのタスクを管理できません",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "このタスクはほかのタスクやスケジュール済みタスクを管理できません。",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "直接操作ではこのツールを呼び出せません",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "このツールは直接操作のセッションでは呼び出せません。",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "スキルはすでに存在します",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "スキルのバイナリリソースはテキストとして編集できません",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "新しいスキルの内容がありません",

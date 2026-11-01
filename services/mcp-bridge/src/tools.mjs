@@ -253,19 +253,9 @@ export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   return clientName === "qz-cli" ? "full" : "drive";
 }
 
-function withReadGuide(tool) {
-  if (tool.name === "qingzhou_execute_tool") {
-    return {
-      ...tool,
-      description: "先读说明书：调用 qingzhou_guide 一次。默认把操作、等待和取数写进一次 run_script（target 为 inner），只 return 需要的字段。单次 name/args 或 calls 只用于一两步或调试。Read the guide first. Prefer one inner run_script. A single name/args or calls batch is only for one or two steps, or for debugging.",
-    };
-  }
-  return { ...tool, description: `先读说明书：调用 qingzhou_guide 一次。Read the guide first: call qingzhou_guide once.\n${tool.description || ""}` };
-}
-
 export function driveToolCatalog() {
   const byName = new Map(TOOL_CATALOG.map(tool => [tool.name, tool]));
-  return DRIVE_TOOL_NAMES.map(name => name === "qingzhou_guide" ? GUIDE_TOOL : withReadGuide(byName.get(name)));
+  return DRIVE_TOOL_NAMES.map(name => name === "qingzhou_guide" ? GUIDE_TOOL : byName.get(name));
 }
 
 export function createMcpServer(state, { clientName = "", profile = "" } = {}) {

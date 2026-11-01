@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "टैब इस काम का नहीं है",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "यह काम दूसरे कामों को मैनेज नहीं कर सकता",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "यह काम दूसरे या शेड्यूल किए गए कामों को मैनेज नहीं कर सकता।",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "डायरेक्ट ड्राइव यह टूल नहीं चला सकता",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "इस टूल को डायरेक्ट-ड्राइव सत्र में नहीं चलाया जा सकता।",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "स्किल पहले से मौजूद है",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "स्किल के बाइनरी संसाधन टेक्स्ट की तरह नहीं बदले जा सकते",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "नई स्किल का कॉन्टेंट नहीं है",
