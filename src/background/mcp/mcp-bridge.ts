@@ -431,8 +431,15 @@ class QingzhouMcpBridgeRuntime {
       try {
         this.check(generation);
         if (!this.deps.dispatch) throw new Error("qz dispatcher is unavailable");
-        const result = await bounded(Promise.resolve(this.deps.dispatch({ id, method: String(request.method || ""), params: record(request.params), raw: request, signal })), signal,
-          Math.max(1000, Math.min(600_000, Number(request.timeoutMs) || config.requestTimeoutMs)));
+        const requestAbort = new AbortController();
+        const abortRequest = (reason?: unknown) => {
+          if (!requestAbort.signal.aborted) requestAbort.abort(reason);
+        };
+        signal.addEventListener("abort", () => abortRequest(signal.reason), { once: true });
+        const dispatchSignal = AbortSignal.any([signal, requestAbort.signal]);
+        const result = await bounded(Promise.resolve(this.deps.dispatch({ id, method: String(request.method || ""), params: record(request.params), raw: request, signal: dispatchSignal })), signal,
+          Math.max(1000, Math.min(600_000, Number(request.timeoutMs) || config.requestTimeoutMs)),
+          () => abortRequest(failure("BRIDGE_REQUEST_TIMEOUT", "The browser operation timed out.")));
         payload = { ok: true, result };
       } catch (error) {
         payload = { ok: false, error: error instanceof Error ? error.message : String(error), code: record(error).code || "", details: errorDetails(error) };
@@ -465,11 +472,14 @@ class QingzhouMcpBridgeRuntime {
   }
 }
 
-function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number): Promise<T> {
+function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number, onTimeout?: () => void): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason || cancelled());
   return new Promise((resolve, reject) => {
     const onAbort = () => finish(signal.reason || cancelled());
-    const timer = setTimeout(() => finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry.")), ms);
+    const timer = setTimeout(() => {
+      try { onTimeout?.(); } catch { /* The caller still observes this timeout. */ }
+      finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry."));
+    }, ms);
     const finish = (error: unknown, value?: T) => {
       clearTimeout(timer); signal.removeEventListener("abort", onAbort);
       if (error) reject(error); else resolve(value as T);

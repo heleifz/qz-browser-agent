@@ -1,3 +1,4 @@
+import { isDriveToolForbidden, projectNamedDriveResult } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -23,6 +24,7 @@ interface BridgeHost {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
     resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior> } | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
+    getTabAliases?(sessionId: string): Readonly<Record<string, number>>;
   };
   collectArtifacts(name: string, args: Fields, result: unknown): Fields[];
   appendArtifacts?(input: { sessionId: string; runId: string; toolCallId: string; sourceTool: string; artifacts: Fields[] }): Promise<unknown>;
@@ -89,6 +91,14 @@ export function createRunScriptBridge({
       : parent?.signal && runSignal ? AbortSignal.any([parent.signal, runSignal]) : parent?.signal || runSignal || undefined;
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName, signal);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
+    const driveRun = runId.startsWith("drive-");
+    if (driveRun && toolName !== "__list_tools__" && isDriveToolForbidden(toolName)) {
+      return respondFailure({
+        error: t("drive.toolForbidden", { name: toolName }),
+        code: "DRIVE_TOOL_FORBIDDEN",
+        details: { toolName },
+      }, { toolName });
+    }
 
     if (toolName === "__list_tools__") {
       const toolContext = await resolveToolContext(sessionId, runId);
@@ -98,11 +108,15 @@ export function createRunScriptBridge({
       return {
         ok: true,
         result: {
-          tools: toolRuntime.getSchemas(toolContext).map(schema => ({
-            name: schema.function?.name || "",
-            description: schema.function?.description || "",
-            parameters: schema.function?.parameters || {},
-          })),
+          tools: toolRuntime.getSchemas(toolContext).flatMap(schema => {
+            const name = schema.function?.name || "";
+            if (driveRun && isDriveToolForbidden(name)) return [];
+            return [{
+              name,
+              description: schema.function?.description || "",
+              parameters: schema.function?.parameters || {},
+            }];
+          }),
         },
         isError: false,
       };
@@ -159,10 +173,15 @@ export function createRunScriptBridge({
           logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
         }
       }
+      const projected = driveRun && toolName === "list_tabs"
+        ? projectNamedDriveResult(toolName, toolArgs, result, null, {
+          aliases: toolRuntime.getTabAliases?.(sessionId),
+        }).value
+        : result;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {
         ok: true,
-        result: stripNestedToolPresentation(result, Boolean(observation)),
+        result: stripNestedToolPresentation(projected, Boolean(observation)),
         ...(observation ? { observation } : {}),
         artifacts,
         isError: Boolean(output.error),

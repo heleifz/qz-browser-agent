@@ -227,5 +227,10 @@
   "sessions.locationPanelUnavailable": "サイドパネルが接続されていません。このウィンドウで開いて再試行するか、都市や地域を教えてください。",
   "sessions.locationResponseTimeout": "位置情報の取得がタイムアウトしました。ブラウザーの位置情報を許可し、システムの位置情報サービスをオンにするか、都市や地域を教えてください。",
   "sessions.externalDrive": "外部",
-  "sessions.externalDriveReadOnly": "このセッションは外部クライアントが直接操作しています。ここでは閲覧のみです。"
+  "sessions.externalDriveReadOnly": "このセッションは外部クライアントが直接操作しています。ここでは閲覧のみです。",
+  "sessions.externalDriveWelcomeTitle": "外部エージェントが直接操作します",
+  "sessions.externalDriveWelcomeBody": "このセッションは外部エージェントが MCP または qz CLI から直接操作します。ターミナルで次のコマンドを実行して接続します。",
+  "sessions.externalDriveWelcomeCommandHint": "このブラウザを接続",
+  "sessions.externalDriveWelcomeCopy": "コピー",
+  "sessions.externalDriveWelcomeCopied": "コピーしました"
 }

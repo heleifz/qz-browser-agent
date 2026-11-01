@@ -23,25 +23,25 @@ const REVIEWED = new Map([
     files: /^sidepanel\/(?:chunk-[\w.-]+|features\/chat\/math-runtime)\.js$/u,
     reason: "loadMathRuntime loads only packaged vendor/mathjax/startup.js, with a local test-server fallback.",
   }]),
-  ["dynamic-code:4257df8c31520a5d7340e3b17e0186dba6dbb7e359bb6b7a83f57be5ac518dae", {
+  ["dynamic-code:154ed0174e4cd217b9e41855bf47960f6bad58ba559943ee1f0343db2c2ad992", {
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
-    reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
+    reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. Traces stay in the worker and a timeout reads the last five once. See policy risk in the audit guide.",
   }],
   ["dynamic-code:e78830823858460286c6355bfb8af085dd3762df57a4feb3d1c7a38e237fc8a5", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",
   }],
-  ["worker-source:890f3c5dc5be580fe67f809f64e6fe9556b44894fdd87172868660fa83fcd795", {
+  ["worker-source:11dbf0fbcc7d404174d299c143971229f57622a4762a30c84e6cbf27220a7a60", {
     files: /^runner-sandbox\.js$/u,
-    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only.",
+    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. A timeout snapshot is forwarded once and does not terminate the worker.",
   }],
   ...[
-    ["33445b4d16f8797c82850bf05d48c497e57dc488270f9c4756edb8a2ffe89e28", "background/tools/cdp-runtime", "Run-owned CDP evaluator with cancellation and stale-owner checks; existing page-script capability."],
+    ["b7bb66be99eb36094f15f78c471a30b31c21ba4ace62502696f922ba78a6f0b2", "background/tools/cdp-runtime", "Run-owned CDP evaluator. A script timeout reads the last five traces with a fixed Runtime.callFunctionOn on the promise held by CDP, then terminates. Existing page-script capability."],
     ["3e11705ca0c9ddb62d92e242771769301b481d4c3349267a5132318e07e6763a", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element."],
     ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity and arguments to the run-owned evaluator."],
     ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["5529486e8d683a386a258b41b7993015bb6411581961019272e66f5fd49123b2", "capabilities/script/tools", "Entire createScriptTools factory with product-specific offscreen error text. Same explicit user/Agent page-script capability. Policy risk remains."],
+    ["7fa7eb403ac90ca88908f19daf1c268b950ed0b595464615324355b697c22c55", "capabilities/script/tools", "Entire createScriptTools factory with product-specific offscreen error text. Page traces stay on the CDP-held promise; an inner timeout reads the last five once. Same explicit user/Agent page-script capability. Policy risk remains."],
     ["e1026a3accc9f907512ec6d6eeed9728cfbd86b130ad009452f3bee13803b70c", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant from isolated-page-calls; validates live context identity."],
     ["c56fb6154c392cf8fece033fcc496139904617749a4fb93acae372347b20b1fd", "background/tools/element-runtime", "Calls the packaged ISOLATED_CONTENT_INVOKE bridge constant; action parameters are passed as CDP values, not code."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
@@ -55,9 +55,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function.",
   }],
-  ["cdp-execution:e2f317664c8f22585c687339240b5fa6400b1515ae838e69259566344c16a2d3", {
+  ["cdp-execution:ed1908c7847b601236df02b4e05676e19dd95524eaf0b1fc08401a7004b63141", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion.",
+    reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion. Page traces stay on the CDP-held promise; an inner timeout reads the last five once.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,

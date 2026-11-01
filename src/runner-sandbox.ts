@@ -29,6 +29,9 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
       callId: data.callId,
       response: data.response,
     });
+  } else if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    workers.get(requestId)?.postMessage({ type: "trace_snapshot", requestId });
   } else if (data.type === "cancel") {
     cancelWorkerRun(String(data.requestId || ""));
   }
@@ -112,6 +115,15 @@ function startWorkerRun(data: Record<string, unknown>) {
         type: "fetch_cancel",
         requestId,
         callId: message.callId,
+      }, "*");
+      return;
+    }
+    if (message.type === "trace_snapshot") {
+      parent.postMessage({
+        source: SANDBOX_SOURCE,
+        type: "trace_snapshot",
+        requestId,
+        trace: Array.isArray(message.trace) ? message.trace.slice(-5) : [],
       }, "*");
       return;
     }

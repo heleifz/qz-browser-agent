@@ -51,8 +51,10 @@ test("settings supports reading, typed field updates, and JSON patches from stdi
 
 test("MCP only prints a URL; automation commands remain explicit", () => {
   assert.equal(parseCommand(["mcp"]).action, undefined);
+  assert.equal(parseCommand(["tools"]).command, "tools");
+  assert.equal(parseCommand(["tools", "open_tab"]).id, "open_tab");
   for (const args of [["mcp", "tools"], ["mcp", "call", "anything"], ["mcp", "--client", "browser"],
-    ["tools"], ["tools", "list"], ["tools", "show", "open_tab"], ["tools", "call", "open_tab", "-s", "task"],
+    ["tools", "show", "open_tab"], ["tools", "call", "open_tab", "-s", "task"],
     ["call", "open_tab", "-s", "task"], ["logs"], ["logs", "clear"], ["input", "task"],
     ["downloads"], ["downloads", "list"], ["downloads", "show", "42"]]) rejects(args);
   assert.equal(parseCommand(["automations"]).action, "list");

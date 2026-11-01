@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "L’onglet n’appartient pas à cette tâche",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "Cette tâche ne peut pas gérer d’autres tâches",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "Cette tâche ne peut pas gérer d’autres tâches ni des tâches planifiées.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "Le pilotage direct ne peut pas appeler cet outil",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "Cet outil ne peut pas être appelé dans une session de pilotage direct.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "La compétence existe déjà",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "Les ressources binaires des compétences ne peuvent pas être modifiées comme du texte",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "Contenu de la nouvelle compétence manquant",

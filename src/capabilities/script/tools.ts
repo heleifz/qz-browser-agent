@@ -15,7 +15,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { scriptTimeout } from "#sdk/background/tools";
+import { publishTimeoutTrace, scriptTimeout } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -445,6 +445,7 @@ function withoutToolAccess(result: Fields): Fields {
 
 const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
 const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
+const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
 function makeRunScriptAbortedError(tabId: number, phase = "run") {
   return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
@@ -638,16 +639,20 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) 
   });
   abortHandler = () => {
     const pending = runScriptInnerPendingByRequestId.get(requestId);
-    if (pending) {
-      chrome.runtime.sendMessage({
-        type: "run_script_inner_cancel",
-        requestId,
-      }).catch(() => {});
-      pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running inner script", {
-        engine: "offscreen_inner",
-        requestId,
-      }));
+    if (!pending) return;
+    if (record(signal?.reason).code === "TOOL_TIMEOUT") {
+      const read = requestInnerTraceSnapshot(requestId);
+      publishTimeoutTrace(signal, read);
+      void read.finally(() => {
+        chrome.runtime.sendMessage({ type: "run_script_inner_cancel", requestId }).catch(() => {});
+      });
+    } else {
+      chrome.runtime.sendMessage({ type: "run_script_inner_cancel", requestId }).catch(() => {});
     }
+    pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running inner script", {
+      engine: "offscreen_inner",
+      requestId,
+    }));
   };
   if (signal) {
     signal.addEventListener("abort", abortHandler, { once: true });
@@ -672,7 +677,27 @@ function isNestedRunScriptContext(context: ToolContext = {}) {
   return Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0)) > 0;
 }
 
+function requestInnerTraceSnapshot(requestId: string): Promise<unknown[]> {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (rows: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      runScriptInnerTraceWaiters.delete(requestId);
+      resolve(Array.isArray(rows) ? rows.slice(-5) : []);
+    };
+    const timer = setTimeout(() => finish([]), 800);
+    runScriptInnerTraceWaiters.set(requestId, finish);
+    chrome.runtime.sendMessage({ type: "run_script_inner_trace_snapshot", requestId }).catch(() => finish([]));
+  });
+}
+
 function handleRunScriptInnerRuntimeMessage(msg: Fields = {}) {
+  if (msg?.type === "run_script_inner_trace_snapshot_result") {
+    runScriptInnerTraceWaiters.get(String(msg.requestId || ""))?.(msg.trace);
+    return { ok: true, handled: true };
+  }
   if (msg?.type === "run_script_inner_trace") {
     return { ok: true, handled: true };
   }
@@ -758,10 +783,22 @@ async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {
   }
 }
 
+function holdScriptTrace(body: string) {
+  return `
+(() => {
+  const __qzTrace = [];
+  const __qzPromise = (async () => {
+${body}
+  })();
+  try { Object.defineProperty(__qzPromise, "__qzTrace", { value: __qzTrace }); } catch (_e) {}
+  return __qzPromise;
+})()
+`;
+}
+
 function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, parentCallId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
   const source = wrapRunScriptSource(String(code || ""));
-  return `
-(async () => {
+  return holdScriptTrace(`
   const __qzSourceTabId = ${JSON.stringify(tabId)};
   const __qzSessionId = ${JSON.stringify(sessionId)};
   const __qzRunId = ${JSON.stringify(runId || "")};
@@ -843,17 +880,12 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
   });
   const tabId = __qzSourceTabId;
   ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails })}
-})()
-`;
+`);
 }
 
 function buildCdpTraceExpression(code: string, { tabId, reason = "cdp", scriptArgs = {}, securityGuardrails = {} }: ScriptOptions = {}) {
   const source = wrapRunScriptSource(String(code || ""));
-  return `
-(async () => {
-  ${runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails })}
-})()
-`;
+  return holdScriptTrace(runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, source, withConsolePatch: true, defineInputBindings: true, securityGuardrails }));
 }
 
 function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {} }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
@@ -864,7 +896,6 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
   const args = input;
   const $plugin = input.$plugin || {};
   ` : ""}
-  const __qzTrace = [];
   const __qzArtifacts = [];
   const __qzMaxTrace = ${MAX_SCRIPT_TRACE_ENTRIES};
   const __qzStartedAt = Date.now();

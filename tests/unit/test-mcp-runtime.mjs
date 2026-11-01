@@ -83,12 +83,17 @@ const sessions = {
   getRuntime: () => ({ ...runtimeState }),
 };
 
+const driveToolNames = ["read_dom", "browse_history", "list_skills"];
+const blockedToolNames = [
+  "manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user",
+  "qingzhou_skill_author__delete_skill", "mcp_call_tool",
+];
+function toolSchema(name) {
+  return { type: "function", function: { name, description: name, parameters: { type: "object" } } };
+}
 const runProfiles = [];
 const toolRuntime = {
-  getSchemas: () => [{
-    type: "function",
-    function: { name: "read_dom", description: "Read", parameters: { type: "object" } },
-  }],
+  getSchemas: () => [...driveToolNames, ...blockedToolNames].map(toolSchema),
   async execute(name, args, signal, context) {
     executed.push({ name, args, signal, context });
     if (name === "load_skill") return { name: "research", displayName: "Research" };
@@ -219,16 +224,19 @@ assert.deepEqual(await runtime.getMessages("s1"), { sessionId: "s1", session: co
 assert.equal((await runtime.getMessages("s1", { tail: true, num: 1 })).num, 1);
 
 const listedTools = await runtime.listTools({ sessionId: "s1", loadedPluginSkillNames: ["extra"] });
-assert.deepEqual(listedTools.tools.map(tool => tool.name), ["read_dom"]);
+assert.deepEqual(listedTools.tools.map(tool => tool.name), [...driveToolNames, ...blockedToolNames]);
 assert.equal(runProfiles.at(-1).externalDrive, false);
-await runtime.listTools({ sessionId: "" });
+const blankTools = await runtime.listTools({ sessionId: "" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
-await runtime.listTools({ sessionId: "not-created" });
+assert.deepEqual(blankTools.tools.map(tool => tool.name), driveToolNames);
+const missingTools = await runtime.listTools({ sessionId: "not-created" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
 assert.equal(Object.hasOwn(metadata, "not-created"), false);
+assert.deepEqual(missingTools.tools.map(tool => tool.name), driveToolNames);
 metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
-await runtime.listTools({ sessionId: "drive-listed" });
+const driveTools = await runtime.listTools({ sessionId: "drive-listed" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
+assert.deepEqual(driveTools.tools.map(tool => tool.name), driveToolNames);
 assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools"]);
 const inputContext = { marker: true };
 const occupiedBefore = executed.length;
@@ -255,6 +263,77 @@ await assert.rejects(
 assert.equal(loadedNames.length, loadedBeforeDrive, "a built-in session rejects direct drive before recording a skill");
 assert.equal(executed.at(-1).name, "read_dom");
 assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_execute_tool"]);
+assert.equal((await runtime.getTool({ sessionId: "s1", name: "manage_bookmarks" })).name, "manage_bookmarks");
+assert.equal((await runtime.getTool({ sessionId: "drive-listed", name: "browse_history" })).name, "browse_history");
+assert.equal(await runtime.getTool({ sessionId: "drive-listed", name: "not_a_tool" }), null);
+for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "qingzhou_skill_author__delete_skill", "mcp_call_tool"]) {
+  await assert.rejects(
+    () => runtime.getTool({ sessionId: "drive-listed", name }),
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message === `不能通过直驱调用 ${name}。`,
+  );
+}
+await assert.rejects(
+  () => runtime.getTool({ sessionId: "", name: "ask_user" }),
+  error => error.code === "DRIVE_TOOL_FORBIDDEN",
+);
+
+const driveNotes = [];
+const persistedDriveSessions = [];
+sessions.recordToolEvent = event => { driveNotes.push(event); };
+sessions.persistTranscript = async sessionId => { persistedDriveSessions.push(sessionId); };
+{
+  const notedBefore = driveNotes.length;
+  await runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main" } });
+  assert.equal(driveNotes.length, notedBefore, "a legacy empty session does not record a drive transcript");
+  assert.equal(executed.at(-1).context.toolCallId || "", "");
+}
+const batchNotes = await runtime.executeTool({
+  sessionId: "drive-s",
+  calls: [
+    { id: "tree", name: "get_ax_tree", args: { tabId: 3 } },
+    { id: "shot", name: "screenshot", args: { tabId: 3 } },
+  ],
+});
+assert.equal(batchNotes.results.length, 2);
+assert.deepEqual(driveNotes.map(event => [event.toolCallId, event.toolName, event.isError, event.type]), [
+  ["tree", "get_ax_tree", false, "tool_execution_end"],
+  ["shot", "screenshot", false, "tool_execution_end"],
+]);
+assert.equal(driveNotes.every(event => event.runId === "drive-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
+assert.deepEqual(persistedDriveSessions, ["drive-s"]);
+{
+  const previous = toolRuntime.execute;
+  toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "drop-me" });
+  try {
+    driveNotes.length = 0;
+    const shot = await runtime.executeTool({ sessionId: "drive-s", name: "screenshot", args: { tabId: 4 } });
+    assert.equal(Object.hasOwn(shot.result, "_image"), false);
+    assert.equal(Object.hasOwn(shot.result, "_debug"), false);
+    assert.equal(driveNotes[0].result._image, "data:image/png;base64,aaaa");
+    assert.equal(Object.hasOwn(driveNotes[0].result, "_debug"), false);
+    assert.equal(executed.at(-1).context.toolCallId || "", "", "drive recording stays off the execution context");
+  } finally {
+    toolRuntime.execute = previous;
+  }
+}
+{
+  const previous = toolRuntime.execute;
+  toolRuntime.execute = async () => { throw Object.assign(new Error("drive boom"), { code: "TOOL_FAILED" }); };
+  try {
+    driveNotes.length = 0;
+    persistedDriveSessions.length = 0;
+    await assert.rejects(
+      runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { selector: "x" } }),
+      error => error.code === "TOOL_FAILED",
+    );
+    assert.equal(driveNotes.length, 1);
+    assert.equal(driveNotes[0].isError, true);
+    assert.equal(driveNotes[0].result.code, "TOOL_FAILED");
+    assert.deepEqual(persistedDriveSessions, ["drive-s"]);
+  } finally {
+    toolRuntime.execute = previous;
+  }
+}
 
 const listedSkills = await runtime.listSkills({ scope: "global", query: "guide" });
 assert.equal(listedSkills.count, 1);
@@ -314,7 +393,7 @@ assert.deepEqual(snapshot.usage, {
   inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,
   modelCalls: 0, toolCalls: 0, screenshots: 0, contextCompressions: 0,
 });
-assert.equal(snapshot.toolCount, 1);
+assert.equal(snapshot.toolCount, driveToolNames.length + blockedToolNames.length);
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);
 
@@ -342,6 +421,21 @@ toolRuntime.execute = async (_name, _args, signal) => { toolController.abort(new
 await assert.rejects(runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, toolController.signal), /late disconnect/);
 assert.equal(loadedNames.length, loadedCount, "revoked tool results cannot update loaded Skill state");
 toolRuntime.execute = oldExecute;
+
+{
+  const hung = new AbortController();
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const previous = toolRuntime.execute;
+  toolRuntime.execute = async () => { entered(); return new Promise(() => {}); };
+  const pending = runtime.executeTool({ sessionId: "drive-lease", name: "read_dom" }, hung.signal);
+  await started;
+  hung.abort(new Error("bridge timeout"));
+  await assert.rejects(pending, /bridge timeout/);
+  toolRuntime.execute = previous;
+  const released = await runtime.executeTool({ sessionId: "drive-lease", name: "read_dom" });
+  assert.equal(released.result.ok, true, "aborting a hung drive call releases DRIVE_SESSION_BUSY");
+}
 
 const admissionController = new AbortController();
 await runtime.sendMessage({ sessionId: "s1", text: "retain admission authority", waitForStart: false }, admissionController.signal);

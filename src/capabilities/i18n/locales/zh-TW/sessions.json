@@ -227,5 +227,10 @@
   "sessions.locationPanelUnavailable": "側邊欄未連線。請開啟目前視窗的側邊欄後重試，或直接告訴我城市或區域。",
   "sessions.locationResponseTimeout": "定位逾時。請確認已允許瀏覽器定位，並開啟系統定位服務；也可直接告訴我城市或區域。",
   "sessions.externalDrive": "外部直驅",
-  "sessions.externalDriveReadOnly": "這個工作階段由外部用戶端直接操作，這裡只能查看。"
+  "sessions.externalDriveReadOnly": "這個工作階段由外部用戶端直接操作，這裡只能查看。",
+  "sessions.externalDriveWelcomeTitle": "由外部 agent 直接操作",
+  "sessions.externalDriveWelcomeBody": "這個工作階段由外部 agent 透過 MCP 或 qz CLI 直接操作。在終端機執行下面的命令完成綁定。",
+  "sessions.externalDriveWelcomeCommandHint": "綁定目前的瀏覽器",
+  "sessions.externalDriveWelcomeCopy": "複製",
+  "sessions.externalDriveWelcomeCopied": "已複製"
 }

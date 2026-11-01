@@ -84,8 +84,13 @@ test("loaded extension creates and imports a Skill whose ID is another Skill's d
     const execute = (name, args) => callTool(environment.bridge.endpoint, "qingzhou_execute_tool", { name, args, timeoutSeconds: 30 });
     const loaded = await execute("load_skill", { name: "skill-workbench" });
     expect(loaded.result.name).toBe("skill-workbench");
-    const created = await execute("qingzhou_skill_author__create_skill", { timeout: 30, name: "rt5", description: "New skill", content: "New rt5 body" });
-    expect(created.result).toMatchObject({ saved: true, name: "rt5" });
+    const created = await extensionRequest(page, "save_workspace_skill", {
+      name: "rt5",
+      expected: null,
+      skill: { name: "rt5", description: "New skill", content: "New rt5 body" },
+    }, "skill_workspace_saved");
+    expect(created.skill.name).toBe("rt5");
+    expect(created.skill.content).toBe("New rt5 body");
     const stored = await page.evaluate(async () => (await chrome.storage.local.get("_skills"))._skills);
     expect(stored.rt6).toEqual(rt6);
     expect(stored.rt5.content).toBe("New rt5 body");

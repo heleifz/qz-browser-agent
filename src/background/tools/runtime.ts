@@ -45,7 +45,7 @@ import { assertScriptPageLifecycle } from "./behavior.js";
  */
 
 import { ToolExecutionError, isMissingRequiredValue, validateToolSchema } from "./arguments.js";
-import { DEFAULT_TOOL_TIMEOUT, resolveTimeout, scriptTimeout } from "./timing.js";
+import { DEFAULT_TOOL_TIMEOUT, documentHostTimeout, resolveTimeout, scriptTimeout } from "./timing.js";
 import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import { getSecurityGuardrails, matchBlockedUrl } from "../../shared/security-guardrails.js";
 import {
@@ -73,6 +73,7 @@ import {
   getSkillToolDefinition,
   getSkillToolParameters,
   getHostCoreToolTarget,
+  isDocumentHostTool,
   isSkillPageTool,
   isSkillToolActive,
   listSkillMcpServers,
@@ -367,10 +368,11 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     plugin: entry.plugin,
     ...(renderer?.type === "selection" ? { selectionRenderer: renderer } : {}),
     validateArgs: args => {
-      if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
+      if (isDocumentHostTool(entry.tool)) documentHostTimeout(args, runtimeName);
+      else if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
       return hostDefinition?.validateArgs?.(args);
     },
-    timeout: isSkillPageScriptTool(entry.tool) ? 0 : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
+    timeout: isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
     legacyTimeoutMs: !isSkillScriptTool(entry.tool),
     execute: (args, signal, context) => executeSkillTool(name, args, signal, context,
       (nestedName, nestedArgs, nestedSignal, nestedContext = {}) => executeTool(

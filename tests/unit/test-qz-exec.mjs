@@ -164,3 +164,60 @@ test("exec writes per-call images to files", async () => {
   assert.equal(existsSync(body.result.results[1].images[0]), true);
   assert.equal(readFileSync(body.result.results[1].images[0]).toString(), "shot");
 });
+
+test("qz exec list_tools get_tool and capabilities use the catalog calls", async () => {
+  const calls = [];
+  const deps = setup({
+    callTool: async (_endpoint, name, args) => {
+      calls.push({ name, args });
+      if (name === "qingzhou_list_tools") return { tools: [{ name: "open_tab", signature: "open_tab({url})" }] };
+      if (name === "qingzhou_get_tool") return { name: args.name, signature: "open_tab({url})" };
+      return { capabilities: ["tabs"] };
+    },
+  });
+  assert.equal(await main(["exec", JSON.stringify({ name: "list_tools" })], deps), 0);
+  assert.equal(calls[0].name, "qingzhou_list_tools");
+  assert.equal(calls[0].args.name, undefined);
+  assert.equal(calls[0].args.clientId, "fixture");
+  assert.equal(JSON.parse(deps.stdout.text).result.tools[0].signature, "open_tab({url})");
+  assert.equal(await main(["exec", JSON.stringify({ name: "get_tool", args: { name: "open_tab" } })], deps), 0);
+  assert.equal(calls[1].name, "qingzhou_get_tool");
+  assert.equal(calls[1].args.name, "open_tab");
+  assert.equal(await main(["exec", JSON.stringify({ name: "capabilities" })], deps), 0);
+  assert.equal(calls[2].name, "qingzhou_list_capabilities");
+  const batch = setup({
+    callTool: async (_endpoint, name) => {
+      calls.push({ name });
+      return { results: [] };
+    },
+  });
+  assert.equal(await main(["exec", JSON.stringify({ calls: [{ id: "a", name: "list_tools", args: {} }] })], batch), 0);
+  assert.equal(calls[3].name, "qingzhou_execute_tool");
+});
+
+test("qz script request timeout outlasts the script timeout", async () => {
+  const calls = [];
+  const timed = setup({
+    readStdin: async () => "async () => 1\n",
+    callTool: async (_endpoint, name, args, options) => {
+      calls.push({ name, args, timeoutMs: options.timeoutMs });
+      return { sessionId: "s", result: { ok: true, result: 1 } };
+    },
+  });
+  assert.equal(await main(["script", "--timeout", "5"], timed), 0);
+  assert.equal(calls[0].name, "qingzhou_execute_tool");
+  assert.equal(calls[0].args.args.timeout, 5);
+  assert.equal(calls[0].args.timeoutSeconds, 65);
+  assert.equal(calls[0].timeoutMs, 65000);
+  const defaults = setup({
+    readStdin: async () => "async () => 1\n",
+    callTool: async (_endpoint, _name, args, options) => {
+      calls.push({ args, timeoutMs: options.timeoutMs });
+      return { result: { ok: true, result: 1 } };
+    },
+  });
+  assert.equal(await main(["script"], defaults), 0);
+  assert.equal(calls[1].args.args.timeout, 120);
+  assert.equal(calls[1].args.timeoutSeconds, 180);
+  assert.equal(calls[1].timeoutMs, 180000);
+});

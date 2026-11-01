@@ -371,6 +371,8 @@ export const backendMessages = defineMessages("backend", {
   "toolError.SESSION_TAB_UNOWNED.label": {"zh-CN": "标签页未归属当前任务", "en": "Tab does not belong to this task"},
   "toolError.SESSION_TOOL_FORBIDDEN.label": {"zh-CN": "当前任务不能管理其他任务", "en": "This task cannot manage other tasks"},
   "toolError.SESSION_TOOL_FORBIDDEN.message": {"zh-CN": "当前会话不允许管理其他会话或定时任务。", "en": "This task cannot manage other tasks or scheduled tasks."},
+  "toolError.DRIVE_TOOL_FORBIDDEN.label": {"zh-CN": "直驱不能调用此工具", "en": "Direct drive cannot call this tool"},
+  "toolError.DRIVE_TOOL_FORBIDDEN.message": {"zh-CN": "这个工具不能在直驱会话里调用。", "en": "This tool cannot be called in a direct-drive session."},
   "toolError.SKILL_ALREADY_EXISTS.label": {"zh-CN": "技能已存在", "en": "Skill already exists"},
   "toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": {"zh-CN": "二进制技能资源不能按文本编辑", "en": "Binary skill resources cannot be edited as text"},
   "toolError.SKILL_CREATE_REQUIRES_CONTENT.label": {"zh-CN": "创建技能缺少内容", "en": "New skill content missing"},

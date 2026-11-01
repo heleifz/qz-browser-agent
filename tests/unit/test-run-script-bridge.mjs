@@ -320,4 +320,87 @@ assert.equal((await activationBridge.handleToolCall({
   runId: "run-current",
 })).ok, true);
 
+const driveExecutions = [];
+const driveBridge = createRunScriptBridge({
+  supervisor: {
+    isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+    hasAgent: () => false,
+    getAbortSignal: () => controller.signal,
+  },
+  getRuntime: () => ({ status: "running" }),
+  isTerminalRuntimeForRun: () => false,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async () => null,
+  toolRuntime: {
+    resolveDefinition: () => ({ behavior: {} }),
+    getSchemas: () => [
+      { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
+      { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
+    ],
+    getTabAliases: () => ({ page: 7 }),
+    async execute(name) {
+      driveExecutions.push(name);
+      if (name === "list_tabs") {
+        return [
+          { id: 7, title: "Owned", url: "https://httpbin.org/html", ownedByCurrentTask: true, width: 800 },
+          { id: 8, title: "Other", url: "https://httpbin.org/robots.txt", ownedByCurrentTask: false, width: 640 },
+        ];
+      }
+      return { ok: true };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const blockedAsk = await driveBridge.handleToolCall({
+  toolName: "ask_llm",
+  args: { prompt: "hi" },
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(blockedAsk.ok, false);
+assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(driveExecutions, []);
+const driveList = await driveBridge.handleToolCall({
+  toolName: "__list_tools__",
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.deepEqual(driveList.result.tools.map(tool => tool.name), ["read_dom"]);
+assert.equal((await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "drive-1",
+})).ok, true);
+assert.deepEqual(driveExecutions, ["read_dom"]);
+const driveTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.deepEqual(driveTabs.result, {
+  tabs: [{ id: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html" }],
+  count: 1,
+  foreign: 1,
+});
+assert.equal("width" in driveTabs.result, false);
+const allTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: { scope: "all" },
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(Array.isArray(allTabs.result), true);
+assert.equal(allTabs.result.length, 2);
+assert.equal(allTabs.result[0].width, 800);
+const plainTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "run-current",
+});
+assert.equal(Array.isArray(plainTabs.result), true);
+assert.equal(plainTabs.result[1].ownedByCurrentTask, false);
+
 console.log("run_script bridge tests passed");

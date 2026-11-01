@@ -1,5 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import { COMMANDS, commandOptions } from "./commands.mjs";
+import { driveGuide } from "./drive-guide.mjs";
 import { defaultShell, optionTerminator, shellArgument, shellQuote } from "./shell.mjs";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -528,6 +529,10 @@ export function renderHelp(topic = "", options = {}) {
   out.line("Version: qz --version (-v)", "muted");
   out.line("npm: npm run qz -- COMMAND [options]", "muted");
   out.shellNote();
+  if (!topic) {
+    out.line();
+    out.line(driveGuide({ explicit: options.lang, env: options.env || process.env }));
+  }
   return out.finish();
 }
 

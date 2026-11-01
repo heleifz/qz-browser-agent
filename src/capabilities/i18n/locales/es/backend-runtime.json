@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "La pestaña no pertenece a esta tarea",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "Esta tarea no puede gestionar otras tareas",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "Esta tarea no puede gestionar otras tareas ni tareas programadas.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "La conducción directa no puede llamar a esta herramienta",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "Esta herramienta no se puede llamar en una sesión de conducción directa.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "La habilidad ya existe",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "Los recursos binarios de habilidades no se pueden editar como texto",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "Falta el contenido de la nueva habilidad",

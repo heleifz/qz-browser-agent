@@ -39,6 +39,10 @@ const messages = defineMessages("skill-tools", {
     "zh-CN": "页面目标: 用 tabRef 指定当前任务拥有的标签页别名或正整数 ID；省略时使用当前任务工作标签页。",
     "en": "Page target: pass tabRef as an alias or positive integer ID of a tab owned by the current task; omit it to use the current task's working tab."
   },
+  "documentHostTimeout": {
+    "zh-CN": "可选。文档工具超时秒数；省略时默认 120 秒。",
+    "en": "Optional document-tool timeout in seconds. Defaults to 120 seconds."
+  },
   "requiredTimeout": {
     "zh-CN": "必须传入 timeout（秒）：<= 0 表示无限等待，> 0 表示最多等待对应秒数。",
     "en": "Required timeout in seconds: <= 0 means no time limit; > 0 sets the maximum duration."

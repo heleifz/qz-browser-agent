@@ -206,17 +206,31 @@ function normalizeCanManageSessionId(value: unknown = "") {
 }
 
 
-async function listSessionsRuntime({ limit = 100, excludeSessionId = "" } = {}) {
+async function listSessionsRuntime({
+  limit = 100,
+  excludeSessionId = "",
+  sessionId = "",
+  scope = "",
+}: { limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
   await sessionRuntimeReady;
-  const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
   const excluded = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
+  const requestedId = typeof sessionId === "string" ? sessionId.trim() : "";
   const sessions = Object.values(await getSessions())
     .filter((session) => session?.source !== "automation")
     .filter((session) => !excluded || session.id !== excluded)
-    .sort((a, b) => compareBeijingDateTimeDesc(a.updatedAt, b.updatedAt))
-    .slice(0, max)
-    .map((session) => formatSessionRuntimeRecord(session));
-  return { sessions };
+    .sort((a, b) => compareBeijingDateTimeDesc(a.updatedAt, b.updatedAt));
+  if (scope === "session") {
+    const match = requestedId ? sessions.find((session) => session.id === requestedId) : undefined;
+    return {
+      scope: "session",
+      session: match ? compactSessionRecord(match) : null,
+      otherCount: sessions.filter((session) => session.id !== requestedId).length,
+    };
+  }
+  const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
+  return {
+    sessions: sessions.slice(0, max).map((session) => formatSessionRuntimeRecord(session)),
+  };
 }
 
 
@@ -1662,6 +1676,17 @@ async function buildSkillUiContext(sessionId: string) {
     // Skill UI context is best-effort; descriptor listing should still work.
   }
   return context;
+}
+
+function compactSessionRecord(session: Partial<SessionMetadata> & { id: string }) {
+  const runtime = getSessionRuntimeState(session.id);
+  return {
+    id: session.id,
+    title: session.title || t("session.new"),
+    status: runtime.status,
+    running: runtime.running,
+    updatedAt: session.updatedAt || session.createdAt || "",
+  };
 }
 
 function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false } = {}) {

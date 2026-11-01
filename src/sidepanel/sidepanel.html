@@ -104,7 +104,20 @@
           <div class="welcome-icon" aria-label="轻舟" data-i18n-aria-label="core.brand"></div>
           <p class="welcome-subtitle" data-i18n="core.tagline">万重山外，一舟轻渡</p>
         </div>
-        
+        <section id="drive-welcome" class="drive-welcome" aria-label="外部直驱" data-i18n-aria-label="sessions.externalDrive">
+          <h2 data-i18n="sessions.externalDriveWelcomeTitle">由外部 agent 直接操作</h2>
+          <p class="drive-welcome-copy" data-i18n="sessions.externalDriveWelcomeBody">这个会话由外部 agent 通过 MCP 或 qz CLI 直接操作。在终端运行下面的命令完成绑定。</p>
+          <div class="drive-welcome-card">
+            <div class="drive-welcome-command">
+              <code id="drive-welcome-command">npx qz-browser-agent@latest connect</code>
+              <small data-i18n="sessions.externalDriveWelcomeCommandHint">绑定当前浏览器</small>
+            </div>
+            <button id="drive-welcome-copy" class="qz-btn qz-btn--secondary qz-btn--sm" type="button">
+              <span class="drive-welcome-copy-label" data-i18n="sessions.externalDriveWelcomeCopy">复制</span>
+              <span class="drive-welcome-copied" data-i18n="sessions.externalDriveWelcomeCopied">已复制</span>
+            </button>
+          </div>
+        </section>
       </div>
     </main>
 

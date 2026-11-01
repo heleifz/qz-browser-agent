@@ -54,6 +54,12 @@ for (const code of [...codes].sort()) {
   assert.notEqual(label, code, `code should not be shown raw: ${code}`);
   assert.equal(label.includes("_"), false, `localized label should not contain underscores: ${code}`);
 }
+for (const [language, label] of [
+  ["zh-CN", "直驱不能调用此工具"],
+  ["en", "Direct drive cannot call this tool"],
+]) withLanguage(language, () => {
+  assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), label);
+});
 
 assert.equal(localizeToolFailureCode("TOOL_NOT_EXECUTED"), "工具未执行");
 assert.equal(

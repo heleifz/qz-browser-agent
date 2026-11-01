@@ -56,6 +56,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   DESKTOP_CAPTURE_AUDIO_NOT_SELECTED: { label: "toolError.DESKTOP_CAPTURE_AUDIO_NOT_SELECTED.label" },
   DESKTOP_CAPTURE_FAILED: { label: "toolError.DESKTOP_CAPTURE_FAILED.label" },
   DESKTOP_CAPTURE_UNAVAILABLE: { label: "toolError.DESKTOP_CAPTURE_UNAVAILABLE.label" },
+  DRIVE_TOOL_FORBIDDEN: { label: "toolError.DRIVE_TOOL_FORBIDDEN.label", message: "toolError.DRIVE_TOOL_FORBIDDEN.message" },
   DOCUMENT_ARTIFACT_EMPTY: { label: "toolError.DOCUMENT_ARTIFACT_EMPTY.label", message: "toolError.DOCUMENT_ARTIFACT_EMPTY.message" },
   DOCUMENT_ARTIFACT_NOT_FOUND: { label: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.label", message: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.message" },
   DOCUMENT_BLOCK_SCHEMA_INVALID: { label: "toolError.DOCUMENT_BLOCK_SCHEMA_INVALID.label" },

@@ -227,5 +227,10 @@
   "sessions.locationPanelUnavailable": "Боковая панель не подключена. Откройте её в этом окне и повторите попытку или просто назовите город или район.",
   "sessions.locationResponseTimeout": "Время ожидания геолокации истекло. Разрешите геолокацию в браузере и включите службы геолокации системы или просто назовите город или район.",
   "sessions.externalDrive": "Внешний",
-  "sessions.externalDriveReadOnly": "Эту сессию напрямую ведёт внешний клиент. Здесь можно только просматривать."
+  "sessions.externalDriveReadOnly": "Эту сессию напрямую ведёт внешний клиент. Здесь можно только просматривать.",
+  "sessions.externalDriveWelcomeTitle": "Управляется внешним агентом",
+  "sessions.externalDriveWelcomeBody": "Эту сессию напрямую ведёт внешний агент через MCP или CLI qz. Выполните эту команду в терминале, чтобы подключить его.",
+  "sessions.externalDriveWelcomeCommandHint": "Привязать этот браузер",
+  "sessions.externalDriveWelcomeCopy": "Копировать",
+  "sessions.externalDriveWelcomeCopied": "Скопировано"
 }

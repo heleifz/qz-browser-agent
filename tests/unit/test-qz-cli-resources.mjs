@@ -62,7 +62,7 @@ test("invalid settings and MCP input fail before discovery and never echo suppli
 });
 
 test("removed commands fail before discovery; MCP has no command passthrough", async () => {
-  for (const argv of [["tools"], ["tools", "list"], ["tools", "show", "open_tab"],
+  for (const argv of [["tools", "show", "open_tab"],
     ["tools", "call", "open_tab", "-", "-s", "task"], ["tools", "job", "job-1"],
     ["call", "open_tab", "-s", "task"], ["logs"], ["logs", "clear"], ["input", "task"],
     ["downloads"], ["downloads", "list"], ["downloads", "show", "42"],

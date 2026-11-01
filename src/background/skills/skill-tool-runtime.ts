@@ -59,6 +59,10 @@ const SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY = {
   type: "number",
   get description() { return skillToolT("scriptTimeout"); },
 } as const;
+const SKILL_DOCUMENT_HOST_TIMEOUT_PROPERTY = {
+  type: "number",
+  get description() { return skillToolT("documentHostTimeout"); },
+} as const;
 const SKILL_TOOL_TAB_REF_PROPERTY = {
   type: ["integer", "string"],
   get description() { return skillToolT("tabRef"); },
@@ -234,9 +238,11 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
     const err = new ToolExecutionError("PLUGIN_TOOL_SCRIPT_MISSING", `Skill tool ${name} has no executable script`, { pluginId: plugin.id, skillName: plugin.skillName, tool: tool.rawName });
     throw err;
   }
-  const controlArgs = isSkillScriptTool(tool)
-    ? pickRequiredScriptSkillToolControlArgs(inputArgs, name)
-    : pickSkillToolControlArgs(inputArgs);
+  const controlArgs = isDocumentHostTool(tool)
+    ? pickDocumentHostControlArgs(inputArgs)
+    : isSkillScriptTool(tool)
+      ? pickRequiredScriptSkillToolControlArgs(inputArgs, name)
+      : pickSkillToolControlArgs(inputArgs);
   const skillConfig = await resolveSkillExecutionConfig(plugin, tool, runtime.skillSettings);
   assertSkillExecutionActive(signal);
   const scriptArgs = {
@@ -764,7 +770,7 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
     tool.runtime === "inner" ? skillToolT("innerRuntime") : "",
     pageTool ? skillToolT("pageTarget") : "",
     scriptTool
-      ? skillToolT("requiredTimeout")
+      ? (isDocumentHostTool(tool) ? skillToolT("documentHostTimeout") : skillToolT("requiredTimeout"))
       : skillToolT("optionalTimeout"),
     renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
@@ -786,7 +792,14 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
         : {}),
     },
   };
-  if (isSkillScriptTool(tool)) {
+  if (isDocumentHostTool(tool)) {
+    const { timeout: _timeout, ...restProperties } = next.properties;
+    next.properties = {
+      timeout: { ...SKILL_DOCUMENT_HOST_TIMEOUT_PROPERTY },
+      ...restProperties,
+    };
+    if (Array.isArray(next.required)) next.required = uniqueRequired(next.required.filter(field => field !== "timeout"));
+  } else if (isSkillScriptTool(tool)) {
     const { timeout: _timeout, ...restProperties } = next.properties;
     next.properties = {
       timeout: { ...SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY },
@@ -829,6 +842,22 @@ function pickSkillToolControlArgs(args: Fields = {}) {
   return {
     ...(timeout != null ? { timeout } : {}),
   };
+}
+
+export function isDocumentHostTool(tool: Partial<SkillTool> = {}) {
+  const name = String(tool.name || "");
+  if (!name.startsWith("qingzhou_documents__")) return false;
+  return (tool.runtime || "host") === "host";
+}
+
+function pickDocumentHostControlArgs(args: Fields = {}) {
+  if (!Object.prototype.hasOwnProperty.call(args || {}, "timeout") || args.timeout == null || args.timeout === "") return { timeout: 120 };
+  const timeout = finiteNumber(args.timeout);
+  if (timeout == null) {
+    const err = new ToolExecutionError("INVALID_TIMEOUT", "Document tool timeout must be a number of seconds", { unit: "seconds", value: args.timeout });
+    throw err;
+  }
+  return { timeout };
 }
 
 function pickRequiredScriptSkillToolControlArgs(args: Fields = {}, name = "") {

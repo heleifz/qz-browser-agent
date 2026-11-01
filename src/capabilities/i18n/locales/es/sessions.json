@@ -227,5 +227,10 @@
   "sessions.locationPanelUnavailable": "El panel lateral no está conectado. Ábrelo en esta ventana e inténtalo de nuevo, o dime una ciudad o zona.",
   "sessions.locationResponseTimeout": "Se agotó el tiempo de ubicación. Permite la ubicación en el navegador y activa los servicios de ubicación del sistema, o dime una ciudad o zona.",
   "sessions.externalDrive": "Externo",
-  "sessions.externalDriveReadOnly": "Un cliente externo está controlando esta sesión. Esta vista es de solo lectura."
+  "sessions.externalDriveReadOnly": "Un cliente externo está controlando esta sesión. Esta vista es de solo lectura.",
+  "sessions.externalDriveWelcomeTitle": "Operado por un agente externo",
+  "sessions.externalDriveWelcomeBody": "Un agente externo opera esta sesión por MCP o la CLI de qz. Ejecuta este comando en la terminal para conectarlo.",
+  "sessions.externalDriveWelcomeCommandHint": "Emparejar este navegador",
+  "sessions.externalDriveWelcomeCopy": "Copiar",
+  "sessions.externalDriveWelcomeCopied": "Copiado"
 }

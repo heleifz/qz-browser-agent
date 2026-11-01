@@ -9,9 +9,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(v
 const send = (message: InnerWorkerOutput) => self.postMessage(message);
 const pendingToolCalls = new Map<string, ToolCall>();
 const pendingFetchCalls = new Map<string, FetchCall>();
+const liveInnerTraces = new Map<string, TraceRow[]>();
 
 self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
   const data = event.data || {};
+  if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    const rows = liveInnerTraces.get(requestId) || [];
+    send({ type: "trace_snapshot", requestId, trace: rows.slice(-5) });
+    return;
+  }
   if (data.type === "execute") {
     runInnerScript(data).catch((error) => {
       send({
@@ -62,6 +69,8 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
 async function runInnerScript(payload: WorkerExecute) {
   const startedAt = Date.now();
   const traceRows: TraceRow[] = [];
+  const requestId = String(payload.requestId || "");
+  if (requestId) liveInnerTraces.set(requestId, traceRows);
   const artifacts: unknown[] = [];
   const source = String(payload.source || "");
   const input = payload.scriptArgs && typeof payload.scriptArgs === "object" ? payload.scriptArgs : {};
@@ -166,6 +175,7 @@ async function runInnerScript(payload: WorkerExecute) {
       result: makeEnvelope(false, null, error, traceRows, artifacts, startedAt),
     });
   } finally {
+    if (requestId) liveInnerTraces.delete(requestId);
     restoreSecurity();
     if (payload.fetchBridge === true) self.fetch = originalFetch;
     restoreConsole();

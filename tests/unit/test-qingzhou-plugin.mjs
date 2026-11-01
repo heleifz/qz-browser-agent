@@ -208,7 +208,7 @@ assert.match(
 );
 assert.match(
   mcpRuntimeSource,
-  /async function listTools[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*loadedPluginSkillNames/,
+  /async function toolCatalog[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*async function listTools[\s\S]*toolCatalog\(params, "mcp_list_tools"\)/,
   "MCP bridge list_tools should include tools from skills loaded in the session",
 );
 assert.doesNotMatch(

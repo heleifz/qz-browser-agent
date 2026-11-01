@@ -28,6 +28,7 @@ interface ChatWorkspaceOptions extends Pick<RunOptions, "isRuntimeRunning" | "sy
   getEventRouter?(): ReturnType<typeof createSidepanelEventRouter> | undefined;
 }
 import { installImageLightbox } from "../../ui/image-lightbox.js";
+import { copyPlainText } from "../../ui/ui-utils.js";
 import { createToastFeature } from "../../ui/toast-feature.js";
 import { createCaseRecordingFeature } from "./case-recording-feature.js";
 import { createChatRunController, CHAT_RUN_STATES } from "./chat-run-controller.js";
@@ -45,10 +46,32 @@ import { createTranscriptProjection } from "./transcript/projection.js";
 import { createTranscriptReconcileFeature } from "./transcript/recovery.js";
 import { createTranscriptRenderer } from "./transcript/renderer.js";
 
+const driveWelcomeCopyBindings = new WeakSet<Document>();
+
 export function applyExternalDriveChrome(root: ParentNode, readOnly: boolean) {
-  root.querySelector("#app")?.toggleAttribute("data-external-drive", readOnly);
+  const app = root.querySelector("#app");
+  if (readOnly) app?.setAttribute("data-external-drive", "true");
+  else app?.removeAttribute("data-external-drive");
   root.querySelector("#external-drive-readonly")?.classList.toggle("hidden", !readOnly);
   root.querySelector("#input-area")?.classList.toggle("hidden", readOnly);
+  bindDriveWelcomeCopy(root);
+}
+
+function bindDriveWelcomeCopy(root: ParentNode) {
+  const host = root instanceof Document ? root : root.ownerDocument;
+  if (!host || driveWelcomeCopyBindings.has(host)) return;
+  driveWelcomeCopyBindings.add(host);
+  host.addEventListener("click", event => {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest<HTMLButtonElement>("#drive-welcome-copy");
+    if (!button || !host.contains(button)) return;
+    const command = button.closest("#welcome")?.querySelector("#drive-welcome-command")?.textContent?.trim() || "";
+    if (!command) return;
+    void copyPlainText(command).then(() => {
+      button.classList.add("is-confirmed");
+      host.defaultView?.setTimeout(() => button.classList.remove("is-confirmed"), 1600);
+    }).catch(() => {});
+  });
 }
 
 export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
@@ -96,6 +119,7 @@ export function createChatWorkspaceFeature(options: ChatWorkspaceOptions) {
   const projection = createTranscriptProjection({
     projectArtifacts: (entries, sessionId) => extensions.projectTranscript(entries, sessionId),
     isQueuedSubmission: (sessionId, clientMessageId) => queue.isSubmitting(sessionId, clientMessageId),
+    groupTools: sessionId => options.sessionState.getRecord(sessionId)?.source !== "external-drive",
   });
   const toast = createToastFeature({
     root,

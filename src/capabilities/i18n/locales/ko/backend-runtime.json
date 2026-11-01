@@ -20,6 +20,8 @@
   "backend.toolError.SESSION_TAB_UNOWNED.label": "탭이 이 작업에 속하지 않습니다",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.label": "이 작업에서 다른 작업을 관리할 수 없습니다",
   "backend.toolError.SESSION_TOOL_FORBIDDEN.message": "이 작업에서는 다른 작업이나 예약 작업을 관리할 수 없습니다.",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.label": "직접 구동에서는 이 도구를 호출할 수 없습니다",
+  "backend.toolError.DRIVE_TOOL_FORBIDDEN.message": "이 도구는 직접 구동 세션에서 호출할 수 없습니다.",
   "backend.toolError.SKILL_ALREADY_EXISTS.label": "스킬이 이미 있습니다",
   "backend.toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": "스킬의 바이너리 리소스는 텍스트로 편집할 수 없습니다",
   "backend.toolError.SKILL_CREATE_REQUIRES_CONTENT.label": "새 스킬 내용이 없습니다",

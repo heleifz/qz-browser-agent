@@ -140,7 +140,8 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
         const body = request.method === "POST" ? await readJson(request) : undefined;
         if (!session && !sessionId && request.method === "POST" && isInitializeRequest(body)) {
           const clientName = typeof body?.params?.clientInfo?.name === "string" ? body.params.clientInfo.name : "";
-          const mcp = createMcpServer(state, { clientName });
+          const profile = new URL(request.url || "/", "http://127.0.0.1").searchParams.get("profile") || "";
+          const mcp = createMcpServer(state, { clientName, profile });
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: randomUUID,
             onsessioninitialized: id => sessions.set(id, session),

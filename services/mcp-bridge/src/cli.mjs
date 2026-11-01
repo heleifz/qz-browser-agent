@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,8 @@ import { createLiveOutput, outputMode } from "./output.mjs";
 import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
+import { driveGuide } from "./drive-guide.mjs";
+import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
 
 export const HELP = renderHelp();
 
@@ -235,6 +237,16 @@ async function dispatchCommand(parsed, dependencies) {
     throw new QzError("connection_pending", "qz is waiting for Chrome. Open the connection URL in the Chrome profile with qz installed and confirm the connection in qz. Then run qz connect again.", { url: connectUrl });
   }
   // Validate JSON before connecting; malformed arguments cannot cause browser actions.
+  let scriptCode = "";
+  if (command === "script") {
+    if (options.file && options.file !== "-") {
+      try { scriptCode = readFileSync(options.file, "utf8"); }
+      catch { throw new QzError("invalid_arguments", `Could not read ${options.file}. Use qz script [FILE|-].`); }
+    } else {
+      scriptCode = await (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
+    }
+    if (!String(scriptCode).trim()) throw new QzError("invalid_arguments", "The script is empty. Use qz script [FILE|-].");
+  }
   let execPayload = null;
   if (command === "exec") {
     if (options.payloadError) throw new QzError("invalid_arguments", options.payloadError);
@@ -262,7 +274,11 @@ async function dispatchCommand(parsed, dependencies) {
   const running = await find();
   if (command === "status") return { result: running ? { running: true, endpoint: running.endpoint, updateAvailable: running.updateAvailable === true, ...(running.health.features?.browserPairing === 1 ? {} : { updateRequired: true, hint: UPGRADE_HINT }), ...running.health.status } : { running: false, connected: false } };
   if (!running) throw connectionRequired();
-  if (command === "mcp") return options.json ? { result: { url: `${running.endpoint}/mcp` } } : { text: `${running.endpoint}/mcp\n` };
+  if (command === "mcp") {
+    const url = new URL("/mcp", running.endpoint);
+    if (options.profile) url.searchParams.set("profile", options.profile);
+    return options.json ? { result: { url: url.href } } : { text: `${url.href}\n` };
+  }
   const call = dependencies.callTool;
   requirePairingSupport(running.health);
   if (command === "browsers") {
@@ -280,9 +296,42 @@ async function dispatchCommand(parsed, dependencies) {
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
   if (command === "exec") {
-    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...common }, requestOptions);
+    const route = catalogExecRoute(execPayload);
+    if (route) {
+      const sessionId = String(route.args.sessionId || options.session || "").trim();
+      const result = await call(running.endpoint, route.tool, {
+        ...route.args,
+        ...(sessionId ? { sessionId } : {}),
+        ...common,
+      }, requestOptions);
+      return { result, exitCode: 0 };
+    }
+    const session = options.session && !execPayload.sessionId ? { sessionId: options.session } : {};
+    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...session, ...common }, requestOptions);
     const failed = execFailed(result);
     return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
+  }
+  if (command === "script") {
+    const budgets = scriptTimeouts({ timeoutOption: options.timeout, timeoutSeconds });
+    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session });
+    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...request, ...common, timeoutSeconds: budgets.requestSeconds }, {
+      ...requestOptions,
+      timeoutMs: budgets.requestSeconds * 1000,
+    });
+    return presentScriptResult(result);
+  }
+  if (command === "tools") {
+    const session = options.session ? { sessionId: options.session } : {};
+    if (id) {
+      const tool = await call(running.endpoint, "qingzhou_get_tool", { ...common, ...session, name: id }, requestOptions);
+      if (options.json) return { result: tool };
+      const signature = tool?.signature || tool?.name || id;
+      return { text: tool?.description ? `${signature}\n${tool.description}\n` : `${signature}\n` };
+    }
+    const listed = await call(running.endpoint, "qingzhou_list_tools", { ...common, ...session }, requestOptions);
+    if (options.json) return { result: listed };
+    const lines = (Array.isArray(listed?.tools) ? listed.tools : []).map(tool => tool.signature || tool.name);
+    return { text: `${lines.join("\n")}\n` };
   }
   const startedAt = Date.now();
   const readSnapshot = async (sessionId, seconds, signal) => {
@@ -422,8 +471,13 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     const parsed = parseCommand(argv);
     mode = outputMode(parsed.options, stdout, env);
     if (parsed.command === "help") {
-      const help = renderHelp(parsed.helpTopic, mode);
+      const help = renderHelp(parsed.helpTopic, { ...mode, lang: parsed.options.lang, env });
       stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { help } })}\n` : help);
+      return 0;
+    }
+    if (parsed.command === "skill") {
+      const guide = driveGuide({ explicit: parsed.options.lang, env });
+      stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { guide } })}\n` : guide);
       return 0;
     }
     if (parsed.command === "exec") mode = { ...mode, json: true };
@@ -437,6 +491,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       },
     });
     live?.finish();
+    if (result.stderr) stderr.write(result.stderr);
     stdout.write(result.text ?? (mode.json ? `${JSON.stringify({ ok: true, result: result.result })}\n`
       : renderResult({ ...parsed, presentation: { ...parsed.presentation, streamed: live?.streamed } }, result.result, mode)));
     const status = result.result?.snapshot?.status || result.result?.snapshot?.runtime?.status;

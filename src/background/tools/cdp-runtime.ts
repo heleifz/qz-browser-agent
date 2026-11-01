@@ -2,6 +2,7 @@ import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js'
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import { forgetIsolatedContexts } from './isolated-contexts.js';
 import { forgetChildFrames } from './child-frames.js';
+import { publishTimeoutTrace } from './script-timeout-trace.js';
 export type { CdpCommand };
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
@@ -250,13 +251,38 @@ export function createCdpRuntime({
     }
     let abortHandler: (() => void) | null = null;
     let aborted = false;
+    let scriptPromiseId = "";
+    const expression = typeof params.expression === "string" ? params.expression : "";
+    const liveTrace = expression.includes('Object.defineProperty(__qzPromise, "__qzTrace"');
+    const canCommand = () => state.ownerKey === ownerKey && state.attached && !state.releasing;
+
+    const readLiveScriptTrace = (): Promise<unknown[]> => {
+      const finishRead = context.measurePhase?.("cdp");
+      const read = debuggerApi.sendCommand(state.target, "Runtime.callFunctionOn", {
+        objectId: scriptPromiseId,
+        functionDeclaration: "function(){ const rows = this && this.__qzTrace; return Array.isArray(rows) ? rows.slice(-5) : []; }",
+        returnByValue: true,
+      }).then(snapshot => {
+        const value = record(record(snapshot).result).value;
+        return Array.isArray(value) ? value.slice(-5) : [];
+      }).catch(() => [] as unknown[]).finally(() => finishRead?.());
+      return read.finally(() => {
+        if (!canCommand()) return undefined;
+        const finishTerminate = context.measurePhase?.("cdp");
+        return debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
+          .finally(() => finishTerminate?.()).catch(() => undefined);
+      });
+    };
 
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
         abortHandler = () => {
           aborted = true;
+          const timedOut = record(signal.reason).code === "TOOL_TIMEOUT";
           // A late abort must not terminate the next run on this retained connection.
-          if (state.ownerKey === ownerKey && state.attached && !state.releasing) {
+          if (timedOut && liveTrace && scriptPromiseId && canCommand()) {
+            publishTimeoutTrace(signal, readLiveScriptTrace());
+          } else if (canCommand()) {
             const finishPhase = context.measurePhase?.("cdp");
             debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
               .finally(() => finishPhase?.()).catch(() => {});
@@ -282,9 +308,11 @@ export function createCdpRuntime({
     };
 
     try {
-      const evalResult = await runCommand("Runtime.evaluate", params);
+      const evaluateParams = liveTrace ? { ...params, awaitPromise: false, returnByValue: false } : params;
+      const evalResult = await runCommand("Runtime.evaluate", evaluateParams);
       const result = record(evalResult).result;
-      if (params?.awaitPromise && isCdpPromiseResult(result)) {
+      if ((params?.awaitPromise || liveTrace) && isCdpPromiseResult(result)) {
+        if (liveTrace) scriptPromiseId = result.objectId;
         return await runCommand("Runtime.awaitPromise", {
           promiseObjectId: result.objectId,
           returnByValue: params.returnByValue !== false,

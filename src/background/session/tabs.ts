@@ -43,7 +43,7 @@ type RestoreSuccess = { ok: true; index: number; portable: PortableSessionTab; t
 const object = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 const errorCode = (error: unknown, fallback: string): string => String(object(error).code || fallback);
-import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
+import { formatTab, getEffectiveTabUrl, isChromePdfViewerUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import {
   getSecurityGuardrails,
   matchBlockedUrl,
@@ -339,7 +339,8 @@ export function createSessionTabs({
     const isOwnedPreNavigationBlank = allowPreNavigationBlank === true
       && tabUrl === "about:blank"
       && (owner?.sessionId === id || Boolean(pending));
-    if (!isPageTab(tab) && !isOwnedPreNavigationBlank && !(tabOnly && owner?.sessionId === id)) {
+    const ownedPdfViewer = owner?.sessionId === id && isChromePdfViewerUrl(tabUrl);
+    if (!isPageTab(tab) && !isOwnedPreNavigationBlank && !(tabOnly && owner?.sessionId === id) && !ownedPdfViewer) {
       return {
         ok: false,
         code: "SESSION_TAB_NOT_WEB",
