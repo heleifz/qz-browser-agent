@@ -5,6 +5,7 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { BridgeError } from "./state.mjs";
 import { waitForTask } from "./task-stream.mjs";
 import { PACKAGE_VERSION } from "./package-info.mjs";
+import { driveGuide } from "./drive-guide.mjs";
 
 // Public MCP tools use the extension's version 1 wire protocol.
 export const TOOL_CATALOG = JSON.parse(readFileSync(new URL("./catalog.json", import.meta.url), "utf8"))
@@ -100,9 +101,12 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   };
   if (name === "qingzhou_watch_task") return { sessionId: args.sessionId, snapshot: await watch(args.sessionId, { allowIdle: true }) };
   if (name === "qingzhou_get_tool") {
-    const listed = await state.callExtension("list_tools", { sessionId: args.sessionId, timeoutSeconds: args.timeoutSeconds }, options);
-    const tool = (Array.isArray(listed) ? listed : listed?.tools || []).find(tool => (tool.name || tool.function?.name) === args.name);
-    if (!tool) throw new BridgeError("tool_not_found", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
+    const tool = await state.callExtension("get_tool", {
+      sessionId: args.sessionId, name: args.name, timeoutSeconds: args.timeoutSeconds,
+    }, options);
+    if (!tool || typeof tool !== "object") {
+      throw new BridgeError("tool_not_found", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
+    }
     return tool;
   }
   if (name === "qingzhou_call") return state.callExtension(args.method.trim(), args.params || {}, options);
@@ -221,28 +225,71 @@ export function resultToContent(result) {
   }
   const top = imageEntries(body);
   if (!top.length && !nested.length) {
-    return [{ type: "text", text: JSON.stringify(body, null, 2) }];
+    return [{ type: "text", text: JSON.stringify(body) }];
   }
   return [
-    { type: "text", text: JSON.stringify(withoutImages(body), null, 2) },
+    { type: "text", text: JSON.stringify(withoutImages(body)) },
     ...top.map(image => imageBlock(image)),
     ...nested,
   ];
 }
 
 const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
+const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
+const GUIDE_TOOL = {
+  name: "qingzhou_guide",
+  description: "先读说明书。返回直驱说明书全文。一条新连接调用一次。Read the guide first. Call this once on a new connection before other tools.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
+  },
+};
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。默认把操作、等待和取数写进一次 run_script（target 为 inner），只 return 需要的字段。单次调用只用于一两步或调试。Call qingzhou_guide once, then prefer one inner run_script.";
 
-export function createMcpServer(state, { clientName = "" } = {}) {
+export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
+  const explicit = String(profile || "").trim().toLowerCase();
+  if (explicit === "full" || explicit === "drive") return explicit;
+  return clientName === "qz-cli" ? "full" : "drive";
+}
+
+function withReadGuide(tool) {
+  if (tool.name === "qingzhou_execute_tool") {
+    return {
+      ...tool,
+      description: "先读说明书：调用 qingzhou_guide 一次。默认把操作、等待和取数写进一次 run_script（target 为 inner），只 return 需要的字段。单次 name/args 或 calls 只用于一两步或调试。Read the guide first. Prefer one inner run_script. A single name/args or calls batch is only for one or two steps, or for debugging.",
+    };
+  }
+  return { ...tool, description: `先读说明书：调用 qingzhou_guide 一次。Read the guide first: call qingzhou_guide once.\n${tool.description || ""}` };
+}
+
+export function driveToolCatalog() {
+  const byName = new Map(TOOL_CATALOG.map(tool => [tool.name, tool]));
+  return DRIVE_TOOL_NAMES.map(name => name === "qingzhou_guide" ? GUIDE_TOOL : withReadGuide(byName.get(name)));
+}
+
+export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
+  const catalogProfile = mcpCatalogProfile({ clientName, profile });
   let driveSessionId = "";
   const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
-    capabilities: { tools: {} }, instructions: "Control qz tasks and browser tools through the local bridge.",
+    capabilities: { tools: {} },
+    instructions: catalogProfile === "drive" ? DRIVE_INSTRUCTIONS : "Control qz tasks and browser tools through the local bridge.",
   });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_CATALOG }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: catalogProfile === "drive" ? driveToolCatalog() : TOOL_CATALOG,
+  }));
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     try {
       let progress = 0;
       const progressToken = request.params._meta?.progressToken;
       const input = { ...(request.params.arguments || {}) };
+      if (request.params.name === "qingzhou_guide") {
+        return { content: [{ type: "text", text: driveGuide({ explicit: input.lang }) }] };
+      }
+      if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
+        if (!String(input.scope || "").trim()) input.scope = "session";
+        if (!String(input.sessionId || "").trim() && driveSessionId) input.sessionId = driveSessionId;
+      }
       if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
         if (!driveSessionId) driveSessionId = crypto.randomUUID().replaceAll("-", "");
         input.sessionId = driveSessionId;

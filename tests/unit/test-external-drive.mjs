@@ -3,9 +3,11 @@ import test from "node:test";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 import {
   createExternalDriveCoordinator,
+  DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
   parseDriveRequest,
   projectDriveResult,
+  projectNamedDriveResult,
   runDriveCalls,
 } from "../../src/background/mcp/external-drive.js";
 import { t } from "../../src/shared/i18n/backend.js";
@@ -83,9 +85,58 @@ test("projection drops nodes and screenshot bytes", () => {
   assert.deepEqual(projected.images, [{ mimeType: "image/png", data: "aGk=" }]);
 });
 
+test("named drive projection compacts scripts and this session's tabs, then caps the body", () => {
+  const success = projectNamedDriveResult("run_script", { target: "inner" }, {
+    ok: true,
+    result: { title: "Ada" },
+    trace: [{ name: "open_tab" }, { name: "fill" }],
+    __runScriptEnvelope: true,
+  });
+  assert.deepEqual(success.value, { ok: true, result: { title: "Ada" } });
+  assert.deepEqual(success.images, []);
+
+  const traces = Array.from({ length: 7 }, (_, index) => ({ step: index }));
+  const failure = projectNamedDriveResult("run_script", {}, {
+    ok: false,
+    code: "DRIVE_TOOL_FORBIDDEN",
+    error: "blocked",
+    diagnostic: "ask_llm",
+    trace: traces,
+    __runScriptEnvelope: true,
+  });
+  assert.equal(failure.value.ok, false);
+  assert.equal(failure.value.code, "DRIVE_TOOL_FORBIDDEN");
+  assert.equal(failure.value.diagnostic, "ask_llm");
+  assert.deepEqual(failure.value.trace, traces.slice(-5));
+
+  const tabs = projectNamedDriveResult("list_tabs", {}, [
+    { id: 1, title: "owned", url: "https://a.example", ownedByCurrentTask: true, usable: true, rect: { x: 1 } },
+    { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false, usable: false },
+  ], null, { aliases: { form: 1 } });
+  assert.deepEqual(tabs.value, {
+    tabs: [{ id: 1, alias: "form", title: "owned", url: "https://a.example" }],
+    count: 1,
+    foreign: 1,
+  });
+  const escaped = projectNamedDriveResult("list_tabs", { scope: "all" }, [
+    { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false },
+  ]);
+  assert.ok(Array.isArray(escaped.value));
+  assert.equal(escaped.value.length, 1);
+  const unmarked = projectNamedDriveResult("list_tabs", {}, { ok: true, nodes: [1] });
+  assert.deepEqual(unmarked.value, { ok: true, nodes: [1] });
+
+  const huge = projectNamedDriveResult("read_dom", {}, { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) });
+  assert.equal(huge.value.truncated, true);
+  assert.equal(huge.value.limitChars, DRIVE_RESULT_CHAR_LIMIT);
+  assert.equal(huge.value.totalChars > DRIVE_RESULT_CHAR_LIMIT, true);
+  assert.equal(huge.value.preview.length, DRIVE_RESULT_CHAR_LIMIT);
+});
+
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {
   const seen = [];
   const commits = [];
+  const settled = [];
   const batch = await runDriveCalls([
     { id: "open", name: "open_tab", args: { url: "https://example.com", tabAlias: "page" } },
     { id: "read", name: "get_ax_tree", args: { tabRef: "page" } },
@@ -101,6 +152,7 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
       : { kind: "target", implicit: false, observation: true },
     commitToolResult: async (result) => { commits.push(result); },
     discardToolResult: async () => {},
+    onSettled: call => settled.push({ id: call.id, name: call.name, images: call.images.length }),
   });
   assert.equal(seen[0].name, "open_tab");
   assert.equal(seen[1].args.tabId, 11);
@@ -111,6 +163,10 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
   assert.equal(Object.hasOwn(batch, "images"), false);
   assert.deepEqual(batch.results[1].images, [{ mimeType: "image/png", data: "YQ==" }]);
   assert.equal(commits.length, 2);
+  assert.deepEqual(settled, [
+    { id: "open", name: "open_tab", images: 0 },
+    { id: "read", name: "get_ax_tree", images: 1 },
+  ]);
 });
 
 test("a batch refreshes the working tab before the next call and keeps the drive run", async () => {

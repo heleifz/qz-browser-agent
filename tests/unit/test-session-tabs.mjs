@@ -228,12 +228,42 @@ const implicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "p
 assert.equal(implicitPendingTarget.ok, true, "an omitted tabId must still resolve to the navigating working tab");
 assert.equal(implicitPendingTarget.tabId, 13);
 
+tabs.set(14, {
+  id: 14,
+  url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?https://example.test/file.pdf",
+  title: "file.pdf",
+  windowId: 1,
+  active: false,
+  pinned: false,
+  groupId: -1,
+});
+tabs.set(15, {
+  id: 15,
+  url: "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html",
+  title: "PDF",
+  windowId: 1,
+  active: false,
+  pinned: false,
+  groupId: -1,
+});
+runtimes.get("blank-owner").ownedTabIds.push(14, 15);
+const embeddedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 14, checkOnly: true });
+assert.equal(embeddedPdf.ok, true, "an owned Chrome PDF viewer with an embedded https URL is a page tab");
+assert.equal(embeddedPdf.tab.url, "https://example.test/file.pdf");
+const bareOwnedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 15, checkOnly: true });
+assert.equal(bareOwnedPdf.ok, true, "an owned bare Chrome PDF viewer is not SESSION_TAB_NOT_WEB");
+const bareForeignPdf = await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 15, checkOnly: true });
+assert.equal(bareForeignPdf.ok, false);
+assert.equal(bareForeignPdf.code, "SESSION_TAB_NOT_WEB");
+
 runtimes.delete("blank-owner");
 runtimes.delete("pending-owner");
 tabs.delete(10);
 tabs.delete(11);
 tabs.delete(12);
 tabs.delete(13);
+tabs.delete(14);
+tabs.delete(15);
 
 await sessionTabs.handleTabRemoved(4);
 assert.equal(runtimes.get("a").workingTabId, null);

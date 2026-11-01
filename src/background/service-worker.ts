@@ -795,6 +795,12 @@ const mcpRuntime = createMcpRuntime({
     },
     getConversation: sessionTranscript.getConversation,
     compactTranscriptEvent: sessionCommands.compactTranscriptEvent,
+    recordToolEvent: event => {
+      const sessionId = normalizeSessionId(event.sessionId);
+      if (!sessionId || typeof event.type !== "string") return;
+      sessionAgentHost.handleEvent(sessionId, event as Parameters<typeof sessionAgentHost.handleEvent>[1]);
+    },
+    persistTranscript: sessionId => sessionCommands.saveSessionRecordRuntime({ sessionId }),
     getRuntime: sessionCommands.getSessionRuntimeState,
   },
   tools: {
@@ -908,6 +914,7 @@ const backgroundApi = createBackgroundApi({
   },
   tools: {
     list: mcpRuntime.listTools,
+    get: mcpRuntime.getTool,
     execute: mcpRuntime.executeTool,
     acceptRunScriptInnerMessage: toolRuntime.handleRunScriptInnerRuntimeMessage,
     executeRunScriptCall: runScriptBridge.handleToolCall,

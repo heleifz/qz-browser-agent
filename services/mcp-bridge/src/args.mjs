@@ -26,6 +26,7 @@ export function parseCommand(argv) {
       parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
       wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
       json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
+      lang: { type: "string" }, profile: { type: "string" },
       help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
     } });
   } catch (error) { invalid(error.message); }
@@ -70,6 +71,8 @@ export function parseCommand(argv) {
   }
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
+  if (options.profile !== undefined && !["full", "drive"].includes(options.profile)) invalid("--profile must be full or drive.");
+  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a language, such as zh-CN or en.");
   if (options.client !== undefined) {
     options["client-id"] = options.client;
     delete options.client;
@@ -144,6 +147,14 @@ export function parseCommand(argv) {
   } else if (command === "exec") {
     if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
     else options.payload = words[0] ?? "-";
+  } else if (command === "script") {
+    if (words.length > 1) invalid("Use qz script [FILE|-].");
+    options.file = words[0] ?? "-";
+  } else if (command === "tools") {
+    if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools [NAME].");
+    id = words[0];
+  } else if (command === "skill") {
+    if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {
     if (words.length) invalid("Use qz tasks to list tasks, qz create PROMPT, qz show ID, or qz cancel ID.");
     action = "list";

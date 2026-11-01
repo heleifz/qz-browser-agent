@@ -42,7 +42,8 @@ function toolLocalName(name: string) {
   return separator >= 0 ? name.slice(separator + 2) : name;
 }
 
-function forbidden(name: string) {
+/** True when direct drive must not call this tool. Matches the full name and the segment after the last "__". */
+export function isDriveToolForbidden(name: string) {
   const local = toolLocalName(name);
   return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
 }
@@ -72,7 +73,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
   const timeoutSeconds = positiveSeconds(record(params.limits).timeoutSeconds);
   if (!hasCalls) {
     if (!name) return { ok: false, error: driveError("DRIVE_ARGUMENTS", "execute_tool requires name") };
-    if (forbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name })) };
+    if (isDriveToolForbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name })) };
     return { ok: true, mode: "single", name, timeoutSeconds, maxCalls: budget };
   }
   const calls: DriveCall[] = [];
@@ -83,7 +84,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
     if (!id || !callName || (call.args != null && (typeof call.args !== "object" || Array.isArray(call.args)))) {
       return { ok: false, error: driveError("DRIVE_ARGUMENTS", t("drive.callShape")) };
     }
-    if (forbidden(callName)) {
+    if (isDriveToolForbidden(callName)) {
       return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name: callName })) };
     }
     calls.push({ id, name: callName, args: record(call.args) });
@@ -95,8 +96,22 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
 
 const DATA_URL = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/u;
 
-/** Apply the tool's model projection, then keep screenshot bytes out of the JSON body. */
-export function projectDriveResult(result: unknown, policy: ModelPolicy = null): { value: unknown; images: DriveImage[] } {
+const DRIVE_PAGE_KEYS = new Set(["_tabId", "_pageTitle", "_pageUrl", "_pageContext", "sessionId", "runId"]);
+const DRIVE_GEOMETRY_KEYS = new Set(["rect", "clickablePoint", "parent", "lineRange", "actionable"]);
+
+function compactDriveValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(compactDriveValue);
+  if (!value || typeof value !== "object") return value;
+  const out: Fields = {};
+  for (const [key, child] of Object.entries(value as Fields)) {
+    if (DRIVE_PAGE_KEYS.has(key) || DRIVE_GEOMETRY_KEYS.has(key)) continue;
+    out[key] = compactDriveValue(child);
+  }
+  return out;
+}
+
+/** Apply the tool's model projection, then keep screenshot bytes and per-item page noise out of the JSON body. */
+export function projectDriveResult(result: unknown, policy: ModelPolicy = null, options: { verbose?: boolean } = {}): { value: unknown; images: DriveImage[] } {
   let projected = result;
   try {
     if (policy?.projectResult) projected = policy.projectResult(result);
@@ -117,7 +132,79 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null):
     const match = DATA_URL.exec(raw);
     if (match?.[1] && match[2]) images.push({ mimeType: match[1], data: match[2].replace(/\s+/gu, "") });
   }
-  return { value, images };
+  return { value: options.verbose ? value : compactDriveValue(value), images };
+}
+
+export const DRIVE_RESULT_CHAR_LIMIT = 48_000;
+
+function capDriveValue(value: unknown): unknown {
+  let text = "";
+  try { text = JSON.stringify(value) ?? ""; }
+  catch { return value; }
+  if (text.length <= DRIVE_RESULT_CHAR_LIMIT) return value;
+  return {
+    truncated: true,
+    totalChars: text.length,
+    limitChars: DRIVE_RESULT_CHAR_LIMIT,
+    preview: text.slice(0, DRIVE_RESULT_CHAR_LIMIT),
+  };
+}
+
+function projectRunScriptDriveResult(result: unknown): unknown {
+  const value = record(result);
+  const nested = record(value.result);
+  const envelope = value.__runScriptEnvelope === true ? value : nested.__runScriptEnvelope === true ? nested : null;
+  const body = envelope || value;
+  const failed = body.ok === false || (typeof body.error === "string" && body.error.length > 0 && body.ok !== true);
+  if (!failed) return { ok: true, result: Object.hasOwn(body, "result") ? body.result : body };
+  const trace = Array.isArray(body.trace) ? body.trace.slice(-5) : [];
+  return {
+    ok: false,
+    code: String(body.code || "TOOL_EXECUTION_FAILED"),
+    error: typeof body.error === "string" && body.error ? body.error : "script failed",
+    ...(body.diagnostic ? { diagnostic: body.diagnostic } : {}),
+    ...(trace.length ? { trace } : {}),
+  };
+}
+
+function aliasForTab(id: unknown, aliases?: Readonly<Record<string, number>>) {
+  const numeric = Number(id);
+  if (!aliases || !Number.isFinite(numeric)) return "";
+  return Object.entries(aliases).find(([, tabId]) => tabId === numeric)?.[0] || "";
+}
+
+function compactDriveTabs(value: unknown, aliases?: Readonly<Record<string, number>>): unknown {
+  const tabs = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray(record(value).tabs)
+      ? record(value).tabs as unknown[]
+      : null;
+  if (!tabs) return value;
+  const rows = tabs.filter((tab): tab is Fields => Boolean(tab) && typeof tab === "object" && !Array.isArray(tab));
+  const marked = rows.some(tab => Object.hasOwn(tab, "ownedByCurrentTask") || Object.hasOwn(tab, "usable"));
+  if (!marked) return value;
+  const owned = rows.filter(tab => tab.ownedByCurrentTask === true);
+  return {
+    tabs: owned.map(tab => {
+      const alias = String(tab.alias || tab.tabAlias || aliasForTab(tab.id, aliases) || "");
+      return { id: tab.id, ...(alias ? { alias } : {}), title: tab.title || "", url: tab.url || "" };
+    }),
+    count: owned.length,
+    foreign: rows.length - owned.length,
+  };
+}
+
+/** Drive-facing result: script success is {ok, result}, tabs default to this session, and every body is capped. */
+export function projectNamedDriveResult(name: string, args: unknown, result: unknown, policy: ModelPolicy = null, options: { aliases?: Readonly<Record<string, number>> } = {}): { value: unknown; images: DriveImage[] } {
+  const input = record(args);
+  const verbose = input.verbose === true;
+  const script = name === "run_script" || record(result).__runScriptEnvelope === true || record(record(result).result).__runScriptEnvelope === true;
+  if (script) return { value: capDriveValue(projectRunScriptDriveResult(result)), images: [] };
+  const projected = projectDriveResult(result, policy, { verbose });
+  const value = name === "list_tabs" && input.scope !== "all" && !verbose
+    ? compactDriveTabs(projected.value, options.aliases)
+    : projected.value;
+  return { value: capDriveValue(value), images: projected.images };
 }
 
 interface DriveOutcome {
@@ -127,6 +214,7 @@ interface DriveOutcome {
   args: unknown;
   isError: boolean;
   result: unknown;
+  projected?: { value: unknown; images: DriveImage[] };
 }
 
 function failed(call: DriveCall, error: unknown, args: unknown = call.args): DriveOutcome {
@@ -155,10 +243,25 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   aliases?: Readonly<Record<string, number>>;
   context?: Fields;
   refreshContext?(context: Fields): Fields;
+  onSettled?(call: { id: string; name: string; args: unknown; isError: boolean; result: unknown; images: DriveImage[] }): void;
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
   const canCommit = Boolean(deps.commitToolResult && deps.discardToolResult);
+  function publish(outcome: DriveOutcome) {
+    if (outcome.projected) return outcome;
+    const projected = projectNamedDriveResult(outcome.name, outcome.args, outcome.result, deps.getModelPolicy?.(outcome.name) ?? null, { aliases: deps.aliases });
+    const published = { ...outcome, projected };
+    deps.onSettled?.({
+      id: published.id,
+      name: published.name,
+      args: published.args,
+      isError: published.isError,
+      result: projected.value,
+      images: projected.images,
+    });
+    return published;
+  }
   const batch = planTabBatch(calls, call => {
     let policy = deps.getBatchTabPolicy?.(call.name, call.args) ?? null;
     if (policy?.kind === "create" && policy.parallel && !canCommit) policy = { ...policy, parallel: false };
@@ -211,18 +314,18 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
       }
       await deps.discardToolResult?.(outcome.result, deps.context || {});
       batch.settle(outcome.call, current.result, current.isError);
-      settled.set(outcome.call, current);
+      settled.set(outcome.call, publish(current));
     },
   });
   const results = calls.map(call => {
-    const outcome = settled.get(call) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" });
-    const projected = projectDriveResult(outcome.result, deps.getModelPolicy?.(call.name));
+    const outcome = publish(settled.get(call) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }));
+    const images = outcome.projected?.images || [];
     return {
       id: outcome.id,
       name: outcome.name,
-      result: projected.value,
+      result: outcome.projected?.value,
       isError: outcome.isError,
-      ...(projected.images.length ? { images: projected.images } : {}),
+      ...(images.length ? { images } : {}),
     };
   });
   return { results };

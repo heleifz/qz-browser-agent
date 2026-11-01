@@ -102,6 +102,29 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     expect(batch.body.result.results).toHaveLength(3);
     expect(batch.body.result.results.every((item) => item.isError !== true)).toBe(true);
     expect(batch.body.result.runId).toMatch(/^drive-/);
+    const savedTools = await environment.page.evaluate(async (id) => {
+      const key = `_session_${id}`;
+      const stored = await chrome.storage.local.get(key);
+      const record = stored[key] || {};
+      const transcript = [...(record.transcript || []), ...(record.currentTranscript || [])];
+      return transcript.filter((entry) => entry && entry.type === "tool").map((entry) => entry.name);
+    }, batchSession);
+    expect(savedTools).toEqual(["open_tab", "get_ax_tree", "act_on_element"]);
+
+    const smoke = await exec(dependencies, stdout, stderr, {
+      calls: [
+        { id: "open", name: "open_tab", args: { url: `${fixture}/smoke`, tabAlias: "page" } },
+        { id: "read", name: "get_ax_tree", args: { tabRef: "page" } },
+      ],
+    }, "120");
+    expect(smoke.code, smoke.text || stderr.text).toBe(0);
+    expect(smoke.body.result.results).toHaveLength(2);
+    expect(String(smoke.body.result.sessionId || "")).not.toBe("");
+    expect(smoke.body.result.results.every((item) => item.isError !== true)).toBe(true);
+    openedTabs.push(smoke.body.result.results[0].result.id);
+    await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
+      sessionId: smoke.body.result.sessionId, timeoutSeconds: 20,
+    }, { timeoutMs: 25_000 });
     const batchTab = batch.body.result.results[0].result.id;
     openedTabs.push(batchTab);
     expect(String(batch.body.result.results[1].result?.snapshot || "")).not.toBe("");

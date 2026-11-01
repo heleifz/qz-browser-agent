@@ -320,4 +320,51 @@ assert.equal((await activationBridge.handleToolCall({
   runId: "run-current",
 })).ok, true);
 
+const driveExecutions = [];
+const driveBridge = createRunScriptBridge({
+  supervisor: {
+    isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+    hasAgent: () => false,
+    getAbortSignal: () => controller.signal,
+  },
+  getRuntime: () => ({ status: "running" }),
+  isTerminalRuntimeForRun: () => false,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async () => null,
+  toolRuntime: {
+    resolveDefinition: () => ({ behavior: {} }),
+    getSchemas: () => [
+      { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
+      { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
+    ],
+    async execute(name) {
+      driveExecutions.push(name);
+      return { ok: true };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const blockedAsk = await driveBridge.handleToolCall({
+  toolName: "ask_llm",
+  args: { prompt: "hi" },
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(blockedAsk.ok, false);
+assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(driveExecutions, []);
+const driveList = await driveBridge.handleToolCall({
+  toolName: "__list_tools__",
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.deepEqual(driveList.result.tools.map(tool => tool.name), ["read_dom"]);
+assert.equal((await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "drive-1",
+})).ok, true);
+assert.deepEqual(driveExecutions, ["read_dom"]);
+
 console.log("run_script bridge tests passed");

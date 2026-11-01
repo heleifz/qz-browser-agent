@@ -324,13 +324,23 @@ for (const scenario of [
 test("tool lookup uses task context and returns the exact schema or a useful missing-tool error", async t => {
   const tool = { name: "read_article", inputSchema: { type: "object", properties: { tabId: { type: "number" } } } };
   const state = await connectedState(t, async (method, params, options) => {
-    assert.equal(method, "list_tools");
+    assert.equal(method, "get_tool");
     assert.equal(params.sessionId, "task");
     assert.equal(options.clientId, browserId(state, "browser-a"));
-    return { tools: [tool] };
+    return params.name === "read_article" ? tool : null;
   });
   assert.deepEqual(await executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "read_article", clientId: "browser-a" }), tool);
   await assert.rejects(executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "missing", clientId: "browser-a" }), { code: "tool_not_found" });
+});
+
+test("a forbidden drive tool keeps its rejection code", async t => {
+  const state = await connectedState(t, async () => {
+    throw Object.assign(new Error("不能通过直驱调用 manage_bookmarks。"), { code: "DRIVE_TOOL_FORBIDDEN" });
+  });
+  await assert.rejects(
+    executeMcpTool(state, "qingzhou_get_tool", { sessionId: "task", name: "manage_bookmarks" }),
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message.includes("manage_bookmarks"),
+  );
 });
 
 test("async browser-tool admission pins its profile and returns task and job identities", async t => {

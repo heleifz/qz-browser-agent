@@ -227,5 +227,10 @@
   "sessions.locationPanelUnavailable": "Seitenleiste ist nicht verbunden. Öffne sie in diesem Fenster und versuche es erneut, oder nenne einfach eine Stadt oder Region.",
   "sessions.locationResponseTimeout": "Standortzeit überschritten. Erlaube den Standort im Browser und schalte die Standortdienste ein, oder nenne einfach eine Stadt oder Region.",
   "sessions.externalDrive": "Extern",
-  "sessions.externalDriveReadOnly": "Ein externer Client steuert diese Sitzung. Diese Ansicht ist schreibgeschützt."
+  "sessions.externalDriveReadOnly": "Ein externer Client steuert diese Sitzung. Diese Ansicht ist schreibgeschützt.",
+  "sessions.externalDriveWelcomeTitle": "Von einem externen Agenten gesteuert",
+  "sessions.externalDriveWelcomeBody": "Ein externer Agent steuert diese Sitzung über MCP oder die qz-CLI. Führen Sie diesen Befehl im Terminal aus, um die Verbindung herzustellen.",
+  "sessions.externalDriveWelcomeCommandHint": "Diesen Browser koppeln",
+  "sessions.externalDriveWelcomeCopy": "Kopieren",
+  "sessions.externalDriveWelcomeCopied": "Kopiert"
 }

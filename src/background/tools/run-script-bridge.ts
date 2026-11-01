@@ -1,3 +1,4 @@
+import { isDriveToolForbidden } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -89,6 +90,14 @@ export function createRunScriptBridge({
       : parent?.signal && runSignal ? AbortSignal.any([parent.signal, runSignal]) : parent?.signal || runSignal || undefined;
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName, signal);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
+    const driveRun = runId.startsWith("drive-");
+    if (driveRun && toolName !== "__list_tools__" && isDriveToolForbidden(toolName)) {
+      return respondFailure({
+        error: t("drive.toolForbidden", { name: toolName }),
+        code: "DRIVE_TOOL_FORBIDDEN",
+        details: { toolName },
+      }, { toolName });
+    }
 
     if (toolName === "__list_tools__") {
       const toolContext = await resolveToolContext(sessionId, runId);
@@ -98,11 +107,15 @@ export function createRunScriptBridge({
       return {
         ok: true,
         result: {
-          tools: toolRuntime.getSchemas(toolContext).map(schema => ({
-            name: schema.function?.name || "",
-            description: schema.function?.description || "",
-            parameters: schema.function?.parameters || {},
-          })),
+          tools: toolRuntime.getSchemas(toolContext).flatMap(schema => {
+            const name = schema.function?.name || "";
+            if (driveRun && isDriveToolForbidden(name)) return [];
+            return [{
+              name,
+              description: schema.function?.description || "",
+              parameters: schema.function?.parameters || {},
+            }];
+          }),
         },
         isError: false,
       };

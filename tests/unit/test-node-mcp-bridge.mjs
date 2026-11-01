@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
-import { TOOL_CATALOG, executeMcpTool, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
+import { TOOL_CATALOG, driveToolCatalog, executeMcpTool, mcpCatalogProfile, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
 import { resultValue } from "../../services/mcp-bridge/src/client.mjs";
 import { materializeExecImages } from "../../services/mcp-bridge/src/cli.mjs";
 
@@ -35,9 +35,9 @@ async function withBridge(t, options = {}) {
   t.after(() => bridge.close());
   return bridge;
 }
-async function withClient(t, bridge) {
+async function withClient(t, bridge, path = "/mcp?profile=full") {
   const client = new Client({ name: "bridge-test", version: "1" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`)));
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}${path}`)));
   t.after(() => client.close());
   return client;
 }
@@ -48,6 +48,16 @@ async function waitUntil(predicate) {
   }
   assert.fail("condition timed out");
 }
+
+test("drive MCP lists the guide and five tools; qz-cli keeps the full catalog", () => {
+  assert.equal(mcpCatalogProfile({ clientName: "qz-cli" }), "full");
+  assert.equal(mcpCatalogProfile({ clientName: "bridge-test" }), "drive");
+  assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
+  const names = driveToolCatalog().map(tool => tool.name);
+  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
+  assert.match(driveToolCatalog()[1].description, /先读说明书/);
+  assert.match(driveToolCatalog()[1].description, /run_script/);
+});
 
 test("Node bridge exposes the existing catalog through a real MCP SDK client", async t => {
   const bridge = await withBridge(t, { instanceId: "instance-test", scopeId: "checkout-test", buildId: "build-test" });
@@ -457,7 +467,7 @@ test("request timeout clears delivery state and rejects late completion", async 
 test("MCP result content retains FastMCP list/string/null serialization", () => {
   assert.deepEqual(resultToContent(null), []);
   assert.deepEqual(resultToContent(["plain", { value: 1 }, null]), [
-    { type: "text", text: "plain" }, { type: "text", text: '{\n  "value": 1\n}' },
+    { type: "text", text: "plain" }, { type: "text", text: '{"value":1}' },
   ]);
   const batch = resultToContent({
     results: [
@@ -529,7 +539,8 @@ test("one MCP connection reuses one generated drive session id", async t => {
   assert.notEqual(first.params.sessionId, "default");
   assert.equal(listed.method, "list_tools");
   assert.equal(listed.params.sessionId, first.params.sessionId);
-  assert.equal(inspected.method, "list_tools");
+  assert.equal(inspected.method, "get_tool");
+  assert.equal(inspected.params.name, "list_tabs");
   assert.equal(inspected.params.sessionId, first.params.sessionId);
   assert.equal(explicit.params.sessionId, "kept-id");
   assert.match(second.params.sessionId, /^[0-9a-f]{32}$/);
@@ -541,7 +552,7 @@ test("MCP session deletion cancels pending work and invalidates the old session"
   const bridge = await withBridge(t);
   await pairBrowser(bridge.state, { id: "browser" });
   const client = new Client({ name: "session-cleanup-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   const sessionId = transport.sessionId;
@@ -579,7 +590,7 @@ test("an abandoned MCP POST cancels only its operation and never replays it", as
   const bridge = await withBridge(t);
   await (await post(bridge, "/v1/qingzhou/poll", { client: { id: "browser", pollTimeoutMs: 100 } })).json();
   const client = new Client({ name: "disconnect-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   for (const phase of ["queued", "inflight"]) {
@@ -622,7 +633,7 @@ test("an abandoned MCP POST cancels only its operation and never replays it", as
 test("MCP idle expiry releases abandoned sessions while active GET and POST responses survive", async t => {
   const bridge = await withBridge(t, { mcpSessionIdleTimeoutMs: 100 });
   const client = new Client({ name: "session-expiry-test", version: "1" });
-  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
   await client.connect(transport);
   t.after(() => client.close());
   const sessionId = transport.sessionId;
@@ -656,7 +667,7 @@ test("repeated real SDK calls and overlapping HTTP polls preserve isolation and 
   const delivered = new Set();
   for (let round = 0; round < 6; round++) {
     const client = new Client({ name: `stress-${round}`, version: "1" });
-    const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp`));
+    const transport = new StreamableHTTPClientTransport(new URL(`${bridge.endpoint}/mcp?profile=full`));
     await client.connect(transport);
     try {
       for (const id of ["browser-a", "browser-b"]) {

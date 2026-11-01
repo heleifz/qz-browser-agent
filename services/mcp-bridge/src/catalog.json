@@ -53,6 +53,8 @@
       "properties": {
         "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
         "excludeSessionId": {"default": "", "title": "Excludesessionid", "type": "string"},
+        "scope": {"type": "string", "description": "session returns one session. Omit it to list tasks."},
+        "sessionId": {"type": "string", "description": "Session to return when scope is session."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },

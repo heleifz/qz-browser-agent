@@ -339,8 +339,8 @@ test("suggested shell commands use placeholders for untrusted identifiers", () =
 test("help advertises task-centric commands and omits removed CLI entry points", () => {
   for (const topic of ["", "show", "submit", "skills"]) {
     const help = renderHelp(topic);
-    assert.doesNotMatch(help, /qz (?:input|tools|call|logs|downloads)\b/);
-    assert.doesNotMatch(help, /^\s+(?:input|tools|call|logs|downloads)\s/m);
+    assert.doesNotMatch(help, /qz (?:input|call|logs|downloads)\b/);
+    assert.doesNotMatch(help, /^\s+(?:input|call|logs|downloads)\s/m);
   }
   assert.match(renderHelp("show"), /TASK_ID/);
 });

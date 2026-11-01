@@ -25,6 +25,7 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "stop_session",
   "clear_goal",
   "list_tools",
+  "get_tool",
   "execute_tool",
   "call_tool",
   "list_data_tables",
@@ -88,6 +89,7 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false, keepTabs: params.keepTabs === true }, signal);
       case "clear_goal": return call("sessions.clearGoal", params.sessionId, "mcp_bridge", signal);
       case "list_tools": return call("tools.list", params);
+      case "get_tool": return call("tools.get", params);
       case "execute_tool":
       case "call_tool": return call("tools.execute", params, signal);
       case "list_data_tables": return call("data.listTables");

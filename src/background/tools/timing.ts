@@ -7,6 +7,13 @@ export function positiveSeconds(value: unknown): number | null {
   return Number.isFinite(number) && number > 0 ? Math.max(1, Math.floor(number * 1000)) : null;
 }
 
+export const DOCUMENT_HOST_TIMEOUT_MS = 120_000;
+
+export function documentHostTimeout(args: Record<string, unknown>, name: string): number {
+  if (args.timeout == null || args.timeout === "") return DOCUMENT_HOST_TIMEOUT_MS;
+  return scriptTimeout(args, name);
+}
+
 export function scriptTimeout(args: Record<string, unknown>, name: string): number {
   const seconds = Number(args.timeout);
   if (!Number.isFinite(seconds)) throw new ToolExecutionError("INVALID_TIMEOUT", `${name} timeout must be a number of seconds`, {

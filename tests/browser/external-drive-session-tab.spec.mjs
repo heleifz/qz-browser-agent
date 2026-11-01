@@ -102,10 +102,29 @@ test("the task list hides the external drive tab until a drive session exists", 
   await page.evaluate(async () => {
     const { applyExternalDriveChrome } = await import("/extension/sidepanel/features/chat/chat-workspace-feature.js");
     document.querySelector("#sessions-panel")?.classList.add("hidden");
+    document.querySelector("#messages")?.classList.remove("hidden");
     document.querySelector("#chat-dock")?.classList.remove("hidden");
+    document.querySelector("#welcome")?.insertAdjacentHTML("beforeend", `
+      <section class="welcome-onboarding">
+        <h2>先从一个小任务开始</h2>
+        <button id="onboarding-primary-btn" type="button">配置模型接口</button>
+        <button type="button" class="onboarding-action">世界主要城市未来 7 天天气</button>
+      </section>
+    `);
+    navigator.clipboard.writeText = async text => { window.__copiedDriveCommand = text; };
     applyExternalDriveChrome(document, true);
   });
   await expect(page.locator("#input-area")).toBeHidden();
   await expect(page.locator("#external-drive-readonly")).toBeVisible();
   await expect(page.locator("#external-drive-readonly")).toContainText("只能查看");
+  await expect(page.locator("#welcome")).toBeVisible();
+  await expect(page.locator(".welcome-onboarding")).toBeHidden();
+  await expect(page.locator("#onboarding-primary-btn")).toBeHidden();
+  await expect(page.locator(".welcome-subtitle")).toBeHidden();
+  await expect(page.locator("#drive-welcome")).toBeVisible();
+  await expect(page.locator("#drive-welcome h2")).toHaveText("由外部 agent 直接操作");
+  await expect(page.locator("#drive-welcome-command")).toHaveText("npx qz-browser-agent@latest connect");
+  await page.locator("#drive-welcome-copy").click();
+  await expect.poll(() => page.evaluate(() => window.__copiedDriveCommand)).toBe("npx qz-browser-agent@latest connect");
+  await expect(page.locator("#drive-welcome-copy")).toHaveClass(/is-confirmed/);
 });
