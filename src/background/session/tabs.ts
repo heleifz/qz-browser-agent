@@ -268,6 +268,7 @@ export function createSessionTabs({
       visitedTaskSites: addVisitedTaskSite(runtime, workingTab, timestamp()),
     };
     if (ownership.claim) patch.ownedTabIds = addOwnedTabId(runtime, workingTab.id);
+    if (createdTab) patch.createdTabIds = normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), workingTab.id]);
     return setRuntime(id, patch);
   }
 
@@ -710,7 +711,7 @@ export function createSessionTabs({
     const sessions = await getSessions();
     const session = sessions[id];
     if (!session) return false;
-    if (session.source === "external-drive") return session.keepDriveTabs !== true;
+    if (session.source === "external-drive") return true;
     if (isAutomationSessionFamily(id, sessions)) return true;
     return String(session.parentSessionId || rootSessionId) !== String(rootSessionId);
   }
@@ -720,15 +721,17 @@ export function createSessionTabs({
     const id = normalizeSessionId(sessionId);
     const runtime = supervisor.getRuntime(id) || {};
     const ownedTabIds = getOwnedTabIds(runtime);
-    if (!ownedTabIds.length) {
+    const createdTabIds = normalizeSessionTabIds(runtime.createdTabIds);
+    if (!ownedTabIds.length && !createdTabIds.length) {
       scheduleGroupSync(id);
       return { closed: [], skipped: false };
     }
-
+    const sessions = await getSessions();
+    const external = sessions[id]?.source === "external-drive";
     const handoff = new Set(normalizeSessionTabIds(runtime.driveHandoffTabIds));
+    const closable = (external ? createdTabIds : ownedTabIds).filter(tabId => !handoff.has(tabId));
     const closed = [];
-    for (const tabId of ownedTabIds) {
-      if (handoff.has(tabId)) continue;
+    for (const tabId of closable) {
       try {
         await tabsApi.remove(tabId);
         closed.push(tabId);
@@ -748,6 +751,7 @@ export function createSessionTabs({
           }
         : {}),
       ownedTabIds: [],
+      createdTabIds: [],
       driveHandoffTabIds: [],
       tabAliases: {},
       ownedTabsClosedAt: timestamp(),
@@ -860,7 +864,9 @@ export function createSessionTabs({
       const nextTabIds = removeOwnedTabId(runtime, tabId);
       const removedOwnedTab = !sameTabIdSet(ownedTabIds, nextTabIds);
       const removedWorkingTab = Number(runtime?.workingTabId) === Number(tabId);
-      if (!removedWorkingTab && !removedOwnedTab) continue;
+      const nextCreated = normalizeSessionTabIds(runtime.createdTabIds).filter(id => id !== Number(tabId));
+      const removedCreated = !sameTabIdSet(runtime.createdTabIds, nextCreated);
+      if (!removedWorkingTab && !removedOwnedTab && !removedCreated) continue;
       supervisor.setRuntime(sessionId, {
         ...runtime,
         ...(removedWorkingTab
@@ -874,6 +880,8 @@ export function createSessionTabs({
             }
           : {}),
         ownedTabIds: nextTabIds,
+        createdTabIds: nextCreated,
+        driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds).filter(id => id !== Number(tabId)),
         tabAliases: normalizeTabAliases(runtime.tabAliases, nextTabIds),
         sessionTabIds: nextTabIds,
         ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
@@ -942,6 +950,7 @@ export function createSessionTabs({
           ...latest,
           ownedTabIds: retained,
           sessionTabIds: retained,
+          createdTabIds: normalizeSessionTabIds(latest.createdTabIds).filter(tabId => !missing.has(tabId)),
           tabAliases: normalizeTabAliases(latest.tabAliases, retained),
           ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
           updatedAt: timestamp(),

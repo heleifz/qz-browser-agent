@@ -163,7 +163,6 @@ export function createSessionRepository({
         parentSessionId,
         source: normalizeSessionSource(input.source || existing?.source),
         driveGroupTitle: normalizeDriveGroupTitle(input.driveGroupTitle || existing?.driveGroupTitle),
-        keepDriveTabs: input.keepDriveTabs === true || existing?.keepDriveTabs === true,
         automationId: normalizeSessionId(input.automationId || existing?.automationId),
         automationRunId: normalizeSessionId(input.automationRunId || existing?.automationRunId),
         listSummary: normalizeSessionListSummary(
@@ -645,7 +644,7 @@ function cleanMetadata<T extends Fields>(session: T): T {
   const next = { ...session };
   if (!next.source) delete next.source;
   if (!next.driveGroupTitle) delete next.driveGroupTitle;
-  if (next.keepDriveTabs !== true) delete next.keepDriveTabs;
+  delete next.keepDriveTabs;
   if (!next.automationId) delete next.automationId;
   if (!next.automationRunId) delete next.automationRunId;
   return next;

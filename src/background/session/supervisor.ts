@@ -30,7 +30,7 @@ interface UserWait {
 export interface SessionHandle<A extends SupervisorAgent> {
   sessionId: string; epoch: number; agent: A | null; lease: AgentLease | null;
   ready: Promise<unknown> | null; unsubscribe: (() => void) | null; task: SessionTask | null;
-  wait: UserWait | null; runtime: Record<string, unknown> | null; activeRunId: string; lastEventSeq: number;
+  wait: UserWait | null; runtime: Record<string, unknown> | null; activeRunId: string; driveRunId: string; lastEventSeq: number;
 }
 type ActiveHandle<A extends SupervisorAgent> = SessionHandle<A> & { agent: A; lease: AgentLease };
 interface Revocation<A extends SupervisorAgent> {
@@ -222,7 +222,26 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     const rid = normalizeRunId(runId);
     if (!rid) return false;
     const entry = handles.get(id);
-    return Boolean(entry?.agent && entry.activeRunId === rid);
+    if (!entry) return false;
+    if (entry.agent && entry.activeRunId === rid) return true;
+    return entry.driveRunId === rid;
+  }
+
+  /** One execution identity for an external drive session. Stop clears it, so it cannot outlive the session. */
+  function mintDriveRunId(sessionId: string) {
+    const id = requireSessionId(sessionId);
+    let handle = handles.get(id);
+    if (!handle) {
+      handle = createHandle(id);
+      handles.set(id, handle);
+    }
+    if (!handle.driveRunId) handle.driveRunId = `drive-${crypto.randomUUID()}`;
+    return handle.driveRunId;
+  }
+
+  function clearDriveRunId(sessionId: string) {
+    const handle = handles.get(requireSessionId(sessionId));
+    if (handle) handle.driveRunId = "";
   }
 
   function getTask(sessionId: string) {
@@ -410,6 +429,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
       wait: null,
       runtime: null,
       activeRunId: "",
+      driveRunId: "",
       lastEventSeq: 0,
     };
   }
@@ -603,6 +623,8 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     waitForIdle,
     waitForTaskRelease,
     isRunCurrent,
+    mintDriveRunId,
+    clearDriveRunId,
     getTask,
     getRuntime,
     setRuntime,

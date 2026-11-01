@@ -1,3 +1,4 @@
+import { DOCUMENT_TOOL_CORE_NAMES, getDocumentSkillToolName } from "../../capabilities/documents/skill-contract.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
@@ -8,6 +9,11 @@ import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 export const DRIVE_MAX_CALLS = 10;
 const DRIVE_IDLE_MS = 30 * 60 * 1000;
 
+const DOCUMENT_DRIVE_NAMES = DOCUMENT_TOOL_CORE_NAMES.flatMap((name) => {
+  const skillName = getDocumentSkillToolName(name);
+  return skillName ? [name, skillName] : [name];
+});
+
 const ALLOWED = new Set([
   "open_tab", "close_tab", "navigate", "list_tabs", "use_tab",
   "get_ax_tree", "read_article", "find_elements", "inspect_element",
@@ -15,12 +21,7 @@ const ALLOWED = new Set([
   "wait", "wait_for_element", "wait_for_navigation", "wait_until", "wait_for_network_idle", "wait_for_response",
   "load_skill", "load_skill_resource", "run_skill_script", "run_script",
   "data_store", "save_file", "download_url",
-  "qingzhou_documents__document_fetch",
-  "qingzhou_documents__document_parse",
-  "qingzhou_documents__document_read_chunk",
-  "qingzhou_documents__document_create",
-  "qingzhou_documents__document_download",
-  "qingzhou_documents__document_list_artifacts",
+  ...DOCUMENT_DRIVE_NAMES,
 ]);
 
 const FORBIDDEN = new Set([
@@ -72,11 +73,8 @@ function callBudget(limits: unknown) {
   return requested;
 }
 
-/** Classify one execute_tool request. Remote nodes and skill capture stop before any tool runs. */
+/** Classify one execute_tool request. Forbidden names stop before any tool runs. */
 export function parseDriveRequest(params: Fields = {}): DriveParse {
-  const nodeId = String(params.nodeId ?? "").trim();
-  if (nodeId && nodeId !== "local") return { ok: false, error: driveError("NODE_REMOTE_NOT_IMPLEMENTED", t("drive.remoteNode")) };
-  if (params.saveAsSkill === true) return { ok: false, error: driveError("SKILL_CAPTURE_NOT_IMPLEMENTED", t("drive.skillCapture")) };
   const name = String(params.name || params.toolName || "").trim();
   const hasCalls = Array.isArray(params.calls);
   if (hasCalls && name) return { ok: false, error: driveError("DRIVE_ARGUMENTS", t("drive.nameOrCalls")) };
@@ -171,6 +169,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   discardToolResult?(result: unknown, context: Fields): Promise<unknown>;
   aliases?: Readonly<Record<string, number>>;
   context?: Fields;
+  refreshContext?(context: Fields): Fields;
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
@@ -197,13 +196,14 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
       let args: unknown = call.args;
       try { args = batch.args(call); }
       catch (error) { return failed(call, error); }
-      const context: Fields = {
+      const base: Fields = {
         ...(deps.context || {}),
         preserveWorkingTab: batch.observation(call) === true,
         deferToolCommit: parallel,
         deferCreatedTabSelection: batch.parallelCreate(call) === true,
         createdTabResult: batch.executionParent(call),
       };
+      const context = deps.refreshContext ? deps.refreshContext(base) : base;
       try {
         const result = await deps.execute(call.name, args, callSignal, context);
         const value = record(result);
@@ -229,14 +229,18 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
       settled.set(outcome.call, current);
     },
   });
-  const images: DriveImage[] = [];
   const results = calls.map(call => {
     const outcome = settled.get(call) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" });
     const projected = projectDriveResult(outcome.result, deps.getModelPolicy?.(call.name));
-    images.push(...projected.images);
-    return { id: outcome.id, name: outcome.name, result: projected.value, isError: outcome.isError };
+    return {
+      id: outcome.id,
+      name: outcome.name,
+      result: projected.value,
+      isError: outcome.isError,
+      ...(projected.images.length ? { images: projected.images } : {}),
+    };
   });
-  return { results, images };
+  return { results };
 }
 
 type DriveCoordinatorOptions = {
@@ -244,6 +248,8 @@ type DriveCoordinatorOptions = {
   stop?(sessionId: string, meta?: Fields): Promise<unknown> | unknown;
   getRuntime?(sessionId: string): Fields | null;
   setRuntime?(sessionId: string, patch: Fields): unknown;
+  mintRunId?(sessionId: string): string;
+  clearRunId?(sessionId: string): void;
 };
 
 let activeCoordinator: ReturnType<typeof createExternalDriveCoordinator> | null = null;
@@ -254,10 +260,18 @@ export function createExternalDriveCoordinator({
   stop,
   getRuntime,
   setRuntime,
+  mintRunId,
+  clearRunId,
 }: DriveCoordinatorOptions = {}) {
   const busy = new Set<string>();
   const controllers = new Map<string, AbortController>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const generation = new Map<string, number>();
+  const active = new Map<string, number>();
+
+  function generationOf(sessionId: string) {
+    return generation.get(sessionId) || 0;
+  }
 
   function clearIdle(sessionId: string) {
     const timer = timers.get(sessionId);
@@ -265,11 +279,14 @@ export function createExternalDriveCoordinator({
     timers.delete(sessionId);
   }
 
-  function touch(sessionId: string) {
+  function touch(sessionId: string, token: number) {
     if (!sessionId || !stop) return;
     clearIdle(sessionId);
     const timer = setTimeout(() => {
       timers.delete(sessionId);
+      if (generationOf(sessionId) !== token || active.has(sessionId)) return;
+      generation.set(sessionId, token + 1);
+      clearRunId?.(sessionId);
       controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
       busy.delete(sessionId);
       controllers.delete(sessionId);
@@ -279,12 +296,25 @@ export function createExternalDriveCoordinator({
     timers.set(sessionId, timer);
   }
 
+  function invalidate(sessionId: string) {
+    if (!sessionId) return;
+    generation.set(sessionId, generationOf(sessionId) + 1);
+    clearIdle(sessionId);
+    busy.delete(sessionId);
+    active.delete(sessionId);
+    controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
+    controllers.delete(sessionId);
+    clearRunId?.(sessionId);
+  }
+
   const coordinator = {
     isBusy(sessionId: string) { return busy.has(sessionId); },
     begin(sessionId: string, signal?: AbortSignal) {
       if (sessionId && busy.has(sessionId)) throw driveError("DRIVE_SESSION_BUSY", t("drive.sessionBusy"));
+      const token = sessionId ? generationOf(sessionId) : 0;
       if (sessionId) {
         busy.add(sessionId);
+        active.set(sessionId, token);
         clearIdle(sessionId);
       }
       const controller = new AbortController();
@@ -292,13 +322,17 @@ export function createExternalDriveCoordinator({
       const onAbort = () => controller.abort(signal?.reason);
       signal?.addEventListener("abort", onAbort);
       const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      const driveRunId = sessionId && mintRunId ? String(mintRunId(sessionId) || "") : "";
       return {
         signal: combined,
+        driveRunId,
         release() {
-          if (sessionId) busy.delete(sessionId);
-          controllers.delete(sessionId);
           signal?.removeEventListener("abort", onAbort);
-          if (sessionId) touch(sessionId);
+          if (!sessionId || generationOf(sessionId) !== token || active.get(sessionId) !== token) return;
+          busy.delete(sessionId);
+          active.delete(sessionId);
+          if (controllers.get(sessionId) === controller) controllers.delete(sessionId);
+          touch(sessionId, token);
         },
       };
     },
@@ -313,17 +347,16 @@ export function createExternalDriveCoordinator({
       if (current.includes(id)) return;
       setRuntime(sessionId, { driveHandoffTabIds: [...current, id] });
     },
-    noteStopped(sessionId: string) {
-      clearIdle(sessionId);
-      busy.delete(sessionId);
-      controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
-      controllers.delete(sessionId);
+    noteStopped(sessionId: string, meta: Fields = {}) {
+      if (!sessionId) return;
+      if (meta.source === "drive_idle" && active.has(sessionId)) return;
+      invalidate(sessionId);
     },
   };
   activeCoordinator = coordinator;
   return coordinator;
 }
 
-export function noteExternalDriveStopped(sessionId: string) {
-  activeCoordinator?.noteStopped(sessionId);
+export function noteExternalDriveStopped(sessionId: string, meta: Fields = {}) {
+  activeCoordinator?.noteStopped(sessionId, meta);
 }

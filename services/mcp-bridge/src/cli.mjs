@@ -71,6 +71,16 @@ function connectionRequired() {
   return new QzError("not_connected", "Run qz connect to start the local service and connect Chrome. If qz is not installed, run qz install.");
 }
 
+function resolveExecClient(health, optionSelector = "", payload = null) {
+  const payloadSelector = String(payload && typeof payload === "object" && !Array.isArray(payload) ? payload.clientId || "" : "").trim();
+  const optionId = optionSelector ? selectClient(health, optionSelector) : "";
+  const payloadId = payloadSelector ? selectClient(health, payloadSelector) : "";
+  if (optionId && payloadId && optionId !== payloadId) {
+    throw new QzError("client_conflict", "The --client option and clientId select different browsers.");
+  }
+  return optionId || payloadId || selectClient(health, "");
+}
+
 function parseExecPayload(source) {
   let value;
   try { value = JSON.parse(source); }
@@ -85,18 +95,36 @@ async function readExecStdin(dependencies) {
   return (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
 }
 
-function materializeExecImages(result) {
-  if (!result || typeof result !== "object" || Array.isArray(result) || !Array.isArray(result.images)) return result;
-  const images = result.images.filter(image => image && typeof image.data === "string");
-  if (!images.length) return result;
-  const directory = mkdtempSync(join(tmpdir(), "qz-exec-"));
-  const paths = images.map((image, index) => {
+function imageFilePaths(images, directory, prefix) {
+  const files = (Array.isArray(images) ? images : []).filter(image => image && typeof image.data === "string");
+  if (!files.length) return null;
+  return files.map((image, index) => {
     const extension = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png";
-    const path = join(directory, `${index}.${extension}`);
+    const path = join(directory, `${prefix}${index}.${extension}`);
     writeFileSync(path, Buffer.from(image.data, "base64"));
     return path;
   });
-  return { ...result, images: paths };
+}
+
+function materializeExecImages(result) {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const nested = Array.isArray(result.results) && result.results.some(item => Array.isArray(item?.images) && item.images.some(image => typeof image?.data === "string"));
+  const topLevel = Array.isArray(result.images) && result.images.some(image => typeof image?.data === "string");
+  if (!nested && !topLevel) return result;
+  const directory = mkdtempSync(join(tmpdir(), "qz-exec-"));
+  const images = imageFilePaths(result.images, directory, "");
+  const results = Array.isArray(result.results)
+    ? result.results.map((item, index) => {
+      if (!item || typeof item !== "object" || !Array.isArray(item.images)) return item;
+      const paths = imageFilePaths(item.images, directory, `${index}-`);
+      return paths ? { ...item, images: paths } : item;
+    })
+    : result.results;
+  return {
+    ...result,
+    ...(images ? { images } : {}),
+    ...(Array.isArray(result.results) ? { results } : {}),
+  };
 }
 
 function execFailed(result) {
@@ -244,7 +272,9 @@ async function dispatchCommand(parsed, dependencies) {
     return { result: await call(running.endpoint, "qingzhou_forget_browser", { clientId: browser.clientId }, { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal }) };
   }
   // Resolve names once. Every subsequent operation carries this profile UUID.
-  const clientId = selectClient(running.health, options["client-id"]);
+  const clientId = command === "exec"
+    ? resolveExecClient(running.health, options["client-id"], execPayload)
+    : selectClient(running.health, options["client-id"]);
   parsed.presentation = { ...parsed.presentation, clientId };
   options["client-id"] = clientId;
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };

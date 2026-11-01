@@ -80,16 +80,19 @@ async function normalizeQingzhouTabGroupDuplicates(target: chrome.tabGroups.TabG
 async function listQingzhouTabGroups(windowId: number, preferredGroupId: number | null, title = "") {
   if (!chrome.tabGroups?.query) return [];
   const groups = await chrome.tabGroups.query({ windowId });
-  // A stored group ID needs a current task tab as evidence; browser restarts may reuse IDs.
-  // That witnessed identity survives translated-title changes after a language switch.
-  // Title matching remains a fallback for older groups without a stored identity.
+  // A stored group ID is claimed only when one of this session's tabs is already in it.
+  // That witnessed identity is reused even when the title differs, then the title is updated.
+  // Title matching is the fallback when no tab witnesses the stored id. Browser restarts may reuse ids.
   const titles = title
     ? new Set([title])
     : new Set([t("notification.task"), QINGZHOU_TAB_GROUP_TITLE, "Qingzhou task", "qz task"]);
-  return groups
-    .filter(group => group.windowId === windowId && (
-      title ? group.title === title : group.id === preferredGroupId || typeof group.title === "string" && titles.has(group.title)
-    ))
+  const inWindow = groups.filter(group => group.windowId === windowId);
+  if (preferredGroupId != null) {
+    const witnessed = inWindow.filter(group => group.id === preferredGroupId);
+    if (witnessed.length) return witnessed;
+  }
+  return inWindow
+    .filter(group => typeof group.title === "string" && titles.has(group.title))
     .sort((a, b) => Number(a.id) - Number(b.id));
 }
 

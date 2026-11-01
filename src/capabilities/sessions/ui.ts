@@ -127,7 +127,11 @@ export default function (qz: UiExtensionAPI) {
       activate: ({ refresh }) => { if (refresh) sessions.refresh({ requestFreshState: true }); },
       deactivate: sessions.clearInteractionHold,
       capture: () => ({ mode: sessions.getMode() }),
-      restore: state => { sessions.setMode(record(state).mode === "automation" ? "automation" : "manual"); sessions.refresh({ requestFreshState: true }); },
+      restore: state => {
+        const mode = String(record(state).mode || "");
+        sessions.setMode(mode === "automation" || mode === "external-drive" ? mode : "manual");
+        sessions.refresh({ requestFreshState: true });
+      },
   });
   qz.registerOverlay({ id: "session-artifacts", priority: 60, close: () => {
         if (!artifacts.hasBlockingOverlay()) return false; artifacts.closePanel(); return true;

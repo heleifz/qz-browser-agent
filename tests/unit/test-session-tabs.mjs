@@ -25,6 +25,11 @@ let guardrails = {};
 let failPersist = false;
 let clock = 0;
 let nextTabId = 6;
+const sessionRecords = {
+  a: { id: "a", parentSessionId: "0" },
+  b: { id: "b", parentSessionId: "0" },
+  child: { id: "child", parentSessionId: "a" },
+};
 
 const supervisor = {
   getRuntime(sessionId) {
@@ -75,11 +80,7 @@ const sessionTabs = createSessionTabs({
   windowTarget: { async resolveForNewTab() { return 7; } },
   storage: createMemoryStorage(),
   ready: async () => {},
-  getSessions: async () => ({
-    a: { id: "a", parentSessionId: "0" },
-    b: { id: "b", parentSessionId: "0" },
-    child: { id: "child", parentSessionId: "a" },
-  }),
+  getSessions: async () => sessionRecords,
   isAutomationSessionFamily: () => false,
   setRuntime(sessionId, patch) {
     const next = { ...(runtimes.get(sessionId) || {}), ...patch };
@@ -360,6 +361,25 @@ assert.equal(childClose.skipped, false);
 assert.deepEqual(childClose.closed, [3]);
 assert.equal(removed.at(-1), 3);
 assert.deepEqual(getOwnedTabIds(runtimes.get("child")), []);
+
+sessionRecords.drive = { id: "drive", source: "external-drive", parentSessionId: "0" };
+tabs.set(10, webTab(10, "https://created.example/a"));
+tabs.set(11, webTab(11, "https://claimed.example/b"));
+tabs.set(12, webTab(12, "https://handoff.example/c"));
+runtimes.set("drive", {
+  sessionId: "drive",
+  ownedTabIds: [10, 11, 12],
+  createdTabIds: [10, 12],
+  driveHandoffTabIds: [12],
+  workingTabId: 11,
+});
+const driveClose = await sessionTabs.closeOwnedTabs("drive", { source: "test_cleanup" });
+assert.deepEqual(driveClose.closed, [10]);
+assert.equal(tabs.has(11), true);
+assert.equal(tabs.has(12), true);
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive")), []);
+assert.deepEqual(runtimes.get("drive").createdTabIds, []);
+assert.deepEqual(runtimes.get("drive").driveHandoffTabIds, []);
 
 assert.equal(normalizeWorkingTab({ id: 0, url: "https://invalid.example" }), null);
 assert.equal(normalizeWorkingTab({ id: 5, url: "chrome://settings" }), null);

@@ -177,6 +177,7 @@ export default defineMessages("sessions", {
   "localArtifact": { "zh-CN": "本地产物", en: "Local artifact" },
   "documentLibrary": { "zh-CN": "文档库", en: "Document library" },
   "regularTasks": { "zh-CN": "普通任务", en: "Tasks" },
+  "externalDrive": { "zh-CN": "外部直驱", en: "External" },
   "new": { "zh-CN": "新建", en: "New" },
   "import": { "zh-CN": "导入", en: "Import" },
   "frequency": { "zh-CN": "频率", en: "Frequency" },

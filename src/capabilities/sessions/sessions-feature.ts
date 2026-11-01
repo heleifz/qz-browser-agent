@@ -159,6 +159,15 @@ export function createSessionsFeature(options: SessionsOptions) {
   const expandedSessionIds = new Set<string>();
   const collapsedSessionIds = new Set<string>();
   const pendingSessionDeleteIds = new Set<string>();
+
+function isSessionListMode(mode = sessionsViewMode) {
+  return mode === "manual" || mode === "external-drive";
+}
+
+function externalDriveTabButton() {
+  return sessionsModeBtns.find(button => button.dataset.sessionsMode === "external-drive");
+}
+
 function refreshSessionsPanel({ requestFreshState = false } = {}) {
   syncSessionsViewModeUi();
   if (sessionsViewMode === "automation") {
@@ -212,7 +221,7 @@ function scheduleSessionsListRefresh({ immediate = false, delay = null }: Refres
 async function renderSessionsListNow({ requestFreshState = false } = {}) {
   if (!isActive()) return;
   syncSessionsViewModeUi();
-  if (sessionsViewMode !== "manual") return;
+  if (!isSessionListMode()) return;
   if (sessionsListRefreshTimer) {
     clearTimeout(sessionsListRefreshTimer);
     sessionsListRefreshTimer = null;
@@ -261,7 +270,7 @@ function getSessionListReorderHoldRemainingMs(now = Date.now()) {
 }
 
 function scheduleDeferredSessionListSortRefresh(delayMs: number) {
-  if (!isActive() || sessionsViewMode !== "manual") return;
+  if (!isActive() || !isSessionListMode()) return;
   const duration = Number.isFinite(delayMs) ? delayMs : SESSION_LIST_INTERACTION_HOLD_MS;
   const waitMs = Math.max(80, Math.ceil(duration));
   const dueAt = Date.now() + waitMs;
@@ -930,8 +939,17 @@ async function loadSessionsList({ requestFreshState = false } = {}) {
     };
   });
   rememberSessionListRecords(list);
+  const driveSessions = list.filter(session => session.source === "external-drive");
+  externalDriveTabButton()?.classList.toggle("hidden", driveSessions.length === 0);
+  if (!driveSessions.length && sessionsViewMode === "external-drive") {
+    sessionsViewMode = "manual";
+    syncSessionsViewModeUi();
+  }
+  const visibleSessions = sessionsViewMode === "external-drive"
+    ? driveSessions
+    : list.filter(session => session.source !== "external-drive");
 
-  if (list.length === 0) {
+  if (visibleSessions.length === 0) {
     resetSessionListRenderOrder();
     commitSessionsListSearchHtml(`
       <div class="sessions-empty">
@@ -942,9 +960,9 @@ async function loadSessionsList({ requestFreshState = false } = {}) {
     return;
   }
 
-  artifactsFeature.scheduleSummaryBackfill(list);
+  artifactsFeature.scheduleSummaryBackfill(visibleSessions);
 
-  const searchState = filterSessionsForSearch(list, searchQuery);
+  const searchState = filterSessionsForSearch(visibleSessions, searchQuery);
   if (searchState.searchActive && searchState.list.length === 0) {
     resetSessionListRenderOrder();
     commitSessionsListSearchHtml(`
@@ -1081,13 +1099,16 @@ function syncSessionDeleteVisualState(sessionId: string, deleting: boolean) {
 
 sessionsModeBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
-    const mode = btn.dataset.sessionsMode === "automation" ? "automation" : "manual";
+    const requested = btn.dataset.sessionsMode || "manual";
+    const mode = requested === "automation" || requested === "external-drive" ? requested : "manual";
     setSessionsViewMode(mode, { track: true, refresh: true });
   }, { signal: lifetime });
 });
 
 function setSessionsViewMode(mode: string, { track = false, refresh = false } = {}) {
-  const next = automationsEnabled && mode === "automation" ? "automation" : "manual";
+  const next = mode === "external-drive"
+    ? "external-drive"
+    : automationsEnabled && mode === "automation" ? "automation" : "manual";
   if (sessionsViewMode === next) return false;
   sessionsViewMode = next;
   if (track) {
@@ -1460,6 +1481,7 @@ function getSessionStatusClass(status: string) {
     sessionListInteractionHoldUntil = 0;
     listExit.cancel();
     sessionsViewMode = "manual";
+    externalDriveTabButton()?.classList.add("hidden");
     sessionStateRequestedAt.clear();
     expandedSessionIds.clear();
     collapsedSessionIds.clear();

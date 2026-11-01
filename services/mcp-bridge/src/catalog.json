@@ -358,8 +358,6 @@
             }
           }
         },
-        "nodeId": {"type": "string"},
-        "saveAsSkill": {"type": "boolean"},
         "limits": {
           "type": "object",
           "additionalProperties": false,

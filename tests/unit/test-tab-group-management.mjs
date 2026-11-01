@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { getCoreToolMetadata } from "../../src/shared/tools/tool-metadata.js";
 import { chromeMessageId } from "../../src/shared/i18n/definition.js";
 
+globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
+
 const root = new URL("../../", import.meta.url);
 
 function readProjectFile(relativePath) {
@@ -20,6 +22,7 @@ function installChromeMock({ tabs = [], groups = [] } = {}) {
   };
 
   globalThis.chrome = {
+    i18n: { getUILanguage: () => "zh-CN" },
     tabs: {
       async get(tabId) {
         const tab = state.tabs.get(Number(tabId));
@@ -173,7 +176,7 @@ async function assertInvalidPreferredGroupIsNotAdopted() {
   }
 }
 
-async function assertCustomDriveTitleDoesNotReuseAgentGroup() {
+async function assertWitnessedDriveGroupKeepsItsId() {
   const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
   const state = installChromeMock({
     tabs: [{ id: 701, windowId: 7, groupId: 3 }],
@@ -181,8 +184,25 @@ async function assertCustomDriveTitleDoesNotReuseAgentGroup() {
   });
   globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
   const result = await ensureQingzhouTabGroupForWindow([701], { preferredGroupId: 3, title: "轻舟 · CLI" });
-  assert.notEqual(result.groupId, 3);
+  assert.equal(result.groupId, 3);
   assert.equal(result.group.title, "轻舟 · CLI");
+  assert.equal(state.groups.get(3).title, "轻舟 · CLI");
+  assert.equal(state.tabs.get(701).groupId, 3);
+}
+
+async function assertTitleFallbackJoinsTheMatchingDriveGroup() {
+  const { ensureQingzhouTabGroupForWindow } = await import("../../src/shared/tab-groups.js");
+  const state = installChromeMock({
+    tabs: [{ id: 702, windowId: 7, groupId: -1 }],
+    groups: [
+      { id: 3, windowId: 7, title: "轻舟任务" },
+      { id: 4, windowId: 7, title: "轻舟 · CLI" },
+    ],
+  });
+  globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
+  const result = await ensureQingzhouTabGroupForWindow([702], { title: "轻舟 · CLI" });
+  assert.equal(result.groupId, 4);
+  assert.equal(state.tabs.get(702).groupId, 4);
   assert.equal(state.groups.get(3).title, "轻舟任务");
 }
 
@@ -192,6 +212,7 @@ await assertCreatesGroupWhenMissing();
 await assertManagedGroupSurvivesLanguageSwitch();
 await assertManagedGroupSurvivesLegacyBranding();
 await assertInvalidPreferredGroupIsNotAdopted();
-await assertCustomDriveTitleDoesNotReuseAgentGroup();
+await assertWitnessedDriveGroupKeepsItsId();
+await assertTitleFallbackJoinsTheMatchingDriveGroup();
 
 console.log("tab group management tests passed");

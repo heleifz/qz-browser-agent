@@ -90,3 +90,75 @@ test("tool failure exits 1 and screenshot bytes become file paths", async () => 
   });
   assert.equal(await main(["exec", "{\"calls\":[{\"id\":\"a\",\"name\":\"open_tab\",\"args\":{}}]}"], batch), 1);
 });
+
+test("exec resolves payload clientId and does not fall back", async () => {
+  const health = {
+    features: { browserPairing: 1 },
+    status: {
+      connected: true,
+      clients: [
+        { clientId: "11111111-1111-1111-1111-111111111111", name: "Alpha" },
+        { clientId: "22222222-2222-2222-2222-222222222222", name: "Beta" },
+      ],
+      browsers: [
+        { clientId: "11111111-1111-1111-1111-111111111111", name: "Alpha" },
+        { clientId: "22222222-2222-2222-2222-222222222222", name: "Beta" },
+        { clientId: "33333333-3333-3333-3333-333333333333", name: "Gamma" },
+      ],
+    },
+  };
+  const calls = [];
+  const same = setup({
+    findDaemon: async () => ({ endpoint: running.endpoint, health }),
+    callTool: async (_endpoint, name, args) => {
+      calls.push({ name, args });
+      return { toolName: "list_tabs", result: { tabs: [] } };
+    },
+  });
+  assert.equal(await main(["exec", "--client", "Alpha", JSON.stringify({
+    name: "list_tabs", args: {}, clientId: "11111111-1111-1111-1111-111111111111",
+  })], same), 0);
+  assert.equal(calls[0].args.clientId, "11111111-1111-1111-1111-111111111111");
+
+  const conflict = setup({
+    findDaemon: async () => ({ endpoint: running.endpoint, health }),
+    callTool: async () => { throw new Error("called"); },
+  });
+  assert.equal(await main(["exec", "--client", "Alpha", JSON.stringify({
+    name: "list_tabs", args: {}, clientId: "Beta",
+  })], conflict), 1);
+  assert.match(conflict.stdout.text, /The --client option and clientId select different browsers/);
+  assert.equal(conflict.stdout.text.includes("called"), false);
+
+  const offline = setup({
+    findDaemon: async () => ({ endpoint: running.endpoint, health }),
+    callTool: async () => { throw new Error("called"); },
+  });
+  assert.equal(await main(["exec", JSON.stringify({ name: "list_tabs", args: {}, clientId: "Gamma" })], offline), 1);
+  assert.match(offline.stdout.text, /offline/);
+  assert.equal(offline.stdout.text.includes("called"), false);
+});
+
+test("exec writes per-call images to files", async () => {
+  const png = Buffer.from("shot").toString("base64");
+  const deps = setup({
+    callTool: async () => ({
+      sessionId: "s",
+      runId: "drive-1",
+      results: [
+        { id: "a", name: "open_tab", result: { id: 1 }, isError: false },
+        { id: "b", name: "screenshot", result: { id: 1 }, isError: false, images: [{ mimeType: "image/png", data: png }] },
+      ],
+    }),
+  });
+  assert.equal(await main(["exec", JSON.stringify({
+    calls: [
+      { id: "a", name: "open_tab", args: { url: "https://example.com" } },
+      { id: "b", name: "screenshot", args: {} },
+    ],
+  })], deps), 0);
+  const body = JSON.parse(deps.stdout.text);
+  assert.equal(deps.stdout.text.includes(png), false);
+  assert.equal(existsSync(body.result.results[1].images[0]), true);
+  assert.equal(readFileSync(body.result.results[1].images[0]).toString(), "shot");
+});

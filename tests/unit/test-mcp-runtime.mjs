@@ -220,9 +220,15 @@ const explicitRunTool = await runtime.executeTool({ sessionId: "s1", runId: "pub
 assert.equal(executed.at(-1).context.runId, "public-run", "the public MCP runId must reach tool execution unchanged");
 assert.equal(explicitRunTool.runId, "public-run");
 activeRunId = "";
-await runtime.executeTool({ sessionId: "s1", name: "load_skill", args: { name: "research" } });
+await runtime.executeTool({ sessionId: "s1", name: "read_dom", args: {} });
 assert.equal(executed.at(-1).context.runId, "", "a completed runtime id must not be reused as a live run");
-assert.deepEqual(loadedNames.at(-1), ["s1", ["research", "Research"]]);
+const loadedBeforeDrive = loadedNames.length;
+await assert.rejects(
+  runtime.executeTool({ sessionId: "s1", name: "load_skill", args: { name: "research" } }),
+  error => error.code === "DRIVE_SESSION_OCCUPIED",
+);
+assert.equal(loadedNames.length, loadedBeforeDrive, "a built-in session rejects direct drive before recording a skill");
+assert.equal(executed.at(-1).name, "read_dom");
 assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_execute_tool", "mcp_execute_tool", "mcp_execute_tool"]);
 
 const listedSkills = await runtime.listSkills({ scope: "global", query: "guide" });
@@ -305,7 +311,7 @@ await runtime.executeTool({ sessionId: "s1", name: "read_dom" }, toolController.
 assert.equal(executed.at(-1).signal, toolController.signal, "tools receive the connection authority signal");
 const oldExecute = toolRuntime.execute, loadedCount = loadedNames.length;
 toolRuntime.execute = async (_name, _args, signal) => { toolController.abort(new Error("late disconnect")); assert.equal(signal.aborted, true); return { name: "research" }; };
-await assert.rejects(runtime.executeTool({ sessionId: "s1", name: "load_skill" }, toolController.signal), /late disconnect/);
+await assert.rejects(runtime.executeTool({ sessionId: "s1", name: "read_dom" }, toolController.signal), /late disconnect/);
 assert.equal(loadedNames.length, loadedCount, "revoked tool results cannot update loaded Skill state");
 toolRuntime.execute = oldExecute;
 
