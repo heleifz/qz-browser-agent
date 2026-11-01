@@ -1,4 +1,3 @@
-import { DOCUMENT_TOOL_CORE_NAMES, getDocumentSkillToolName } from "../../capabilities/documents/skill-contract.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
@@ -8,21 +7,6 @@ import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 /** Same-session batch cap. The scheduler also refuses to run more than ten at once. */
 export const DRIVE_MAX_CALLS = 10;
 const DRIVE_IDLE_MS = 30 * 60 * 1000;
-
-const DOCUMENT_DRIVE_NAMES = DOCUMENT_TOOL_CORE_NAMES.flatMap((name) => {
-  const skillName = getDocumentSkillToolName(name);
-  return skillName ? [name, skillName] : [name];
-});
-
-const ALLOWED = new Set([
-  "open_tab", "close_tab", "navigate", "list_tabs", "use_tab",
-  "get_ax_tree", "read_article", "find_elements", "inspect_element",
-  "act_on_element", "scroll_page", "screenshot",
-  "wait", "wait_for_element", "wait_for_navigation", "wait_until", "wait_for_network_idle", "wait_for_response",
-  "load_skill", "load_skill_resource", "run_skill_script", "run_script",
-  "data_store", "save_file", "download_url",
-  ...DOCUMENT_DRIVE_NAMES,
-]);
 
 const FORBIDDEN = new Set([
   "ask_llm", "manage_sessions", "manage_settings", "manage_guardrails",
@@ -35,7 +19,6 @@ type Fields = Record<string, unknown>;
 type ModelPolicy = { projectResult?(result: unknown): unknown } | null | undefined;
 export type DriveParse =
   | { ok: false; error: Error }
-  | { ok: true; mode: "legacy"; name: string; timeoutSeconds: number | null; maxCalls: number }
   | { ok: true; mode: "single"; name: string; timeoutSeconds: number | null; maxCalls: number }
   | { ok: true; mode: "batch"; calls: DriveCall[]; timeoutSeconds: number | null; maxCalls: number };
 
@@ -53,10 +36,6 @@ export function driveGroupTitle(clientName: unknown) {
 
 function forbidden(name: string) {
   return FORBIDDEN.has(name) || name.startsWith("mcp_");
-}
-
-function allowed(name: string) {
-  return ALLOWED.has(name);
 }
 
 function positiveSeconds(value: unknown) {
@@ -84,10 +63,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
   const timeoutSeconds = positiveSeconds(record(params.limits).timeoutSeconds);
   if (!hasCalls) {
     if (!name) return { ok: false, error: driveError("DRIVE_ARGUMENTS", "execute_tool requires name") };
-    if (forbidden(name) || !allowed(name)) {
-      if (forbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name })) };
-      return { ok: true, mode: "legacy", name, timeoutSeconds, maxCalls: budget };
-    }
+    if (forbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name })) };
     return { ok: true, mode: "single", name, timeoutSeconds, maxCalls: budget };
   }
   const calls: DriveCall[] = [];
@@ -98,7 +74,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
     if (!id || !callName || (call.args != null && (typeof call.args !== "object" || Array.isArray(call.args)))) {
       return { ok: false, error: driveError("DRIVE_ARGUMENTS", t("drive.callShape")) };
     }
-    if (forbidden(callName) || !allowed(callName)) {
+    if (forbidden(callName)) {
       return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name: callName })) };
     }
     calls.push({ id, name: callName, args: record(call.args) });
@@ -249,7 +225,7 @@ type DriveCoordinatorOptions = {
   getRuntime?(sessionId: string): Fields | null;
   setRuntime?(sessionId: string, patch: Fields): unknown;
   mintRunId?(sessionId: string): string;
-  clearRunId?(sessionId: string): void;
+  takeRunId?(sessionId: string): string;
 };
 
 let activeCoordinator: ReturnType<typeof createExternalDriveCoordinator> | null = null;
@@ -261,7 +237,7 @@ export function createExternalDriveCoordinator({
   getRuntime,
   setRuntime,
   mintRunId,
-  clearRunId,
+  takeRunId,
 }: DriveCoordinatorOptions = {}) {
   const busy = new Set<string>();
   const controllers = new Map<string, AbortController>();
@@ -286,11 +262,18 @@ export function createExternalDriveCoordinator({
       timers.delete(sessionId);
       if (generationOf(sessionId) !== token || active.has(sessionId)) return;
       generation.set(sessionId, token + 1);
-      clearRunId?.(sessionId);
+      const driveRunId = takeRunId?.(sessionId) || "";
       controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
       busy.delete(sessionId);
       controllers.delete(sessionId);
-      void stop(sessionId, { source: "drive_idle", cascade: false, keepTabs: false });
+      active.delete(sessionId);
+      void stop(sessionId, {
+        source: "drive_idle",
+        cascade: false,
+        keepTabs: false,
+        driveRunCaptured: true,
+        driveRunId,
+      });
     }, idleMs);
     (timer as unknown as { unref?: () => void }).unref?.();
     timers.set(sessionId, timer);
@@ -304,11 +287,11 @@ export function createExternalDriveCoordinator({
     active.delete(sessionId);
     controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
     controllers.delete(sessionId);
-    clearRunId?.(sessionId);
   }
 
   const coordinator = {
     isBusy(sessionId: string) { return busy.has(sessionId); },
+    hasActiveLease(sessionId: string) { return active.has(sessionId); },
     begin(sessionId: string, signal?: AbortSignal) {
       if (sessionId && busy.has(sessionId)) throw driveError("DRIVE_SESSION_BUSY", t("drive.sessionBusy"));
       const token = sessionId ? generationOf(sessionId) : 0;
@@ -348,9 +331,10 @@ export function createExternalDriveCoordinator({
       setRuntime(sessionId, { driveHandoffTabIds: [...current, id] });
     },
     noteStopped(sessionId: string, meta: Fields = {}) {
-      if (!sessionId) return;
-      if (meta.source === "drive_idle" && active.has(sessionId)) return;
+      if (!sessionId) return false;
+      if (meta.source === "drive_idle" && active.has(sessionId)) return false;
       invalidate(sessionId);
+      return true;
     },
   };
   activeCoordinator = coordinator;
@@ -358,5 +342,11 @@ export function createExternalDriveCoordinator({
 }
 
 export function noteExternalDriveStopped(sessionId: string, meta: Fields = {}) {
-  activeCoordinator?.noteStopped(sessionId, meta);
+  if (!activeCoordinator) return true;
+  return activeCoordinator.noteStopped(sessionId, meta);
+}
+
+/** True while a newer execute_tool lease owns this session. A late stop must not close its tabs. */
+export function externalDriveLeaseActive(sessionId: string) {
+  return Boolean(sessionId && activeCoordinator?.hasActiveLease(sessionId));
 }

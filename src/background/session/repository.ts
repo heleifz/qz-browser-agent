@@ -151,6 +151,12 @@ export function createSessionRepository({
       const sessions = await listMetadata();
       const id = normalizeSessionId(input.id) || genSessionId();
       const existing = sessions[id];
+      const requestedSource = normalizeSessionSource(input.source);
+      const currentSource = normalizeSessionSource(existing?.source);
+      if (existing && requestedSource === "external-drive" && currentSource !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      if (existing && requestedSource === "external-drive" && currentSource === "external-drive") return existing;
       const now = nowBeijingDateTime();
       const requestedParent = normalizeParentSessionId(input.parentSessionId);
       const parentSessionId = existing?.parentSessionId

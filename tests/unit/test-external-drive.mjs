@@ -11,6 +11,8 @@ import {
 import { t } from "../../src/shared/i18n/backend.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
+import { createSessionRepository } from "../../src/background/session/repository.js";
+import { createMemoryStorage } from "../support/memory-storage.mjs";
 
 globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
 
@@ -42,8 +44,11 @@ test("drive titles and request sentences stay on the existing tool", () => {
     assert.equal(parseDriveRequest({ name: "open_tab", args: { url: "https://example.com" } }).mode, "single");
     assert.equal(parseDriveRequest({ name: "document_fetch", args: {} }).mode, "single");
     assert.equal(parseDriveRequest({ name: "qingzhou_documents__document_fetch", args: {} }).mode, "single");
-    assert.equal(parseDriveRequest({ name: "read_dom", args: {} }).mode, "legacy");
-    assert.equal(parseDriveRequest({ name: "qingzhou_skill_author__create_skill", args: {} }).mode, "legacy");
+    assert.equal(parseDriveRequest({ name: "read_dom", args: {} }).mode, "single");
+    assert.equal(parseDriveRequest({ name: "qingzhou_skill_author__create_skill", args: {} }).mode, "single");
+    const readBatch = parseDriveRequest({ calls: [{ id: "a", name: "read_dom", args: {} }] });
+    assert.equal(readBatch.ok, true);
+    assert.equal(readBatch.mode, "batch");
     assert.equal(t("drive.sessionOccupied"), "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。");
   });
   withLanguage("en", () => {
@@ -158,12 +163,18 @@ test("a drive run id is current only until stop clears it", () => {
   assert.equal(supervisor.isRunCurrent("drive-session", first), true);
   assert.equal(supervisor.isRunCurrent("drive-session", ""), false);
   assert.equal(supervisor.isRunCurrent("drive-session", "run-permanent"), false);
-  supervisor.clearDriveRunId("drive-session");
-  assert.equal(supervisor.isRunCurrent("drive-session", first), false);
+  const taken = supervisor.takeDriveRunForRelease("drive-session");
+  assert.equal(taken, first);
+  assert.equal(supervisor.isRunCurrent("drive-session", first), true);
   const second = supervisor.mintDriveRunId("drive-session");
   assert.match(second, /^drive-/);
   assert.notEqual(second, first);
   assert.equal(supervisor.isRunCurrent("drive-session", second), true);
+  supervisor.finishDriveRunRelease("drive-session", first);
+  assert.equal(supervisor.isRunCurrent("drive-session", first), false);
+  assert.equal(supervisor.isRunCurrent("drive-session", second), true);
+  supervisor.clearDriveRunId("drive-session");
+  assert.equal(supervisor.isRunCurrent("drive-session", second), false);
 });
 
 test("one external session is created only when metadata is missing", async () => {
@@ -191,6 +202,11 @@ test("one external session is created only when metadata is missing", async () =
         return driveRuns.get(sessionId);
       },
       clearDriveRunId(sessionId) { driveRuns.set(sessionId, ""); },
+      takeDriveRunForRelease(sessionId) {
+        const current = driveRuns.get(sessionId) || "";
+        driveRuns.set(sessionId, "");
+        return current;
+      },
       getUserWait: () => null,
       resolveUserWait: () => false,
       rejectUserWait: () => false,
@@ -253,6 +269,14 @@ test("one external session is created only when metadata is missing", async () =
       && error.message === "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。",
   );
   assert.equal(executed.length, before);
+  await assert.rejects(
+    runtime.executeTool({ sessionId: "s1", name: "read_dom", args: { selector: "main" } }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && executed.length === before,
+  );
+  await assert.rejects(
+    runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && executed.length === before,
+  );
   assert.deepEqual(stored.s1, { runId: "agent-run", status: "running" });
   assert.equal(metadata.s1.title, "Session");
   assert.equal(metadata.s1.source, undefined);
@@ -329,6 +353,11 @@ test("idle stop reaches an external drive session and leaves an occupied session
           return driveRuns.get(sessionId);
         },
         clearDriveRunId(sessionId) { driveRuns.set(sessionId, ""); },
+        takeDriveRunForRelease(sessionId) {
+          const current = driveRuns.get(sessionId) || "";
+          driveRuns.set(sessionId, "");
+          return current;
+        },
         getUserWait: () => null,
         resolveUserWait: () => false,
         rejectUserWait: () => false,
@@ -380,4 +409,123 @@ test("idle stop reaches an external drive session and leaves an occupied session
   assert.equal(stops[0].meta.source, "drive_idle");
   assert.equal(stops[0].meta.keepTabs, false);
   assert.equal(metadata["drive-idle"].source, "external-drive");
+  assert.equal(stops[0].meta.driveRunCaptured, true);
+});
+
+test("drive refresh keeps an empty runtime tab instead of the previous one", async () => {
+  const stored = {
+    "drive-clear": {
+      workingTabId: 4,
+      workingUrl: "https://old.example",
+      workingTab: { id: 4, url: "https://old.example" },
+      visitedTaskSites: [{ url: "https://old.example" }],
+    },
+  };
+  const seen = [];
+  const metadata = {};
+  const driveRuns = new Map();
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: (sessionId, runId) => Boolean(runId) && driveRuns.get(sessionId) === runId,
+        mintDriveRunId(sessionId) {
+          if (!driveRuns.get(sessionId)) driveRuns.set(sessionId, `drive-${crypto.randomUUID()}`);
+          return driveRuns.get(sessionId);
+        },
+        clearDriveRunId(sessionId) { driveRuns.set(sessionId, ""); },
+        takeDriveRunForRelease(sessionId) {
+          const current = driveRuns.get(sessionId) || "";
+          driveRuns.set(sessionId, "");
+          return current;
+        },
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+      waitForRunObserved: async () => true,
+      getRuntimeOutput: async (_id, project = (value) => value) => project({}),
+      getLiveAgentEntry: async () => null,
+      setRuntime() {},
+      getStoredRuntime: (id) => stored[id] || null,
+      getLastMessages: async () => ({ messages: [] }),
+      getAgent: async () => null,
+      getTranscript: async () => [],
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      stop: async () => ({ stopped: true }),
+      getConversation: async () => [],
+      compactTranscriptEvent: (event) => event,
+      getRuntime: () => stored["drive-clear"],
+    },
+    userInputPermissions: { hasBrowserPermission: async () => false, locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } } },
+    tools: {
+      ready: async () => {},
+      canManageSessions: async () => true,
+      buildRunProfile: async ({ externalDrive }) => ({ externalDrive }),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames: () => {},
+      runtime: {
+        getSchemas: () => [],
+        async execute(name, _args, _signal, context) {
+          seen.push({
+            name,
+            workingTabId: context.workingTabId,
+            pageUrl: context.dynamicContext.pageUrl,
+            externalDrive: context.runProfile.externalDrive,
+          });
+          if (name === "open_tab") {
+            stored["drive-clear"] = { workingTabId: null, workingUrl: "", workingTab: null, visitedTaskSites: [] };
+            return { id: 9 };
+          }
+          return { ok: true };
+        },
+        getModelPolicy: () => null,
+        getBatchTabPolicy: (name) => name === "open_tab"
+          ? { kind: "create", parallel: true }
+          : { kind: "target", implicit: false, observation: true },
+        getTabAliases: () => ({}),
+        async commitToolResult() {},
+        async discardToolResult() {},
+      },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: () => "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    async dispatchSidepanel() {},
+  });
+  const batch = await runtime.executeTool({
+    sessionId: "drive-clear",
+    calls: [
+      { id: "open", name: "open_tab", args: { url: "https://example.com", tabAlias: "page" } },
+      { id: "read", name: "list_tabs", args: { tabRef: "page" } },
+    ],
+  });
+  assert.equal(batch.results[1].isError, false);
+  assert.equal(seen[0].workingTabId, 4);
+  assert.equal(seen[0].externalDrive, true);
+  assert.equal(seen[1].workingTabId, null);
+  assert.equal(seen[1].pageUrl, "");
+});
+
+test("a drive create does not take over an existing task", async () => {
+  const repository = createSessionRepository({ storage: createMemoryStorage() });
+  await repository.createMetadata({ id: "busy", title: "Busy" });
+  await assert.rejects(
+    repository.createMetadata({ id: "busy", title: "轻舟 · CLI", source: "external-drive", driveGroupTitle: "轻舟 · CLI" }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED"
+      && error.message === "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。",
+  );
+  const stored = await repository.getMetadata("busy");
+  assert.equal(stored.title, "Busy");
+  assert.equal(stored.source, undefined);
+  const created = await repository.createMetadata({
+    id: "fresh", title: "轻舟 · CLI", source: "external-drive", driveGroupTitle: "轻舟 · CLI", titleSource: "fixed",
+  });
+  assert.equal(created.source, "external-drive");
+  const again = await repository.createMetadata({ id: "fresh", title: "other", source: "external-drive" });
+  assert.equal(again.title, "轻舟 · CLI");
+  assert.equal(again.source, "external-drive");
 });

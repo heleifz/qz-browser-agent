@@ -700,6 +700,77 @@ export function createSessionTabs({
     for (const pending of pendingTabs.values()) if (pending.sessionId === id) await discardCreatedTab(pending.token);
   }
 
+  async function discardPendingTabsForRun(sessionId: string, runIds: readonly string[]) {
+    const wanted = new Set(runIds.filter(Boolean));
+    if (!wanted.size) return;
+    for (const [token, pending] of pendingAliases) {
+      if (pending.sessionId === sessionId && wanted.has(String(pending.runId || ""))) pendingAliases.delete(token);
+    }
+    for (const pending of [...pendingTabs.values()]) {
+      if (pending.sessionId === sessionId && wanted.has(String(pending.runId || ""))) await discardCreatedTab(pending.token);
+    }
+  }
+
+  /** Close or hand back only the tabs captured when this stop began. */
+  async function settleStoppedDriveTabs(sessionId: unknown, options: {
+    keepTabs?: boolean;
+    source?: string;
+    ownedTabIds?: unknown;
+    createdTabIds?: unknown;
+    driveHandoffTabIds?: unknown;
+    runIds?: readonly string[];
+    blocked?: () => boolean;
+  } = {}) {
+    const id = normalizeSessionId(sessionId);
+    if (!id) return { closed: [] as number[], released: false };
+    if (options.blocked?.()) return { closed: [] as number[], released: false };
+    const snapshotOwned = new Set(normalizeSessionTabIds(options.ownedTabIds));
+    const snapshotCreated = new Set(normalizeSessionTabIds(options.createdTabIds));
+    const snapshotHandoff = new Set(normalizeSessionTabIds(options.driveHandoffTabIds));
+    const released = new Set([...snapshotOwned, ...snapshotCreated, ...snapshotHandoff]);
+    const closed: number[] = [];
+    if (!options.keepTabs) {
+      await discardPendingTabsForRun(id, options.runIds || []);
+      if (options.blocked?.()) return { closed, released: false };
+      for (const tabId of snapshotCreated) {
+        if (snapshotHandoff.has(tabId)) continue;
+        try {
+          await tabsApi.remove(tabId);
+          closed.push(tabId);
+        } catch { /* The tab is already gone. */ }
+      }
+    }
+    const runtime = supervisor.getRuntime(id) || {};
+    const owned = getOwnedTabIds(runtime).filter(tabId => !released.has(tabId));
+    const created = normalizeSessionTabIds(runtime.createdTabIds).filter(tabId => !snapshotCreated.has(tabId));
+    const handoff = normalizeSessionTabIds(runtime.driveHandoffTabIds).filter(tabId => !released.has(tabId));
+    const workingId = Number(runtime.workingTabId);
+    const clearWorking = Number.isInteger(workingId) && released.has(workingId);
+    setRuntime(id, {
+      ...(clearWorking
+        ? {
+            workingTab: null,
+            workingTabId: null,
+            workingUrl: "",
+            workingTitle: "",
+            workingTabSource: options.source || "drive_tabs_released",
+            workingTabUpdatedAt: timestamp(),
+          }
+        : {}),
+      ownedTabIds: owned,
+      sessionTabIds: owned,
+      createdTabIds: created,
+      driveHandoffTabIds: handoff,
+      tabAliases: normalizeTabAliases(runtime.tabAliases, owned),
+      ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
+      ownedTabsClosedAt: timestamp(),
+      ownedTabsCloseSource: options.source || "stop_session",
+    });
+    broadcast({ type: "sessions_changed", action: "session_tabs", sessionId: id });
+    scheduleGroupSync(id);
+    return { closed, released: true };
+  }
+
   async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal") {
     await discardPendingTabs(sessionId);
     if (!(await shouldAutoCloseOwnedTabs(sessionId))) return { closed: [], skipped: true };
@@ -1098,6 +1169,7 @@ export function createSessionTabs({
     restoreOwnedTabs,
     closeOwnedTabsAfterTerminal,
     closeOwnedTabs,
+    settleStoppedDriveTabs,
     getWorkingTabContext,
     getOwnedTabContexts,
     activateWorkingTab,

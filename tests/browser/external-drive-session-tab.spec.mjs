@@ -1,9 +1,8 @@
 import { expect, test } from "./fixtures.mjs";
 
-const absentShot = "/cursor/stores/bc-fbe6c102-9a7a-565b-b702-284eaf6df74d/media/drive-session-tab-absent.png";
-const presentShot = "/cursor/stores/bc-fbe6c102-9a7a-565b-b702-284eaf6df74d/media/drive-session-tab.png";
-
-test("the task list hides the external drive tab until a drive session exists", async ({ page }) => {
+test("the task list hides the external drive tab until a drive session exists", async ({ page }, testInfo) => {
+  const absentShot = testInfo.outputPath("drive-session-tab-absent.png");
+  const presentShot = testInfo.outputPath("drive-session-tab.png");
   await page.setViewportSize({ width: 420, height: 360 });
   await page.goto("/tests/git-skill-source/probe.html");
   await page.evaluate(async () => {

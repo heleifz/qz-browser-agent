@@ -167,20 +167,57 @@ export function validateMcpToolInput(name, input = {}) {
   }
 }
 
+function imageEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.images)) return [];
+  return value.images.filter(image => image && typeof image.data === "string" && typeof image.mimeType === "string");
+}
+
+function withoutImages(value) {
+  if (!imageEntries(value).length) return value;
+  const { images: _images, ...rest } = value;
+  return rest;
+}
+
+function imageBlock(image, callId) {
+  return {
+    type: "image",
+    data: image.data,
+    mimeType: image.mimeType,
+    ...(callId ? { _meta: { id: callId } } : {}),
+  };
+}
+
 export function resultToContent(result) {
   if (result == null) return [];
   if (Array.isArray(result)) return result.flatMap(resultToContent);
-  const images = result && typeof result === "object" && Array.isArray(result.images)
-    ? result.images.filter(image => image && typeof image.data === "string" && typeof image.mimeType === "string")
-    : [];
-  if (images.length) {
-    const { images: _images, ...rest } = result;
-    return [
-      { type: "text", text: JSON.stringify(rest, null, 2) },
-      ...images.map(image => ({ type: "image", data: image.data, mimeType: image.mimeType })),
-    ];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
+  const nested = [];
+  let body = result;
+  if (Array.isArray(result.results)) {
+    body = {
+      ...result,
+      results: result.results.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const callId = String(item.id || "");
+        for (const image of imageEntries(item)) nested.push(imageBlock(image, callId));
+        const innerImages = imageEntries(item.result);
+        for (const image of innerImages) nested.push(imageBlock(image, callId));
+        const next = withoutImages(item);
+        return innerImages.length && next.result && typeof next.result === "object"
+          ? { ...next, result: withoutImages(next.result) }
+          : next;
+      }),
+    };
   }
-  return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }];
+  const top = imageEntries(body);
+  if (!top.length && !nested.length) {
+    return [{ type: "text", text: JSON.stringify(body, null, 2) }];
+  }
+  return [
+    { type: "text", text: JSON.stringify(withoutImages(body), null, 2) },
+    ...top.map(image => imageBlock(image, "")),
+    ...nested,
+  ];
 }
 
 export function createMcpServer(state, { clientName = "" } = {}) {

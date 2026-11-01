@@ -31,7 +31,7 @@ type Transcript = ReturnType<typeof createSessionTranscript>;
 type Artifacts = ReturnType<typeof createSessionArtifacts>;
 interface McpSessionPort {
   normalizeId(value: unknown): string; requireId(value: unknown, operation: string): string;
-  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent" | "getUserWait" | "mintDriveRunId" | "clearDriveRunId">;
+  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent" | "getUserWait" | "mintDriveRunId" | "clearDriveRunId" | "takeDriveRunForRelease">;
   submitMessage: Commands["submitSessionMessageRuntime"]; waitForRunObserved: Commands["waitForSessionRunObserved"];
   getRuntimeOutput: Commands["getSessionRuntimeStateForOutput"]; getRuntime: Commands["getSessionRuntimeState"];
   getLiveAgentEntry: Host["getLiveEntry"]; getAgent: Host["getAgent"]; setRuntime: Runtime["set"];
@@ -44,7 +44,7 @@ interface McpSessionPort {
 interface McpToolsPort {
   ready?: Promise<unknown> | ((reason: string) => Promise<unknown>);
   canManageSessions(id: string): Promise<boolean>;
-  buildRunProfile(input: { sessionId: string; canManageSessions: boolean }): Promise<RunProfile> | RunProfile;
+  buildRunProfile(input: { sessionId: string; canManageSessions: boolean; externalDrive?: boolean }): Promise<RunProfile> | RunProfile;
   loadedSkillNames: Runtime["loadedSkillNames"]; recordLoadedSkillNames: Runtime["recordLoadedSkillNames"];
   runtime: {
     getSchemas(options: { runProfile: RunProfile; context: ToolContext; loadedPluginSkillNames: string[] }): { type: string; function: { name: string; description: string; parameters: object } }[];
@@ -159,7 +159,7 @@ export function createMcpRuntime({
     getRuntime: sessionId => readRuntime(sessionId),
     setRuntime: (sessionId, patch) => sessions.setRuntime(sessionId, patch),
     mintRunId: sessionId => sessions.supervisor.mintDriveRunId(sessionId),
-    clearRunId: sessionId => { sessions.supervisor.clearDriveRunId(sessionId); },
+    takeRunId: sessionId => sessions.supervisor.takeDriveRunForRelease(sessionId),
   });
 
   function readRuntime(sessionId: string): Fields {
@@ -169,12 +169,9 @@ export function createMcpRuntime({
     return runtime && typeof runtime === "object" ? runtime as Fields : {};
   }
 
-  function resolveAgentRunId(sessionId: string, params: Fields, runtime: Fields) {
-    const requestedRunId = String(params.runId || "").trim();
-    if (requestedRunId) return requestedRunId;
-    const runtimeRunId = String(runtime.runId || "").trim();
-    if (runtimeRunId && sessions.supervisor.isRunCurrent(sessionId, runtimeRunId)) return runtimeRunId;
-    return "";
+  function driveTabId(value: unknown) {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
   }
 
   function toolContext(sessionId: string, runId: string, runProfile: RunProfile, params: Fields, runtime: Fields): ToolContext {
@@ -202,12 +199,12 @@ export function createMcpRuntime({
       ...base,
       sessionId,
       runId: String(base.runId || ""),
-      workingTabId: Number(runtime.workingTabId) || base.workingTabId || null,
+      workingTabId: driveTabId(runtime.workingTabId),
       dynamicContext: {
         ...dynamic,
-        workingTab: runtime.workingTab ?? dynamic.workingTab ?? null,
-        pageUrl: String(runtime.workingUrl || dynamic.pageUrl || ""),
-        taskSiteTabs: runtime.visitedTaskSites || dynamic.taskSiteTabs || [],
+        workingTab: runtime.workingTab ?? null,
+        pageUrl: String(runtime.workingUrl ?? ""),
+        taskSiteTabs: Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [],
       },
     };
   }
@@ -358,7 +355,9 @@ export function createMcpRuntime({
     await waitForToolsReady("mcp_list_tools");
     const sessionId = sessions.normalizeId(params.sessionId);
     const canManageSessions = await tools.canManageSessions(sessionId);
-    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
+    const listedMetadata = sessionId ? await sessions.listMetadata() : {};
+    const externalDrive = listedMetadata[sessionId]?.source === "external-drive";
+    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
     const runtime = sessions.getRuntime(sessionId);
     const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
     const schemas = tools.runtime.getSchemas({
@@ -390,18 +389,36 @@ export function createMcpRuntime({
   }
 
   async function ensureDriveSession(sessionId: string, clientName: unknown) {
-    if (!sessionId || !sessions.createMetadata) return;
+    if (!sessionId) return "";
     const metadata = await sessions.listMetadata();
-    if (metadata[sessionId]) return;
+    const existing = metadata[sessionId];
+    if (existing) {
+      if (String(existing.source || "") !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      return "external-drive";
+    }
+    if (!sessions.createMetadata) return "";
     const title = driveGroupTitle(clientName);
-    await sessions.createMetadata({
-      id: sessionId,
-      title,
-      titleSource: "fixed",
-      source: "external-drive",
-      driveGroupTitle: title,
-      firstMessage: "",
-    });
+    try {
+      await sessions.createMetadata({
+        id: sessionId,
+        title,
+        titleSource: "fixed",
+        source: "external-drive",
+        driveGroupTitle: title,
+        firstMessage: "",
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" ? String((error as { code?: unknown }).code || "") : "";
+      if (code === "DRIVE_SESSION_OCCUPIED") throw error;
+      throw error;
+    }
+    const created = await sessions.listMetadata();
+    if (String(created[sessionId]?.source || "") !== "external-drive") {
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+    }
+    return "external-drive";
   }
 
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
@@ -409,44 +426,20 @@ export function createMcpRuntime({
     if (!parsed.ok) throw parsed.error;
     signal?.throwIfAborted();
     const sessionId = sessions.normalizeId(params.sessionId);
-    const metadata = sessionId ? await sessions.listMetadata() : {};
-    const existing = sessionId ? metadata[sessionId] : undefined;
-    let source = String(existing?.source || "");
-    if (parsed.mode !== "legacy" && existing && source !== "external-drive") {
-      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
-    }
-    if (parsed.mode === "legacy" && source !== "external-drive") {
-      await waitForToolsReady("mcp_execute_tool");
-      signal?.throwIfAborted();
-      const canManageSessions = await tools.canManageSessions(sessionId);
-      signal?.throwIfAborted();
-      const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
-      signal?.throwIfAborted();
-      const runtime = readRuntime(sessionId);
-      const runId = resolveAgentRunId(sessionId, params, runtime);
-      const context = toolContext(sessionId, runId, runProfile, params, runtime);
-      const result = await tools.runtime.execute(parsed.name, plainObject(params.args), signal, context);
-      signal?.throwIfAborted();
-      rememberLoadedSkill(sessionId, parsed.name, result);
-      return { toolName: parsed.name, sessionId, runId: runId || null, result };
-    }
-    if (parsed.mode !== "legacy" && sessionId && !existing) {
-      await ensureDriveSession(sessionId, params.clientName);
-      source = "external-drive";
-    }
+    const source = await ensureDriveSession(sessionId, params.clientName);
     signal?.throwIfAborted();
     await waitForToolsReady("mcp_execute_tool");
     signal?.throwIfAborted();
     const canManageSessions = await tools.canManageSessions(sessionId);
     signal?.throwIfAborted();
-    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
+    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive: source === "external-drive" });
     signal?.throwIfAborted();
     const leased = source === "external-drive";
     const lease = leased ? drive.begin(sessionId, signal) : null;
     const runtime = readRuntime(sessionId);
     const runId = leased ? String(lease?.driveRunId || "") : "";
     const context = toolContext(sessionId, runId, runProfile, params, runtime);
-    const timeoutSignal = parsed.mode !== "legacy" && parsed.timeoutSeconds
+    const timeoutSignal = parsed.timeoutSeconds
       ? AbortSignal.timeout(parsed.timeoutSeconds * 1000)
       : null;
     const baseSignal = lease?.signal || signal;
@@ -454,13 +447,12 @@ export function createMcpRuntime({
       ? AbortSignal.any([baseSignal, timeoutSignal])
       : timeoutSignal || baseSignal;
     try {
-      if (parsed.mode === "legacy" || parsed.mode === "single") {
+      if (parsed.mode === "single") {
         const name = parsed.name;
         const result = await tools.runtime.execute(name, plainObject(params.args), callSignal, context);
         signal?.throwIfAborted();
         callSignal?.throwIfAborted();
         rememberLoadedSkill(sessionId, name, result);
-        if (parsed.mode === "legacy") return { toolName: name, sessionId, runId: runId || null, result };
         const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null);
         const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
         return projected.images.length ? { ...body, images: projected.images } : body;

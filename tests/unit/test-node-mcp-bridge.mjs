@@ -457,6 +457,15 @@ test("MCP result content retains FastMCP list/string/null serialization", () => 
   assert.deepEqual(resultToContent(["plain", { value: 1 }, null]), [
     { type: "text", text: "plain" }, { type: "text", text: '{\n  "value": 1\n}' },
   ]);
+  const batch = resultToContent({
+    results: [
+      { id: "open", name: "open_tab", result: { id: 1 }, isError: false },
+      { id: "shot", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: "YQ==" }] },
+    ],
+  });
+  assert.equal(batch[0].type, "text");
+  assert.equal(batch[0].text.includes("YQ=="), false);
+  assert.deepEqual(batch[1], { type: "image", data: "YQ==", mimeType: "image/png", _meta: { id: "shot" } });
 });
 
 test("MCP session deletion cancels pending work and invalidates the old session", async t => {

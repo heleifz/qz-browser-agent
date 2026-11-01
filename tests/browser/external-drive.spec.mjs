@@ -144,7 +144,8 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
       sessionId: keptId, timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
-    await expect.poll(() => tabExists(environment.page, keptTab), { timeout: 15_000 }).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(await tabExists(environment.page, keptTab)).toBe(true);
 
     const userTab = await environment.page.evaluate(async (url) => {
       const tab = await chrome.tabs.create({ url, active: false });

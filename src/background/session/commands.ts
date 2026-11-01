@@ -1,5 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
-import { noteExternalDriveStopped } from "../mcp/external-drive.js";
+import { externalDriveLeaseActive, noteExternalDriveStopped } from "../mcp/external-drive.js";
 import type { Agent, AgentEvent, DynamicContext } from "../agent/agent.js";
 import type { createSessionSupervisor, SessionTask } from "./supervisor.js";
 import type { createSessionRepository } from "./repository.js";
@@ -52,7 +52,7 @@ interface SessionCommandsDependencies {
   artifacts: Readonly<Pick<Artifacts,
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
   >>;
-  tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal">
+  tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal" | "settleStoppedDriveTabs">
     & Partial<Pick<Tabs, "restoreOwnedTabs">>>;
   sessionRuntimeReady: Promise<unknown>;
   sessionSupervisor: ReturnType<typeof createSessionSupervisor<Agent>>;
@@ -105,7 +105,7 @@ import { extractUserMessageImages } from "../../shared/session/conversation-edit
 import { summarizeQueuedUserMessage } from "../agent/message-queue.js";
 import { createKeyedSerialQueue } from "../internal/serial-queue.js";
 import { formatTraceFields, trace } from "../trace.js";
-import { getOwnedTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
+import { getOwnedTabIds, normalizeSessionTabIds, normalizeVisitedTaskSites, normalizeWorkingTab } from "./tabs.js";
 import {
   buildNextSessionGoal,
   buildNextSessionTracker,
@@ -1891,13 +1891,33 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
   return result;
 }
 
+function snapshotStoppedTabs(runtime: Fields) {
+  return {
+    ownedTabIds: getOwnedTabIds(runtime),
+    createdTabIds: normalizeSessionTabIds(runtime.createdTabIds),
+    driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds),
+  };
+}
+
 async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
-  await sessionRuntimeReady;
-  signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
+  const driveRunId = meta.driveRunCaptured === true
+    ? String(meta.driveRunId || "")
+    : sessionSupervisor.takeDriveRunForRelease(id);
+  const stoppedTabs = snapshotStoppedTabs(sessionSupervisor.getRuntime(id) || {});
+  await sessionRuntimeReady;
+  if (signal?.aborted) {
+    if (driveRunId) {
+      await releaseRunResources({ sessionId: id, runId: driveRunId, eventType: "aborted" }).catch((error) => {
+        console.warn("[轻舟] release drive run failed:", errorMessage(error));
+      });
+      sessionSupervisor.finishDriveRunRelease(id, driveRunId);
+    }
+    signal.throwIfAborted();
+  }
 
-  const result = await stopSingleSessionRuntime(id, meta, signal);
+  const result = await stopSingleSessionRuntime(id, meta, signal, { driveRunId, stoppedTabs });
   const cascade = meta.cascade !== false;
   const childResults = [];
   if (cascade) {
@@ -1921,10 +1941,22 @@ async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?:
   };
 }
 
-async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, early?: {
+  driveRunId: string;
+  stoppedTabs: { ownedTabIds: number[]; createdTabIds: number[]; driveHandoffTabIds: number[] };
+}) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
-  noteExternalDriveStopped(id, meta);
+  const captured = early || {
+    driveRunId: sessionSupervisor.takeDriveRunForRelease(id),
+    stoppedTabs: snapshotStoppedTabs(sessionSupervisor.getRuntime(id) || {}),
+  };
+  const invalidated = noteExternalDriveStopped(id, meta);
+  const driveRunIds = captured.driveRunId ? [captured.driveRunId] : [];
+  if (invalidated) {
+    const extra = sessionSupervisor.takeDriveRunForRelease(id);
+    if (extra && !driveRunIds.includes(extra)) driveRunIds.push(extra);
+  }
 
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
@@ -2011,10 +2043,28 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
   const closeStoppedTabs = () => {
     void (async () => {
+      for (const runId of driveRunIds) {
+        try {
+          await releaseRunResources({ sessionId: id, runId, eventType: "aborted" });
+        } catch (error) {
+          console.warn("[轻舟] release drive run failed:", errorMessage(error));
+        } finally {
+          sessionSupervisor.finishDriveRunRelease(id, runId);
+        }
+      }
       const sessions = await getSessions();
       const external = sessions[id]?.source === "external-drive";
       if (!external && !hadRuntime) return;
-      if (external && meta.keepTabs === true) return;
+      if (external) {
+        await sessionTabs.settleStoppedDriveTabs(id, {
+          keepTabs: meta.keepTabs === true,
+          source: "stop_session",
+          runIds: driveRunIds,
+          blocked: () => externalDriveLeaseActive(id),
+          ...captured.stoppedTabs,
+        });
+        return;
+      }
       await sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session");
     })().catch((err) => {
       console.debug("[轻舟] close stopped session owned tabs failed:", errorMessage(err));
