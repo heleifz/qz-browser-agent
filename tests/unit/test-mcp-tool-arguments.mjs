@@ -20,7 +20,7 @@ test("advertised MCP schemas reject unknown top-level arguments before dispatch"
   }
 });
 
-test("nested tool arguments, answers, settings patches and raw method params remain extensible", () => {
+test("nested tool arguments, answers, settings patches and raw method params remain extensible", async () => {
   for (const [name, input, field] of [
     ["qingzhou_execute_tool", { name: "custom_tool", args: { customField: { nested: [1, "two"] } } }, "args"],
     ["qingzhou_respond_to_user_input", { sessionId: "task", waitId: "wait", action: "submit", answers: { city: "杭州", choices: ["a"] } }, "answers"],
@@ -31,4 +31,11 @@ test("nested tool arguments, answers, settings patches and raw method params rem
   assert.equal(args.clientId, "selected-browser");
   assert.equal(args.firstMessage, "Do this task.");
   assert.equal(args.title, "");
+  const drive = validateMcpToolInput("qingzhou_execute_tool", { name: "list_tabs", args: {} });
+  assert.equal(Object.hasOwn(drive, "sessionId"), false);
+  assert.equal(Object.hasOwn(drive, "runId"), false);
+  await assert.rejects(
+    executeMcpTool({ callExtension: () => assert.fail("unknown runId must not reach Chrome") }, "qingzhou_execute_tool", { name: "list_tabs", runId: "run-1" }),
+    /additional propert/i,
+  );
 });

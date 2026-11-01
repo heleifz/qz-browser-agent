@@ -1,5 +1,13 @@
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
+import { t } from "../../shared/i18n/backend.js";
+import {
+  createExternalDriveCoordinator,
+  driveGroupTitle,
+  parseDriveRequest,
+  projectDriveResult,
+  runDriveCalls,
+} from "./external-drive.js";
 import { summarizeSessionUsage } from "../../shared/session/session-usage.js";
 import type { createSessionCommands } from "../session/commands.js";
 import type { createSessionAgentHost } from "../session/agent-host.js";
@@ -12,6 +20,7 @@ import type { Agent } from "../agent/agent.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { SkillRecord, SkillResource } from "../../shared/skills/skill-utils.js";
 import type { RunProfile } from "../agent/run-profile.js";
+import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ResponsePort } from "../transports/sidepanel.js";
 type Fields = Record<string, unknown>;
@@ -22,21 +31,29 @@ type Transcript = ReturnType<typeof createSessionTranscript>;
 type Artifacts = ReturnType<typeof createSessionArtifacts>;
 interface McpSessionPort {
   normalizeId(value: unknown): string; requireId(value: unknown, operation: string): string;
-  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent" | "getUserWait">;
+  supervisor: Pick<ReturnType<typeof createSessionSupervisor<Agent>>, "resolveUserWait" | "rejectUserWait" | "isRunCurrent" | "getUserWait" | "mintDriveRunId" | "clearDriveRunId" | "takeDriveRunForRelease">;
   submitMessage: Commands["submitSessionMessageRuntime"]; waitForRunObserved: Commands["waitForSessionRunObserved"];
   getRuntimeOutput: Commands["getSessionRuntimeStateForOutput"]; getRuntime: Commands["getSessionRuntimeState"];
   getLiveAgentEntry: Host["getLiveEntry"]; getAgent: Host["getAgent"]; setRuntime: Runtime["set"];
   getLastMessages: Commands["getLastMessagesRuntime"]; getTranscript: Transcript["get"]; getConversation: Transcript["getConversation"];
   listMetadata(): Promise<Record<string, SessionMetadata>>; compactTranscriptEvent: Commands["compactTranscriptEvent"];
+  createMetadata?(input: Fields): Promise<unknown>;
+  stop?(sessionId: string, meta?: Fields, signal?: AbortSignal): Promise<unknown>;
+  getStoredRuntime?(sessionId: string): Fields | null;
 }
 interface McpToolsPort {
   ready?: Promise<unknown> | ((reason: string) => Promise<unknown>);
   canManageSessions(id: string): Promise<boolean>;
-  buildRunProfile(input: { sessionId: string; canManageSessions: boolean }): Promise<RunProfile> | RunProfile;
+  buildRunProfile(input: { sessionId: string; canManageSessions: boolean; externalDrive?: boolean }): Promise<RunProfile> | RunProfile;
   loadedSkillNames: Runtime["loadedSkillNames"]; recordLoadedSkillNames: Runtime["recordLoadedSkillNames"];
   runtime: {
     getSchemas(options: { runProfile: RunProfile; context: ToolContext; loadedPluginSkillNames: string[] }): { type: string; function: { name: string; description: string; parameters: object } }[];
     execute(name: string, args: Fields, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
+    getModelPolicy?(name: string): { projectResult?(result: unknown): unknown } | null | undefined;
+    getBatchTabPolicy?(name: string, args: unknown): ToolBatchTabPolicy | null;
+    getTabAliases?(sessionId: string): Record<string, number>;
+    commitToolResult?(result: unknown, signal: AbortSignal, context: ToolContext): Promise<unknown>;
+    discardToolResult?(result: unknown, context: ToolContext): Promise<unknown>;
   };
 }
 interface McpSkillsPort {
@@ -49,6 +66,7 @@ interface McpOptions {
   artifacts: Pick<Artifacts, "collect" | "empty">; trace: { get(): Promise<readonly unknown[]> };
   dispatchSidepanel(message: Fields, port: ResponsePort): Promise<unknown>;
   storageKey?(): string;
+  driveIdleMs?: number;
   userInputPermissions: Pick<Parameters<typeof createSessionUserInput>[0], "hasBrowserPermission" | "locationConsent">;
 }
 import {
@@ -77,6 +95,7 @@ export function createMcpRuntime({
   dispatchSidepanel,
   userInputPermissions,
   storageKey = () => "",
+  driveIdleMs,
 }: McpOptions) {
   if (typeof dispatchSidepanel !== "function") throw new TypeError("dispatchSidepanel is required");
 
@@ -133,6 +152,62 @@ export function createMcpRuntime({
     reject: sessions.supervisor.rejectUserWait,
     ...userInputPermissions,
   });
+
+  const drive = createExternalDriveCoordinator({
+    ...(driveIdleMs == null ? {} : { idleMs: driveIdleMs }),
+    stop: (sessionId, meta) => sessions.stop?.(sessionId, meta || {}),
+    getRuntime: sessionId => readRuntime(sessionId),
+    setRuntime: (sessionId, patch) => sessions.setRuntime(sessionId, patch),
+    mintRunId: sessionId => sessions.supervisor.mintDriveRunId(sessionId),
+    takeRunId: sessionId => sessions.supervisor.takeDriveRunForRelease(sessionId),
+  });
+
+  function readRuntime(sessionId: string): Fields {
+    const stored = sessionId ? sessions.getStoredRuntime?.(sessionId) : null;
+    if (stored && typeof stored === "object") return stored;
+    const runtime = sessionId ? sessions.getRuntime(sessionId) : null;
+    return runtime && typeof runtime === "object" ? runtime as Fields : {};
+  }
+
+  function driveTabId(value: unknown) {
+    const id = Number(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  }
+
+  function toolContext(sessionId: string, runId: string, runProfile: RunProfile, params: Fields, runtime: Fields): ToolContext {
+    const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
+    const dynamicContext = { ...plainObject(params.dynamicContext, {}) };
+    dynamicContext.workingTab = runtime.workingTab || null;
+    dynamicContext.pageUrl = runtime.workingUrl || "";
+    dynamicContext.taskSiteTabs = runtime.visitedTaskSites || [];
+    return {
+      sessionId,
+      runId,
+      workingTabId: Number(runtime.workingTabId) || null,
+      runProfile,
+      source: "mcp_bridge",
+      dynamicContext,
+      loadedPluginSkillNames: loadedNames,
+    };
+  }
+
+  function refreshDriveContext(base: Fields): Fields {
+    const sessionId = String(base.sessionId || "");
+    const runtime = readRuntime(sessionId);
+    const dynamic = plainObject(base.dynamicContext);
+    return {
+      ...base,
+      sessionId,
+      runId: String(base.runId || ""),
+      workingTabId: driveTabId(runtime.workingTabId),
+      dynamicContext: {
+        ...dynamic,
+        workingTab: runtime.workingTab ?? null,
+        pageUrl: String(runtime.workingUrl ?? ""),
+        taskSiteTabs: Array.isArray(runtime.visitedTaskSites) ? runtime.visitedTaskSites : [],
+      },
+    };
+  }
 
   async function sendMessage(params: Fields = {}, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -276,7 +351,11 @@ export function createMcpRuntime({
     await waitForToolsReady("mcp_list_tools");
     const sessionId = sessions.normalizeId(params.sessionId);
     const canManageSessions = await tools.canManageSessions(sessionId);
-    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
+    const listedMetadata = sessionId ? await sessions.listMetadata() : {};
+    const known = sessionId ? listedMetadata[sessionId] : undefined;
+    // A session that does not exist yet can only be opened by direct drive.
+    const externalDrive = !known || known.source === "external-drive";
+    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
     const runtime = sessions.getRuntime(sessionId);
     const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
     const schemas = tools.runtime.getSchemas({
@@ -301,46 +380,109 @@ export function createMcpRuntime({
     };
   }
 
+  function rememberLoadedSkill(sessionId: string, name: string, result: unknown) {
+    if (name !== "load_skill" || !result || typeof result !== "object" || plainObject(result).error) return;
+    const value = plainObject(result);
+    tools.recordLoadedSkillNames(sessionId, [value.name, value.displayName]);
+  }
+
+  async function ensureDriveSession(sessionId: string, clientName: unknown) {
+    if (!sessionId) return "";
+    const metadata = await sessions.listMetadata();
+    const existing = metadata[sessionId];
+    if (existing) {
+      if (String(existing.source || "") !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      return "external-drive";
+    }
+    if (!sessions.createMetadata) return "";
+    const title = driveGroupTitle(clientName);
+    try {
+      await sessions.createMetadata({
+        id: sessionId,
+        title,
+        titleSource: "fixed",
+        source: "external-drive",
+        driveGroupTitle: title,
+        firstMessage: "",
+      });
+    } catch (error) {
+      const code = error && typeof error === "object" ? String((error as { code?: unknown }).code || "") : "";
+      if (code === "DRIVE_SESSION_OCCUPIED") throw error;
+      throw error;
+    }
+    const created = await sessions.listMetadata();
+    if (String(created[sessionId]?.source || "") !== "external-drive") {
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+    }
+    return "external-drive";
+  }
+
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
-    signal?.throwIfAborted();
-    const name = String(params.name || params.toolName || "").trim();
-    if (!name) throw new Error("execute_tool requires name");
-    await waitForToolsReady("mcp_execute_tool");
+    const parsed = parseDriveRequest(params);
+    if (!parsed.ok) throw parsed.error;
     signal?.throwIfAborted();
     const sessionId = sessions.normalizeId(params.sessionId);
+    const source = await ensureDriveSession(sessionId, params.clientName);
+    signal?.throwIfAborted();
+    await waitForToolsReady("mcp_execute_tool");
+    signal?.throwIfAborted();
     const canManageSessions = await tools.canManageSessions(sessionId);
     signal?.throwIfAborted();
-    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions });
+    const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive: source === "external-drive" });
     signal?.throwIfAborted();
-    const runtime = sessions.getRuntime(sessionId);
-    const requestedRunId = String(params.runId || "").trim();
-    const runtimeRunId = String(runtime.runId || "").trim();
-    const runId = requestedRunId || (
-      runtimeRunId
-      && typeof sessions.supervisor?.isRunCurrent === "function"
-      && sessions.supervisor.isRunCurrent(sessionId, runtimeRunId)
-        ? runtimeRunId
-        : ""
-    );
-    const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
-    const dynamicContext = { ...plainObject(params.dynamicContext, {}) };
-    dynamicContext.workingTab = runtime.workingTab || null;
-    dynamicContext.pageUrl = runtime.workingUrl || "";
-    dynamicContext.taskSiteTabs = runtime.visitedTaskSites || [];
-    const result = await tools.runtime.execute(name, plainObject(params.args), signal, {
-      sessionId,
-      runId,
-      workingTabId: runtime.workingTabId || null,
-      runProfile,
-      source: "mcp_bridge",
-      dynamicContext,
-      loadedPluginSkillNames: loadedNames,
-    });
-    signal?.throwIfAborted();
-    if (name === "load_skill" && result && typeof result === "object" && !plainObject(result).error) {
-      tools.recordLoadedSkillNames(sessionId, [plainObject(result).name, plainObject(result).displayName]);
+    const leased = source === "external-drive";
+    const lease = leased ? drive.begin(sessionId, signal) : null;
+    const runtime = readRuntime(sessionId);
+    const runId = leased ? String(lease?.driveRunId || "") : "";
+    const context = toolContext(sessionId, runId, runProfile, params, runtime);
+    const timeoutSignal = parsed.timeoutSeconds
+      ? AbortSignal.timeout(parsed.timeoutSeconds * 1000)
+      : null;
+    const baseSignal = lease?.signal || signal;
+    const callSignal = timeoutSignal && baseSignal
+      ? AbortSignal.any([baseSignal, timeoutSignal])
+      : timeoutSignal || baseSignal;
+    try {
+      if (parsed.mode === "single") {
+        const name = parsed.name;
+        const result = await tools.runtime.execute(name, plainObject(params.args), callSignal, context);
+        signal?.throwIfAborted();
+        callSignal?.throwIfAborted();
+        rememberLoadedSkill(sessionId, name, result);
+        const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null);
+        const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
+        return projected.images.length ? { ...body, images: projected.images } : body;
+      }
+      const batch = await runDriveCalls(parsed.calls, {
+        execute: (name, args, batchSignal, batchContext) => tools.runtime.execute(name, plainObject(args), batchSignal, batchContext as ToolContext),
+        getBatchTabPolicy: (name, args) => tools.runtime.getBatchTabPolicy?.(name, args) ?? null,
+        getModelPolicy: name => tools.runtime.getModelPolicy?.(name) ?? null,
+        commitToolResult: tools.runtime.commitToolResult
+          ? (result, commitSignal, commitContext) => tools.runtime.commitToolResult!(result, commitSignal, commitContext as ToolContext)
+          : undefined,
+        discardToolResult: tools.runtime.discardToolResult
+          ? (result, discardContext) => tools.runtime.discardToolResult!(result, discardContext as ToolContext)
+          : undefined,
+        aliases: tools.runtime.getTabAliases?.(sessionId) || {},
+        context,
+        refreshContext: refreshDriveContext,
+        signal: callSignal ?? new AbortController().signal,
+        maxInFlight: parsed.maxCalls,
+      });
+      signal?.throwIfAborted();
+      callSignal?.throwIfAborted();
+      for (const item of batch.results) if (!item.isError) rememberLoadedSkill(sessionId, item.name, item.result);
+      return { sessionId, runId: runId || null, results: batch.results };
+    } catch (error) {
+      if (timeoutSignal?.aborted && !signal?.aborted) {
+        throw Object.assign(new Error(t("drive.batchTimeout")), { code: "DRIVE_BATCH_TIMEOUT" });
+      }
+      throw error;
+    } finally {
+      lease?.release();
     }
-    return { toolName: name, sessionId, runId: runId || null, result };
   }
 
   async function listAvailableSkills(params: Fields = {}) {
@@ -444,6 +586,7 @@ export function createMcpRuntime({
     getSnapshot,
     listTools,
     executeTool,
+    drive,
     listSkills: listAvailableSkills,
     getSkill,
     getSkillResource,

@@ -223,12 +223,12 @@ assert.match(
 );
 assert.match(
   mcpRuntimeSource,
-  /async function executeTool[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*loadedPluginSkillNames/,
+  /function toolContext[\s\S]*tools\.loadedSkillNames\(sessionId,\s*params\.loadedPluginSkillNames \|\| \[\]\)[\s\S]*async function executeTool[\s\S]*toolContext\(/,
   "MCP bridge execute_tool should allow tools from skills loaded in the session",
 );
 assert.match(
   mcpRuntimeSource,
-  /name === "load_skill"[\s\S]*tools\.recordLoadedSkillNames\(sessionId,\s*\[plainObject\(result\)\.name,\s*plainObject\(result\)\.displayName\]\)/,
+  /function rememberLoadedSkill[\s\S]*name !== "load_skill"[\s\S]*tools\.recordLoadedSkillNames\(sessionId,\s*\[value\.name,\s*value\.displayName\]\)[\s\S]*async function executeTool[\s\S]*rememberLoadedSkill\(/,
   "MCP bridge execute_tool(load_skill) should activate plugin tools for later calls",
 );
 assert.match(

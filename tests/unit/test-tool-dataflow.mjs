@@ -54,15 +54,16 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     async query() { return [...tabs.values()]; },
   };
   chrome.tabs = tabsApi;
+  const isRunCurrent = (_sessionId, runId) => runId === 'run' && !controller.signal.aborted;
   sessions = createSessionTabs({ supervisor: {
-    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent: () => !controller.signal.aborted,
+    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent,
     setRuntime: (_id, next) => { Object.assign(state, next); return state; },
   }, tabsApi, storage: chrome.storage.local, ready: async () => {}, normalizeSessionId: String,
   setRuntime(_id, patch) { Object.assign(state, patch); writes.push({ owned: [...state.ownedTabIds], working: state.workingTabId }); return state; },
   persistRuntime: async () => {}, broadcast() {}, now: () => 'fixed', logger: { warn() {} },
   loadSecurityGuardrails: async () => ({}),
   });
-  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent: () => !controller.signal.aborted,
+  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent,
     async commitCreatedTab(input) {
       const pendingTab = [...tabs.values()].find(tab => tab.title === failCommit);
       if (pendingTab && !state.ownedTabIds.includes(pendingTab.id) && state.ownedTabIds.length === 1)
@@ -282,6 +283,15 @@ test('hidden Skill script shares the barrier and tabRef protocol', async () => {
   assert.deepEqual(f.siteChanges, [{ name: 'run_skill_script', working: 97 }]);
   const serial = setup({ serial: true, scriptFixtures: true });
   assert.deepEqual(result, serial.snapshot(await serial.run(input)));
+});
+
+test('a parallel open commits when the session has no agent run', async () => {
+  const f = setup(), identity = { sessionId: 'flow', runId: '' };
+  const result = await f.runtime.execute('__flow_open', { tabAlias: 'a' }, f.controller.signal,
+    { ...identity, deferToolCommit: true, deferCreatedTabSelection: true });
+  await f.runtime.commitToolResult(result, f.controller.signal, identity);
+  assert.deepEqual(f.state.ownedTabIds, [97]);
+  assert.equal(f.tabs.size, 1);
 });
 
 test('copied results and foreign runs cannot use or settle a private creation permit', async () => {

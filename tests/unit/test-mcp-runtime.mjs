@@ -34,6 +34,7 @@ const skillItems = [{
   ],
 }];
 
+const metadata = { s1: { id: "s1", title: "Session" } };
 const sessions = {
   normalizeId: value => String(value || "").trim(),
   requireId(value, operation) {
@@ -44,8 +45,11 @@ const sessions = {
   supervisor: {
     getUserWait: sessionId => sessionId === "s1" && waits.has(runtimeState.waitId) ? { sessionId, waitId: runtimeState.waitId, runId: activeRunId } : null,
     isRunCurrent(sessionId, runId) {
-      return sessionId === "s1" && runId === activeRunId;
+      return sessionId === "s1" && runId === activeRunId || String(runId || "").startsWith("drive-");
     },
+    mintDriveRunId(sessionId) { return `drive-${sessionId}`; },
+    takeDriveRunForRelease() { return ""; },
+    clearDriveRunId() {},
     resolveUserWait({ waitId }) {
       if (!waits.has(waitId)) return false;
       waits.delete(waitId);
@@ -69,12 +73,17 @@ const sessions = {
   getLastMessages: async ({ sessionId, num }) => ({ sessionId, num, messages: transcript.slice(-num) }),
   getAgent: async () => ({ exportSession: () => conversation }),
   getTranscript: async () => transcript,
-  listMetadata: async () => ({ s1: { id: "s1", title: "Session" } }),
+  listMetadata: async () => ({ ...metadata }),
+  createMetadata: async (input) => {
+    metadata[input.id] = { id: input.id, title: input.title || input.id, source: input.source || "external-drive" };
+    return metadata[input.id];
+  },
   getConversation: async () => conversation,
   compactTranscriptEvent: event => ({ ...event, compact: true }),
   getRuntime: () => ({ ...runtimeState }),
 };
 
+const runProfiles = [];
 const toolRuntime = {
   getSchemas: () => [{
     type: "function",
@@ -89,7 +98,10 @@ const toolRuntime = {
 const tools = {
   ready: async reason => { toolReadinessReasons.push(reason); },
   canManageSessions: async () => true,
-  buildRunProfile: async ({ sessionId }) => ({ sessionId }),
+  buildRunProfile: async (input) => {
+    runProfiles.push(input);
+    return { sessionId: input.sessionId };
+  },
   runtime: toolRuntime,
   loadedSkillNames: (_sessionId, extra) => ["existing", ...extra],
   recordLoadedSkillNames: (...args) => loadedNames.push(args),
@@ -208,22 +220,41 @@ assert.equal((await runtime.getMessages("s1", { tail: true, num: 1 })).num, 1);
 
 const listedTools = await runtime.listTools({ sessionId: "s1", loadedPluginSkillNames: ["extra"] });
 assert.deepEqual(listedTools.tools.map(tool => tool.name), ["read_dom"]);
-assert.deepEqual(toolReadinessReasons, ["mcp_list_tools"]);
+assert.equal(runProfiles.at(-1).externalDrive, false);
+await runtime.listTools({ sessionId: "" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+await runtime.listTools({ sessionId: "not-created" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+assert.equal(Object.hasOwn(metadata, "not-created"), false);
+metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
+await runtime.listTools({ sessionId: "drive-listed" });
+assert.equal(runProfiles.at(-1).externalDrive, true);
+assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools"]);
 const inputContext = { marker: true };
-const activeRunTool = await runtime.executeTool({ sessionId: "s1", name: "read_dom", args: { selector: "main" }, dynamicContext: inputContext });
-assert.deepEqual(inputContext, { marker: true }, "MCP execution must not mutate caller-owned context");
+const occupiedBefore = executed.length;
+await assert.rejects(
+  runtime.executeTool({ sessionId: "s1", name: "read_dom", args: { selector: "main" }, dynamicContext: inputContext }),
+  error => error.code === "DRIVE_SESSION_OCCUPIED",
+);
+assert.deepEqual(inputContext, { marker: true }, "a rejected drive call must not mutate caller-owned context");
+assert.equal(executed.length, occupiedBefore);
+await assert.rejects(
+  runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
+  error => error.code === "DRIVE_SESSION_OCCUPIED",
+);
+const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: {}, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
-assert.equal(executed.at(-1).context.dynamicContext.pageUrl, runtimeState.workingUrl);
-assert.equal(executed.at(-1).context.runId, "run-1", "MCP should inherit only the Session's live run");
-assert.equal(activeRunTool.runId, "run-1");
-const explicitRunTool = await runtime.executeTool({ sessionId: "s1", runId: "public-run", name: "read_dom", args: {} });
-assert.equal(executed.at(-1).context.runId, "public-run", "the public MCP runId must reach tool execution unchanged");
-assert.equal(explicitRunTool.runId, "public-run");
-activeRunId = "";
-await runtime.executeTool({ sessionId: "s1", name: "load_skill", args: { name: "research" } });
-assert.equal(executed.at(-1).context.runId, "", "a completed runtime id must not be reused as a live run");
-assert.deepEqual(loadedNames.at(-1), ["s1", ["research", "Research"]]);
-assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_execute_tool", "mcp_execute_tool", "mcp_execute_tool"]);
+assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
+assert.equal(driveTool.runId, "drive-drive-s");
+assert.notEqual(driveTool.runId, "public-run");
+const loadedBeforeDrive = loadedNames.length;
+await assert.rejects(
+  runtime.executeTool({ sessionId: "s1", name: "load_skill", args: { name: "research" } }),
+  error => error.code === "DRIVE_SESSION_OCCUPIED",
+);
+assert.equal(loadedNames.length, loadedBeforeDrive, "a built-in session rejects direct drive before recording a skill");
+assert.equal(executed.at(-1).name, "read_dom");
+assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_execute_tool"]);
 
 const listedSkills = await runtime.listSkills({ scope: "global", query: "guide" });
 assert.equal(listedSkills.count, 1);
@@ -294,18 +325,21 @@ for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
   const gate = new Promise(resolve => { release = resolve; });
   tools[stage] = async () => { entered(); return gate; };
   const count = executed.length;
-  const pending = runtime.executeTool({ sessionId: "s1", name: "read_dom" }, controller.signal);
+  const pending = runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, controller.signal);
   await started; controller.abort(new Error("connection revoked")); release(true);
   await assert.rejects(pending, /connection revoked/);
   assert.equal(executed.length, count, `revoked ${stage} work must not execute a tool`);
   tools[stage] = original;
 }
+const linked = new AbortController();
+await runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, linked.signal);
+const seenSignal = executed.at(-1).signal;
+linked.abort();
+assert.equal(seenSignal.aborted, true, "the drive call follows the connection signal");
 const toolController = new AbortController();
-await runtime.executeTool({ sessionId: "s1", name: "read_dom" }, toolController.signal);
-assert.equal(executed.at(-1).signal, toolController.signal, "tools receive the connection authority signal");
 const oldExecute = toolRuntime.execute, loadedCount = loadedNames.length;
 toolRuntime.execute = async (_name, _args, signal) => { toolController.abort(new Error("late disconnect")); assert.equal(signal.aborted, true); return { name: "research" }; };
-await assert.rejects(runtime.executeTool({ sessionId: "s1", name: "load_skill" }, toolController.signal), /late disconnect/);
+await assert.rejects(runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, toolController.signal), /late disconnect/);
 assert.equal(loadedNames.length, loadedCount, "revoked tool results cannot update loaded Skill state");
 toolRuntime.execute = oldExecute;
 

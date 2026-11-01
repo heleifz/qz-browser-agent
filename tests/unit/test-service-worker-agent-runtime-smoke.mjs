@@ -1075,6 +1075,7 @@ function createChromeMock() {
     tabs: {
       onRemoved: makeEvent(state.tabsOnRemoved),
       onUpdated: makeEvent(state.tabsOnUpdated),
+      onActivated: makeEvent(),
       async query(query = {}) {
         let tabs = state.tabs.slice();
         if (query.active) tabs = tabs.filter(tab => tab.active);

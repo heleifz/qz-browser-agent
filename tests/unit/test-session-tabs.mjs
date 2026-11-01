@@ -25,6 +25,11 @@ let guardrails = {};
 let failPersist = false;
 let clock = 0;
 let nextTabId = 6;
+const sessionRecords = {
+  a: { id: "a", parentSessionId: "0" },
+  b: { id: "b", parentSessionId: "0" },
+  child: { id: "child", parentSessionId: "a" },
+};
 
 const supervisor = {
   getRuntime(sessionId) {
@@ -75,11 +80,7 @@ const sessionTabs = createSessionTabs({
   windowTarget: { async resolveForNewTab() { return 7; } },
   storage: createMemoryStorage(),
   ready: async () => {},
-  getSessions: async () => ({
-    a: { id: "a", parentSessionId: "0" },
-    b: { id: "b", parentSessionId: "0" },
-    child: { id: "child", parentSessionId: "a" },
-  }),
+  getSessions: async () => sessionRecords,
   isAutomationSessionFamily: () => false,
   setRuntime(sessionId, patch) {
     const next = { ...(runtimes.get(sessionId) || {}), ...patch };
@@ -360,6 +361,94 @@ assert.equal(childClose.skipped, false);
 assert.deepEqual(childClose.closed, [3]);
 assert.equal(removed.at(-1), 3);
 assert.deepEqual(getOwnedTabIds(runtimes.get("child")), []);
+
+sessionRecords.drive = { id: "drive", source: "external-drive", parentSessionId: "0" };
+tabs.set(10, webTab(10, "https://created.example/a"));
+tabs.set(11, webTab(11, "https://claimed.example/b"));
+tabs.set(12, webTab(12, "https://handoff.example/c"));
+runtimes.set("drive", {
+  sessionId: "drive",
+  ownedTabIds: [10, 11, 12],
+  createdTabIds: [10, 12],
+  driveHandoffTabIds: [12],
+  workingTabId: 11,
+});
+const driveClose = await sessionTabs.closeOwnedTabs("drive", { source: "test_cleanup" });
+assert.deepEqual(driveClose.closed, [10]);
+assert.equal(tabs.has(11), true);
+assert.equal(tabs.has(12), true);
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive")), []);
+assert.deepEqual(runtimes.get("drive").createdTabIds, []);
+assert.deepEqual(runtimes.get("drive").driveHandoffTabIds, []);
+
+tabs.set(20, webTab(20, "https://kept.example/a"));
+tabs.set(21, webTab(21, "https://kept.example/b"));
+tabs.set(22, webTab(22, "https://next.example/c"));
+runtimes.set("drive-keep", {
+  sessionId: "drive-keep",
+  ownedTabIds: [20, 21, 22],
+  createdTabIds: [20, 21, 22],
+  driveHandoffTabIds: [],
+  workingTabId: 20,
+});
+sessionRecords["drive-keep"] = { id: "drive-keep", source: "external-drive", parentSessionId: "0" };
+const handed = await sessionTabs.settleStoppedDriveTabs("drive-keep", {
+  keepTabs: true,
+  source: "stop_session",
+  ownedTabIds: [20, 21],
+  createdTabIds: [20, 21],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+});
+assert.deepEqual(handed.closed, []);
+assert.equal(tabs.has(20), true);
+assert.equal(tabs.has(21), true);
+assert.equal(tabs.has(22), true);
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive-keep")), [22]);
+assert.deepEqual(runtimes.get("drive-keep").createdTabIds, [22]);
+assert.equal(runtimes.get("drive-keep").workingTabId, null);
+
+tabs.set(30, webTab(30, "https://old.example/a"));
+tabs.set(31, webTab(31, "https://new.example/b"));
+runtimes.set("drive-next", {
+  sessionId: "drive-next",
+  ownedTabIds: [30, 31],
+  createdTabIds: [30, 31],
+  workingTabId: 31,
+});
+const closedRound = await sessionTabs.settleStoppedDriveTabs("drive-next", {
+  keepTabs: false,
+  source: "stop_session",
+  ownedTabIds: [30],
+  createdTabIds: [30],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+});
+assert.deepEqual(closedRound.closed, [30]);
+assert.equal(tabs.has(30), false);
+assert.equal(tabs.has(31), true);
+assert.deepEqual(runtimes.get("drive-next").createdTabIds, [31]);
+
+tabs.set(40, webTab(40, "https://live.example/a"));
+runtimes.set("drive-live", {
+  sessionId: "drive-live",
+  ownedTabIds: [40],
+  createdTabIds: [40],
+  workingTabId: 40,
+});
+const spared = await sessionTabs.settleStoppedDriveTabs("drive-live", {
+  keepTabs: false,
+  source: "stop_session",
+  ownedTabIds: [40],
+  createdTabIds: [40],
+  driveHandoffTabIds: [],
+  runIds: ["drive-old"],
+  blocked: () => true,
+});
+assert.deepEqual(spared, { closed: [], released: false });
+assert.equal(tabs.has(40), true);
+assert.deepEqual(runtimes.get("drive-live").createdTabIds, [40]);
+assert.equal(runtimes.get("drive-live").workingTabId, 40);
 
 assert.equal(normalizeWorkingTab({ id: 0, url: "https://invalid.example" }), null);
 assert.equal(normalizeWorkingTab({ id: 5, url: "chrome://settings" }), null);

@@ -151,6 +151,12 @@ export function createSessionRepository({
       const sessions = await listMetadata();
       const id = normalizeSessionId(input.id) || genSessionId();
       const existing = sessions[id];
+      const requestedSource = normalizeSessionSource(input.source);
+      const currentSource = normalizeSessionSource(existing?.source);
+      if (existing && requestedSource === "external-drive" && currentSource !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      if (existing && requestedSource === "external-drive" && currentSource === "external-drive") return existing;
       const now = nowBeijingDateTime();
       const requestedParent = normalizeParentSessionId(input.parentSessionId);
       const parentSessionId = existing?.parentSessionId
@@ -162,6 +168,7 @@ export function createSessionRepository({
         titleSource: existing?.titleSource || normalizeTitleSource(input.titleSource, parentSessionId),
         parentSessionId,
         source: normalizeSessionSource(input.source || existing?.source),
+        driveGroupTitle: normalizeDriveGroupTitle(input.driveGroupTitle || existing?.driveGroupTitle),
         automationId: normalizeSessionId(input.automationId || existing?.automationId),
         automationRunId: normalizeSessionId(input.automationRunId || existing?.automationRunId),
         listSummary: normalizeSessionListSummary(
@@ -642,6 +649,8 @@ function normalizeMetadataMap(value: unknown): Record<string, SessionMetadata> {
 function cleanMetadata<T extends Fields>(session: T): T {
   const next = { ...session };
   if (!next.source) delete next.source;
+  if (!next.driveGroupTitle) delete next.driveGroupTitle;
+  delete next.keepDriveTabs;
   if (!next.automationId) delete next.automationId;
   if (!next.automationRunId) delete next.automationRunId;
   return next;
@@ -654,7 +663,12 @@ function normalizeTitleSource(value: unknown, parentSessionId: unknown) {
 }
 
 function normalizeSessionSource(value: unknown) {
-  return String(value || "").trim() === "automation" ? "automation" : "";
+  const source = String(value || "").trim();
+  return source === "automation" || source === "external-drive" ? source : "";
+}
+
+function normalizeDriveGroupTitle(value: unknown) {
+  return String(value || "").replace(/\s+/gu, " ").trim().slice(0, 80);
 }
 
 function hasListSummary(summary: SessionListSummary | null | undefined) {

@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { driveGroupTitle } from "../mcp/external-drive.js";
 import { productText } from "../../shared/product-text.js";
 import type { StorageAdapter } from "../internal/storage.js";
 import type { TabReference } from "../../shared/tab-utils.js";
@@ -26,7 +27,7 @@ interface SessionTabsOptions {
   persistRuntime(id?: string): Promise<unknown>;
   broadcast?(event: Fields): unknown;
   now?(): string | number;
-  ensureTabGroupForWindow(ids: number[], options: { preferredGroupId: number | null; color: NonNullable<chrome.tabGroups.UpdateProperties["color"]>; collapsed: boolean }): Promise<{ groupId: number } | null>;
+  ensureTabGroupForWindow(ids: number[], options: { preferredGroupId: number | null; color: NonNullable<chrome.tabGroups.UpdateProperties["color"]>; collapsed: boolean; title?: string }): Promise<{ groupId: number } | null>;
   annotateGuardrailTab?(tab: ReturnType<typeof formatTab>, guardrails: SecurityGuardrails): TabReference;
   loadSecurityGuardrails?: typeof getSecurityGuardrails;
   normalizeSessionId?(value: unknown): string;
@@ -267,6 +268,7 @@ export function createSessionTabs({
       visitedTaskSites: addVisitedTaskSite(runtime, workingTab, timestamp()),
     };
     if (ownership.claim) patch.ownedTabIds = addOwnedTabId(runtime, workingTab.id);
+    if (createdTab) patch.createdTabIds = normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), workingTab.id]);
     return setRuntime(id, patch);
   }
 
@@ -698,6 +700,77 @@ export function createSessionTabs({
     for (const pending of pendingTabs.values()) if (pending.sessionId === id) await discardCreatedTab(pending.token);
   }
 
+  async function discardPendingTabsForRun(sessionId: string, runIds: readonly string[]) {
+    const wanted = new Set(runIds.filter(Boolean));
+    if (!wanted.size) return;
+    for (const [token, pending] of pendingAliases) {
+      if (pending.sessionId === sessionId && wanted.has(String(pending.runId || ""))) pendingAliases.delete(token);
+    }
+    for (const pending of [...pendingTabs.values()]) {
+      if (pending.sessionId === sessionId && wanted.has(String(pending.runId || ""))) await discardCreatedTab(pending.token);
+    }
+  }
+
+  /** Close or hand back only the tabs captured when this stop began. */
+  async function settleStoppedDriveTabs(sessionId: unknown, options: {
+    keepTabs?: boolean;
+    source?: string;
+    ownedTabIds?: unknown;
+    createdTabIds?: unknown;
+    driveHandoffTabIds?: unknown;
+    runIds?: readonly string[];
+    blocked?: () => boolean;
+  } = {}) {
+    const id = normalizeSessionId(sessionId);
+    if (!id) return { closed: [] as number[], released: false };
+    if (options.blocked?.()) return { closed: [] as number[], released: false };
+    const snapshotOwned = new Set(normalizeSessionTabIds(options.ownedTabIds));
+    const snapshotCreated = new Set(normalizeSessionTabIds(options.createdTabIds));
+    const snapshotHandoff = new Set(normalizeSessionTabIds(options.driveHandoffTabIds));
+    const released = new Set([...snapshotOwned, ...snapshotCreated, ...snapshotHandoff]);
+    const closed: number[] = [];
+    if (!options.keepTabs) {
+      await discardPendingTabsForRun(id, options.runIds || []);
+      if (options.blocked?.()) return { closed, released: false };
+      for (const tabId of snapshotCreated) {
+        if (snapshotHandoff.has(tabId)) continue;
+        try {
+          await tabsApi.remove(tabId);
+          closed.push(tabId);
+        } catch { /* The tab is already gone. */ }
+      }
+    }
+    const runtime = supervisor.getRuntime(id) || {};
+    const owned = getOwnedTabIds(runtime).filter(tabId => !released.has(tabId));
+    const created = normalizeSessionTabIds(runtime.createdTabIds).filter(tabId => !snapshotCreated.has(tabId));
+    const handoff = normalizeSessionTabIds(runtime.driveHandoffTabIds).filter(tabId => !released.has(tabId));
+    const workingId = Number(runtime.workingTabId);
+    const clearWorking = Number.isInteger(workingId) && released.has(workingId);
+    setRuntime(id, {
+      ...(clearWorking
+        ? {
+            workingTab: null,
+            workingTabId: null,
+            workingUrl: "",
+            workingTitle: "",
+            workingTabSource: options.source || "drive_tabs_released",
+            workingTabUpdatedAt: timestamp(),
+          }
+        : {}),
+      ownedTabIds: owned,
+      sessionTabIds: owned,
+      createdTabIds: created,
+      driveHandoffTabIds: handoff,
+      tabAliases: normalizeTabAliases(runtime.tabAliases, owned),
+      ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
+      ownedTabsClosedAt: timestamp(),
+      ownedTabsCloseSource: options.source || "stop_session",
+    });
+    broadcast({ type: "sessions_changed", action: "session_tabs", sessionId: id });
+    scheduleGroupSync(id);
+    return { closed, released: true };
+  }
+
   async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal") {
     await discardPendingTabs(sessionId);
     if (!(await shouldAutoCloseOwnedTabs(sessionId))) return { closed: [], skipped: true };
@@ -709,6 +782,7 @@ export function createSessionTabs({
     const sessions = await getSessions();
     const session = sessions[id];
     if (!session) return false;
+    if (session.source === "external-drive") return true;
     if (isAutomationSessionFamily(id, sessions)) return true;
     return String(session.parentSessionId || rootSessionId) !== String(rootSessionId);
   }
@@ -718,13 +792,17 @@ export function createSessionTabs({
     const id = normalizeSessionId(sessionId);
     const runtime = supervisor.getRuntime(id) || {};
     const ownedTabIds = getOwnedTabIds(runtime);
-    if (!ownedTabIds.length) {
+    const createdTabIds = normalizeSessionTabIds(runtime.createdTabIds);
+    if (!ownedTabIds.length && !createdTabIds.length) {
       scheduleGroupSync(id);
       return { closed: [], skipped: false };
     }
-
+    const sessions = await getSessions();
+    const external = sessions[id]?.source === "external-drive";
+    const handoff = new Set(normalizeSessionTabIds(runtime.driveHandoffTabIds));
+    const closable = (external ? createdTabIds : ownedTabIds).filter(tabId => !handoff.has(tabId));
     const closed = [];
-    for (const tabId of ownedTabIds) {
+    for (const tabId of closable) {
       try {
         await tabsApi.remove(tabId);
         closed.push(tabId);
@@ -744,6 +822,8 @@ export function createSessionTabs({
           }
         : {}),
       ownedTabIds: [],
+      createdTabIds: [],
+      driveHandoffTabIds: [],
       tabAliases: {},
       ownedTabsClosedAt: timestamp(),
       ownedTabsCloseSource: source || "terminal",
@@ -855,7 +935,9 @@ export function createSessionTabs({
       const nextTabIds = removeOwnedTabId(runtime, tabId);
       const removedOwnedTab = !sameTabIdSet(ownedTabIds, nextTabIds);
       const removedWorkingTab = Number(runtime?.workingTabId) === Number(tabId);
-      if (!removedWorkingTab && !removedOwnedTab) continue;
+      const nextCreated = normalizeSessionTabIds(runtime.createdTabIds).filter(id => id !== Number(tabId));
+      const removedCreated = !sameTabIdSet(runtime.createdTabIds, nextCreated);
+      if (!removedWorkingTab && !removedOwnedTab && !removedCreated) continue;
       supervisor.setRuntime(sessionId, {
         ...runtime,
         ...(removedWorkingTab
@@ -869,6 +951,8 @@ export function createSessionTabs({
             }
           : {}),
         ownedTabIds: nextTabIds,
+        createdTabIds: nextCreated,
+        driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds).filter(id => id !== Number(tabId)),
         tabAliases: normalizeTabAliases(runtime.tabAliases, nextTabIds),
         sessionTabIds: nextTabIds,
         ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
@@ -901,10 +985,15 @@ export function createSessionTabs({
 
   async function syncGroup(_sessionId = "") {
     await ready();
-    const validTabs = [];
-    const groupedTabIds = new Set();
+    const sessions = await getSessions();
+    const groupedTabIds = new Set<number>();
+    const buckets = new Map<string, { title: string; tabs: { id?: number; windowId?: number }[] }>();
     let runtimeChanged = false;
     for (const [runtimeSessionId, runtime] of supervisor.runtimeEntries()) {
+      const meta = sessions[runtimeSessionId];
+      const drive = meta?.source === "external-drive";
+      const key = drive ? `drive:${runtimeSessionId}` : GLOBAL_SESSION_TAB_GROUP_ID;
+      const title = drive ? String(meta?.driveGroupTitle || "").trim() || driveGroupTitle("") : "";
       const validTabIds: number[] = [];
       const ownedTabIds = getOwnedTabIds(runtime);
       for (const tabId of ownedTabIds) {
@@ -917,7 +1006,9 @@ export function createSessionTabs({
           if (!isPageTab(tab)) continue;
           if (!groupedTabIds.has(normalizedTabId)) {
             groupedTabIds.add(normalizedTabId);
-            validTabs.push(tab);
+            const bucket = buckets.get(key) || { title, tabs: [] };
+            bucket.tabs.push(tab);
+            buckets.set(key, bucket);
           }
         } catch (_error) {}
       }
@@ -930,6 +1021,7 @@ export function createSessionTabs({
           ...latest,
           ownedTabIds: retained,
           sessionTabIds: retained,
+          createdTabIds: normalizeSessionTabIds(latest.createdTabIds).filter(tabId => !missing.has(tabId)),
           tabAliases: normalizeTabAliases(latest.tabAliases, retained),
           ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
           updatedAt: timestamp(),
@@ -940,38 +1032,39 @@ export function createSessionTabs({
     if (runtimeChanged) await persistRuntime();
 
     const store = await getGroupStore();
-    const previous = store[GLOBAL_SESSION_TAB_GROUP_ID] || { windows: {} };
-    const next: { windows: Record<string, GroupWindow> } = { windows: {} };
-    const tabsByWindow = new Map<number, number[]>();
-    for (const tab of validTabs) {
-      const windowId = Number(tab.windowId);
-      if (!Number.isFinite(windowId)) continue;
-      if (!tabsByWindow.has(windowId)) tabsByWindow.set(windowId, []);
-      tabsByWindow.get(windowId)!.push(Number(tab.id));
-    }
-
-    for (const [windowId, tabIds] of tabsByWindow.entries()) {
-      const previousWindow = previous.windows?.[String(windowId)] || null;
-      const sortedTabIds = normalizeSessionTabIds(tabIds).sort((a, b) => a - b);
-      const group = await reconcileManagedGroupWindow(previousWindow, sortedTabIds);
-      if (group) next.windows[String(windowId)] = group;
-    }
-    for (const [windowId, previousWindow] of Object.entries(previous.windows || {})) {
-      if (!tabsByWindow.has(Number(windowId))) await cleanupManagedGroupWindow(previousWindow, []);
+    const nextStore: GroupStore = {};
+    for (const [key, bucket] of buckets) {
+      const previous = store[key] || { windows: {} };
+      const next: { windows: Record<string, GroupWindow> } = { windows: {} };
+      const tabsByWindow = new Map<number, number[]>();
+      for (const tab of bucket.tabs) {
+        const windowId = Number(tab.windowId);
+        if (!Number.isFinite(windowId)) continue;
+        if (!tabsByWindow.has(windowId)) tabsByWindow.set(windowId, []);
+        tabsByWindow.get(windowId)!.push(Number(tab.id));
+      }
+      for (const [windowId, tabIds] of tabsByWindow.entries()) {
+        const previousWindow = previous.windows?.[String(windowId)] || null;
+        const sortedTabIds = normalizeSessionTabIds(tabIds).sort((a, b) => a - b);
+        const group = await reconcileManagedGroupWindow(previousWindow, sortedTabIds, bucket.title);
+        if (group) next.windows[String(windowId)] = group;
+      }
+      for (const [windowId, previousWindow] of Object.entries(previous.windows || {})) {
+        if (!tabsByWindow.has(Number(windowId))) await cleanupManagedGroupWindow(previousWindow, []);
+      }
+      if (Object.keys(next.windows).length > 0) nextStore[key] = next;
     }
     for (const [key, previousEntry] of Object.entries(store)) {
-      if (key === GLOBAL_SESSION_TAB_GROUP_ID) continue;
+      if (nextStore[key]) continue;
       for (const previousWindow of Object.values(previousEntry?.windows || {})) {
         await cleanupManagedGroupWindow(previousWindow, []);
       }
     }
-    const nextStore: GroupStore = {};
-    if (Object.keys(next.windows).length > 0) nextStore[GLOBAL_SESSION_TAB_GROUP_ID] = next;
     await storage.set({ [SESSION_TAB_GROUPS_KEY]: nextStore });
     return nextStore;
   }
 
-  async function reconcileManagedGroupWindow(previousWindow: GroupWindow | null, tabIds: unknown) {
+  async function reconcileManagedGroupWindow(previousWindow: GroupWindow | null, tabIds: unknown, title = "") {
     const desiredTabIds = normalizeSessionTabIds(tabIds).sort((a, b) => a - b);
     if (desiredTabIds.length < 1) {
       await cleanupManagedGroupWindow(previousWindow, desiredTabIds);
@@ -988,6 +1081,7 @@ export function createSessionTabs({
         preferredGroupId: existingGroupId,
         color: "cyan",
         collapsed: false,
+        ...(title ? { title } : {}),
       });
       return group ? { groupId: group.groupId, tabIds: desiredTabIds } : null;
     } catch (error) {
@@ -1075,6 +1169,7 @@ export function createSessionTabs({
     restoreOwnedTabs,
     closeOwnedTabsAfterTerminal,
     closeOwnedTabs,
+    settleStoppedDriveTabs,
     getWorkingTabContext,
     getOwnedTabContexts,
     activateWorkingTab,

@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "リポジトリのタブを利用できません。開き直してから再試行してください",
   "backend.git.repository": "リポジトリ",
   "backend.git.localChanges": "連携済みの Skill にローカルの変更があります。更新で上書きする前に確認してください",
-  "backend.git.nameConflict": "リポジトリにローカルの Skill と同名の Skill があります"
+  "backend.git.nameConflict": "リポジトリにローカルの Skill と同名の Skill があります",
+  "backend.drive.sessionBusy": "このセッションは前のバッチを実行中です。終了を待つか、セッションを停止してください。",
+  "backend.drive.sessionOccupied": "このセッションは別のタスクが使用中のため、直接操作できません。新しい sessionId を使ってください。",
+  "backend.drive.nameOrCalls": "name と calls はどちらか一方だけ渡してください。",
+  "backend.drive.callShape": "calls の各項目には id と name が必要です。補ってから再試行してください。",
+  "backend.drive.tooManyCalls": "1 回のバッチは最大 {limit} 件です。calls を減らして再試行してください。",
+  "backend.drive.toolForbidden": "直接操作では {name} を呼び出せません。",
+  "backend.drive.sendMessageRejected": "このセッションは外部クライアントが直接操作しています。ここでは閲覧のみです。",
+  "backend.drive.batchTimeout": "このバッチはタイムアウトしました。limits.timeoutSeconds を大きくして再試行してください。"
 }

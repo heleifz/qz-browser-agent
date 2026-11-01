@@ -50,7 +50,7 @@ function argumentsWithDefaults(definition, input) {
   }));
 }
 
-export async function executeMcpTool(state, name, input = {}, { signal, onTaskUpdate } = {}) {
+export async function executeMcpTool(state, name, input = {}, { signal, onTaskUpdate, clientName } = {}) {
   const args = validateMcpToolInput(name, input);
   if (name === "qingzhou_bridge_status") return state.status();
   if (name === "qingzhou_forget_browser") return state.forgetBrowser(args.clientId);
@@ -62,12 +62,12 @@ export async function executeMcpTool(state, name, input = {}, { signal, onTaskUp
   const connectionSignal = state.signal(connection.controller.signal);
   const operationSignal = signal ? AbortSignal.any([connectionSignal, signal]) : connectionSignal;
   operationSignal.throwIfAborted();
-  const result = await executeBrowserTool(state, name, args, { signal: operationSignal, connectionSignal, onTaskUpdate });
+  const result = await executeBrowserTool(state, name, args, { signal: operationSignal, connectionSignal, onTaskUpdate, clientName });
   return args.clientId && (observableTools.has(name) || taskInputResults.has(name) || ["qingzhou_list_sessions", "qingzhou_get_user_input", "qingzhou_stop_session", "qingzhou_abort_session"].includes(name)) && result && typeof result === "object" && !Array.isArray(result)
     ? { ...result, clientId: args.clientId } : result;
 }
 
-async function executeBrowserTool(state, name, args, { signal, connectionSignal, onTaskUpdate }) {
+async function executeBrowserTool(state, name, args, { signal, connectionSignal, onTaskUpdate, clientName }) {
   const observe = observableTools.has(name) && (name === "qingzhou_watch_task" || args.wait || args.stream);
   const asyncTool = name === "qingzhou_execute_tool" && args.wait === false;
   const options = { timeoutSeconds: args.timeoutSeconds, clientId: args.clientId, signal };
@@ -118,7 +118,9 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   if (name === "qingzhou_submit_wait_form") params.answers ||= {};
   if (name === "qingzhou_execute_tool") {
     delete params.wait;
-    params.args ||= {};
+    if (!Array.isArray(params.calls)) params.args ||= {};
+    const displayName = String(clientName || "").trim();
+    if (displayName) params.clientName = displayName;
     return asyncTool ? { ...state.startExtensionJob("execute_tool", params, { ...options, connectionSignal }), sessionId: args.sessionId, clientId }
       : state.callExtension("execute_tool", params, options);
   }
@@ -165,13 +167,73 @@ export function validateMcpToolInput(name, input = {}) {
   }
 }
 
+function imageEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.images)) return [];
+  return value.images.filter(image => image && typeof image.data === "string" && typeof image.mimeType === "string");
+}
+
+function withoutImages(value) {
+  if (!imageEntries(value).length) return value;
+  const { images: _images, ...rest } = value;
+  return rest;
+}
+
+function imageBlock(image, meta) {
+  return {
+    type: "image",
+    data: image.data,
+    mimeType: image.mimeType,
+    ...(meta && Object.keys(meta).length ? { _meta: meta } : {}),
+  };
+}
+
+function peelCallImages(value, callId, startIndex, sink) {
+  const images = imageEntries(value);
+  if (!images.length) return { value, nextIndex: startIndex };
+  const placeholders = images.map((image, offset) => {
+    const meta = { ...(callId ? { id: callId } : {}), index: startIndex + offset };
+    sink.push(imageBlock(image, meta));
+    return meta;
+  });
+  return { value: { ...withoutImages(value), images: placeholders }, nextIndex: startIndex + images.length };
+}
+
 export function resultToContent(result) {
   if (result == null) return [];
   if (Array.isArray(result)) return result.flatMap(resultToContent);
-  return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
+  const nested = [];
+  let body = result;
+  if (Array.isArray(result.results)) {
+    body = {
+      ...result,
+      results: result.results.map(item => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const callId = String(item.id || "");
+        const peeled = peelCallImages(item, callId, 0, nested);
+        let next = peeled.value;
+        if (next.result && typeof next.result === "object" && !Array.isArray(next.result)) {
+          next = { ...next, result: peelCallImages(next.result, callId, peeled.nextIndex, nested).value };
+        }
+        return next;
+      }),
+    };
+  }
+  const top = imageEntries(body);
+  if (!top.length && !nested.length) {
+    return [{ type: "text", text: JSON.stringify(body, null, 2) }];
+  }
+  return [
+    { type: "text", text: JSON.stringify(withoutImages(body), null, 2) },
+    ...top.map(image => imageBlock(image)),
+    ...nested,
+  ];
 }
 
-export function createMcpServer(state) {
+const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
+
+export function createMcpServer(state, { clientName = "" } = {}) {
+  let driveSessionId = "";
   const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
     capabilities: { tools: {} }, instructions: "Control qz tasks and browser tools through the local bridge.",
   });
@@ -180,7 +242,12 @@ export function createMcpServer(state) {
     try {
       let progress = 0;
       const progressToken = request.params._meta?.progressToken;
-      const result = await executeMcpTool(state, request.params.name, request.params.arguments || {}, { signal: extra.signal,
+      const input = { ...(request.params.arguments || {}) };
+      if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
+        if (!driveSessionId) driveSessionId = crypto.randomUUID().replaceAll("-", "");
+        input.sessionId = driveSessionId;
+      }
+      const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,
         onTaskUpdate: progressToken === undefined ? undefined : event => extra.sendNotification({
           method: "notifications/progress", params: { progressToken, progress: ++progress,
             message: ["text", "replace"].includes(event.type) ? event.text : JSON.stringify(event),

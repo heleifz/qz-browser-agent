@@ -307,5 +307,13 @@
   "backend.git.tabUnavailableRetry": "La pestaña del repositorio no está disponible. Vuelve a abrirla e inténtalo de nuevo",
   "backend.git.repository": "Repositorio",
   "backend.git.localChanges": "Los Skills vinculados tienen cambios locales. Confirma antes de sobrescribirlos con una actualización",
-  "backend.git.nameConflict": "El repositorio contiene Skills con los mismos nombres que los locales"
+  "backend.git.nameConflict": "El repositorio contiene Skills con los mismos nombres que los locales",
+  "backend.drive.sessionBusy": "Esta sesión ya está ejecutando un lote. Espera a que termine o detén la sesión.",
+  "backend.drive.sessionOccupied": "Esta sesión ya tiene una tarea, así que no se puede controlar directamente. Usa un sessionId nuevo.",
+  "backend.drive.nameOrCalls": "Pasa name o calls, no ambos.",
+  "backend.drive.callShape": "Cada elemento de calls necesita un id y un name. Añádelos e inténtalo de nuevo.",
+  "backend.drive.tooManyCalls": "Un lote puede contener como máximo {limit} llamadas. Envía menos calls e inténtalo de nuevo.",
+  "backend.drive.toolForbidden": "El control directo no puede llamar a {name}.",
+  "backend.drive.sendMessageRejected": "Un cliente externo está controlando esta sesión. Esta vista es de solo lectura.",
+  "backend.drive.batchTimeout": "Este lote agotó el tiempo. Aumenta limits.timeoutSeconds e inténtalo de nuevo."
 }

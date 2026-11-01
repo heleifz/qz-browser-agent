@@ -787,6 +787,12 @@ const mcpRuntime = createMcpRuntime({
     getAgent: sessionAgentHost.getAgent,
     getTranscript: sessionTranscript.get,
     listMetadata: getSessions,
+    createMetadata: input => sessionCommands.createSessionMetadataRuntime(input),
+    stop: (sessionId, meta) => sessionCommands.stopSessionRuntime(sessionId, meta || {}),
+    getStoredRuntime: sessionId => {
+      try { return sessionSupervisor.getRuntime(sessionId); }
+      catch { return null; }
+    },
     getConversation: sessionTranscript.getConversation,
     compactTranscriptEvent: sessionCommands.compactTranscriptEvent,
     getRuntime: sessionCommands.getSessionRuntimeState,
@@ -1036,6 +1042,28 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   sessionTabs.handleTabRemoved(tabId).catch((error) => {
     console.warn("[轻舟] persist tab removal failed:", error);
   });
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  const owner = sessionTabs.findOwner(activeInfo.tabId);
+  if (!owner) return;
+  void getSessions().then(sessions => {
+    if (sessions[owner.sessionId]?.source !== "external-drive") return;
+    if (mcpRuntime.drive.isBusy(owner.sessionId)) return;
+    mcpRuntime.drive.markHandoff(owner.sessionId, activeInfo.tabId);
+  }).catch(() => {});
+});
+
+chrome.debugger?.onDetach?.addListener((source, reason) => {
+  const tabId = source.tabId;
+  if (reason !== "canceled_by_user" || typeof tabId !== "number") return;
+  const owner = sessionTabs.findOwner(tabId);
+  if (!owner) return;
+  void getSessions().then(sessions => {
+    if (sessions[owner.sessionId]?.source !== "external-drive") return;
+    mcpRuntime.drive.markHandoff(owner.sessionId, tabId);
+    mcpRuntime.drive.abort(owner.sessionId);
+  }).catch(() => {});
 });
 
 chrome.notifications?.onClicked?.addListener((notificationId) => {

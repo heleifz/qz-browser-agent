@@ -225,5 +225,7 @@
   "sessions.locationPositionUnavailable": "위치를 확인할 수 없습니다. 네트워크와 위치 서비스를 확인하거나, 도시나 지역을 알려 주세요.",
   "sessions.locationTimeout": "위치 확인 시간이 초과되었습니다. 사이드 패널을 열어 두고 브라우저 위치를 허용하거나, 도시나 지역을 알려 주세요.",
   "sessions.locationPanelUnavailable": "사이드 패널이 연결되지 않았습니다. 이 창에서 연 뒤 다시 시도하거나, 도시나 지역을 알려 주세요.",
-  "sessions.locationResponseTimeout": "위치 확인 시간이 초과되었습니다. 브라우저 위치를 허용하고 시스템 위치 서비스를 켜거나, 도시나 지역을 알려 주세요."
+  "sessions.locationResponseTimeout": "위치 확인 시간이 초과되었습니다. 브라우저 위치를 허용하고 시스템 위치 서비스를 켜거나, 도시나 지역을 알려 주세요.",
+  "sessions.externalDrive": "외부",
+  "sessions.externalDriveReadOnly": "이 세션은 외부 클라이언트가 직접 조작합니다. 여기서는 보기만 할 수 있습니다."
 }
