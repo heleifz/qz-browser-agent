@@ -27,7 +27,7 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. See policy risk in the audit guide.",
   }],
-  ["dynamic-code:032b78e8da4f8c117219440d115123fb57e38cbaab75e3f55e586c6b88176b54", {
+  ["dynamic-code:e78830823858460286c6355bfb8af085dd3762df57a4feb3d1c7a38e237fc8a5", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",
   }],

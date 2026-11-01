@@ -67,20 +67,6 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const set = page.__qzExtensionInputEvents || (page.__qzExtensionInputEvents = new Marked());
     try { set.add(event); } catch { /* A stand-in event may not be a WeakSet key. */ }
   };
-  const checkable = (node: DomNode | null | undefined): "checkbox" | "radio" | "" => {
-    if (!node || String(node.nodeName || "").toUpperCase() !== "INPUT" || node.disabled === true) return "";
-    const type = String(node.getAttribute?.("type") || "").toLowerCase();
-    return type === "checkbox" || type === "radio" ? type : "";
-  };
-  const applyCheck = (node: DomNode, type: "checkbox" | "radio") => {
-    const next = type === "radio" ? true : node.checked !== true;
-    if (node.checked === next) return;
-    node.checked = next;
-    const Change = page.Event;
-    const event = typeof Change === "function" ? new Change("change", { bubbles: true }) : { type: "change", bubbles: true };
-    noted(event);
-    try { node.dispatchEvent?.(event); } catch { /* The checked state is already updated. */ }
-  };
   const described = (node: DomNode | null) => {
     if (!node) return { node: { nodeId: 0, backendNodeId: 0, nodeName: "", nodeType: 0 } };
     const id = idFor(node);
@@ -133,25 +119,6 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     try { target.dispatchEvent(event); }
     catch { /* The page has no pointer events. Mouse events still fire. */ }
   };
-  const activate = (target: DomNode | null | undefined) => {
-    if (!target) return;
-    const anchor = typeof target.closest === "function" ? target.closest("a[href]") : String(target.nodeName) === "A" ? target : null;
-    const href = anchor ? String(anchor.href || anchor.getAttribute?.("href") || "") : "";
-    if (anchor && href && !href.toLowerCase().startsWith("javascript:")) {
-      const where = String(anchor.target || anchor.getAttribute?.("target") || "");
-      if (where === "_blank") page.open?.(href, "_blank", "noopener");
-      else page.location?.assign?.(href);
-      return;
-    }
-    const control = String(target.nodeName || "").toUpperCase();
-    const inputType = String(target.getAttribute?.("type") || "").toLowerCase();
-    const form = target.form || (typeof target.closest === "function" ? target.closest("form") : null);
-    const requestSubmit = form && "requestSubmit" in form && typeof form.requestSubmit === "function" ? form.requestSubmit : undefined;
-    const submitter = control === "BUTTON" || inputType === "submit" || inputType === "image";
-    if (!requestSubmit || !submitter || inputType === "button" || inputType === "reset") return;
-    try { requestSubmit.call(form, target); }
-    catch { /* The form rejected the submit. The click listeners still ran. */ }
-  };
   const mouse = (input: MouseInput) => {
     const x = Number(input.x);
     const y = Number(input.y);
@@ -179,21 +146,13 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         const name = Number(input.clickCount) > 1 ? "dblclick" : "click";
         const event = makeEvent(name, init);
         noted(event);
-        let allowed = true;
         if (!target || typeof target.dispatchEvent !== "function") {
           throw new Error(`Firefox could not dispatch ${name}: the page has no element at (${x}, ${y}).`);
         }
-        const kind = checkable(target);
-        const before = kind ? target.checked === true : null;
-        try { allowed = target.dispatchEvent(event) !== false; }
+        try { target.dispatchEvent(event); }
         catch (error) {
           const text = error instanceof Error ? error.message : String(error);
           throw new Error(`Firefox could not dispatch ${name} at (${x}, ${y}): ${text}`);
-        }
-        if (allowed && name === "click") {
-          activate(target);
-          // An untrusted click does not run the checkbox activation behavior.
-          if (kind && target.checked === before) applyCheck(target, kind);
         }
       }
       state.mouseTarget = null;
@@ -775,10 +734,10 @@ interface DomNode {
   hasAttribute?(name: string): boolean; getBoundingClientRect?(): { x?: number; y?: number; left?: number; top?: number; width?: number; height?: number };
   querySelectorAll?(selector: string): ArrayLike<DomNode>; dispatchEvent?(event: unknown): boolean;
   contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
-  shadowRoot?: DomNode | null; focus?(): void; closest?(selector: string): DomNode | null;
+  shadowRoot?: DomNode | null; focus?(): void;
   ownerDocument?: DomNode; type?: string; matches?(selector: string): boolean; click?(): void;
   clientLeft?: number; clientTop?: number;
-  href?: string; target?: string; form?: { requestSubmit?(submitter?: DomNode): void } | null;
+  form?: { requestSubmit?(submitter?: DomNode): void } | null;
   value?: string; selectionStart?: number | null; selectionEnd?: number | null;
   disabled?: boolean; checked?: boolean; readOnly?: boolean; required?: boolean; isContentEditable?: boolean;
   appendChild?(node: DomNode): void; __qzConsoleSeen?: number; __qzConsoleBridge?: boolean;
@@ -794,7 +753,6 @@ interface PageScope {
   };
   Function?: (source: string) => () => (...args: unknown[]) => unknown;
   WeakSet?: new () => { add(value: object): void };
-  Event?: new (type: string, init?: unknown) => unknown;
   MouseEvent?: new (type: string, init?: unknown) => unknown;
   WheelEvent?: new (type: string, init?: unknown) => unknown;
   KeyboardEvent?: new (type: string, init?: unknown) => unknown;
@@ -803,8 +761,6 @@ interface PageScope {
   HTMLInputElement?: { prototype: object };
   HTMLTextAreaElement?: { prototype: object };
   Touch?: new (init: unknown) => unknown;
-  location?: { assign?(url: string): void };
-  open?(url: string, target?: string, features?: string): void;
   TouchEvent?: new (type: string, init?: unknown) => unknown;
   Navigator?: { prototype: object };
   Error: new () => { stack?: string };
