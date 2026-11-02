@@ -13,6 +13,8 @@ import {
   projectNamedDriveResult,
   runDriveCalls,
 } from "../../src/background/mcp/external-drive.js";
+import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
+import { t as toolT } from "../../src/background/tools/messages.js";
 import { t } from "../../src/shared/i18n/backend.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
@@ -425,6 +427,169 @@ test("direct drive resolves an alias and a returned tabRef", async () => {
   const missingEn = await missingEnPromise;
   assert.equal(missingEn.results[0].result.error, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
   assert.doesNotMatch(missingEn.results[0].result.error, /omit tabRef/i);
+});
+
+test("single drive no_alias matches calls and the script bridge", async () => {
+  const throwNoAlias = () => {
+    const error = new Error("built-in alias");
+    error.code = "BATCH_TAB_REFERENCE_ERROR";
+    error.details = { reason: "no_alias", tabRef: "page" };
+    throw error;
+  };
+  const callBatch = (language) => {
+    let pending;
+    withLanguage(language, () => {
+      pending = runDriveCalls([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {
+        signal: new AbortController().signal,
+        aliases: {},
+        execute: async () => { throw new Error("planner should reject before execute"); },
+        getBatchTabPolicy: () => ({ kind: "target", implicit: false, observation: true }),
+      });
+    });
+    return pending;
+  };
+  const zhCalls = await callBatch("zh-CN");
+  const enCalls = await callBatch("en");
+  const zhSentence = withLanguage("zh-CN", () => t("drive.noAlias"));
+  const enSentence = withLanguage("en", () => t("drive.noAlias"));
+  assert.equal(zhCalls.results[0].result.error, zhSentence);
+  assert.equal(enCalls.results[0].result.error, enSentence);
+
+  const noted = [];
+  const metadata = {};
+  const driveRuns = new Map();
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: (sessionId, runId) => Boolean(runId) && driveRuns.get(sessionId) === runId,
+        mintDriveRunId(sessionId) {
+          if (!driveRuns.get(sessionId)) driveRuns.set(sessionId, `drive-${crypto.randomUUID()}`);
+          return driveRuns.get(sessionId);
+        },
+        clearDriveRunId(sessionId) { driveRuns.set(sessionId, ""); },
+        takeDriveRunForRelease(sessionId) {
+          const current = driveRuns.get(sessionId) || "";
+          driveRuns.set(sessionId, "");
+          return current;
+        },
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+      waitForRunObserved: async () => true,
+      getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
+      getLiveAgentEntry: async () => null,
+      setRuntime() {},
+      getStoredRuntime: () => null,
+      getLastMessages: async () => ({ messages: [] }),
+      getAgent: async () => null,
+      getTranscript: async () => [],
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      getConversation: async () => [],
+      compactTranscriptEvent: (event) => event,
+      getRuntime: () => ({ status: "idle", workingTabId: null }),
+      recordToolEvent(event) { noted.push(event); },
+    },
+    userInputPermissions: {
+      hasBrowserPermission: async () => false,
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+    },
+    tools: {
+      ready: async () => {},
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames: () => {},
+      runtime: {
+        getSchemas: () => [],
+        async execute(name) {
+          if (name === "get_ax_tree") throwNoAlias();
+          if (name === "list_tabs") throw new Error("plain failure");
+          return { ok: true };
+        },
+        getModelPolicy: () => null,
+        getBatchTabPolicy: () => null,
+        getTabAliases: () => ({}),
+      },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    async dispatchSidepanel() {},
+  });
+  const rejectMessage = async (language, params) => {
+    let pending;
+    withLanguage(language, () => {
+      pending = runtime.executeTool(params);
+    });
+    try {
+      await pending;
+    } catch (error) {
+      return error.message;
+    }
+    throw new Error("expected executeTool to reject");
+  };
+  const zhSingle = await rejectMessage("zh-CN", { sessionId: "drive-alias", name: "get_ax_tree", args: { tabRef: "page" }, clientName: "qz-cli" });
+  const enSingle = await rejectMessage("en", { sessionId: "drive-alias", name: "get_ax_tree", args: { tabRef: "page" }, clientName: "qz-cli" });
+  assert.equal(zhSingle, zhSentence);
+  assert.equal(enSingle, enSentence);
+  assert.equal(zhSingle, zhCalls.results[0].result.error);
+  assert.equal(enSingle, enCalls.results[0].result.error);
+  assert.equal(noted[0].result.error, zhSentence);
+  assert.equal(noted.at(-1).result.error, enSentence);
+  const plain = await rejectMessage("zh-CN", { sessionId: "drive-alias", name: "list_tabs", args: {} });
+  assert.equal(plain, "plain failure");
+  assert.doesNotMatch(plain, /--session/);
+
+  const scriptCall = async (language, runId) => {
+    const bridge = createRunScriptBridge({
+      supervisor: {
+        isRunCurrent: (_sessionId, id) => String(id).startsWith("drive-") || id === "run-current",
+        hasAgent: () => false,
+        getAbortSignal: () => new AbortController().signal,
+      },
+      getRuntime: () => ({ status: "running" }),
+      isTerminalRuntimeForRun: () => false,
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      getRunToolContext: async () => ({ language }),
+      toolRuntime: {
+        resolveDefinition: () => ({ behavior: {} }),
+        getSchemas: () => [],
+        async execute(name) {
+          if (name === "get_ax_tree") throwNoAlias();
+          return { ok: true };
+        },
+      },
+      collectArtifacts: () => [],
+    });
+    return bridge.handleToolCall({
+      toolName: "get_ax_tree",
+      args: { tabRef: "page" },
+      sessionId: "s1",
+      runId,
+    });
+  };
+  const zhScript = await scriptCall("zh-CN", "drive-1");
+  const enScript = await scriptCall("en", "drive-1");
+  const builtIn = await scriptCall("en", "run-current");
+  assert.equal(zhScript.error, zhSentence);
+  assert.equal(enScript.error, enSentence);
+  assert.equal(zhScript.error, zhSingle);
+  assert.equal(enScript.error, enSingle);
+  assert.doesNotMatch(builtIn.error, /--session/);
+  assert.match(builtIn.error, /no page alias yet/);
+
+  const builtInZh = withLanguage("zh-CN", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
+  const builtInEn = withLanguage("en", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
+  assert.doesNotMatch(builtInZh, /--session/);
+  assert.doesNotMatch(builtInEn, /--session/);
+  assert.notEqual(builtInZh, zhSentence);
+  assert.notEqual(builtInEn, enSentence);
 });
 
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {
