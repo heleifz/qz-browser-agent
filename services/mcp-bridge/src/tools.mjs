@@ -254,7 +254,7 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。第一次调用创建会话并返回 session id，同一任务的后续每次调用都显式带上这个 sessionId。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。页面脚本只跑 page。不要使用 target inner。Call qingzhou_guide once. The first call creates a session and returns its session id. Every later call in the same task passes that sessionId. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Page scripts run on the page.";
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。第一次调用创建会话并返回 session id，同一任务的后续每次调用都显式带上这个 sessionId。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。直驱 run_script 始终用 target page 并带 tabRef。编排用 calls 或 execute_tool。Call qingzhou_guide once. The first call creates a session and returns its session id. Every later call in the same task passes that sessionId. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Direct-drive run_script always uses target page and passes tabRef. Orchestrate with calls or execute_tool.";
 
 /** Node waits at least as long as a page script plus 60 seconds, and never rewrites the extension payload timeout. */
 export function driveExtensionTimeoutSeconds(params, fallback = 180) {

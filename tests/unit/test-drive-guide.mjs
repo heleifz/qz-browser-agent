@@ -38,10 +38,18 @@ test("the packed drive guide is the qz-browser-agent skill, in one language, ins
   assert.doesNotMatch(source, /省略 tabRef|omit tabRef/i);
   assert.doesNotMatch(source, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
   assert.doesNotMatch(source, /返回的 id|a returned id/i);
+  assert.doesNotMatch(source, /\binner\b/i);
+  assert.match(zh, /直驱的 run_script 始终用 target page，并带 tabRef/);
+  assert.match(zh, /直驱只接受带 tabRef 的 page 脚本/);
+  assert.match(en, /Direct-drive run_script always uses target page and passes tabRef/);
+  assert.match(en, /Direct drive accepts only a page script with tabRef/);
   const bridgeTools = readFileSync(new URL("../../services/mcp-bridge/src/tools.mjs", import.meta.url), "utf8");
   const instructions = bridgeTools.slice(bridgeTools.indexOf("const DRIVE_INSTRUCTIONS"), bridgeTools.indexOf("export function driveExtensionTimeoutSeconds"));
   assert.doesNotMatch(instructions, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
   assert.doesNotMatch(instructions, /返回的 id|a returned id/i);
+  assert.doesNotMatch(instructions, /\binner\b/i);
+  assert.match(instructions, /直驱 run_script 始终用 target page 并带 tabRef/);
+  assert.match(instructions, /Direct-drive run_script always uses target page and passes tabRef/);
   assert.match(instructions, /第一次调用创建会话并返回 session id/);
   assert.match(instructions, /The first call creates a session and returns its session id/);
   assert.match(instructions, /open_tab \/ list_tabs 返回的 tabRef/);

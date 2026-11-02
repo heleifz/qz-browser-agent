@@ -101,6 +101,14 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   const inner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
   assert.equal(inner.ok, false);
   assert.equal(inner.error.code, "DRIVE_RUN_SCRIPT_TARGET");
+  assert.equal(inner.error.message, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(inner.error.message, /\binner\b/i);
+  withLanguage("en", () => {
+    const enInner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
+    assert.equal(enInner.ok, false);
+    assert.equal(enInner.error.message, "Direct drive accepts only a page script with tabRef. Orchestrate with calls or execute_tool.");
+    assert.doesNotMatch(enInner.error.message, /\binner\b/i);
+  });
   const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
   assert.equal(missing.ok, false);
   assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
@@ -173,6 +181,8 @@ test("a calls batch rejects inner run_script before that call runs", async () =>
   assert.equal(batch.results[0].result.tabRef, 3);
   assert.equal(batch.results[1].isError, true);
   assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
+  assert.equal(batch.results[1].result.error, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(batch.results[1].result.error, /\binner\b/i);
 });
 
 test("projection drops nodes and screenshot bytes", () => {
