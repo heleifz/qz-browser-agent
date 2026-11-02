@@ -6,6 +6,7 @@ import {
   DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
   isDriveToolDefault,
+  isDriveToolForbidden,
   parseDriveRequest,
   prepareDriveToolCall,
   projectDriveResult,
@@ -78,10 +79,19 @@ test("drive titles and request sentences stay on the existing tool", () => {
 test("direct-drive run_script stays on the page and script errors keep the engine text", () => {
   assert.equal(isDriveToolDefault("open_tab"), true);
   assert.equal(isDriveToolDefault("list_skills"), true);
+  assert.equal(isDriveToolDefault("use_tab"), true);
+  assert.equal(isDriveToolDefault("wait_for_element"), true);
+  assert.equal(isDriveToolDefault("wait_for_navigation"), true);
+  assert.equal(isDriveToolDefault("wait_until"), false);
+  assert.equal(isDriveToolDefault("get_working_tab"), false);
   assert.equal(isDriveToolDefault("read_dom"), false);
   assert.equal(isDriveToolDefault("browse_history"), false);
   assert.equal(isDriveToolDefault("manage_goal"), false);
   assert.equal(isDriveToolDefault("run_script"), true);
+  assert.equal(isDriveToolForbidden("wait_until"), false);
+  assert.equal(isDriveToolForbidden("get_working_tab"), false);
+  assert.equal(isDriveToolForbidden("wait_for_user"), true);
+  assert.equal(isDriveToolForbidden("ask_user"), true);
   const page = prepareDriveToolCall("run_script", { tabRef: " page ", timeout: 5, code: "async () => 1" });
   assert.equal(page.ok, true);
   assert.equal(page.args.target, "page");
@@ -92,6 +102,34 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
   assert.equal(missing.ok, false);
   assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
+  withLanguage("zh-CN", () => {
+    const zh = prepareDriveToolCall("navigate", {});
+    assert.equal(zh.ok, false);
+    assert.equal(zh.error.message, "直驱的页面工具必须带 tabRef。open_tab 用 tabAlias。不要漏掉 tabRef。");
+  });
+  withLanguage("en", () => {
+    const en = prepareDriveToolCall("navigate", {});
+    assert.equal(en.ok, false);
+    assert.equal(en.error.message, "Direct-drive page tools require tabRef. open_tab uses tabAlias. Do not leave out tabRef.");
+  });
+  for (const name of ["navigate", "get_ax_tree", "read_dom", "use_tab", "close_tab", "screenshot", "act_on_element", "wait_for_element"]) {
+    const rejected = prepareDriveToolCall(name, {});
+    assert.equal(rejected.ok, false, name);
+    assert.equal(rejected.error.code, "DRIVE_TAB_REF_REQUIRED", name);
+    const blank = prepareDriveToolCall(name, { tabRef: "  " });
+    assert.equal(blank.ok, false, name);
+    const prefixed = prepareDriveToolCall(`plugin__${name}`, { tabRef: " page " });
+    assert.equal(prefixed.ok, true, name);
+    assert.equal(prefixed.args.tabRef, "page", name);
+  }
+  const tabIdOnly = prepareDriveToolCall("screenshot", { tabId: 4 });
+  assert.equal(tabIdOnly.ok, false);
+  assert.equal(tabIdOnly.error.code, "DRIVE_TAB_REF_REQUIRED");
+  for (const name of ["open_tab", "list_tabs", "list_skills", "load_skill", "wait_until", "wait", "document_fetch", "get_working_tab", "browse_history", "data_store"]) {
+    assert.equal(prepareDriveToolCall(name, {}).ok, true, name);
+  }
+  assert.equal(prepareDriveToolCall("read_image", { url: "https://example.com/a.png" }).ok, true);
+  assert.equal(prepareDriveToolCall("read_image", {}).error.code, "DRIVE_TAB_REF_REQUIRED");
   const other = prepareDriveToolCall("open_tab", { url: "https://example.com" });
   assert.equal(other.ok, true);
   const syntax = projectNamedDriveResult("run_script", { target: "page", tabRef: "page" }, {
@@ -434,7 +472,7 @@ test("one external session is created only when metadata is missing", async () =
   assert.equal(stops.length, 0);
   assert.equal(created.length, 0);
 
-  const legacy = await runtime.executeTool({ name: "read_dom", args: { selector: "main" } });
+  const legacy = await runtime.executeTool({ name: "read_dom", args: { selector: "main", tabRef: "page" } });
   assert.equal(legacy.toolName, "read_dom");
   assert.deepEqual(legacy.result.nodes, [1]);
   assert.equal(created.length, 0);
@@ -461,7 +499,7 @@ test("one external session is created only when metadata is missing", async () =
   assert.match(openedResult.runId, /^drive-/);
   assert.equal(created.length, 2);
 
-  const readBack = await runtime.executeTool({ sessionId: "drive-1", name: "read_dom", args: {} });
+  const readBack = await runtime.executeTool({ sessionId: "drive-1", name: "read_dom", args: { tabRef: "page" } });
   assert.deepEqual(readBack.result.nodes, [1]);
   assert.match(readBack.runId, /^drive-/);
 

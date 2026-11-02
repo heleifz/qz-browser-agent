@@ -19,9 +19,9 @@ const FORBIDDEN = new Set([
 
 /** Default qz tools / list_tools / tools.$list tier. Guide-tier names stay callable by name. */
 const DRIVE_DEFAULT_TOOLS = new Set([
-  "open_tab", "navigate", "list_tabs", "close_tab", "use_tab", "get_working_tab",
+  "open_tab", "navigate", "list_tabs", "close_tab", "use_tab",
   "get_ax_tree", "find_elements", "read_article", "act_on_element", "scroll_page",
-  "screenshot", "wait_for_element", "wait_for_navigation", "wait_until",
+  "screenshot", "wait_for_element", "wait_for_navigation",
   "run_script", "load_skill", "list_skills",
 ]);
 
@@ -66,19 +66,45 @@ export function isDriveToolDefault(name: string) {
   return DRIVE_DEFAULT_TOOLS.has(name) || DRIVE_DEFAULT_TOOLS.has(local);
 }
 
-/** Direct-drive run_script is page-only and must name a tabRef. Built-in inner batches do not use this. */
+/** Tools whose schema has tabId. Direct drive must name tabRef so execution does not fill the working tab. */
+const PAGE_TAB_TOOLS = new Set([
+  "navigate", "close_tab", "use_tab", "set_page_mode",
+  "read_article", "read_dom", "find_elements", "inspect_element", "act_on_element", "scroll_page",
+  "get_ax_tree",
+  "read_console_messages", "network_watch", "network_recent", "network_body",
+  "wait_for_response", "wait_for_network_idle", "wait_for_navigation", "wait_for_element", "wait_for_user",
+  "screenshot", "list_images", "read_image",
+  "run_script", "run_skill_script",
+  "import_skill_from_page_zip", "import_git_skill_repository", "install_skill_to_git",
+]);
+
+function missingTabRef(value: unknown) {
+  return value == null || (typeof value === "string" && value.trim() === "");
+}
+
+function pageToolNeedsTabRef(name: string, args: Fields) {
+  const local = toolLocalName(name);
+  if (!PAGE_TAB_TOOLS.has(name) && !PAGE_TAB_TOOLS.has(local)) return false;
+  if (local === "read_image" && String(args.url ?? "").trim()) return false;
+  return true;
+}
+
+/** Direct drive rejects a missing tabRef on page tools. run_script stays page-only. Built-in inner batches do not use this. */
 export function prepareDriveToolCall(name: string, args: unknown): { ok: true; args: Fields } | { ok: false; error: Error } {
   const input = record(args);
-  if (toolLocalName(name) !== "run_script") return { ok: true, args: input };
-  const target = String(input.target ?? "").trim();
-  if (target && target !== "page") {
-    return { ok: false, error: driveError("DRIVE_RUN_SCRIPT_TARGET", t("drive.runScriptPageOnly")) };
+  const local = toolLocalName(name);
+  if (local === "run_script") {
+    const target = String(input.target ?? "").trim();
+    if (target && target !== "page") {
+      return { ok: false, error: driveError("DRIVE_RUN_SCRIPT_TARGET", t("drive.runScriptPageOnly")) };
+    }
   }
-  const tabRef = input.tabRef;
-  if (tabRef == null || (typeof tabRef === "string" && tabRef.trim() === "")) {
+  if (!pageToolNeedsTabRef(name, input)) return { ok: true, args: input };
+  if (missingTabRef(input.tabRef)) {
     return { ok: false, error: driveError("DRIVE_TAB_REF_REQUIRED", t("drive.tabRefRequired")) };
   }
-  return { ok: true, args: { ...input, target: "page", tabRef: typeof tabRef === "string" ? tabRef.trim() : tabRef } };
+  const tabRef = typeof input.tabRef === "string" ? input.tabRef.trim() : input.tabRef;
+  return { ok: true, args: local === "run_script" ? { ...input, target: "page", tabRef } : { ...input, tabRef } };
 }
 
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */

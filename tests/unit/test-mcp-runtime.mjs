@@ -96,6 +96,11 @@ function toolSchema(name) {
 const runProfiles = [];
 const toolRuntime = {
   getSchemas: () => [...driveToolNames, ...blockedToolNames].map(toolSchema),
+  getBatchTabPolicy: (name) => name === "open_tab"
+    ? { kind: "create" }
+    : ["get_ax_tree", "screenshot", "read_dom", "navigate"].includes(name)
+      ? { kind: "target", implicit: false }
+      : null,
   async execute(name, args, signal, context) {
     executed.push({ name, args, signal, context });
     if (name === "load_skill") return { name: "research", displayName: "Research" };
@@ -252,7 +257,7 @@ await assert.rejects(
   runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
   error => error.code === "DRIVE_SESSION_OCCUPIED",
 );
-const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: {}, runId: "public-run" });
+const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" }, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
 assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
 assert.equal(driveTool.runId, "drive-drive-s");
@@ -285,15 +290,15 @@ sessions.recordToolEvent = event => { driveNotes.push(event); };
 sessions.persistTranscript = async sessionId => { persistedDriveSessions.push(sessionId); };
 {
   const notedBefore = driveNotes.length;
-  await runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main" } });
+  await runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main", tabRef: "page" } });
   assert.equal(driveNotes.length, notedBefore, "a legacy empty session does not record a drive transcript");
   assert.equal(executed.at(-1).context.toolCallId || "", "");
 }
 const batchNotes = await runtime.executeTool({
   sessionId: "drive-s",
   calls: [
-    { id: "tree", name: "get_ax_tree", args: { tabId: 3 } },
-    { id: "shot", name: "screenshot", args: { tabId: 3 } },
+    { id: "tree", name: "get_ax_tree", args: { tabRef: 3 } },
+    { id: "shot", name: "screenshot", args: { tabRef: 3 } },
   ],
 });
 assert.equal(batchNotes.results.length, 2);
@@ -308,7 +313,7 @@ assert.deepEqual(persistedDriveSessions, ["drive-s"]);
   toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "drop-me" });
   try {
     driveNotes.length = 0;
-    const shot = await runtime.executeTool({ sessionId: "drive-s", name: "screenshot", args: { tabId: 4 } });
+    const shot = await runtime.executeTool({ sessionId: "drive-s", name: "screenshot", args: { tabRef: 4 } });
     assert.equal(Object.hasOwn(shot.result, "_image"), false);
     assert.equal(Object.hasOwn(shot.result, "_debug"), false);
     assert.equal(driveNotes[0].result._image, "data:image/png;base64,aaaa");
@@ -325,7 +330,7 @@ assert.deepEqual(persistedDriveSessions, ["drive-s"]);
     driveNotes.length = 0;
     persistedDriveSessions.length = 0;
     await assert.rejects(
-      runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { selector: "x" } }),
+      runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { selector: "x", tabRef: "page" } }),
       error => error.code === "TOOL_FAILED",
     );
     assert.equal(driveNotes.length, 1);
@@ -413,14 +418,14 @@ for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
   tools[stage] = original;
 }
 const linked = new AbortController();
-await runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, linked.signal);
+await runtime.executeTool({ sessionId: "drive-abort", name: "read_dom", args: { tabRef: "page" } }, linked.signal);
 const seenSignal = executed.at(-1).signal;
 linked.abort();
 assert.equal(seenSignal.aborted, true, "the drive call follows the connection signal");
 const toolController = new AbortController();
 const oldExecute = toolRuntime.execute, loadedCount = loadedNames.length;
 toolRuntime.execute = async (_name, _args, signal) => { toolController.abort(new Error("late disconnect")); assert.equal(signal.aborted, true); return { name: "research" }; };
-await assert.rejects(runtime.executeTool({ sessionId: "drive-abort", name: "read_dom" }, toolController.signal), /late disconnect/);
+await assert.rejects(runtime.executeTool({ sessionId: "drive-abort", name: "read_dom", args: { tabRef: "page" } }, toolController.signal), /late disconnect/);
 assert.equal(loadedNames.length, loadedCount, "revoked tool results cannot update loaded Skill state");
 toolRuntime.execute = oldExecute;
 
@@ -430,12 +435,12 @@ toolRuntime.execute = oldExecute;
   const started = new Promise(resolve => { entered = resolve; });
   const previous = toolRuntime.execute;
   toolRuntime.execute = async () => { entered(); return new Promise(() => {}); };
-  const pending = runtime.executeTool({ sessionId: "drive-lease", name: "read_dom" }, hung.signal);
+  const pending = runtime.executeTool({ sessionId: "drive-lease", name: "read_dom", args: { tabRef: "page" } }, hung.signal);
   await started;
   hung.abort(new Error("bridge timeout"));
   await assert.rejects(pending, /bridge timeout/);
   toolRuntime.execute = previous;
-  const released = await runtime.executeTool({ sessionId: "drive-lease", name: "read_dom" });
+  const released = await runtime.executeTool({ sessionId: "drive-lease", name: "read_dom", args: { tabRef: "page" } });
   assert.equal(released.result.ok, true, "aborting a hung drive call releases DRIVE_SESSION_BUSY");
 }
 

@@ -74,19 +74,19 @@ async () => {
 }
 ```
 
-MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`args` 为 `{target:"page", tabRef, timeout, code}`。`tabRef` 必填。不要省略，也不要写 inner。不要把另一段 `run_script` 当成字符串嵌进这段脚本里当默认写法。要读页面，就在这一段页面脚本里读 `document`。
+MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`args` 为 `{target:"page", tabRef, timeout, code}`。`tabRef` 必填。必须写上，也不要写 inner。不要把另一段 `run_script` 当成字符串嵌进这段脚本里当默认写法。要读页面，就在这一段页面脚本里读 `document`。
 
 `code` 是单个 `async () => { ... }` 函数表达式。不要写 IIFE、`main()`，也不要在函数外 `return`。开头用一行注释说明页面、动作和目的。`timeout` 单位是秒，必填。`<= 0` 表示不限时，`> 0` 表示最多这么多秒。`qz script` 默认 120，可用 `--timeout` 覆盖。桥接请求再多等 60 秒，所以节点不会先于扩展报超时。不要为了等它先 sleep。
 
-`tabRef` 是本会话的页面别名，或正整数标签页 id。别名 1–64 个字母、数字、下划线或连字符，不能全是数字。别名只在本会话有效，关闭该标签后失效。引用别名之前，`open_tab` 必须已经出现。本会话还没有别名时，省略 `tabRef` 来用工作标签页，或先 `open_tab`。不要自己造 `page(...)` 或其他简写。`open_tab` 不要传 `tabRef`。`list_tabs` 每一项的标签标识也是 `tabRef`。
+`tabRef` 是本会话的页面别名，或正整数标签页 id。别名 1–64 个字母、数字、下划线或连字符，不能全是数字。别名只在本会话有效，关闭该标签后失效。引用别名之前，`open_tab` 必须已经出现。本会话还没有别名时，先 `open_tab`，再用返回的 `tabRef`。不要自己造 `page(...)` 或其他简写。`open_tab` 用 `tabAlias`，不要传 `tabRef`。`list_tabs` 每一项的标签标识也是 `tabRef`。
 
-页面工具省略 `tabRef` 时用本会话工作标签页。一批里有多个 `open_tab` 时，后面的页面调用必须写明 `tabRef`。同一标签同时只给一个会话。后来者失败，先拿到的会话不中断。
+直驱不使用工作标签页。带 `tabRef` 参数的页面工具如果没写，会被拒绝，错误码是 `DRIVE_TAB_REF_REQUIRED`。`act_on_screen` 没有这个参数。一批里每个页面调用都要写自己的 `tabRef`。同一标签同时只给一个会话。后来者失败，先拿到的会话不中断。
 
 默认工具。`qz tools`、`qingzhou_list_tools` 和脚本里的 `tools.$list()` 默认只给这一档，每项是一行短签名加一句说明：
 
-`open_tab`、`navigate`、`list_tabs`、`close_tab`、`use_tab`、`get_working_tab`、`get_ax_tree`、`find_elements`、`read_article`、`act_on_element`、`scroll_page`、`screenshot`、`wait_for_element`、`wait_for_navigation`、`wait_until`、`run_script`、`load_skill`、`list_skills`。
+`open_tab`、`navigate`、`list_tabs`、`close_tab`、`use_tab`、`get_ax_tree`、`find_elements`、`read_article`、`act_on_element`、`scroll_page`、`screenshot`、`wait_for_element`、`wait_for_navigation`、`run_script`、`load_skill`、`list_skills`。
 
-说明书档仍可调用，只是不在默认列表里。需要时用 `qz tools 名字` 或 `qingzhou_get_tool` 看签名。这一档包括 `read_dom`、`inspect_element`、`act_on_screen`、次要等待（`wait`、`wait_for_response`、`wait_for_network_idle`）、`document_*`、`list_images`、`collect_images`、`read_image`、`data_store`、`download_url`、`save_file`、`network_*`、`browse_history`、`set_page_mode`、`send_alert`，以及 `load_skill_resource`。文档工具名字仍带前缀 `qingzhou_documents__`。不要改这些名字。
+说明书档仍可调用，只是不在默认列表里。需要时用 `qz tools 名字` 或 `qingzhou_get_tool` 看签名。这一档包括 `read_dom`、`inspect_element`、`act_on_screen`、`get_working_tab`、次要等待（`wait`、`wait_for_response`、`wait_for_network_idle`）、钟点等待 `wait_until`、`document_*`、`list_images`、`collect_images`、`read_image`、`data_store`、`download_url`、`save_file`、`network_*`、`browse_history`、`set_page_mode`、`send_alert`，以及 `load_skill_resource`。文档工具名字仍带前缀 `qingzhou_documents__`。不要改这些名字。
 
 常用调用：
 
@@ -94,7 +94,7 @@ MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`a
 - `navigate({url, tabRef})`。`url` 必填。
 - `act_on_element({tabRef, target, action, value, key})`。`target` 用 `uid:` 或 `css:`。`action` 是 `click`、`fill`、`press`、`select`、`check`、`uncheck`、`scroll`。
 - `wait_for_element({tabRef, selector, timeout, absent})`。`selector` 必填，是 CSS，不是 `uid:`。超时不抛错，看 `found`。
-- `wait_for_navigation({tabRef, timeout})` 等地址变化。`wait_until({tabRef, timeout})` 等到条件满足。
+- `wait_for_navigation({tabRef, timeout})` 等地址变化。
 - `get_ax_tree({tabRef, root, scope, depth, limit})`。只在需要 `uid:` 时调用，并缩小 `root` 或 `limit`。
 - `find_elements({tabRef, pattern, selector, limit})`。用返回的 `target` 做下一次 `act_on_element`。
 - `run_script({target:"page", tabRef, timeout, code})`。`tabRef`、`timeout`、`code` 必填。会改页面时再设 `mutatesPage:true`。
@@ -116,7 +116,8 @@ MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`a
 - `DRIVE_TOO_MANY_CALLS`：一批最多 10 个。
 - `DRIVE_BATCH_TIMEOUT`：`limits.timeoutSeconds` 到了。加大限制，或把页面读取放进带 `tabRef` 的 `qz script`。
 - `UNKNOWN_TOOL`：先 `qz tools` 或 `tools.$list()`。
-- `BATCH_TAB_REFERENCE_ERROR`：`tabRef` 或 `tabAlias` 不对，或 `open_tab` 排在引用之后。本会话还没有别名时，省略 `tabRef`，或先 `open_tab`。
+- `BATCH_TAB_REFERENCE_ERROR`：`tabRef` 或 `tabAlias` 不对，或 `open_tab` 排在引用之后。本会话还没有别名时，先 `open_tab`。
+- `DRIVE_TAB_REF_REQUIRED`：页面工具没有 `tabRef`。`open_tab` 用 `tabAlias`。`list_tabs`、`list_skills`、`load_skill`、`wait` 和 `wait_until` 不需要页面目标。
 - `SESSION_TAB_UNOWNED`：用本会话的 `tabRef`，或先 `open_tab`。
 - 登录墙：在这个浏览器里打开该站并登录，然后重试。
 - `BRIDGE_REQUEST_TIMEOUT`：不要先 sleep。脚本请求会比脚本超时多等 60 秒。看会话里这次调用是否还在跑，不要立刻重发。
@@ -142,7 +143,7 @@ scroll_page。没有可靠目标时先滚动再读树。它不代替 act_on_elem
 
 screenshot。不是默认步骤。树和选择器都不够时才拍。图片字节不进 JSON 正文。
 
-三个默认等待。wait_for_element 的 selector 是 CSS，超时看 found，不抛错。wait_for_navigation 等地址变化。wait_until 等到条件成立。说明书档还有 wait、wait_for_response、wait_for_network_idle。wait_for_user 不能直驱。产品里没有第三个以 wait_for_ 开头、又不在黑名单里的等待，所以第三项默认等待是 wait_until。
+两个默认等待。wait_for_element 的 selector 是 CSS，超时看 found，不抛错。wait_for_navigation 等地址变化。wait_until 是钟点等待，参数是带时区的 until，不在默认列表里。它留在说明书档，仍可调用：用 qz tools wait_until 或 qingzhou_get_tool 看签名后再调。它不在黑名单里。说明书档还有 wait、wait_for_response、wait_for_network_idle。wait_for_user 和 ask_user 不能直驱。
 
 run_script。直驱入口强制 target 为 page，并且必须有 tabRef。内置 agent 自己的 inner 批处理还在，但这条直驱路径、qz script 和这份说明书都不使用它。页面脚本里可以 await tools.名字(参数)。直驱运行里的 tools.$list() 只返回默认档的短签名，每一项是名字、一行签名和一句说明。黑名单名字在脚本里同样会被拒绝。语法错误带回引擎原文、行列号和几行堆栈。若说明被改写成「脚本执行失败。」或「脚本语法错误，请检查引号、换行、括号或 return/await 的位置。」投影会改回 details 里的原文，并附上 (行:列)。
 
@@ -168,7 +169,7 @@ load_skill 与 list_skills。list_skills 给摘要。需要正文时 load_skill�
 
 调用示例。这些例子只用公开的示例站，用来核对参数形状，不是待答的题目。
 
-一次只开一页时，后面的页面工具可以省略 tabRef，用本会话的工作标签页。一批里有两个 open_tab 时，后面的调用必须写 tabRef，否则是目标不明确。
+直驱不假设工作标签页。带 tabRef 参数的页面工具都要写上。open_tab 用 tabAlias。list_tabs、list_skills、load_skill、wait 和 wait_until 不需要页面目标。get_working_tab 只查询当前页，不在默认列表里，仍可调用。
 
 ```json
 {"name":"navigate","args":{"url":"https://example.com/next","tabRef":"page"}}
@@ -199,9 +200,9 @@ open_tab({url:string, tabAlias?:string})
 打开一个标签页。
 ```
 
-本会话还没有别名就写了别名时，错误码是 BATCH_TAB_REFERENCE_ERROR，reason 是 no_alias。原句是：本会话还没有页面别名。省略 tabRef，或先 open_tab。不要改成去配模型。
+本会话还没有别名就写了别名时，错误码是 BATCH_TAB_REFERENCE_ERROR，reason 是 no_alias。先 open_tab，再用返回的 tabRef。不要改成去配模型。
 
-直驱 run_script 若写成 target inner，错误码是 DRIVE_RUN_SCRIPT_TARGET。若没写 tabRef，错误码是 DRIVE_TAB_REF_REQUIRED。这两条只挡直驱入口和 qz script。内置 agent 自己的 inner 批处理不走这里。
+直驱页面工具没写 tabRef 时，错误码是 DRIVE_TAB_REF_REQUIRED。run_script 写成 target inner 时，错误码是 DRIVE_RUN_SCRIPT_TARGET。这两条只挡直驱入口、脚本里的页面工具和 qz script。内置 agent 自己的 inner 批处理不走这里。
 
 节点等待。客户端 timeoutSeconds 是这一次 MCP 请求的等待。脚本 args.timeout 是页面脚本自己的秒数。节点实际等待取二者里更长的那个，并且脚本再加 60 秒。不要改写 limits.timeoutSeconds，那是一批 calls 的总预算。脚本 timeout 小于等于 0 时节点等待用 86400 秒作上限。
 
@@ -287,19 +288,19 @@ async () => {
 }
 ```
 
-The same MCP call is `qingzhou_execute_tool` with `name` `run_script` and `args` `{target:"page", tabRef, timeout, code}`. `tabRef` is required. Do not omit it, and do not pass inner. Do not nest another `run_script` as a string inside this script. Read `document` in this page script.
+The same MCP call is `qingzhou_execute_tool` with `name` `run_script` and `args` `{target:"page", tabRef, timeout, code}`. `tabRef` is required. Pass it, and do not pass inner. Do not nest another `run_script` as a string inside this script. Read `document` in this page script.
 
 `code` is one `async () => { ... }` function expression. No IIFE, no `main()`, and no `return` outside the function. Start with a one-line comment naming the page, the action, and the purpose. `timeout` is seconds and is required. `<= 0` means no limit. `> 0` is the maximum wait. `qz script` sends 120 unless `--timeout` says otherwise. The bridge waits 60 seconds longer, so the node process does not fail before the extension. Do not sleep first.
 
-`tabRef` is a page alias in this session, or a positive integer tab id. An alias is 1–64 letters, digits, underscores, or hyphens, and not all digits. It belongs to this session and dies when the tab closes. The `open_tab` that creates an alias comes first. When this session has no alias yet, omit `tabRef` to use the working tab, or `open_tab` first. Do not invent `page(...)` or another shorthand. `open_tab` does not take `tabRef`. Each `list_tabs` row identifies the tab with `tabRef`.
+`tabRef` is a page alias in this session, or a positive integer tab id. An alias is 1–64 letters, digits, underscores, or hyphens, and not all digits. It belongs to this session and dies when the tab closes. The `open_tab` that creates an alias comes first. When this session has no alias yet, `open_tab` first, then use the returned `tabRef`. Do not invent `page(...)` or another shorthand. `open_tab` uses `tabAlias` and does not take `tabRef`. Each `list_tabs` row identifies the tab with `tabRef`.
 
-Page tools use the session working tab when `tabRef` is omitted. When a batch contains more than one `open_tab`, later page calls must set `tabRef`. One tab has one session at a time. A later claimant fails. The session that already holds the tab is not interrupted.
+Direct drive does not use a working tab. A page tool that accepts `tabRef` is rejected with `DRIVE_TAB_REF_REQUIRED` when that field is missing. `act_on_screen` has no `tabRef` parameter. Every other page call in a batch sets its own `tabRef`. One tab has one session at a time. A later claimant fails. The session that already holds the tab is not interrupted.
 
 Default tools. `qz tools`, `qingzhou_list_tools`, and `tools.$list()` return this tier by default. Each item is a one-line signature and a short description:
 
-`open_tab`, `navigate`, `list_tabs`, `close_tab`, `use_tab`, `get_working_tab`, `get_ax_tree`, `find_elements`, `read_article`, `act_on_element`, `scroll_page`, `screenshot`, `wait_for_element`, `wait_for_navigation`, `wait_until`, `run_script`, `load_skill`, `list_skills`.
+`open_tab`, `navigate`, `list_tabs`, `close_tab`, `use_tab`, `get_ax_tree`, `find_elements`, `read_article`, `act_on_element`, `scroll_page`, `screenshot`, `wait_for_element`, `wait_for_navigation`, `run_script`, `load_skill`, `list_skills`.
 
-Guide-tier tools still run. They are omitted from the default list. Use `qz tools NAME` or `qingzhou_get_tool` for a signature. That tier includes `read_dom`, `inspect_element`, `act_on_screen`, secondary waits (`wait`, `wait_for_response`, `wait_for_network_idle`), `document_*`, `list_images`, `collect_images`, `read_image`, `data_store`, `download_url`, `save_file`, `network_*`, `browse_history`, `set_page_mode`, `send_alert`, and `load_skill_resource`. Document tool names still use the prefix `qingzhou_documents__`. Do not rename them.
+Guide-tier tools still run. They stay off the default list. Use `qz tools NAME` or `qingzhou_get_tool` for a signature. That tier includes `read_dom`, `inspect_element`, `act_on_screen`, `get_working_tab`, secondary waits (`wait`, `wait_for_response`, `wait_for_network_idle`), the clock wait `wait_until`, `document_*`, `list_images`, `collect_images`, `read_image`, `data_store`, `download_url`, `save_file`, `network_*`, `browse_history`, `set_page_mode`, `send_alert`, and `load_skill_resource`. Document tool names still use the prefix `qingzhou_documents__`. Do not rename them.
 
 Common calls:
 
@@ -307,7 +308,7 @@ Common calls:
 - `navigate({url, tabRef})`. `url` is required.
 - `act_on_element({tabRef, target, action, value, key})`. `target` is `uid:` or `css:`. `action` is `click`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll`.
 - `wait_for_element({tabRef, selector, timeout, absent})`. `selector` is required CSS, not `uid:`. A timeout does not throw. Check `found`.
-- `wait_for_navigation({tabRef, timeout})` waits for the URL to change. `wait_until({tabRef, timeout})` waits until a condition holds.
+- `wait_for_navigation({tabRef, timeout})` waits for the URL to change.
 - `get_ax_tree({tabRef, root, scope, depth, limit})`. Call it when you need a `uid:`, and narrow `root` or `limit`.
 - `find_elements({tabRef, pattern, selector, limit})`. Pass a returned `target` to the next `act_on_element`.
 - `run_script({target:"page", tabRef, timeout, code})`. `tabRef`, `timeout`, and `code` are required. Set `mutatesPage:true` when the script changes the page.
@@ -329,7 +330,8 @@ Stop on an error. Tell the user the returned `code` and the sentence, change one
 - `DRIVE_TOO_MANY_CALLS`: at most 10 calls in one batch.
 - `DRIVE_BATCH_TIMEOUT`: `limits.timeoutSeconds` elapsed. Raise the limit, or move a page read into `qz script` with `tabRef`.
 - `UNKNOWN_TOOL`: run `qz tools` or `tools.$list()` first.
-- `BATCH_TAB_REFERENCE_ERROR`: `tabRef` or `tabAlias` is wrong, or `open_tab` comes after the call that uses the alias. When this session has no alias yet, omit `tabRef`, or `open_tab` first.
+- `BATCH_TAB_REFERENCE_ERROR`: `tabRef` or `tabAlias` is wrong, or `open_tab` comes after the call that uses the alias. When this session has no alias yet, `open_tab` first.
+- `DRIVE_TAB_REF_REQUIRED`: a page tool has no `tabRef`. `open_tab` uses `tabAlias`. `list_tabs`, `list_skills`, `load_skill`, `wait`, and `wait_until` do not need a page target.
 - `SESSION_TAB_UNOWNED`: use this session's `tabRef`, or `open_tab` first.
 - Login wall: 在这个浏览器里打开该站并登录，然后重试。
 - `BRIDGE_REQUEST_TIMEOUT`: do not sleep first. A script request waits 60 seconds longer than the script timeout. Check whether that call is still running before you send it again.
@@ -355,7 +357,7 @@ scroll_page. Scroll, then read the tree, when you have no reliable target. It do
 
 screenshot. This is not a default step. Use it when the tree and a selector are not enough. Image bytes stay out of the JSON body.
 
-Three default waits. wait_for_element takes a CSS selector. A timeout sets found and does not throw. wait_for_navigation waits for the URL to change. wait_until waits until a condition holds. Guide-tier waits are wait, wait_for_response, and wait_for_network_idle. wait_for_user cannot be driven. There is no third non-blacklisted wait whose name starts with wait_for_, so the third default wait is wait_until.
+Two default waits. wait_for_element takes a CSS selector. A timeout sets found and does not throw. wait_for_navigation waits for the URL to change. wait_until is a clock wait. Its argument is until, an absolute time with a time zone. It is not on the default list. It stays on the guide tier and is still callable: use qz tools wait_until or qingzhou_get_tool, then call it. It is not blacklisted. Guide-tier waits also include wait, wait_for_response, and wait_for_network_idle. wait_for_user and ask_user cannot be driven.
 
 run_script. The direct-drive entry forces target page and requires tabRef. The built-in agent's own inner batches still exist. This direct path, qz script, and this guide do not use them. A page script may await tools.name(arguments). tools.$list() during a drive run returns only the default tier, each item a name, a one-line signature, and one sentence. Blacklisted names fail inside the script too. A syntax error comes back as the engine text, with line, column, and a few stack lines. If a catalog sentence replaced that with a generic failure, the drive projection restores details.originalError and appends (line:column).
 
@@ -381,11 +383,11 @@ Do not install or look for a skill named qz-drive. When the built-in agent shoul
 
 Call shapes. These examples only check argument shape. They are not questions to answer.
 
-When one batch opens a single page, later page tools may omit tabRef and use the session working tab. Two open_tab calls in one batch require tabRef on later calls.
+Direct drive does not assume a working tab. Page tools that take tabRef set it. open_tab uses tabAlias. list_tabs, list_skills, load_skill, wait, and wait_until need no page target. get_working_tab only queries the current page. It is off the default list and still callable.
 
 A failed page script comes back with the engine text. trace has at most five rows. qz tools and qingzhou_list_tools return short signatures, not full JSON Schema. Ask for a guide-tier tool by name before you call it. The lookup is not the call.
 
-If this session has no alias yet and you pass one, the code is BATCH_TAB_REFERENCE_ERROR and the reason is no_alias. Direct-drive run_script with target inner returns DRIVE_RUN_SCRIPT_TARGET. A missing tabRef returns DRIVE_TAB_REF_REQUIRED. Those two checks apply to the drive entry and to qz script. The built-in agent's own inner batches do not pass through them.
+If this session has no alias yet and you pass one, the code is BATCH_TAB_REFERENCE_ERROR and the reason is no_alias. open_tab first, then use the returned tabRef. A page tool without tabRef returns DRIVE_TAB_REF_REQUIRED. Direct-drive run_script with target inner returns DRIVE_RUN_SCRIPT_TARGET. Those checks apply to the drive entry, to page tools inside a script, and to qz script. The built-in agent's own inner batches do not pass through them.
 
 Node wait. timeoutSeconds on the MCP request is the client wait. args.timeout on the script is the page script's own seconds. The node wait is the longer of the two, and the script gets 60 seconds more. Do not rewrite limits.timeoutSeconds. That is the budget for one calls batch. A script timeout less than or equal to 0 makes the node wait use 86400 seconds as its upper bound.
 

@@ -254,7 +254,7 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。连上之后用 open_tab 和 get_ax_tree。页面脚本必须带 tabRef，只跑 page。不要使用 target inner。Call qingzhou_guide once, then drive with open_tab and get_ax_tree. Page scripts require tabRef and run on the page.";
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。连上之后用 open_tab 和 get_ax_tree。页面工具必须带 tabRef。open_tab 用 tabAlias。页面脚本只跑 page。不要使用 target inner。Call qingzhou_guide once, then drive with open_tab and get_ax_tree. Page tools require tabRef. open_tab uses tabAlias. Page scripts run on the page.";
 
 /** Node waits at least as long as a page script plus 60 seconds, and never rewrites the extension payload timeout. */
 export function driveExtensionTimeoutSeconds(params, fallback = 180) {

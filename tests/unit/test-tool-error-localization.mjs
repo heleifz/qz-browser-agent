@@ -55,7 +55,7 @@ for (const code of [...codes].sort()) {
   assert.equal(label.includes("_"), false, `localized label should not contain underscores: ${code}`);
 }
 for (const [language, forbidden, target, tabRef] of [
-  ["zh-CN", "直驱不能调用此工具", "直驱脚本只跑页面", "直驱脚本需要页面"],
+  ["zh-CN", "直驱不能调用此工具", "直驱脚本只跑页面", "直驱需要页面"],
   ["en", "Direct drive cannot call this tool", "Page scripts only", "Page reference required"],
 ]) withLanguage(language, () => {
   assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), forbidden);

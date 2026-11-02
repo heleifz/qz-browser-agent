@@ -368,8 +368,17 @@ const driveList = await driveBridge.handleToolCall({
   runId: "drive-1",
 });
 assert.deepEqual(driveList.result.tools, [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }]);
+const missingPage = await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(missingPage.ok, false);
+assert.equal(missingPage.code, "DRIVE_TAB_REF_REQUIRED");
+assert.deepEqual(driveExecutions, []);
 assert.equal((await driveBridge.handleToolCall({
   toolName: "read_dom",
+  args: { tabRef: "page" },
   sessionId: "s1",
   runId: "drive-1",
 })).ok, true);

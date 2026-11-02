@@ -376,7 +376,7 @@ export const backendMessages = defineMessages("backend", {
   "toolError.DRIVE_TOOL_FORBIDDEN.label": {"zh-CN": "直驱不能调用此工具", "en": "Direct drive cannot call this tool"},
   "toolError.DRIVE_TOOL_FORBIDDEN.message": {"zh-CN": "这个工具不能在直驱会话里调用。", "en": "This tool cannot be called in a direct-drive session."},
   "toolError.DRIVE_RUN_SCRIPT_TARGET.label": {"zh-CN": "直驱脚本只跑页面", "en": "Page scripts only"},
-  "toolError.DRIVE_TAB_REF_REQUIRED.label": {"zh-CN": "直驱脚本需要页面", "en": "Page reference required"},
+  "toolError.DRIVE_TAB_REF_REQUIRED.label": {"zh-CN": "直驱需要页面", "en": "Page reference required"},
   "toolError.SKILL_ALREADY_EXISTS.label": {"zh-CN": "技能已存在", "en": "Skill already exists"},
   "toolError.SKILL_BINARY_RESOURCE_TEXT_EDIT_UNSUPPORTED.label": {"zh-CN": "二进制技能资源不能按文本编辑", "en": "Binary skill resources cannot be edited as text"},
   "toolError.SKILL_CREATE_REQUIRES_CONTENT.label": {"zh-CN": "创建技能缺少内容", "en": "New skill content missing"},
@@ -955,5 +955,5 @@ export const backendMessages = defineMessages("backend", {
   "drive.sendMessageRejected": {"zh-CN": "这个会话由外部客户端直接操作，这里只能查看。", "en": "An external client is driving this session. This view is read-only."},
   "drive.batchTimeout": {"zh-CN": "这一批超时了。请加大 limits.timeoutSeconds 后再试。", "en": "This batch timed out. Increase limits.timeoutSeconds and try again."},
   "drive.runScriptPageOnly": {"zh-CN": "直驱的 run_script 只跑页面。不要传 target:\"inner\"。编排用 calls 或 execute_tool。", "en": "Direct-drive run_script runs on the page only. Do not pass target:\"inner\". Orchestrate with calls or execute_tool."},
-  "drive.tabRefRequired": {"zh-CN": "直驱的 run_script 必须带 tabRef，并且只跑页面。", "en": "Direct-drive run_script requires tabRef and runs on the page only."},
+  "drive.tabRefRequired": {"zh-CN": "直驱的页面工具必须带 tabRef。open_tab 用 tabAlias。不要漏掉 tabRef。", "en": "Direct-drive page tools require tabRef. open_tab uses tabAlias. Do not leave out tabRef."},
 });

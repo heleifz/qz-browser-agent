@@ -143,13 +143,13 @@ export function createRunScriptBridge({
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
       let toolArgs = plainObject(message.args);
-      if (driveRun && toolName === "run_script") {
+      if (driveRun && toolName !== "__list_tools__") {
         const prepared = prepareDriveToolCall(toolName, toolArgs);
         if (!prepared.ok) {
           const failure = prepared.error as Error & { code?: string };
           return respondFailure({
             error: failure.message,
-            code: failure.code || "DRIVE_RUN_SCRIPT_TARGET",
+            code: failure.code || "DRIVE_TAB_REF_REQUIRED",
             details: { toolName },
           }, { toolName });
         }
