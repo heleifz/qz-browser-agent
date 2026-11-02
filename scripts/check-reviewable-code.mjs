@@ -41,7 +41,7 @@ const REVIEWED = new Map([
     ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity and arguments to the run-owned evaluator."],
     ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["7fa7eb403ac90ca88908f19daf1c268b950ed0b595464615324355b697c22c55", "capabilities/script/tools", "Entire createScriptTools factory with product-specific offscreen error text. Page traces stay on the CDP-held promise; an inner timeout reads the last five once. Same explicit user/Agent page-script capability. Policy risk remains."],
+    ["be122f24e710bfad076f995e0d161ee83918f7827035abcf299d65c7e14c5a17", "capabilities/script/tools", "Entire createScriptTools factory. Drive calls never inject a default tab, and explicit tabRef suppresses the ordinary page default. Identity remains JSON-serialized data; source and run-owned execution are unchanged. Page traces stay on the CDP-held promise; an inner timeout reads the last five once. Policy risk remains."],
     ["e1026a3accc9f907512ec6d6eeed9728cfbd86b130ad009452f3bee13803b70c", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant from isolated-page-calls; validates live context identity."],
     ["c56fb6154c392cf8fece033fcc496139904617749a4fb93acae372347b20b1fd", "background/tools/element-runtime", "Calls the packaged ISOLATED_CONTENT_INVOKE bridge constant; action parameters are passed as CDP values, not code."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
@@ -55,9 +55,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function.",
   }],
-  ["cdp-execution:ed1908c7847b601236df02b4e05676e19dd95524eaf0b1fc08401a7004b63141", {
+  ["cdp-execution:3020b78cdb3feac1b1215c08285df1b4d695ff5b78e195a07660152b27f172ac", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: same reviewed page-script factory, without bundled shorthand expansion. Page traces stay on the CDP-held promise; an inner timeout reads the last five once.",
+    reason: "Unbundled createScriptTools: same reviewed explicit-target bridge and page-script factory, without bundled shorthand expansion. Page traces stay on the CDP-held promise; an inner timeout reads the last five once.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,

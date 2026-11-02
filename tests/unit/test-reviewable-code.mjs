@@ -47,6 +47,10 @@ try {
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
     assert.notEqual(mutatedScriptCode, scriptCode);
     assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+    const implicitTarget = scriptCode.replace('input.tabRef == null', 'true');
+    assert.notEqual(implicitTarget, scriptCode);
+    assert.equal(cdpFindings(implicitTarget, scriptPath).filter(item => !item.reviewed).length, 1,
+      'removing explicit-reference protection requires a new factory review');
     assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
 
     if (!bundle) {
