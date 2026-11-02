@@ -213,6 +213,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SCRIPT_SYNTAX_ERROR: { label: "toolError.SCRIPT_SYNTAX_ERROR.label", message: "toolError.SCRIPT_SYNTAX_ERROR.message" },
   SECURITY_GUARDRAIL_BLOCKED: { label: "toolError.SECURITY_GUARDRAIL_BLOCKED.label" },
   SCREENSHOT_CONTEXT_STALE: { label: "toolError.SCREENSHOT_CONTEXT_STALE.label", message: "toolError.SCREENSHOT_CONTEXT_STALE.message" },
+  SCREENSHOT_TARGET_INVALID: { label: "toolError.SCREENSHOT_TARGET_INVALID.label", message: "toolError.SCREENSHOT_TARGET_INVALID.message" },
   SCREENSHOT_COORDINATES_UNAVAILABLE: { label: "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.label", message: "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.message" },
   SCREENSHOT_FEEDBACK_FAILED: { label: "toolError.SCREENSHOT_FEEDBACK_FAILED.label", message: "toolError.SCREENSHOT_FEEDBACK_FAILED.message" },
   SELECTOR_BOUNDS_FAILED: { label: "toolError.SELECTOR_BOUNDS_FAILED.label", message: "toolError.SELECTOR_BOUNDS_FAILED.message" },

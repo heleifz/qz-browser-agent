@@ -111,6 +111,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     const screenshot = await exec(dependencies, stdout, stderr, { sessionId, name: "screenshot", args: { tabRef: "page", target: "viewport" } });
     expect(screenshot.code).toBe(1);
     expect(screenshot.text || stderr.text).toContain("SCREENSHOT_TARGET_INVALID");
+    expect(screenshot.text || stderr.text).toMatch(/Omit target to capture the viewport|截视口不传 target/);
 
     await expect(callTool(environment.bridge.endpoint, "qingzhou_send_message", {
       sessionId, text: "hello", timeoutSeconds: 15,
@@ -282,6 +283,8 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
         await page.locator('[data-sessions-mode="external-drive"]').click();
         await page.locator(`.session-card[data-id="${sessionId}"]`).click();
         await expect(page.locator("#app")).toHaveAttribute("data-external-drive", "true");
+        expect(await page.evaluate(async id => (await chrome.tabs.get(id)).active,
+          result.body.result.results[0].result.tabRef)).toBe(false);
       }
       await expect(cards).toHaveCount((index + 1) * 2);
     }
@@ -321,6 +324,8 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
     await expect(cards).toHaveCount(12);
     expect(await cards.evaluateAll(nodes => new Set(nodes.map(node => node.id)).size)).toBe(12);
     await callTool(bridge.endpoint, "qingzhou_stop_session", { sessionId });
+    const createdTabs = saved.filter(row => row.name === "open_tab").map(row => row.result.tabRef);
+    await expect.poll(async () => (await Promise.all(createdTabs.map(id => tabExists(page, id)))).some(Boolean)).toBe(false);
   } finally { await environment.close(); await fixture.close(); }
 });
 

@@ -17,6 +17,7 @@ const SOURCE_FILES = [
   "src/background/service-worker.ts",
   "src/background/skills/runtime.ts",
   "src/capabilities/wait/tools.ts",
+  "src/capabilities/media/tools.ts",
   "src/background/tools/runtime.ts",
   ...readdirSync("src/background/tools")
     .filter(name => /\.[jt]s$/.test(name) && !name.endsWith(".d.ts"))
@@ -61,6 +62,16 @@ for (const [language, forbidden, target, tabRef] of [
   assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), forbidden);
   assert.equal(localizeToolFailureCode("DRIVE_RUN_SCRIPT_TARGET"), target);
   assert.equal(localizeToolFailureCode("DRIVE_TAB_REF_REQUIRED"), tabRef);
+});
+
+for (const [language, message] of [
+  ["zh-CN", "截视口不传 target。截元素请传 uid: 或 css: 目标。"],
+  ["en", "Omit target to capture the viewport. For an element, pass a uid: or css: target."],
+]) withLanguage(language, () => {
+  const error = Object.assign(new Error(message), { code: "SCREENSHOT_TARGET_INVALID" });
+  assert.equal(localizeToolFailureError(error).message, message);
+  assert.equal(localizeToolFailurePayload({ error: error.message, code: error.code }).error, message,
+    "runtime and transport localization must preserve screenshot recovery guidance");
 });
 
 assert.equal(localizeToolFailureCode("TOOL_NOT_EXECUTED"), "工具未执行");

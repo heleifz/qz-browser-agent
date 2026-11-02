@@ -37,6 +37,7 @@ interface NavigationOptions {
   onUiEvent?(event: PortMessage): void;
   syncExternalDriveChrome?(): void;
   mergeSessionRecord?(record: SessionMetadata): unknown;
+  getSessionSource?(id: string): string | undefined;
   sessionTitleBar?: HTMLElement | null; currentSessionTitle?: HTMLElement | null;
   sessionTitleEditButton?: HTMLButtonElement | null; sessionTitleInput?: HTMLInputElement | null;
   showToast?(message: string, options: { tone: string; anchorEl?: Element | null }): void;
@@ -400,7 +401,7 @@ export function createSessionNavigationFeature(options: NavigationOptions) {
       else options.runController.finish({ render: false });
       pendingSessionRevealId = hasCachedTranscript ? null : targetId;
       if (hasCachedTranscript) revealSessionChat(targetId);
-      if (source !== "restore") {
+      if (source !== "restore" && options.getSessionSource?.(targetId) !== "external-drive") {
         options.send?.({ type: "activate_session_working_tab", sessionId: targetId });
       }
       if (wasObservingRunningSession) {

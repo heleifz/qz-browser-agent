@@ -91,6 +91,19 @@ test('single and batch non-page calls validate then discard tabRef, including UR
     { code: 'BATCH_TAB_REFERENCE_ERROR' });
 });
 
+test('screenshot viewport misuse retains actionable recovery through the real runtime in both languages', async () => {
+  const f = fixture();
+  for (const language of ['zh-CN', 'en']) {
+    await assert.rejects(f.runtime.execute('screenshot', { tabRef: 'shop', target: 'viewport' }, undefined,
+      { ...f.context, language }), error => {
+      assert.equal(error.code, 'SCREENSHOT_TARGET_INVALID');
+      assert.match(error.message, language === 'en' ? /Omit target to capture the viewport/ : /截视口不传 target/);
+      return true;
+    });
+  }
+  assert.deepEqual(f.targets, [], 'argument recovery must precede page targeting or capture');
+});
+
 test('screen actions require an explicit drive page and use its alias rather than the working tab', async () => {
   const f = fixture(), registry = createToolRegistry();
   registry.forCapability('drive-test')({ ...resolveToolDefinition('act_on_screen'), execute: args => ({ operated: args.tabId }) });

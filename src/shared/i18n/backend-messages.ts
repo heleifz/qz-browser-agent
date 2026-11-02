@@ -353,6 +353,8 @@ export const backendMessages = defineMessages("backend", {
   "toolError.SECURITY_GUARDRAIL_BLOCKED.label": {"zh-CN": "安全策略已阻止", "en": "Blocked by security policy"},
   "toolError.SCREENSHOT_CONTEXT_STALE.label": {"zh-CN": "页面截图坐标已失效", "en": "Screenshot coordinates are out of date"},
   "toolError.SCREENSHOT_CONTEXT_STALE.message": {"zh-CN": "页面截图坐标已经失效，请重新获取可操作的页面截图后再试。", "en": "Take a new screenshot with actionable=true, then try again."},
+  "toolError.SCREENSHOT_TARGET_INVALID.label": {"zh-CN": "截图目标无效", "en": "Invalid screenshot target"},
+  "toolError.SCREENSHOT_TARGET_INVALID.message": {"zh-CN": "截视口不传 target。截元素请传 uid: 或 css: 目标。", "en": "Omit target to capture the viewport. For an element, pass a uid: or css: target."},
   "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.label": {"zh-CN": "页面截图坐标不可用", "en": "Screenshot coordinates unavailable"},
   "toolError.SCREENSHOT_COORDINATES_UNAVAILABLE.message": {"zh-CN": "当前页面无法建立可靠的截图坐标，请重新截取整个视口。", "en": "Reliable coordinates could not be established. Capture the entire viewport again."},
   "toolError.SCREENSHOT_FEEDBACK_FAILED.label": {"zh-CN": "操作反馈截图失败", "en": "Could not capture the page after the action"},
