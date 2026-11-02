@@ -36,7 +36,7 @@ assert.doesNotMatch(citationSection, /每条 footnote 必须|同一个来源网�
 
 assert.match(
   SYSTEM_PROMPT,
-  /当前任务工作标签页：当前 Session 的默认页面目标；页面工具省略 tabRef 时使用它。/,
+  /当前任务工作标签页：当前 Session 的默认页面目标；页面工具未传 tabRef 时使用它。/,
   "kernel should define the session working tab as the default page target",
 );
 assert.match(

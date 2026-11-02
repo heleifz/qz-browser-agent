@@ -203,4 +203,12 @@ test('batch tab messages interpolate tabRef and differ by reference reason', () 
     assert.equal(new Set(texts).size, keys.length, language);
     for (const text of texts) assert.ok(!text.includes('{tabRef}'), `${language}: ${text}`);
   }
+  const noAlias = {
+    'zh-CN': withLanguage('zh-CN', () => toolT('batchTabReferenceNoAlias', { tabRef: 'x' })),
+    en: withLanguage('en', () => toolT('batchTabReferenceNoAlias', { tabRef: 'x' })),
+  };
+  assert.match(noAlias['zh-CN'], /--session/);
+  assert.match(noAlias.en, /--session/);
+  assert.doesNotMatch(noAlias['zh-CN'], /省略 tabRef/);
+  assert.doesNotMatch(noAlias.en, /omit tabRef/i);
 });

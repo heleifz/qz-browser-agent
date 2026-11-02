@@ -35,6 +35,14 @@ test("the packed drive guide is the qz-browser-agent skill, in one language, ins
   assert.doesNotMatch(zh, /npx skills add[^\n]*qz-drive/);
   assert.doesNotMatch(en, /npx skills add[^\n]*qz-drive/);
   assert.doesNotMatch(source, /^name: qz-drive$/m);
+  assert.doesNotMatch(source, /省略 tabRef|omit tabRef/i);
+  assert.match(zh, /一个任务一个会话/);
+  assert.match(zh, /tabAlias 建议写上，便于阅读，但不是必填/);
+  assert.match(zh, /页面工具始终传 `tabRef`/);
+  assert.match(en, /One task uses one session/);
+  assert.match(en, /tabAlias` is recommended for readability and is not required/);
+  assert.match(en, /Page tools always pass `tabRef`/);
+  assert.match(en, /The CLI does not resume the previous session/);
   for (const text of [zh, en]) {
     const tokens = text.length / CHARS_PER_TOKEN;
     assert.ok(tokens >= 3000 && tokens <= 5000, `${text.length} chars is ${tokens} tokens`);

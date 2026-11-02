@@ -105,13 +105,16 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   withLanguage("zh-CN", () => {
     const zh = prepareDriveToolCall("navigate", {});
     assert.equal(zh.ok, false);
-    assert.equal(zh.error.message, "直驱的页面工具必须带 tabRef。open_tab 用 tabAlias。不要漏掉 tabRef。");
+    assert.equal(zh.error.message, "页面工具必须带 tabRef。它可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+    assert.doesNotMatch(zh.error.message, /省略 tabRef/);
   });
   withLanguage("en", () => {
     const en = prepareDriveToolCall("navigate", {});
     assert.equal(en.ok, false);
-    assert.equal(en.error.message, "Direct-drive page tools require tabRef. open_tab uses tabAlias. Do not leave out tabRef.");
+    assert.equal(en.error.message, "Page tools require tabRef. It can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+    assert.doesNotMatch(en.error.message, /omit tabRef/i);
   });
+  assert.equal(prepareDriveToolCall("open_tab", { url: "https://example.com" }).ok, true);
   for (const name of ["navigate", "get_ax_tree", "read_dom", "use_tab", "close_tab", "screenshot", "act_on_element", "wait_for_element"]) {
     const rejected = prepareDriveToolCall(name, {});
     assert.equal(rejected.ok, false, name);
@@ -384,6 +387,45 @@ test("fixable script errors keep the identifier and syntax failures still restor
   assert.match(catalog.value.error, /price is not defined/);
   assert.match(catalog.value.error, /\(3:1\)/);
   assert.doesNotMatch(catalog.value.error, /^脚本执行失败/);
+});
+
+test("direct drive resolves an alias and a returned tabRef", async () => {
+  const seen = [];
+  const run = (calls, aliases) => runDriveCalls(calls, {
+    signal: new AbortController().signal,
+    aliases,
+    execute: async (_name, args) => {
+      seen.push(args.tabId);
+      return { snapshot: "ok" };
+    },
+    getBatchTabPolicy: () => ({ kind: "target", implicit: false, observation: true }),
+  });
+  const byAlias = await run([{ id: "alias", name: "get_ax_tree", args: { tabRef: "page" } }], { page: 11 });
+  const byId = await run([
+    { id: "number", name: "get_ax_tree", args: { tabRef: 11 } },
+    { id: "digits", name: "get_ax_tree", args: { tabRef: "11" } },
+  ], {});
+  assert.equal(byAlias.results[0].isError, false);
+  assert.equal(byId.results[0].isError, false);
+  assert.equal(byId.results[1].isError, false);
+  assert.deepEqual(seen, [11, 11, 11]);
+  let missingPromise;
+  withLanguage("zh-CN", () => {
+    missingPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
+  });
+  const missing = await missingPromise;
+  assert.equal(missing.results[0].isError, true);
+  assert.equal(missing.results[0].result.code, "BATCH_TAB_REFERENCE_ERROR");
+  assert.match(missing.results[0].result.error, /--session/);
+  assert.match(missing.results[0].result.error, /list_tabs/);
+  assert.doesNotMatch(missing.results[0].result.error, /省略 tabRef/);
+  let missingEnPromise;
+  withLanguage("en", () => {
+    missingEnPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
+  });
+  const missingEn = await missingEnPromise;
+  assert.doesNotMatch(missingEn.results[0].result.error, /omit tabRef/i);
+  assert.match(missingEn.results[0].result.error, /same --session/);
 });
 
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {
