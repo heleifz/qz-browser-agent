@@ -862,6 +862,10 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
 
   const before = executed.length;
   await assert.rejects(
+    runtime.createDriveSession({ sessionId: "s1" }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
+  );
+  await assert.rejects(
     runtime.executeTool({ sessionId: "s1", name: "open_tab", args: { url: "https://example.com" }, clientName: "pi" }),
     (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
   );
@@ -1217,6 +1221,20 @@ test("production normalization creates fresh isolated sessions even with an occu
   assert.equal(executions, executed);
   assert.deepEqual(await repository.listMetadata(), before);
   await assert.rejects(runtime.executeTool({ sessionId: "default", name: "list_tabs" }), error => error.code === "DRIVE_SESSION_OCCUPIED");
+});
+
+test("drive creation reports occupied when metadata creation is unavailable", async () => {
+  const runtime = createMcpRuntime({
+    sessions: {
+      supervisor: {},
+      listMetadata: async () => ({}),
+    },
+    async dispatchSidepanel() {},
+  });
+  await assert.rejects(
+    runtime.createDriveSession({ sessionId: "drive-unavailable" }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
+  );
 });
 
 test("a drive create does not take over an existing task", async () => {

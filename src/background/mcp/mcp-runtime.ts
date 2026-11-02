@@ -461,7 +461,7 @@ export function createMcpRuntime({
     const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
     const source = await ensureDriveSession(sessionId, params.clientName);
     if (source !== "external-drive") {
-      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_REQUIRED" });
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
     }
     return { sessionId };
   }
