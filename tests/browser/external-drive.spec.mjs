@@ -323,6 +323,30 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
     await expect(page.locator("#app")).toHaveAttribute("data-external-drive", "true");
     await expect(cards).toHaveCount(12);
     expect(await cards.evaluateAll(nodes => new Set(nodes.map(node => node.id)).size)).toBe(12);
+    await page.locator('[data-tab="sessions"]').click();
+    await page.locator('[data-sessions-mode="external-drive"]').click();
+    const taskEntries = page.locator('#sessions-list .session-card:not(.is-removing)');
+    await expect(taskEntries).toHaveCount(1);
+    await expect(taskEntries.first()).toHaveAttribute('data-id', sessionId);
+    for (const name of ['wait', 'read_article', 'read_article']) {
+      const repeated = await exec(dependencies, stdout, stderr, { sessionId, name,
+        args: name === 'wait' ? { seconds: 0 } : { tabRef: 'first', limit: 100 } });
+      expect(repeated.code, repeated.text || stderr.text).toBe(0);
+      await expect(page.locator('#sessions-list .session-card')).toHaveCount(1);
+      await expect(taskEntries.first()).toHaveAttribute('data-id', sessionId);
+    }
+    const extraIds = [];
+    for (let i = 0; i < 2; i++) {
+      stdout.text = stderr.text = '';
+      expect(await main(['session', 'create', '--json'], dependencies), stdout.text || stderr.text).toBe(0);
+      extraIds.push(JSON.parse(stdout.text).result.sessionId);
+      await expect(taskEntries).toHaveCount(i + 2);
+    }
+    expect(new Set(await taskEntries.evaluateAll(nodes => nodes.map(node => node.dataset.id))))
+      .toEqual(new Set([sessionId, ...extraIds]));
+    expect(new Set(await taskEntries.locator('.session-card-title').allTextContents()).size).toBe(1);
+    await expect(page.locator('#sessions-list .session-card')).toHaveCount(3);
+    for (const id of extraIds) await callTool(bridge.endpoint, 'qingzhou_stop_session', { sessionId: id });
     await callTool(bridge.endpoint, "qingzhou_stop_session", { sessionId });
     const createdTabs = saved.filter(row => row.name === "open_tab").map(row => row.result.tabRef);
     await expect.poll(async () => (await Promise.all(createdTabs.map(id => tabExists(page, id)))).some(Boolean)).toBe(false);
