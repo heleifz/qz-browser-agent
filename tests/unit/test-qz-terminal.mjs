@@ -52,7 +52,10 @@ test("help recommends direct creation, optional titles, waiting, and contextual 
   assert.match(renderHelp("send"), /next safe boundary/);
   assert.match(renderHelp("send"), /next run/);
   for (const name of ["", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "stop", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
-    assert.doesNotMatch(renderHelp(name), /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
+    // General help appends the browser guide. Chrome's documented --args flag is
+    // not a qz CLI option; validate removed options only in the command reference.
+    const commandReference = renderHelp(name).split("不要配置轻舟模型")[0];
+    assert.doesNotMatch(commandReference, /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
     for (const width of [40, 80]) fits(renderHelp(name, { width }), width);
   }
 });

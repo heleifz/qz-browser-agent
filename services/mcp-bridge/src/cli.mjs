@@ -17,6 +17,7 @@ import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
 import { driveGuide } from "./drive-guide.mjs";
 import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
+import { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
 
 export const HELP = renderHelp();
 
@@ -241,11 +242,11 @@ async function dispatchCommand(parsed, dependencies) {
   if (command === "script") {
     if (options.file && options.file !== "-") {
       try { scriptCode = readFileSync(options.file, "utf8"); }
-      catch { throw new QzError("invalid_arguments", `Could not read ${options.file}. Use qz script [FILE|-].`); }
+      catch { throw new QzError("invalid_arguments", `Could not read ${options.file}. Use qz script --session ID --tab TABREF [FILE|-].`); }
     } else {
       scriptCode = await (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
     }
-    if (!String(scriptCode).trim()) throw new QzError("invalid_arguments", "The script is empty. Use qz script [FILE|-].");
+    if (!String(scriptCode).trim()) throw new QzError("invalid_arguments", "The script is empty. Use qz script --session ID --tab TABREF [FILE|-].");
   }
   let execPayload = null;
   if (command === "exec") {
@@ -296,18 +297,31 @@ async function dispatchCommand(parsed, dependencies) {
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
   if (command === "exec") {
+    const flaggedSession = String(options.session || "").trim();
+    const payloadSession = String(execPayload.sessionId || "").trim();
+    if (payloadSession && flaggedSession && payloadSession !== flaggedSession) {
+      throw new QzError("invalid_arguments", "The --session option and sessionId select different sessions. Pass one id from qz session create.");
+    }
     const route = catalogExecRoute(execPayload);
     if (route) {
-      const sessionId = String(route.args.sessionId || options.session || "").trim();
+      const sessionId = String(route.args.sessionId || flaggedSession).trim();
+      if (sessionId !== flaggedSession) {
+        throw new QzError("invalid_arguments", "The --session option and args.sessionId select different sessions. Pass one id from qz session create.");
+      }
+      const bindsSession = route.tool === "qingzhou_list_tools" || route.tool === "qingzhou_get_tool";
       const result = await call(running.endpoint, route.tool, {
         ...route.args,
-        ...(sessionId ? { sessionId } : {}),
+        ...(bindsSession && sessionId ? { sessionId } : {}),
         ...common,
       }, requestOptions);
       return { result, exitCode: 0 };
     }
-    const session = options.session && !execPayload.sessionId ? { sessionId: options.session } : {};
-    const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...session, ...common }, requestOptions);
+    const session = flaggedSession && !execPayload.sessionId ? { sessionId: flaggedSession } : {};
+    const params = { ...execPayload, ...session, ...common };
+    const requestSeconds = driveExtensionTimeoutSeconds(params, timeoutSeconds);
+    const result = await call(running.endpoint, "qingzhou_execute_tool", params, {
+      ...requestOptions, timeoutMs: requestSeconds * 1000,
+    });
     const failed = execFailed(result);
     return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
   }
@@ -417,6 +431,13 @@ async function dispatchCommand(parsed, dependencies) {
         : { ...result, snapshot };
     }
     return { result };
+  }
+  if (command === "session" && action === "create") {
+    const created = await call(running.endpoint, "qingzhou_create_drive_session", { ...common }, requestOptions);
+    const sessionId = String(created?.sessionId || "").trim();
+    if (!sessionId) throw new QzError("invalid_response", "The drive session was created without an ID. Run qz session create again.");
+    if (options.json) return { result: { sessionId } };
+    return { text: `sessionId ${sessionId}\n` };
   }
   let name, parameters;
   if (resource) {

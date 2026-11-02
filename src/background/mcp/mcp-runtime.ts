@@ -12,6 +12,7 @@ import {
   parseDriveRequest,
   prepareDriveToolCall,
   projectNamedDriveResult,
+  projectDriveScriptDiagnostic,
   runDriveCalls,
 } from "./external-drive.js";
 import { summarizeSessionUsage } from "../../shared/session/session-usage.js";
@@ -122,7 +123,7 @@ export function createMcpRuntime({
       storageKey: storageKey(),
       methods: [
         "ping", "capabilities", "get_bridge_config", "save_bridge_config", "runtime_message",
-        "list_sessions", "create_session", "send_message", "follow_up", "continue_task",
+        "list_sessions", "create_session", "create_drive_session", "send_message", "follow_up", "continue_task",
         "submit_wait_form", "cancel_wait", "get_user_input", "respond_to_user_input", "get_session_state", "get_session_snapshot",
         "get_messages", "get_history", "stop_session", "clear_goal", "list_tools", "get_tool",
         "execute_tool", "list_data_tables", "list_skills", "get_skill", "get_skill_resource",
@@ -357,12 +358,9 @@ export function createMcpRuntime({
 
   async function toolCatalog(params: Fields, reason: string) {
     await waitForToolsReady(reason);
-    const sessionId = sessions.normalizeId(params.sessionId);
+    const { sessionId, metadata } = await requireToolSession(params.sessionId);
     const canManageSessions = await tools.canManageSessions(sessionId);
-    const listedMetadata = sessionId ? await sessions.listMetadata() : {};
-    const known = sessionId ? listedMetadata[sessionId] : undefined;
-    // A session that does not exist yet can only be opened by direct drive.
-    const externalDrive = !known || known.source === "external-drive";
+    const externalDrive = metadata.source === "external-drive";
     const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
     const runtime = sessions.getRuntime(sessionId);
     const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
@@ -445,13 +443,39 @@ export function createMcpRuntime({
     return "external-drive";
   }
 
+  async function requireToolSession(value: unknown) {
+    // Do not use the runtime normalizer: missing IDs must never select "default".
+    const sessionId = typeof value === "string" ? value.trim() : "";
+    if (!sessionId) {
+      throw Object.assign(new Error(t("drive.sessionRequired")), { code: "DRIVE_SESSION_REQUIRED" });
+    }
+    const metadata = (await sessions.listMetadata())[sessionId];
+    if (!metadata) {
+      throw Object.assign(new Error(t("drive.sessionNotFound")), { code: "DRIVE_SESSION_NOT_FOUND" });
+    }
+    return { sessionId, metadata };
+  }
+
+  async function createDriveSession(params: Fields = {}) {
+    const requested = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
+    const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
+    const source = await ensureDriveSession(sessionId, params.clientName);
+    if (source !== "external-drive") {
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+    }
+    return { sessionId };
+  }
+
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
     const language = getLanguage();
     const parsed = parseDriveRequest(params);
     if (!parsed.ok) throw parsed.error;
     signal?.throwIfAborted();
-    const sessionId = sessions.normalizeId(params.sessionId);
-    const source = await ensureDriveSession(sessionId, params.clientName);
+    const { sessionId, metadata } = await requireToolSession(params.sessionId);
+    if (metadata.source !== "external-drive") {
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+    }
+    const source = metadata.source;
     signal?.throwIfAborted();
     await waitForToolsReady("mcp_execute_tool");
     signal?.throwIfAborted();
@@ -508,6 +532,11 @@ export function createMcpRuntime({
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
           if (error instanceof Error) {
+            if (name === "run_script") {
+              Object.assign(error, withLanguage(language, () => projectDriveScriptDiagnostic({
+                message: error.message, details: plainObject(error).details,
+              })));
+            }
             const next = withLanguage(language, () => driveNoAliasText(error, error.message));
             if (next !== error.message) error.message = next;
           }
@@ -651,6 +680,7 @@ export function createMcpRuntime({
     getSnapshot,
     listTools,
     getTool,
+    createDriveSession,
     executeTool,
     drive,
     listSkills: listAvailableSkills,

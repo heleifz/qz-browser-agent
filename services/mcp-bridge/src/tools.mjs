@@ -6,6 +6,8 @@ import { BridgeError } from "./state.mjs";
 import { waitForTask } from "./task-stream.mjs";
 import { PACKAGE_VERSION } from "./package-info.mjs";
 import { driveGuide } from "./drive-guide.mjs";
+import { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
+export { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
 
 // Public MCP tools use the extension's version 1 wire protocol.
 export const TOOL_CATALOG = JSON.parse(readFileSync(new URL("./catalog.json", import.meta.url), "utf8"))
@@ -120,6 +122,10 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   if (name === "qingzhou_follow_up") params.images ||= [];
   if (name === "qingzhou_submit_wait_form") params.answers ||= {};
+  if (name === "qingzhou_create_drive_session") {
+    const displayName = String(clientName || "").trim();
+    if (displayName) params.clientName = displayName;
+  }
   if (name === "qingzhou_execute_tool") {
     delete params.wait;
     if (!Array.isArray(params.calls)) params.args ||= {};
@@ -244,7 +250,7 @@ export function resultToContent(result) {
 }
 
 const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
-const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
+const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
   description: "先读说明书。返回直驱说明书全文。一条新连接调用一次。Read the guide first. Call this once on a new connection before other tools.",
@@ -254,29 +260,7 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。第一次调用创建会话并返回 session id，同一任务的后续每次调用都显式带上这个 sessionId。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。直驱 run_script 始终用 target page 并带 tabRef。编排用 calls 或 execute_tool。Call qingzhou_guide once. The first call creates a session and returns its session id. Every later call in the same task passes that sessionId. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Direct-drive run_script always uses target page and passes tabRef. Orchestrate with calls or execute_tool.";
-
-/** Node waits at least as long as a page script plus 60 seconds, and never rewrites the extension payload timeout. */
-export function driveExtensionTimeoutSeconds(params, fallback = 180) {
-  const client = Number(params?.timeoutSeconds);
-  const base = Number.isFinite(client) && client > 0 ? client : Number(fallback) || 180;
-  const scripts = [];
-  if (params?.name === "run_script") scripts.push(params.args);
-  if (Array.isArray(params?.calls)) {
-    for (const call of params.calls) if (call?.name === "run_script") scripts.push(call.args);
-  }
-  let scriptMax = 0;
-  let unlimited = false;
-  for (const raw of scripts) {
-    const timeout = Number(raw && typeof raw === "object" ? raw.timeout : undefined);
-    if (!Number.isFinite(timeout)) continue;
-    if (timeout <= 0) unlimited = true;
-    else scriptMax = Math.max(scriptMax, timeout);
-  }
-  if (unlimited) return 86400;
-  if (scriptMax > 0) return Math.max(base, scriptMax + 60);
-  return base;
-}
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。先 qingzhou_create_drive_session 或 qz session create，之后每次调用都带返回的 sessionId。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Call qingzhou_guide once. Create a session with qingzhou_create_drive_session or qz session create, then pass that sessionId on every call. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
 
 export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   const explicit = String(profile || "").trim().toLowerCase();
@@ -291,7 +275,6 @@ export function driveToolCatalog() {
 
 export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
   const catalogProfile = mcpCatalogProfile({ clientName, profile });
-  let driveSessionId = "";
   const server = new Server({ name: "qz-browser-agent-mcp-bridge", version: PACKAGE_VERSION }, {
     capabilities: { tools: {} },
     instructions: catalogProfile === "drive" ? DRIVE_INSTRUCTIONS : "Control qz tasks and browser tools through the local bridge.",
@@ -309,11 +292,9 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
       }
       if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
         if (!String(input.scope || "").trim()) input.scope = "session";
-        if (!String(input.sessionId || "").trim() && driveSessionId) input.sessionId = driveSessionId;
       }
       if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
-        if (!driveSessionId) driveSessionId = crypto.randomUUID().replaceAll("-", "");
-        input.sessionId = driveSessionId;
+        throw new BridgeError("DRIVE_SESSION_REQUIRED", "Pass sessionId from qz session create (MCP: qingzhou_create_drive_session). CLI calls require --session. This call does not create a session.");
       }
       const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,
         onTaskUpdate: progressToken === undefined ? undefined : event => extra.sendNotification({

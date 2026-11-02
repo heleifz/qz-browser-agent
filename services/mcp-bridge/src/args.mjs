@@ -1,10 +1,14 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
 import { browserName } from "./browser-registry.mjs";
-import { COMMANDS, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
+import { COMMANDS, DRIVE_SESSION_REQUIRED, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
   throw new QzError("invalid_arguments", message);
+}
+
+function requireDriveSession(command, options) {
+  if (!String(options.session || "").trim()) invalid(`qz ${command} requires --session <id>. ${DRIVE_SESSION_REQUIRED}`);
 }
 
 function helpTopic(parts) {
@@ -147,13 +151,19 @@ export function parseCommand(argv) {
   } else if (command === "exec") {
     if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
     else options.payload = words[0] ?? "-";
+    requireDriveSession("exec", options);
   } else if (command === "script") {
-    if (words.length > 1) invalid("Use qz script --tab TABREF [FILE|-].");
-    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a numeric tab id.");
+    if (words.length > 1) invalid("Use qz script --session ID --tab TABREF [FILE|-].");
+    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a tabRef returned by open_tab/list_tabs.");
+    requireDriveSession("script", options);
     options.file = words[0] ?? "-";
   } else if (command === "tools") {
-    if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools [NAME].");
+    if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools --session ID [NAME].");
+    requireDriveSession("tools", options);
     id = words[0];
+  } else if (command === "session") {
+    action = words[0] || "";
+    if (action !== "create" || words.length !== 1) invalid("Use qz session create.");
   } else if (command === "skill") {
     if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {

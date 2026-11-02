@@ -15,11 +15,15 @@ for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
     ["unmeasuredViewport", en ? "Geometry unavailable: 7 nodes." : "几何信息缺失：7 个节点。"],
   ]) assert.equal(toolT(key, { count: 7, capability }), expected);
 
-  assert.match(toolT("getAxTreeScope"), en ? /Page roots default to viewport; uid:\/css: element roots default to full/ : /整页根默认 viewport，uid:\/css: 元素根默认 full/);
+  assert.match(toolT("getAxTreeScope"), en ? /Only viewport or full/ : /只能是 viewport 或 full/);
+  assert.match(toolT("getAxTreeScope"), en ? /root "root" uses viewport, and a uid: or css: root uses full/ : /root 为 "root" 用 viewport，uid: 或 css: 根用 full/);
+  assert.doesNotMatch(toolT("getAxTreeScope"), /scope:"page"|整页根|Page roots/i);
   const description = toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" });
-  assert.match(description, en ? /default to scope:"viewport"/ : /整页默认 scope:"viewport"/);
+  assert.match(description, en ? /scope is only viewport or full/ : /scope 只能是 viewport 或 full/);
+  assert.match(description, en ? /When root is "root", the default is scope:"viewport"/ : /root 为 "root" 时默认 scope:"viewport"/);
+  assert.doesNotMatch(description, /scope:"page"|Whole-page reads default/i);
   assert.match(description, /↑\/↓/);
   assert.match(description, /items=N.*\(truncated, N more\)/);
-  assert.match(toolT("getAxTreeRoot"), en ? /scope controls the range/ : /范围由 scope 控制/);
+  assert.match(toolT("getAxTreeRoot"), en ? /scope is only viewport or full/ : /scope 只能是 viewport 或 full/);
 });
 console.log("Bilingual AX marker and budget copy passed");

@@ -25,7 +25,7 @@ export function catalogExecRoute(payload) {
 export function buildScriptRequest({ code = "", timeoutSeconds = 120, sessionId = "", tabRef = "" } = {}) {
   const ref = typeof tabRef === "string" ? tabRef.trim() : tabRef;
   if (ref == null || ref === "") {
-    throw new Error("qz script requires --tab TABREF. Pass an alias or a numeric tab id.");
+    throw new Error("qz script requires --tab TABREF. Pass an alias or a tabRef returned by open_tab/list_tabs.");
   }
   const request = {
     name: "run_script",
@@ -37,7 +37,8 @@ export function buildScriptRequest({ code = "", timeoutSeconds = 120, sessionId 
     },
   };
   const id = String(sessionId || "").trim();
-  if (id) request.sessionId = id;
+  if (!id) throw new Error("qz script requires --session <id>. Pass the sessionId from qz session create.");
+  request.sessionId = id;
   return request;
 }
 

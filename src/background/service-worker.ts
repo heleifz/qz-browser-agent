@@ -881,6 +881,7 @@ const backgroundApi = createBackgroundApi({
   sessions: {
     list: sessionCommands.listSessionsRuntime,
     create: sessionCommands.createSessionFromApi,
+    createDrive: (params: Record<string, unknown>) => mcpRuntime.createDriveSession(params),
     rename: sessionCommands.renameSessionRuntime,
     remove: sessionCommands.deleteSessionRuntime,
     send: mcpRuntime.sendMessage,

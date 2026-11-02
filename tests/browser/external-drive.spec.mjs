@@ -19,6 +19,17 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }),
   };
   const openedTabs = [];
+  const createdIds = new Set();
+  const createDrive = async () => {
+    stdout.text = "";
+    stderr.text = "";
+    expect(await main(["session", "create", "--json"], dependencies), stderr.text).toBe(0);
+    const id = JSON.parse(stdout.text).result.sessionId;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    expect(createdIds.has(id)).toBe(false);
+    createdIds.add(id);
+    return id;
+  };
   try {
     const created = await callTool(environment.bridge.endpoint, "qingzhou_create_session", {
       title: "Built-in task", firstMessage: "", timeoutSeconds: 20,
@@ -46,7 +57,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, builtinId);
     expect(source).not.toBe("external-drive");
 
-    const sessionId = `drive-${Date.now().toString(36)}`;
+    const sessionId = await createDrive();
     const opened = await exec(dependencies, stdout, stderr, {
       sessionId,
       name: "open_tab",
@@ -89,7 +100,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       sessionId, text: "hello", timeoutSeconds: 15,
     }, { timeoutMs: 20_000 })).rejects.toThrow(/只能查看|read-only/);
 
-    const batchSession = `drive-batch-${Date.now().toString(36)}`;
+    const batchSession = await createDrive();
     const batch = await exec(dependencies, stdout, stderr, {
       sessionId: batchSession,
       calls: [
@@ -111,7 +122,9 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, batchSession);
     expect(savedTools).toEqual(["open_tab", "get_ax_tree", "act_on_element"]);
 
+    const smokeId = await createDrive();
     const smoke = await exec(dependencies, stdout, stderr, {
+      sessionId: smokeId,
       calls: [
         { id: "open", name: "open_tab", args: { url: `${fixture}/smoke`, tabAlias: "page" } },
         { id: "read", name: "get_ax_tree", args: { tabRef: "page" } },
@@ -119,7 +132,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, "120");
     expect(smoke.code, smoke.text || stderr.text).toBe(0);
     expect(smoke.body.result.results).toHaveLength(2);
-    expect(String(smoke.body.result.sessionId || "")).not.toBe("");
+    expect(smoke.body.result.sessionId).toBe(smokeId);
     expect(smoke.body.result.results.every((item) => item.isError !== true)).toBe(true);
     openedTabs.push(smoke.body.result.results[0].result.tabRef);
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
@@ -134,7 +147,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       return injected.result;
     }, batchTab), { timeout: 15_000 }).toBe("clicked");
 
-    const keptId = `drive-keep-${Date.now().toString(36)}`;
+    const keptId = await createDrive();
     const kept = await exec(dependencies, stdout, stderr, {
       sessionId: keptId,
       name: "open_tab",
@@ -175,7 +188,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       return tab.id;
     }, `${fixture}/user`);
     openedTabs.push(userTab);
-    const claimId = `drive-claim-${Date.now().toString(36)}`;
+    const claimId = await createDrive();
     const claimed = await exec(dependencies, stdout, stderr, {
       sessionId: claimId,
       name: "use_tab",
@@ -212,7 +225,8 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
 async function exec(dependencies, stdout, stderr, payload, timeout = "60") {
   stdout.text = "";
   stderr.text = "";
-  const code = await main(["exec", "--timeout", timeout, JSON.stringify(payload)], dependencies);
+  const session = payload?.sessionId ? ["--session", String(payload.sessionId)] : [];
+  const code = await main(["exec", ...session, "--timeout", timeout, JSON.stringify(payload)], dependencies);
   let body = null;
   try { body = JSON.parse(stdout.text); } catch { body = null; }
   return { code, text: stdout.text, body };
