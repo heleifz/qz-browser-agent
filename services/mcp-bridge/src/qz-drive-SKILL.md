@@ -102,7 +102,7 @@ MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`a
 
 少取数据。能写死选择器就不要先读整棵树，也不要为了找一个按钮连续 `list_tabs`、`get_ax_tree`、`screenshot`。`screenshot` 不是默认步骤。单次结果大约超过 48000 个字符时变成 `{truncated:true, totalChars, limitChars, preview}`。除非 `verbose:true`，结果里去掉 `_tabId`、`_pageTitle`、`_pageUrl`、`_pageContext`、`sessionId`、`runId`，以及 `rect`、`clickablePoint`、`parent`、`lineRange`、`actionable`。`list_tabs` 默认是本会话短列表：`{tabs:[{tabRef, alias, title, url}], count, foreign}`。只有要看用户自己打开的标签时才传 `scope:"all"`。
 
-会话。一个任务一个会话。第一次调用把 `sessionId <id>` 写到 stderr。同一任务后续的 `qz script` 和 `qz exec` 都显式带 `--session <id>`（MCP 带同一个 sessionId）。CLI 不沿用上次会话。换新任务才开新会话。不传 sessionId 时，这条 MCP 连接共用一个新 id；每个进程都是新连接。并行各用自己的 id。普通任务占用的 id 返回 `DRIVE_SESSION_OCCUPIED`，换新 id，不要重试。已有调用在飞时返回 `DRIVE_SESSION_BUSY`。瞬时忙自动重试一次，仍忙就等它结束。
+会话。一个任务一个会话。第一次调用创建会话并返回 session id（stderr 上的 `sessionId <id>`）。同一任务的后续每次调用都显式带上这个 id（`--session` / sessionId）。CLI 不沿用上次会话。换新任务才开新会话。每个进程都是新连接。并行各用自己的 id。普通任务占用的 id 返回 `DRIVE_SESSION_OCCUPIED`，换新 id，不要重试。已有调用在飞时返回 `DRIVE_SESSION_BUSY`。瞬时忙自动重试一次，仍忙就等它结束。
 
 标签。本会话 `open_tab` 打开的标签归本会话。客户端离开或空闲结束时清掉这些标签。用户原来就有的标签，以及 `use_tab` 接管的标签，只释放租约，绝不自动关。用户点一下该标签会交还：停自动化，标签留在原地。只有显式 `keep` 才留下标签组。隔天是新任务：先 `qz connect`，再新开一轮。同一任务的下一个进程仍显式带 `--session`。看见昨天的「轻舟 · …」组时，把它当普通标签，不要假装还是昨天那个会话。
 
@@ -169,7 +169,7 @@ load_skill 与 list_skills。list_skills 给摘要。需要正文时 load_skill�
 
 调用示例。这些例子只用公开的示例站，用来核对参数形状，不是待答的题目。
 
-直驱不假设工作标签页。页面工具始终传 tabRef，别名或返回的 id 都可以。open_tab 的 tabAlias 建议写，不是必填。list_tabs、list_skills、load_skill、wait 和 wait_until 不需要页面目标。get_working_tab 只查询当前页，不在默认列表里，仍可调用。
+直驱不假设工作标签页。页面工具始终传 tabRef，别名或 open_tab / list_tabs 返回的 tabRef 都可以。open_tab 的 tabAlias 建议写，不是必填。list_tabs、list_skills、load_skill、wait 和 wait_until 不需要页面目标。get_working_tab 只查询当前页，不在默认列表里，仍可调用。
 
 ```json
 {"name":"navigate","args":{"url":"https://example.com/next","tabRef":"page"}}
@@ -200,13 +200,13 @@ open_tab({url:string, tabAlias?:string})
 打开一个标签页。
 ```
 
-没有可用 tabRef 时，错误码是 BATCH_TAB_REFERENCE_ERROR（reason 为 no_alias）或 DRIVE_TAB_REF_REQUIRED。tabRef 可以是别名，或 open_tab / list_tabs 返回的值。同一任务带同一个 --session。不要改成去配模型。
+没传 tabRef 时，错误码只是 DRIVE_TAB_REF_REQUIRED。no_alias 只在已经传入别名、且本会话还没有别名时出现，这时是 BATCH_TAB_REFERENCE_ERROR。tabRef 用别名，或 open_tab / list_tabs 返回的 tabRef。同一任务带同一个 --session。不要改成去配模型。
 
 直驱页面工具没写 tabRef 时，错误码是 DRIVE_TAB_REF_REQUIRED。run_script 写成 target inner 时，错误码是 DRIVE_RUN_SCRIPT_TARGET。这两条只挡直驱入口、脚本里的页面工具和 qz script。内置 agent 自己的 inner 批处理不走这里。
 
 节点等待。客户端 timeoutSeconds 是这一次 MCP 请求的等待。脚本 args.timeout 是页面脚本自己的秒数。节点实际等待取二者里更长的那个，并且脚本再加 60 秒。不要改写 limits.timeoutSeconds，那是一批 calls 的总预算。脚本 timeout 小于等于 0 时节点等待用 86400 秒作上限。
 
-一个任务一个会话。第一次拿到 sessionId 后，后续每次都显式带 --session（MCP 带同一个 sessionId）。换新任务才开新会话。CLI 不沿用上次会话。不传 sessionId 时，这条 MCP 连接共用一个新 id。每个 qz script 和 qz exec 进程都是新连接。并行的几路不要共用一个 id。
+一个任务一个会话。第一次调用创建会话并返回 session id。同一任务的后续每次调用都显式带上这个 id（--session / sessionId）。换新任务才开新会话。CLI 不沿用上次会话。每个 qz script 和 qz exec 进程都是新连接。并行的几路不要共用一个 id。
 
 再核对一遍停手。未连接时下一句只是 qz connect。瞬时忙自动重试一次之后仍忙，就等当前调用结束。普通任务占用的 id 直接换新，不要重试同一个 id。工具被黑名单拒绝时，换一个默认档或说明书档的名字，不要在脚本里换个写法绕过去。参数不合法时补 id、name 或对象 args。一批超过 10 个就拆开。一批总时间到了就加大 limits.timeoutSeconds，或把读取放进带 tabRef 的页面脚本。不知道名字时先看默认列表。别名写错、顺序写反、或本会话还没有别名，都停在 BATCH_TAB_REFERENCE_ERROR。标签不属于本会话时用本会话的 tabRef，或先 open_tab。请求超时不要先 sleep。调用被中止时先看页面是否已经变了。
 
@@ -316,7 +316,7 @@ Common calls:
 
 Fetch less. A known selector does not need a full tree, and one button does not need `list_tabs`, then `get_ax_tree`, then `screenshot`. `screenshot` is not a default step. A result past about 48000 characters becomes `{truncated:true, totalChars, limitChars, preview}`. Unless `verbose:true`, results omit `_tabId`, `_pageTitle`, `_pageUrl`, `_pageContext`, `sessionId`, `runId`, `rect`, `clickablePoint`, `parent`, `lineRange`, and `actionable`. `list_tabs` defaults to this session: `{tabs:[{tabRef, alias, title, url}], count, foreign}`. Pass `scope:"all"` only to see a tab the user opened.
 
-Sessions. One task uses one session. The first call writes `sessionId <id>` to stderr. Later `qz script` and `qz exec` in that task pass `--session <id>` (MCP: the same sessionId). The CLI does not resume the previous session. A new task starts a new session. Without sessionId, this MCP connection keeps one new id, and each process is a new connection. Parallel paths use their own ids. `DRIVE_SESSION_OCCUPIED` means use a new id and do not loop. `DRIVE_SESSION_BUSY` retries once, then wait.
+Sessions. One task uses one session. The first call creates a session and returns the session id (`sessionId <id>` on stderr). Every later call in that task passes this id explicitly (`--session` / sessionId). The CLI does not resume the previous session. A new task starts a new session. Each process is a new connection. Parallel paths use their own ids. `DRIVE_SESSION_OCCUPIED` means use a new id and do not loop. `DRIVE_SESSION_BUSY` retries once, then wait.
 
 Tabs. Tabs this session opened with `open_tab` belong to the session. When the client leaves, or the session goes idle, those tabs are closed. Tabs the user already had, and tabs claimed with `use_tab`, only release the lease. They are never closed automatically. If the user activates the tab, automation stops and the tab stays. Only an explicit keep leaves the tab group. The next day is a new task: `qz connect`, then a new golden path. The next process in the same task still passes `--session`. A leftover 「轻舟 · …」 group is an ordinary tab group, not the old session.
 
@@ -383,11 +383,11 @@ Do not install or look for a skill named qz-drive. When the built-in agent shoul
 
 Call shapes. These examples only check argument shape. They are not questions to answer.
 
-Direct drive does not assume a working tab. Page tools always pass tabRef. An alias or a returned id both work. open_tab tabAlias is recommended, not required. list_tabs, list_skills, load_skill, wait, and wait_until need no page target. get_working_tab only queries the current page. It is off the default list and still callable.
+Direct drive does not assume a working tab. Page tools always pass tabRef. An alias or the tabRef returned by open_tab or list_tabs is valid. open_tab tabAlias is recommended, not required. list_tabs, list_skills, load_skill, wait, and wait_until need no page target. get_working_tab only queries the current page. It is off the default list and still callable.
 
 A failed page script comes back with the engine text. trace has at most five rows. qz tools and qingzhou_list_tools return short signatures, not full JSON Schema. Ask for a guide-tier tool by name before you call it. The lookup is not the call.
 
-A missing tabRef is BATCH_TAB_REFERENCE_ERROR (reason no_alias) or DRIVE_TAB_REF_REQUIRED. tabRef can be an alias or the value returned by open_tab or list_tabs. The same task keeps the same --session. Direct-drive run_script with target inner returns DRIVE_RUN_SCRIPT_TARGET. Those checks apply to the drive entry, to page tools inside a script, and to qz script. The built-in agent's own inner batches do not pass through them.
+A missing tabRef is only DRIVE_TAB_REF_REQUIRED. no_alias is BATCH_TAB_REFERENCE_ERROR only when an alias was passed and this session has no alias yet. Use an alias or the tabRef returned by open_tab or list_tabs, and the same --session. target inner on run_script returns DRIVE_RUN_SCRIPT_TARGET. These checks cover the drive entry, page tools in a script, and qz script. The built-in agent's inner batches do not.
 
 Node wait. timeoutSeconds on the MCP request is the client wait. args.timeout on the script is the page script's own seconds. The node wait is the longer of the two, and the script gets 60 seconds more. Do not rewrite limits.timeoutSeconds. That is the budget for one calls batch. A script timeout less than or equal to 0 makes the node wait use 86400 seconds as its upper bound.
 

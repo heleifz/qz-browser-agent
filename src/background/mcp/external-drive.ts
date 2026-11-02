@@ -406,19 +406,20 @@ interface DriveOutcome {
   projected?: { value: unknown; images: DriveImage[] };
 }
 
-function failed(call: DriveCall, error: unknown, args: unknown = call.args): DriveOutcome {
+function failed(call: DriveCall, error: unknown, args: unknown = call.args, noAliasMessage = ""): DriveOutcome {
   const err = record(error);
+  const details = record(err.details);
   const aborted = err.name === "AbortError" || err.name === "TimeoutError";
+  const code = aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED");
+  const fallback = typeof err.message === "string" && err.message ? err.message : String(error);
+  const message = noAliasMessage && code === "BATCH_TAB_REFERENCE_ERROR" && details.reason === "no_alias" ? noAliasMessage : fallback;
   return {
     call,
     id: call.id,
     name: call.name,
     args,
     isError: true,
-    result: {
-      error: typeof err.message === "string" && err.message ? err.message : String(error),
-      code: aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
-    },
+    result: { error: message, code },
   };
 }
 
@@ -436,6 +437,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
+  const driveNoAlias = t("drive.noAlias");
   const canCommit = Boolean(deps.commitToolResult && deps.discardToolResult);
   function publish(outcome: DriveOutcome) {
     if (outcome.projected) return outcome;
@@ -457,7 +459,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   for (const call of calls) {
     const ready = prepareDriveToolCall(call.name, call.args);
     if (!ready.ok) {
-      blocked.set(call, failed(call, ready.error));
+      blocked.set(call, failed(call, ready.error, call.args, driveNoAlias));
       continue;
     }
     const next = { ...call, args: ready.args };
@@ -476,16 +478,16 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     dependencies: batch.dependencies,
     independent: batch.independent,
     completed: (call, outcome) => batch.complete(call, outcome.result, outcome.isError),
-    cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
+    cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args, driveNoAlias),
     tab: call => {
       try { return batch.observation(call) ? Number(record(batch.args(call)).tabId) || null : null; }
       catch { return null; }
     },
-    reject: (call, error) => failed(call, error),
+    reject: (call, error) => failed(call, error, call.args, driveNoAlias),
     execute: async (call, callSignal, parallel) => {
       let args: unknown = call.args;
       try { args = batch.args(call); }
-      catch (error) { return failed(call, error); }
+      catch (error) { return failed(call, error, call.args, driveNoAlias); }
       const base: Fields = {
         ...(deps.context || {}),
         preserveWorkingTab: batch.observation(call) === true,
@@ -503,7 +505,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         };
       } catch (error) {
         await deps.discardToolResult?.(undefined, context);
-        return failed(call, error, args);
+        return failed(call, error, args, driveNoAlias);
       }
     },
     commit: async outcome => {
@@ -512,7 +514,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         batch.assertDependenciesCommitted(outcome.call);
         if (!current.isError) await deps.commitToolResult?.(current.result, deps.signal, deps.context || {});
       } catch (error) {
-        current = failed(outcome.call, error, outcome.args);
+        current = failed(outcome.call, error, outcome.args, driveNoAlias);
       }
       await deps.discardToolResult?.(outcome.result, deps.context || {});
       batch.settle(outcome.call, current.result, current.isError);
@@ -521,7 +523,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   });
   const results = calls.map(call => {
     const plannedCall = plannedBySource.get(call);
-    const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }));
+    const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args, driveNoAlias));
     const images = outcome.projected?.images || [];
     return {
       id: outcome.id,

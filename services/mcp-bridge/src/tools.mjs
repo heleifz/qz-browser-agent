@@ -254,7 +254,7 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。一个任务一个会话，后续调用带同一个 sessionId。页面工具必须带 tabRef（别名或返回的 id）。open_tab 的 tabAlias 建议写，不是必填。页面脚本只跑 page。不要使用 target inner。Call qingzhou_guide once. One task uses one sessionId. Page tools require tabRef (an alias or a returned id). open_tab tabAlias is recommended, not required. Page scripts run on the page.";
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。第一次调用创建会话并返回 session id，同一任务的后续每次调用都显式带上这个 sessionId。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。页面脚本只跑 page。不要使用 target inner。Call qingzhou_guide once. The first call creates a session and returns its session id. Every later call in the same task passes that sessionId. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Page scripts run on the page.";
 
 /** Node waits at least as long as a page script plus 60 seconds, and never rewrites the extension payload timeout. */
 export function driveExtensionTimeoutSeconds(params, fallback = 180) {

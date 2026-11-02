@@ -416,16 +416,15 @@ test("direct drive resolves an alias and a returned tabRef", async () => {
   const missing = await missingPromise;
   assert.equal(missing.results[0].isError, true);
   assert.equal(missing.results[0].result.code, "BATCH_TAB_REFERENCE_ERROR");
-  assert.match(missing.results[0].result.error, /--session/);
-  assert.match(missing.results[0].result.error, /list_tabs/);
+  assert.equal(missing.results[0].result.error, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
   assert.doesNotMatch(missing.results[0].result.error, /省略 tabRef/);
   let missingEnPromise;
   withLanguage("en", () => {
     missingEnPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
   });
   const missingEn = await missingEnPromise;
+  assert.equal(missingEn.results[0].result.error, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
   assert.doesNotMatch(missingEn.results[0].result.error, /omit tabRef/i);
-  assert.match(missingEn.results[0].result.error, /same --session/);
 });
 
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {

@@ -70,8 +70,10 @@ export function createRunScriptBridge({
   async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
     await ready();
     let language = getLanguage();
-    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
-      withLanguage(language, () => failureResponse(payload, options));
+    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) => withLanguage(language, () => {
+      const response = failureResponse(payload, options);
+      return String(message.runId || "").trim().startsWith("drive-") ? driveNoAliasMessage(response) : response;
+    });
     const toolName = String(message.toolName || "").trim();
     if (!toolName) {
       return respondFailure({
@@ -280,6 +282,15 @@ function nestedObservation(behavior: Readonly<ToolBehavior> | undefined, args: F
     _image: output._image,
     ...(output._imageDetail ? { _imageDetail: output._imageDetail } : {}),
   };
+}
+
+function driveNoAliasMessage(payload: unknown): Fields {
+  const body = plainObject(payload);
+  const details = plainObject(body.details);
+  if (String(body.code || "") !== "BATCH_TAB_REFERENCE_ERROR" || details.reason !== "no_alias") return body;
+  const message = t("drive.noAlias");
+  const result = plainObject(body.result);
+  return { ...body, error: message, message, result: { ...result, error: message, message } };
 }
 
 function failureResponse(payload: unknown, { toolName = "" } = {}) {

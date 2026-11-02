@@ -207,8 +207,8 @@ test('batch tab messages interpolate tabRef and differ by reference reason', () 
     'zh-CN': withLanguage('zh-CN', () => toolT('batchTabReferenceNoAlias', { tabRef: 'x' })),
     en: withLanguage('en', () => toolT('batchTabReferenceNoAlias', { tabRef: 'x' })),
   };
-  assert.match(noAlias['zh-CN'], /--session/);
-  assert.match(noAlias.en, /--session/);
-  assert.doesNotMatch(noAlias['zh-CN'], /省略 tabRef/);
-  assert.doesNotMatch(noAlias.en, /omit tabRef/i);
+  assert.match(noAlias['zh-CN'], /还没有页面别名/);
+  assert.match(noAlias.en, /no page alias yet/);
+  assert.doesNotMatch(noAlias['zh-CN'], /省略 tabRef|--session/);
+  assert.doesNotMatch(noAlias.en, /omit tabRef|--session/i);
 });
