@@ -180,7 +180,7 @@ export default defineMessages("sessions", {
   "externalDrive": { "zh-CN": "外部直驱", en: "External" },
   "externalDriveReadOnly": { "zh-CN": "这个会话由外部客户端直接操作，这里只能查看。", en: "An external client is driving this session. This view is read-only." },
   "externalDriveWelcomeTitle": { "zh-CN": "由外部 agent 直接操作", en: "Driven by an external agent" },
-  "externalDriveWelcomeBody": { "zh-CN": "这个会话由外部 agent 通过 MCP 或 qz CLI 直接操作。在终端运行下面的命令完成绑定。", en: "An external agent drives this session through MCP or the qz CLI. Run this command in a terminal to connect it." },
+  "externalDriveWelcomeBody": { "zh-CN": "这个会话由外部 agent 通过 MCP 或 qz CLI 直接操作。安装或更新说明书：npx skills add alibaba/qz-browser-agent -g。再在终端运行下面的命令完成绑定。", en: "An external agent drives this session through MCP or the qz CLI. Install or update the guide with npx skills add alibaba/qz-browser-agent -g, then run this command in a terminal to connect." },
   "externalDriveWelcomeCommandHint": { "zh-CN": "绑定当前浏览器", en: "Pair this browser" },
   "externalDriveWelcomeCopy": { "zh-CN": "复制", en: "Copy" },
   "externalDriveWelcomeCopied": { "zh-CN": "已复制", en: "Copied" },

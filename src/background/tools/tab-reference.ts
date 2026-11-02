@@ -8,6 +8,7 @@ const keys: Readonly<Record<string, Parameters<typeof t>[0]>> = {
   invalid_reference: "batchTabReferenceInvalidReference", unknown_reference: "batchTabReferenceUnknownReference",
   forward_reference: "batchTabReferenceForwardReference", ambiguous_target: "batchTabReferenceAmbiguousTarget",
   conflicting_target: "tabReferenceConflict",
+  no_alias: "batchTabReferenceNoAlias",
 };
 export function tabReferenceError(reason: string, reference?: unknown, language = getLanguage()) {
   const dependency = reason === "dependency_failed";
@@ -21,6 +22,9 @@ export function resolveTabReference(ref: unknown, aliases: Readonly<Record<strin
   const id = tabReferenceId(ref);
   if (id !== null) return id;
   if (!isTabAlias(ref)) throw tabReferenceError("invalid_reference", ref, language);
-  if (!Object.hasOwn(aliases, ref)) throw tabReferenceError("unknown_reference", ref, language);
+  if (!Object.hasOwn(aliases, ref)) {
+    if (Object.keys(aliases).length === 0) throw tabReferenceError("no_alias", ref, language);
+    throw tabReferenceError("unknown_reference", ref, language);
+  }
   return aliases[ref];
 }

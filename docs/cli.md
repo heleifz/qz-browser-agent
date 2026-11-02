@@ -406,18 +406,21 @@ Use `-t` for `--title`. Run `qz help COMMAND` or `qz COMMAND --help` for command
 
 The default MCP catalog is the direct-drive set: `qingzhou_guide`, `qingzhou_execute_tool`,
 `qingzhou_list_tools`, `qingzhou_get_tool`, and `qingzhou_bridge_status`. Call `qingzhou_guide`
-once on a new connection. It returns the same text as `skills/qz-drive/SKILL.md`. `qz mcp` prints
+once on a new connection. It returns the direct-drive text in `skills/qz-browser-agent/SKILL.md`.
+Install or update that skill with `npx skills add alibaba/qz-browser-agent -g`. `qz mcp` prints
 that URL. `qz mcp --profile full` prints the task and diagnostic catalog. A direct-drive session
-omits blocked tools from `qingzhou_list_tools`. `qingzhou_get_tool` returns `DRIVE_TOOL_FORBIDDEN`
-for a blocked name. Set `wait: false` to receive a job ID and read the result with
-`qingzhou_get_tool_job`. The full catalog also provides `qingzhou_get_trace` and
-`qingzhou_clear_trace` for diagnostics. An MCP connection that omits `sessionId` keeps one
-generated id for that connection.
+lists the default tool tier from `qingzhou_list_tools`. `qingzhou_get_tool` still returns a
+guide-tier tool, and returns `DRIVE_TOOL_FORBIDDEN` for a blocked name. Set `wait: false` to
+receive a job ID and read the result with `qingzhou_get_tool_job`. The full catalog also provides
+`qingzhou_get_trace` and `qingzhou_clear_trace` for diagnostics. An MCP connection that omits
+`sessionId` keeps one generated id for that connection.
 
-`qz script [FILE|-]` runs an async function as `run_script` with `target` `inner`. stdout is only
-the returned value. A failure prints the error code and the last five trace rows. `--timeout`
-defaults to 120 seconds. `qz tools` lists compact signatures. `qz skill` prints the direct-drive
-guide without connecting. `qz --help` prints that same guide after the command list.
+`qz script --tab TABREF [FILE|-]` runs an async function as `run_script` with `target` `page` on
+that tab. `--tab` is an alias or a numeric tab id. stdout is only the returned value. A failure
+prints the error code and the last five trace rows. `--timeout` defaults to 120 seconds, and the
+request waits 60 seconds longer. `qz tools` lists compact signatures for the default tier.
+`qz skill` prints the direct-drive guide without connecting. `qz --help` prints that same guide
+after the command list.
 
 `qz exec` is transport for one tool call or a short `calls` batch. It does not add tools or start
 a model. Pass one JSON object with `name` and `args`, or with `calls`. Quote it safely by piping

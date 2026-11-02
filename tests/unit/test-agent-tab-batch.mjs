@@ -39,7 +39,8 @@ test('direct runtime calls reject unresolved references and publish the unified 
     assert.deepEqual(read.parameters.properties.tabRef.type, ['integer', 'string']);
     assert.equal(read.parameters.properties.tabId, undefined);
     assert.match(open.description, /tabAlias/); assert.match(open.description, /tabRef/);
-    assert.match(read.parameters.properties.tabRef.description, /tabId/);
+    assert.match(read.parameters.properties.tabRef.description, /alias|别名/);
+    assert.doesNotMatch(read.parameters.properties.tabRef.description, /\btabId\b/);
     const close = schemas.find(schema => schema.function.name === 'close_tab').function;
     assert.equal(close.parameters.required.includes('tabId'), false);
     assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true);
@@ -67,7 +68,7 @@ test('multiple new pages require an explicit target', async () => {
 
 for (const [name, input, reason] of [
   ['duplicate aliases', [open('oa', 'same'), open('ob', 'same'), read('r', 'same')], 'duplicate_alias'],
-  ['unknown reference', [read('r', 'missing')], 'unknown_reference'],
+  ['unknown reference', [read('r', 'missing')], 'no_alias'],
   ['forward reference', [read('r', 'a'), open('o', 'a')], 'forward_reference'],
   ['conflicting tabId', [open('o', 'a'), read('r', 'a', { tabId: 99 })], 'conflicting_target'],
   ['invalid alias', [open('o', 'has spaces')], 'invalid_alias'],
@@ -110,7 +111,7 @@ test('creators wait for an earlier numeric target to publish their window anchor
 
 test('bindings expire at the response boundary', async () => {
   const f = fixture(); await f.run([open('o', 'a')]); await f.run([read('r', 'a')]);
-  assert.equal(f.ends().at(-1).result.details.reason, 'unknown_reference'); assert.equal(f.calls.length, 1);
+  assert.equal(f.ends().at(-1).result.details.reason, 'no_alias'); assert.equal(f.calls.length, 1);
 });
 
 for (const name of ['navigate', 'close_tab']) test(`a known dependency supplies a numeric target to ${name}`, async () => {
@@ -153,7 +154,7 @@ test('an unresolved reference keeps its tool identity without executing', async 
   f.agent._tools.getIdentity = namedIdentity;
   await f.run([read('r', 'missing')]);
   const end = f.ends().find(e => e.toolCallId === 'r');
-  assert.equal(end.result.details.reason, 'unknown_reference');
+  assert.equal(end.result.details.reason, 'no_alias');
   assert.equal(end.toolTitle, 'Read article');
   assert.equal(end.toolFamilyId, 'tabs');
   assert.equal(f.events.find(e => e.type === 'tool_execution_start' && e.toolCallId === 'r').toolTitle, 'Read article');
@@ -186,7 +187,8 @@ test('dependency and reference failure messages name the tabRef', async () => {
   assert.ok(!dependency.result.error.includes('{tabRef}'));
   const reference = f.ends().find(e => e.toolCallId === 'u');
   assert.equal(reference.result.code, 'BATCH_TAB_REFERENCE_ERROR');
-  assert.match(reference.result.error, /「missing」|"missing"/);
+  assert.equal(reference.result.details.reason, 'no_alias');
+  assert.match(reference.result.error, /还没有页面别名|no page alias yet/);
 });
 
 test('batch tab messages interpolate tabRef and differ by reference reason', () => {
@@ -195,7 +197,7 @@ test('batch tab messages interpolate tabRef and differ by reference reason', () 
     assert.ok(text.includes('a') && !text.includes('{tabRef}'), language);
   }
   const keys = ['batchTabReferenceUnknownReference', 'batchTabReferenceDuplicateAlias', 'batchTabReferenceForwardReference',
-    'batchTabReferenceInvalidAlias', 'batchTabReferenceInvalidReference', 'batchTabReferenceAmbiguousTarget', 'batchTabReferenceOutsideBatch'];
+    'batchTabReferenceInvalidAlias', 'batchTabReferenceInvalidReference', 'batchTabReferenceAmbiguousTarget', 'batchTabReferenceOutsideBatch', 'batchTabReferenceNoAlias'];
   for (const language of ['en', 'zh-CN']) {
     const texts = keys.map(key => withLanguage(language, () => toolT(key, { tabRef: 'x' })));
     assert.equal(new Set(texts).size, keys.length, language);

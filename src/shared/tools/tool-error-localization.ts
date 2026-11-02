@@ -57,6 +57,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   DESKTOP_CAPTURE_FAILED: { label: "toolError.DESKTOP_CAPTURE_FAILED.label" },
   DESKTOP_CAPTURE_UNAVAILABLE: { label: "toolError.DESKTOP_CAPTURE_UNAVAILABLE.label" },
   DRIVE_TOOL_FORBIDDEN: { label: "toolError.DRIVE_TOOL_FORBIDDEN.label", message: "toolError.DRIVE_TOOL_FORBIDDEN.message" },
+  DRIVE_RUN_SCRIPT_TARGET: { label: "toolError.DRIVE_RUN_SCRIPT_TARGET.label", message: "drive.runScriptPageOnly" },
+  DRIVE_TAB_REF_REQUIRED: { label: "toolError.DRIVE_TAB_REF_REQUIRED.label", message: "drive.tabRefRequired" },
   DOCUMENT_ARTIFACT_EMPTY: { label: "toolError.DOCUMENT_ARTIFACT_EMPTY.label", message: "toolError.DOCUMENT_ARTIFACT_EMPTY.message" },
   DOCUMENT_ARTIFACT_NOT_FOUND: { label: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.label", message: "toolError.DOCUMENT_ARTIFACT_NOT_FOUND.message" },
   DOCUMENT_BLOCK_SCHEMA_INVALID: { label: "toolError.DOCUMENT_BLOCK_SCHEMA_INVALID.label" },
@@ -321,6 +323,7 @@ const BATCH_TAB_REFERENCE_REASONS: Readonly<Record<string, { label: BackendMessa
   ambiguous_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.ambiguousTarget.message" },
   conflicting_target: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message" },
   outside_batch: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.outsideBatch.message" },
+  no_alias: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message" },
 });
 
 function batchTabReferenceReason(details: Record<string, unknown> = {}) {

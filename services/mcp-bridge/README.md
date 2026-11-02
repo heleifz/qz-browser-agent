@@ -44,8 +44,8 @@ npm install --global qz-browser-agent@latest
 qz --version
 ```
 
-To let your agent learn when and how to use qz, install the Skill with
-`npx skills add alibaba/qz-browser-agent -g`.
+To let your agent learn when and how to use qz, install the direct-drive skill with
+`npx skills add alibaba/qz-browser-agent -g`. That command installs `skills/qz-browser-agent`.
 
 ## Connect an MCP client
 

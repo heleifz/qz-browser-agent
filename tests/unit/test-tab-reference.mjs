@@ -303,7 +303,7 @@ test('manual close is reconciled even before the browser close event arrives',as
 
 test('same alias in distinct Sessions is independent, foreign aliases never resolve',async()=>{
   const f=fixture();await f.run([open('local')]);
-  await assert.rejects(f.runtime.execute('read_ref',{tabRef:'local'},f.abort.signal,{...f.context(),sessionId:'two'}),e=>e.details.reason==='unknown_reference');
+  await assert.rejects(f.runtime.execute('read_ref',{tabRef:'local'},f.abort.signal,{...f.context(),sessionId:'two'}),e=>e.details.reason==='no_alias');
   const result=await f.runtime.execute('open_tab',{tabAlias:'local'},f.abort.signal,{...f.context(),sessionId:'two'});
   assert.equal(result.id,102);assert.deepEqual(f.sessions.getTabAliases('two'),{local:102});
 });

@@ -26,7 +26,7 @@ export function parseCommand(argv) {
       parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
       wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
       json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
-      lang: { type: "string" }, profile: { type: "string" },
+      lang: { type: "string" }, profile: { type: "string" }, tab: { type: "string" },
       help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
     } });
   } catch (error) { invalid(error.message); }
@@ -148,7 +148,8 @@ export function parseCommand(argv) {
     if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
     else options.payload = words[0] ?? "-";
   } else if (command === "script") {
-    if (words.length > 1) invalid("Use qz script [FILE|-].");
+    if (words.length > 1) invalid("Use qz script --tab TABREF [FILE|-].");
+    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a numeric tab id.");
     options.file = words[0] ?? "-";
   } else if (command === "tools") {
     if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools [NAME].");

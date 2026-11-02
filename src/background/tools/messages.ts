@@ -4,8 +4,8 @@ import { createTranslator } from "../../shared/i18n/index.js";
 /** Shared model-facing documentation stays out of the panel's UI catalog. */
 const messages = defineMessages("tool-runtime", {
   tabRef: {
-    "zh-CN": "目标页面：浏览器数字 tabId（也接受数字字符串），或当前任务中由 open_tab 的 tabAlias 设置的别名。别名可跨轮复用，关闭页面后失效。新页面同批引用时将 open_tab 放在前面；同时传元素 UID 时必须指向同一页。",
-    en: "Target page: a numeric browser tabId (numeric strings also accepted), or a tabAlias assigned by open_tab in this Session. Aliases persist across turns until the tab closes. In one tool_calls array, place a new opening before its consumers. If an element UID is also supplied, both must target the same tab.",
+    "zh-CN": "目标页面：tabRef 是本会话的页面别名，或正整数标签页 id（也接受数字字符串）。别名可跨轮复用，关闭页面后失效。新页面同批引用时将 open_tab 放在前面；同时传元素 UID 时必须指向同一页。",
+    en: "Target page: tabRef is a page alias in this Session, or a positive integer tab id (numeric strings also accepted). Aliases persist across turns until the tab closes. In one tool_calls array, place a new opening before its consumers. If an element UID is also supplied, both must target the same tab.",
   },
   batchTabReferenceError: {
     "zh-CN": "标签页引用无法解析。请用 tabRef 指定已返回的浏览器数字 ID 或当前任务的页面别名；新页面的 open_tab 应放在引用它的调用之前。",
@@ -40,8 +40,12 @@ const messages = defineMessages("tool-runtime", {
     en: "tabRef \"{tabRef}\" conflicts with the supplied tabId or element UID. Select one target, or make both refer to the same page.",
   },
   batchTabReferenceOutsideBatch: {
-    "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的数字 tabId。",
-    en: "tabRef \"{tabRef}\" only works in the same batch of calls as its open_tab. Use the numeric tabId returned by open_tab instead.",
+    "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。",
+    en: "tabRef \"{tabRef}\" only works in the same batch of calls as its open_tab. Use the tabRef returned by open_tab instead.",
+  },
+  batchTabReferenceNoAlias: {
+    "zh-CN": "本会话还没有页面别名。省略 tabRef，或先 open_tab。",
+    en: "This session has no page alias yet. Omit tabRef, or open_tab first.",
   },
   batchTabDependencyFailed: {
     "zh-CN": "tabAlias「{tabRef}」对应的 open_tab 未能建立有效页面，已跳过此次调用。请先处理该 open_tab 的错误，再重试。",

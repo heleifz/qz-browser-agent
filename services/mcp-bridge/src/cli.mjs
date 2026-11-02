@@ -313,7 +313,7 @@ async function dispatchCommand(parsed, dependencies) {
   }
   if (command === "script") {
     const budgets = scriptTimeouts({ timeoutOption: options.timeout, timeoutSeconds });
-    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session });
+    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session, tabRef: options.tab });
     const result = await call(running.endpoint, "qingzhou_execute_tool", { ...request, ...common, timeoutSeconds: budgets.requestSeconds }, {
       ...requestOptions,
       timeoutMs: budgets.requestSeconds * 1000,

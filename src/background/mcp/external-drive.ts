@@ -10,11 +10,22 @@ const DRIVE_IDLE_MS = 30 * 60 * 1000;
 
 const FORBIDDEN = new Set([
   "ask_llm", "manage_sessions", "manage_settings", "manage_guardrails", "manage_skill_settings",
+  "manage_goal", "example_echo",
   "qingzhou_call", "create_skill", "update_skill", "delete_skill", "manage_skill",
   "edit_skill_resource", "import_skill_from_page_zip", "import_git_skill_repository",
   "install_skill_to_git", "import_page_zip", "import_git_repository", "manage_bookmarks",
   "wait_for_user", "ask_user", "send_message",
 ]);
+
+/** Default qz tools / list_tools / tools.$list tier. Guide-tier names stay callable by name. */
+const DRIVE_DEFAULT_TOOLS = new Set([
+  "open_tab", "navigate", "list_tabs", "close_tab", "use_tab", "get_working_tab",
+  "get_ax_tree", "find_elements", "read_article", "act_on_element", "scroll_page",
+  "screenshot", "wait_for_element", "wait_for_navigation", "wait_until",
+  "run_script", "load_skill", "list_skills",
+]);
+
+const TAB_IDENTITY = new Set(["open_tab", "list_tabs", "get_working_tab", "use_tab", "close_tab", "navigate"]);
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
 export interface DriveImage { mimeType: string; data: string }
@@ -46,6 +57,46 @@ function toolLocalName(name: string) {
 export function isDriveToolForbidden(name: string) {
   const local = toolLocalName(name);
   return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
+}
+
+/** True when a drive catalog or in-script $list should show this tool without asking for it by name. */
+export function isDriveToolDefault(name: string) {
+  if (isDriveToolForbidden(name)) return false;
+  const local = toolLocalName(name);
+  return DRIVE_DEFAULT_TOOLS.has(name) || DRIVE_DEFAULT_TOOLS.has(local);
+}
+
+/** Direct-drive run_script is page-only and must name a tabRef. Built-in inner batches do not use this. */
+export function prepareDriveToolCall(name: string, args: unknown): { ok: true; args: Fields } | { ok: false; error: Error } {
+  const input = record(args);
+  if (toolLocalName(name) !== "run_script") return { ok: true, args: input };
+  const target = String(input.target ?? "").trim();
+  if (target && target !== "page") {
+    return { ok: false, error: driveError("DRIVE_RUN_SCRIPT_TARGET", t("drive.runScriptPageOnly")) };
+  }
+  const tabRef = input.tabRef;
+  if (tabRef == null || (typeof tabRef === "string" && tabRef.trim() === "")) {
+    return { ok: false, error: driveError("DRIVE_TAB_REF_REQUIRED", t("drive.tabRefRequired")) };
+  }
+  return { ok: true, args: { ...input, target: "page", tabRef: typeof tabRef === "string" ? tabRef.trim() : tabRef } };
+}
+
+/** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
+export function driveToolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
+  const parameters = record(tool.parameters);
+  const properties = record(parameters.properties);
+  const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
+  const args = Object.entries(properties).map(([key, spec]) => {
+    const schema = record(spec);
+    const type = Array.isArray(schema.enum)
+      ? schema.enum.map(item => JSON.stringify(item)).join("|")
+      : Array.isArray(schema.type)
+        ? schema.type.filter(item => item !== "null").join("|") || "any"
+        : typeof schema.type === "string" && schema.type ? schema.type : "any";
+    return `${key}${required.has(key) ? "" : "?"}:${type}`;
+  });
+  const description = String(tool.description || "").split("\n").map(line => line.trim()).find(Boolean)?.slice(0, 240) || "";
+  return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
 }
 
 function positiveSeconds(value: unknown) {
@@ -153,6 +204,50 @@ function capDriveValue(value: unknown): unknown {
   };
 }
 
+const GENERIC_SCRIPT_ERRORS = new Set([
+  "脚本执行失败。",
+  "The script failed.",
+  "脚本语法错误。",
+  "The script has a syntax error.",
+  "内部脚本执行失败。",
+  "The internal script failed.",
+]);
+
+function isGenericScriptError(text: string) {
+  const normalized = text.replace(/\s+/gu, " ").trim();
+  return GENERIC_SCRIPT_ERRORS.has(normalized)
+    || normalized.startsWith("脚本语法错误，请检查引号")
+    || normalized.startsWith("Check quotes, line breaks");
+}
+
+/** Prefer the engine text, line, and column over a rewritten catalog sentence. */
+function scriptFailureText(body: Fields) {
+  const details = { ...record(record(body.result).details), ...record(body.details) };
+  const current = typeof body.error === "string" ? body.error.trim() : "";
+  const original = typeof details.originalError === "string" ? details.originalError.trim() : "";
+  let text = original && isGenericScriptError(current) ? original : (current || original || "script failed");
+  const line = Number(details.lineNumber ?? details.line);
+  const column = Number(details.columnNumber ?? details.column);
+  const hasLine = Number.isFinite(line) && line > 0;
+  const hasColumn = Number.isFinite(column) && column > 0;
+  if (hasLine) {
+    const loc = `(${line}:${hasColumn ? column : 1})`;
+    if (!text.includes(loc)) text = `${text} ${loc}`;
+  }
+  const stack = typeof details.stack === "string" ? details.stack : typeof body.stack === "string" ? body.stack : "";
+  if (stack) {
+    const lines = stack.split(/\r?\n/u).map(row => row.trimEnd()).filter(row => row.trim()).slice(0, 8);
+    const extra = lines.filter(line => !text.includes(line.trim()));
+    const summary = extra.join("\n").slice(0, 1500);
+    if (summary) text = `${text}\n${summary}`;
+  }
+  return {
+    error: text,
+    ...(hasLine ? { line } : {}),
+    ...(hasColumn ? { column } : {}),
+  };
+}
+
 function projectRunScriptDriveResult(result: unknown): unknown {
   const value = record(result);
   const nested = record(value.result);
@@ -161,10 +256,13 @@ function projectRunScriptDriveResult(result: unknown): unknown {
   const failed = body.ok === false || (typeof body.error === "string" && body.error.length > 0 && body.ok !== true);
   if (!failed) return { ok: true, result: Object.hasOwn(body, "result") ? body.result : body };
   const trace = Array.isArray(body.trace) ? body.trace.slice(-5) : [];
+  const failure = scriptFailureText(body);
   return {
     ok: false,
     code: String(body.code || "TOOL_EXECUTION_FAILED"),
-    error: typeof body.error === "string" && body.error ? body.error : "script failed",
+    error: failure.error,
+    ...(failure.line ? { line: failure.line } : {}),
+    ...(failure.column ? { column: failure.column } : {}),
     ...(body.diagnostic ? { diagnostic: body.diagnostic } : {}),
     ...(trace.length ? { trace } : {}),
   };
@@ -190,7 +288,7 @@ function compactDriveTabs(value: unknown, aliases?: Readonly<Record<string, numb
   return {
     tabs: owned.map(tab => {
       const alias = String(tab.alias || tab.tabAlias || aliasForTab(tab.id, aliases) || "");
-      return { id: tab.id, ...(alias ? { alias } : {}), title: tab.title || "", url: tab.url || "" };
+      return { tabRef: tab.id, ...(alias ? { alias } : {}), title: tab.title || "", url: tab.url || "" };
     }),
     count: owned.length,
     foreign: rows.length - owned.length,
@@ -207,7 +305,23 @@ export function projectNamedDriveResult(name: string, args: unknown, result: unk
   const value = name === "list_tabs" && input.scope !== "all" && !verbose
     ? compactDriveTabs(projected.value, options.aliases)
     : projected.value;
-  return { value: capDriveValue(value), images: projected.images };
+  return { value: capDriveValue(exposeTabRef(name, value)), images: projected.images };
+}
+
+function withTabRef(row: unknown): unknown {
+  if (!row || typeof row !== "object" || Array.isArray(row) || !Object.hasOwn(row as Fields, "id")) return row;
+  const { id, ...rest } = row as Fields;
+  return { tabRef: id, ...rest };
+}
+
+/** Drive results name the tab with tabRef. Internal execution still uses numeric tabId. */
+function exposeTabRef(name: string, value: unknown): unknown {
+  if (!TAB_IDENTITY.has(toolLocalName(name))) return value;
+  if (Array.isArray(value)) return value.map(withTabRef);
+  if (!value || typeof value !== "object") return value;
+  const body = value as Fields;
+  if (Array.isArray(body.tabs)) return { ...body, tabs: body.tabs.map(withTabRef) };
+  return withTabRef(body);
 }
 
 interface DriveOutcome {
@@ -265,7 +379,20 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     });
     return published;
   }
-  const batch = planTabBatch(calls, call => {
+  const blocked = new Map<DriveCall, DriveOutcome>();
+  const plannedBySource = new Map<DriveCall, DriveCall>();
+  const planned: DriveCall[] = [];
+  for (const call of calls) {
+    const ready = prepareDriveToolCall(call.name, call.args);
+    if (!ready.ok) {
+      blocked.set(call, failed(call, ready.error));
+      continue;
+    }
+    const next = { ...call, args: ready.args };
+    plannedBySource.set(call, next);
+    planned.push(next);
+  }
+  const batch = planTabBatch(planned, call => {
     let policy = deps.getBatchTabPolicy?.(call.name, call.args) ?? null;
     if (policy?.kind === "create" && policy.parallel && !canCommit) policy = { ...policy, parallel: false };
     return { args: call.args, policy };
@@ -321,7 +448,8 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     },
   });
   const results = calls.map(call => {
-    const outcome = publish(settled.get(call) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }));
+    const plannedCall = plannedBySource.get(call);
+    const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }));
     const images = outcome.projected?.images || [];
     return {
       id: outcome.id,

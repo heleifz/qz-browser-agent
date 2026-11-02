@@ -5,7 +5,9 @@ import {
   createExternalDriveCoordinator,
   DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
+  isDriveToolDefault,
   parseDriveRequest,
+  prepareDriveToolCall,
   projectDriveResult,
   projectNamedDriveResult,
   runDriveCalls,
@@ -44,6 +46,7 @@ test("drive titles and request sentences stay on the existing tool", () => {
     assert.equal(forbidden.error.message, "不能通过直驱调用 ask_llm。");
     for (const name of [
       "delete_skill", "manage_bookmarks", "manage_skill_settings", "import_page_zip",
+      "manage_goal", "example_echo", "plugin__manage_goal", "plugin__example_echo",
       "qingzhou_skill_author__create_skill", "qingzhou_skill_author__delete_skill", "mcp_browser", "qingzhou_x__mcp_remote",
     ]) {
       const blocked = parseDriveRequest({ name, args: {} });
@@ -51,6 +54,7 @@ test("drive titles and request sentences stay on the existing tool", () => {
       assert.equal(blocked.error.code, "DRIVE_TOOL_FORBIDDEN", name);
     }
 
+    assert.equal(parseDriveRequest({ name: "run_script", args: { target: "page", tabRef: "page", timeout: 1, code: "async () => 1" } }).mode, "single");
     assert.equal(parseDriveRequest({ name: "open_tab", args: { url: "https://example.com" } }).mode, "single");
     assert.equal(parseDriveRequest({ name: "document_fetch", args: {} }).mode, "single");
     assert.equal(parseDriveRequest({ name: "qingzhou_documents__document_fetch", args: {} }).mode, "single");
@@ -69,6 +73,63 @@ test("drive titles and request sentences stay on the existing tool", () => {
     assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "Direct drive cannot call ask_llm.");
     assert.equal(t("drive.sendMessageRejected"), "An external client is driving this session. This view is read-only.");
   });
+});
+
+test("direct-drive run_script stays on the page and script errors keep the engine text", () => {
+  assert.equal(isDriveToolDefault("open_tab"), true);
+  assert.equal(isDriveToolDefault("list_skills"), true);
+  assert.equal(isDriveToolDefault("read_dom"), false);
+  assert.equal(isDriveToolDefault("browse_history"), false);
+  assert.equal(isDriveToolDefault("manage_goal"), false);
+  assert.equal(isDriveToolDefault("run_script"), true);
+  const page = prepareDriveToolCall("run_script", { tabRef: " page ", timeout: 5, code: "async () => 1" });
+  assert.equal(page.ok, true);
+  assert.equal(page.args.target, "page");
+  assert.equal(page.args.tabRef, "page");
+  const inner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
+  assert.equal(inner.ok, false);
+  assert.equal(inner.error.code, "DRIVE_RUN_SCRIPT_TARGET");
+  const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
+  const other = prepareDriveToolCall("open_tab", { url: "https://example.com" });
+  assert.equal(other.ok, true);
+  const syntax = projectNamedDriveResult("run_script", { target: "page", tabRef: "page" }, {
+    ok: false,
+    code: "SCRIPT_SYNTAX_ERROR",
+    error: "脚本语法错误，请检查引号、换行、括号或 return/await 的位置。",
+    details: {
+      originalError: "SyntaxError: Unexpected token",
+      lineNumber: 2,
+      columnNumber: 4,
+      stack: "SyntaxError: Unexpected token\n    at page.js:2:4\n    at run",
+    },
+    __runScriptEnvelope: true,
+  });
+  assert.match(syntax.value.error, /SyntaxError: Unexpected token/);
+  assert.match(syntax.value.error, /\(2:4\)/);
+  assert.match(syntax.value.error, /page\.js:2:4/);
+  assert.equal(syntax.value.line, 2);
+  assert.equal(syntax.value.column, 4);
+  assert.doesNotMatch(syntax.value.error, /^脚本执行失败/);
+});
+
+test("a calls batch rejects inner run_script before that call runs", async () => {
+  const seen = [];
+  const batch = await runDriveCalls([
+    { id: "open", name: "open_tab", args: { url: "https://example.com" } },
+    { id: "script", name: "run_script", args: { target: "inner", timeout: 1, code: "async () => 1" } },
+  ], {
+    signal: new AbortController().signal,
+    execute: async (name) => {
+      seen.push(name);
+      return { id: 3 };
+    },
+  });
+  assert.deepEqual(seen, ["open_tab"]);
+  assert.equal(batch.results[0].result.tabRef, 3);
+  assert.equal(batch.results[1].isError, true);
+  assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
 });
 
 test("projection drops nodes and screenshot bytes", () => {
@@ -114,7 +175,7 @@ test("named drive projection compacts scripts and this session's tabs, then caps
     { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false, usable: false },
   ], null, { aliases: { form: 1 } });
   assert.deepEqual(tabs.value, {
-    tabs: [{ id: 1, alias: "form", title: "owned", url: "https://a.example" }],
+    tabs: [{ tabRef: 1, alias: "form", title: "owned", url: "https://a.example" }],
     count: 1,
     foreign: 1,
   });
@@ -178,7 +239,7 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
   assert.equal(seen[0].name, "open_tab");
   assert.equal(seen[1].args.tabId, 11);
   assert.equal(Object.hasOwn(seen[1].args, "tabRef"), false);
-  assert.equal(batch.results[0].result.id, 11);
+  assert.equal(batch.results[0].result.tabRef, 11);
   assert.equal(batch.results[1].result.snapshot, "ok");
   assert.equal(Object.hasOwn(batch.results[1].result, "nodes"), false);
   assert.equal(Object.hasOwn(batch, "images"), false);
@@ -389,7 +450,7 @@ test("one external session is created only when metadata is missing", async () =
   assert.equal(other.toolName, "list_tabs");
   releaseOpen();
   const openedResult = await first;
-  assert.equal(openedResult.result.id, 4);
+  assert.equal(openedResult.result.tabRef, 4);
   assert.equal(Object.hasOwn(openedResult.result, "nodes"), false);
   assert.equal(Object.hasOwn(openedResult.result, "_display"), false);
   assert.deepEqual(openedResult.images, [{ mimeType: "image/png", data: "YQ==" }]);
