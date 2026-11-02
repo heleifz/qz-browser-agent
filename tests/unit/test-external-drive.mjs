@@ -5,6 +5,7 @@ import {
   createExternalDriveCoordinator,
   DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
+  driveToolSignature,
   isDriveToolDefault,
   isDriveToolForbidden,
   parseDriveRequest,
@@ -1064,4 +1065,124 @@ test("a drive create does not take over an existing task", async () => {
   const again = await repository.createMetadata({ id: "fresh", title: "other", source: "external-drive" });
   assert.equal(again.title, "轻舟 · CLI");
   assert.equal(again.source, "external-drive");
+});
+
+test("drive catalogs show run_script target as page", async () => {
+  const runScript = {
+    type: "function",
+    function: {
+      name: "run_script",
+      description: "Run a page script.\n- target:\"inner\" stays on the built-in catalog.",
+      parameters: {
+        type: "object",
+        properties: {
+          timeout: { type: "number" },
+          target: { type: "string", enum: ["page", "inner"], description: "page or inner" },
+          tabId: { type: "number" },
+          args: { type: "object" },
+          mutatesPage: { type: "boolean" },
+          code: { type: "string" },
+        },
+        required: ["timeout", "code"],
+      },
+    },
+  };
+  const projected = driveToolSignature({
+    name: runScript.function.name,
+    description: runScript.function.description,
+    parameters: runScript.function.parameters,
+  });
+  assert.equal(projected.signature, "run_script({timeout:number, target:\"page\", tabId?:number, args?:object, mutatesPage?:boolean, code:string})");
+  assert.equal(projected.description, "Run a page script.");
+  assert.doesNotMatch(JSON.stringify(projected), /\binner\b/i);
+  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
+
+  const metadata = { "agent-1": { id: "agent-1", source: "agent" } };
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: () => false,
+        mintDriveRunId: () => "drive-run",
+        clearDriveRunId() {},
+        takeDriveRunForRelease: () => "",
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+      waitForRunObserved: async () => true,
+      getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
+      getLiveAgentEntry: async () => null,
+      setRuntime() {},
+      getStoredRuntime: () => null,
+      getLastMessages: async () => ({ messages: [] }),
+      getAgent: async () => null,
+      getTranscript: async () => [],
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      getConversation: async () => [],
+      compactTranscriptEvent: (event) => event,
+      getRuntime: () => ({ status: "idle", workingTabId: null }),
+    },
+    userInputPermissions: {
+      hasBrowserPermission: async () => false,
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+    },
+    tools: {
+      ready: async () => {},
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames: () => {},
+      runtime: {
+        getSchemas: () => [runScript],
+        execute: async () => ({ ok: true }),
+        getModelPolicy: () => null,
+        getBatchTabPolicy: () => null,
+        getTabAliases: () => ({}),
+      },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    async dispatchSidepanel() {},
+  });
+  const listed = await runtime.listTools({ sessionId: "drive-1" });
+  const fetched = await runtime.getTool({ sessionId: "drive-1", name: "run_script" });
+  assert.equal(listed.tools.length, 1);
+  assert.equal(listed.tools[0].signature, projected.signature);
+  assert.equal(fetched.signature, projected.signature);
+  assert.doesNotMatch(JSON.stringify(listed), /\binner\b/i);
+  assert.doesNotMatch(JSON.stringify(fetched), /\binner\b/i);
+  const builtInList = await runtime.listTools({ sessionId: "agent-1" });
+  const builtInTool = await runtime.getTool({ sessionId: "agent-1", name: "run_script" });
+  assert.match(JSON.stringify(builtInList), /\binner\b/i);
+  assert.match(JSON.stringify(builtInTool), /\binner\b/i);
+  assert.deepEqual(builtInTool.parameters.properties.target.enum, ["page", "inner"]);
+
+  const bridge = createRunScriptBridge({
+    supervisor: {
+      isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+      hasAgent: () => true,
+      getAbortSignal: () => new AbortController().signal,
+    },
+    getRuntime: () => ({ status: "running" }),
+    isTerminalRuntimeForRun: () => false,
+    canManageSessions: async () => true,
+    buildRunProfile: async () => ({}),
+    toolRuntime: {
+      resolveDefinition: () => ({ behavior: {} }),
+      getSchemas: () => [runScript],
+      execute: async () => ({ ok: true }),
+    },
+    collectArtifacts: () => [],
+  });
+  const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "drive-1" });
+  const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
+  assert.equal(driveList.result.tools[0].signature, projected.signature);
+  assert.doesNotMatch(JSON.stringify(driveList.result.tools[0]), /\binner\b/i);
+  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\binner\b/i);
+  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
 });

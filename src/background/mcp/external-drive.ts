@@ -110,8 +110,13 @@ export function prepareDriveToolCall(name: string, args: unknown): { ok: true; a
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
 export function driveToolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
   const parameters = record(tool.parameters);
-  const properties = record(parameters.properties);
+  const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
+  const pageScript = toolLocalName(tool.name) === "run_script";
+  const properties = pageScript
+    ? { ...sourceProperties, target: { ...record(sourceProperties.target), enum: ["page"] } }
+    : sourceProperties;
+  if (pageScript) required.add("target");
   const args = Object.entries(properties).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
