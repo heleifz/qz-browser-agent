@@ -19,6 +19,17 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }),
   };
   const openedTabs = [];
+  const createdIds = new Set();
+  const createDrive = async () => {
+    stdout.text = "";
+    stderr.text = "";
+    expect(await main(["session", "create", "--json"], dependencies), stderr.text).toBe(0);
+    const id = JSON.parse(stdout.text).result.sessionId;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    expect(createdIds.has(id)).toBe(false);
+    createdIds.add(id);
+    return id;
+  };
   try {
     const created = await callTool(environment.bridge.endpoint, "qingzhou_create_session", {
       title: "Built-in task", firstMessage: "", timeoutSeconds: 20,
@@ -46,7 +57,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, builtinId);
     expect(source).not.toBe("external-drive");
 
-    const sessionId = `drive-${Date.now().toString(36)}`;
+    const sessionId = await createDrive();
     const opened = await exec(dependencies, stdout, stderr, {
       sessionId,
       name: "open_tab",
@@ -89,7 +100,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       sessionId, text: "hello", timeoutSeconds: 15,
     }, { timeoutMs: 20_000 })).rejects.toThrow(/只能查看|read-only/);
 
-    const batchSession = `drive-batch-${Date.now().toString(36)}`;
+    const batchSession = await createDrive();
     const batch = await exec(dependencies, stdout, stderr, {
       sessionId: batchSession,
       calls: [
@@ -111,7 +122,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, batchSession);
     expect(savedTools).toEqual(["open_tab", "get_ax_tree", "act_on_element"]);
 
-    const smokeId = `drive-smoke-${Date.now().toString(36)}`;
+    const smokeId = await createDrive();
     const smoke = await exec(dependencies, stdout, stderr, {
       sessionId: smokeId,
       calls: [
@@ -136,7 +147,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       return injected.result;
     }, batchTab), { timeout: 15_000 }).toBe("clicked");
 
-    const keptId = `drive-keep-${Date.now().toString(36)}`;
+    const keptId = await createDrive();
     const kept = await exec(dependencies, stdout, stderr, {
       sessionId: keptId,
       name: "open_tab",
@@ -177,7 +188,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       return tab.id;
     }, `${fixture}/user`);
     openedTabs.push(userTab);
-    const claimId = `drive-claim-${Date.now().toString(36)}`;
+    const claimId = await createDrive();
     const claimed = await exec(dependencies, stdout, stderr, {
       sessionId: claimId,
       name: "use_tab",

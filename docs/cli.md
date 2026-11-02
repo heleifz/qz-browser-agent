@@ -414,13 +414,22 @@ prints the task and diagnostic catalog. A direct-drive session lists the default
 `DRIVE_TOOL_FORBIDDEN` for a blocked name. Set `wait: false` to receive a job ID and read the
 result with `qingzhou_get_tool_job`. The full catalog also provides `qingzhou_get_trace` and
 `qingzhou_clear_trace` for diagnostics. Create the session first. Later calls pass that
-`sessionId`. Omitting it does not create a session.
+`sessionId`. Omitting it returns `DRIVE_SESSION_REQUIRED`; an unknown ID returns
+`DRIVE_SESSION_NOT_FOUND`. Neither case creates a session. Check the browser selection and ID,
+or create a new task session with `qz session create` / `qingzhou_create_drive_session`.
 
-`qz session create` creates one direct-drive session and prints `sessionId <id>` on stdout.
+`qz session create` creates a fresh direct-drive session and prints `sessionId <id>` on stdout;
+with `--json`, read `result.sessionId`. `qz` abbreviates `npx --yes qz-browser-agent@latest` when
+it is not installed globally. See the [copyable drive workflow](../skills/qz-browser-agent/SKILL.md)
+for creation, tab aliases, dependent batches, PDF reading, and response examples.
+
 `qz script --session ID --tab TABREF [FILE|-]` runs an async function on that tab. `--session` is
-required. `--tab` is an alias or a numeric tab id. stdout is only the returned value. A failure
-prints the error code and the last five trace rows. `--timeout` defaults to 120 seconds, and the
-request waits 60 seconds longer. `qz tools --session ID` lists compact signatures for the default
+required. `--tab` takes an alias or a tabRef returned by open_tab/list_tabs. stdout is the returned
+value. Script failures print `{code,error,trace?}` with at most five traces. Thrown/transport failures
+use `{ok:false,error:{code,message}}` with `--json`, or stderr on an interactive terminal.
+`--timeout` defaults to 120 seconds, accepts >0 and <=3600, and the request waits 60 seconds longer.
+To modify a page, use `qz exec --session ID` with run_script and `args.mutatesPage:true`; the script
+command has no mutation flag. `qz tools --session ID` lists compact signatures for the default
 tier. `qz skill` prints the direct-drive guide without connecting. `qz --help` prints that same
 guide after the command list.
 
@@ -430,7 +439,29 @@ safely by piping stdin: `qz exec --session ID <<'JSON'`. stdout is JSON. Exit 0 
 succeeds, 2 when the arguments are invalid, and 1 when the tool fails. Screenshot bytes are
 written to temporary files and the JSON lists those paths. `--session` is required. A missing
 flag exits 2 and names `qz session create`. These commands do not create a session and do not
-reuse the previous one. Each parallel path uses its own `sessionId`. Run `qz connect` first.
+reuse the previous one. Each parallel task creates its own `sessionId`. Run `qz connect` first.
+
+A single tool's data is at `result.result` in exec JSON; a successful script value is at
+`result.result.result`. MCP's decoded text omits the CLI envelope, so those paths are `result`
+and `result.result`. A batch uses exec `result.results` / MCP `results`: inspect each `isError`.
+Call IDs correlate results; they do not interpolate returned values. Fixed-alias open/read calls
+can share a batch. Split requests when arguments depend on an unknown return value. Batches do
+not roll back completed actions.
+
+Three deadlines are separate: `args.timeout` limits script execution; `limits.timeoutSeconds`
+limits batch execution; exec `--timeout` / MCP `timeoutSeconds` controls request waiting (default
+180 seconds). Both the CLI and bridge extend a script request to at least its longest script
+budget plus 60 seconds, preserving a longer client setting. They do not rewrite script or batch
+budgets. Script timeout <=0 uses a request wait of 86400 seconds; CLI timeout flags require a
+positive value. For serial scripts, allow enough total request time and a longer calling-agent deadline.
+
+A CLI process closing its MCP connection does not immediately close the business session's tabs.
+While the extension runtime is running, about 30 minutes of business-session inactivity triggers
+cleanup. At completion use `qz cancel SESSION_ID`, or close specific owned tabs. To stop but retain
+opened tabs, use full MCP `qingzhou_stop_session({sessionId,keepTabs:true,cascade:false})`.
+Cleanup closes session-created tabs; claimed/user tabs only release leases. Do not use global
+`qz stop` for task cleanup. The next day, connect and create a new task session; leftover groups
+are ordinary user tabs.
 
 If a request times out or its connection is interrupted, an operation already started in the
 browser may still be running. Check the task before repeating it. Disconnected MCP requests are

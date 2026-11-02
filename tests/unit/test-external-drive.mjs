@@ -22,6 +22,7 @@ import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
+import { normalizeRuntimeSessionId, requireExplicitSessionId } from "../../src/background/session/id.js";
 
 globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
 const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
@@ -70,12 +71,12 @@ test("drive titles and request sentences stay on the existing tool", () => {
     const readBatch = parseDriveRequest({ calls: [{ id: "a", name: "read_dom", args: {} }] });
     assert.equal(readBatch.ok, true);
     assert.equal(readBatch.mode, "batch");
-    assert.equal(t("drive.sessionOccupied"), "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。");
+    assert.equal(t("drive.sessionOccupied"), "这个会话已有任务在用，不能直接操作。请用 qz session create（MCP：qingzhou_create_drive_session）创建新会话。");
     assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "不能通过直驱调用 ask_llm。");
     assert.equal(t("drive.sendMessageRejected"), "这个会话由外部客户端直接操作，这里只能查看。");
   });
   withLanguage("en", () => {
-    assert.equal(t("drive.sessionOccupied"), "This session already has a task, so it cannot be driven directly. Use a new sessionId.");
+    assert.equal(t("drive.sessionOccupied"), "This session already has a task, so it cannot be driven directly. Create a new session with qz session create (MCP: qingzhou_create_drive_session).");
     assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "Direct drive cannot call ask_llm.");
     assert.equal(t("drive.sendMessageRejected"), "An external client is driving this session. This view is read-only.");
   });
@@ -170,6 +171,57 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   assert.equal(syntax.value.line, 2);
   assert.equal(syntax.value.column, 4);
   assert.doesNotMatch(syntax.value.error, /^脚本执行失败/);
+});
+
+test("drive script failures sanitize host hints without changing returned user data", () => {
+  for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
+    const userValue = { tabId: 7, _tabId: 7, inner: "user value", target: "inner", scope: "custom",
+      diagnostic: { message: "workingTabId / 工作标签页" } };
+    const before = structuredClone(userValue);
+    assert.deepEqual(projectNamedDriveResult("run_script", {}, { ok: true, result: userValue }).value,
+      { ok: true, result: before });
+    assert.deepEqual(userValue, before);
+    const failure = projectNamedDriveResult("run_script", {}, {
+      ok: false, code: "SCRIPT_EVALUATION_FAILED", error: 'Use target:"inner" with workingTabId',
+      diagnostic: { category: "wrong_runtime", suggestedNextStep: 'target:"inner"; 工作标签页; tabId',
+        engine: "inner", tabId: 7, _tabId: 7 },
+      trace: [{ message: 'tools.error: tabId; target:"inner"', details: { scope: "inner" } }],
+    }).value;
+    assert.equal(failure.code, "SCRIPT_EVALUATION_FAILED");
+    assert.equal(failure.diagnostic.category, "wrong_runtime");
+    assert.doesNotMatch(JSON.stringify(failure), /tabId|inner|工作标签页|working tab|"target"|"scope"/i);
+    assert.match(failure.error, /tabRef/);
+    const syntax = projectNamedDriveResult("run_script", {}, {
+      ok: false, code: "SCRIPT_SYNTAX_ERROR", error: "SyntaxError: Unexpected token",
+      details: { lineNumber: 3, columnNumber: 9 },
+    }).value;
+    assert.match(syntax.error, /Unexpected token \(3:9\)/);
+  });
+});
+
+test("drive catalog page requirements agree with execution, including URL-only images", () => {
+  const schemas = getToolSchemas({ language: "en" });
+  for (const schema of schemas) {
+    const tool = schema.function;
+    if (isDriveToolForbidden(tool.name)) continue;
+    const advertised = driveToolSignature(tool);
+    const noPage = prepareDriveToolCall(tool.name, {});
+    if (!noPage.ok && noPage.error.code === "DRIVE_TAB_REF_REQUIRED") {
+      assert.match(advertised.signature.split(" | ")[0], /\btabRef:/, tool.name);
+      assert.doesNotMatch(advertised.signature.split(" | ")[0], /\btabRef\?:/, tool.name);
+      assert.equal(prepareDriveToolCall(tool.name, { tabRef: "page" }).ok, true, tool.name);
+    }
+  }
+  for (const name of ["open_tab", "list_tabs", "act_on_screen", "get_working_tab", "wait_until"]) {
+    const tool = schemas.find(schema => schema.function.name === name).function;
+    assert.equal(prepareDriveToolCall(name, {}).ok, true);
+    assert.doesNotMatch(driveToolSignature(tool).signature, /\btabRef:/, name);
+  }
+  const image = driveToolSignature(schemas.find(schema => schema.function.name === "read_image").function);
+  const urlVariant = image.signature.split(" | ")[1];
+  assert.match(urlVariant, /\burl:string/);
+  assert.doesNotMatch(urlVariant, /tabRef/);
+  assert.equal(prepareDriveToolCall("read_image", { url: "https://example.com/p.png" }).ok, true);
 });
 
 test("a calls batch rejects inner run_script before that call runs", async () => {
@@ -538,6 +590,7 @@ test("single drive no_alias matches calls and the script bridge", async () => {
     trace: { get: async () => [] },
     async dispatchSidepanel() {},
   });
+  await runtime.createDriveSession({ sessionId: "drive-alias" });
   const rejectMessage = async (language, params) => {
     let pending;
     withLanguage(language, () => {
@@ -722,7 +775,7 @@ test("a drive run id is current only until stop clears it", () => {
   assert.equal(supervisor.isRunCurrent("drive-session", second), false);
 });
 
-test("one external session is created only when metadata is missing", async () => {
+test("only explicit creation admits a drive session; busy runs remain isolated", async () => {
   const metadata = { s1: { id: "s1", title: "Session" } };
   const stored = {};
   const executed = [];
@@ -810,8 +863,7 @@ test("one external session is created only when metadata is missing", async () =
   const before = executed.length;
   await assert.rejects(
     runtime.executeTool({ sessionId: "s1", name: "open_tab", args: { url: "https://example.com" }, clientName: "pi" }),
-    (error) => error.code === "DRIVE_SESSION_OCCUPIED"
-      && error.message === "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。",
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
   );
   assert.equal(executed.length, before);
   await assert.rejects(
@@ -828,10 +880,14 @@ test("one external session is created only when metadata is missing", async () =
   assert.equal(stops.length, 0);
   assert.equal(created.length, 0);
 
-  const legacy = await runtime.executeTool({ name: "read_dom", args: { selector: "main", tabRef: "page" } });
-  assert.equal(legacy.toolName, "read_dom");
-  assert.deepEqual(legacy.result.nodes, [1]);
+  await assert.rejects(runtime.executeTool({ name: "read_dom", args: { tabRef: "page" } }),
+    error => error.code === "DRIVE_SESSION_REQUIRED");
+  await assert.rejects(runtime.executeTool({ sessionId: "unknown", name: "list_tabs", args: {} }),
+    error => error.code === "DRIVE_SESSION_NOT_FOUND");
   assert.equal(created.length, 0);
+  assert.equal(executed.length, before);
+  await runtime.createDriveSession({ sessionId: "drive-1", clientName: "pi" });
+  await runtime.createDriveSession({ sessionId: "drive-2", clientName: "Claude Code" });
 
   const first = runtime.executeTool({ sessionId: "drive-1", name: "open_tab", args: { url: "https://example.com" }, clientName: "pi" });
   await new Promise((resolve) => {
@@ -859,6 +915,7 @@ test("one external session is created only when metadata is missing", async () =
   assert.deepEqual(readBack.result.nodes, [1]);
   assert.match(readBack.runId, /^drive-/);
 
+  await runtime.createDriveSession({ sessionId: "drive-docs" });
   const fetched = await runtime.executeTool({ sessionId: "drive-docs", name: "document_fetch", args: { url: "https://example.com/a.pdf" } });
   assert.equal(metadata["drive-docs"].source, "external-drive");
   assert.match(fetched.runId, /^drive-/);
@@ -945,6 +1002,7 @@ test("idle stop reaches an external drive session and leaves an occupied session
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(stops.length, 0);
   assert.equal(metadata.s1.source, "");
+  await runtime.createDriveSession({ sessionId: "drive-idle" });
   await runtime.executeTool({ sessionId: "drive-idle", name: "list_tabs", args: {} });
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(stops.length, 1);
@@ -1039,6 +1097,7 @@ test("drive refresh keeps an empty runtime tab instead of the previous one", asy
     trace: { get: async () => [] },
     async dispatchSidepanel() {},
   });
+  await runtime.createDriveSession({ sessionId: "drive-clear" });
   const batch = await runtime.executeTool({
     sessionId: "drive-clear",
     calls: [
@@ -1053,23 +1112,20 @@ test("drive refresh keeps an empty runtime tab instead of the previous one", asy
   assert.equal(seen[1].pageUrl, "");
 });
 
-test("createDriveSession mints one external-drive id and keeps it", async () => {
-  const metadata = {};
+test("production normalization creates fresh isolated sessions even with an occupied default", async () => {
+  const repository = createSessionRepository({ storage: createMemoryStorage() });
+  const supervisor = createSessionSupervisor({ createAgent: () => { throw new Error("must not start a model"); } });
+  const aliases = new Map();
+  const pages = new Map();
+  let nextTab = 1;
+  let executions = 0;
   const runtime = createMcpRuntime({
     sessions: {
-      normalizeId: (value) => String(value || "").trim(),
-      requireId: (value) => String(value || "").trim(),
-      supervisor: {
-        isRunCurrent: () => false,
-        mintDriveRunId: () => "drive-run",
-        clearDriveRunId() {},
-        takeDriveRunForRelease: () => "",
-        getUserWait: () => null,
-        resolveUserWait: () => false,
-        rejectUserWait: () => false,
-      },
-      listMetadata: async () => ({ ...metadata }),
-      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      normalizeId: normalizeRuntimeSessionId,
+      requireId: requireExplicitSessionId,
+      supervisor,
+      listMetadata: repository.listMetadata,
+      createMetadata: repository.createMetadata,
       getRuntime: () => ({ status: "idle" }),
     },
     tools: {
@@ -1077,30 +1133,90 @@ test("createDriveSession mints one external-drive id and keeps it", async () => 
       buildRunProfile: async () => ({}),
       loadedSkillNames: () => [],
       recordLoadedSkillNames() {},
-      runtime: { getSchemas: () => [], execute: async () => ({}) },
+      runtime: {
+        getSchemas: () => [],
+        getTabAliases: id => aliases.get(id) || {},
+        getBatchTabPolicy: name => name === "open_tab"
+          ? { kind: "create", parallel: true } : { kind: "target", implicit: false, observation: true },
+        async execute(name, args, _signal, context) {
+          executions++;
+          const id = context.sessionId;
+          if (name === "run_script") throw Object.assign(new Error('Use target:"inner" with workingTabId'), {
+            code: "SCRIPT_EVALUATION_FAILED", details: { tabId: 7, _tabId: 7, recovery: "工作标签页 / inner" },
+          });
+          if (name === "open_tab") {
+            const tab = nextTab++;
+            aliases.set(id, { ...aliases.get(id), [args.tabAlias]: tab });
+            pages.set(tab, { sessionId: id, url: args.url });
+            return { id: tab, url: args.url };
+          }
+          const page = pages.get(args.tabId ?? aliases.get(id)?.[args.tabRef]);
+          assert.equal(page?.sessionId, id, "page reads must stay within the owning session");
+          return { snapshot: page.url };
+        },
+      },
     },
-    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    skills: { list: async () => [], load: async () => null, getDisplayName: skill => skill?.name || "", normalizeResourcePath: String },
     artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
     trace: { get: async () => [] },
     userInputPermissions: {
       hasBrowserPermission: async () => false,
-      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => {} },
     },
     async dispatchSidepanel() {},
   });
-  assert.ok(runtime.describe().methods.includes("create_drive_session"));
-  const created = await runtime.createDriveSession({ clientName: "qz-cli" });
-  assert.match(created.sessionId, /^[0-9a-f]{32}$/);
-  assert.equal(metadata[created.sessionId].source, "external-drive");
-  assert.equal(metadata[created.sessionId].title, "轻舟 · CLI");
-  const again = await runtime.createDriveSession({ sessionId: created.sessionId, clientName: "other" });
-  assert.equal(again.sessionId, created.sessionId);
-  assert.equal(metadata[created.sessionId].title, "轻舟 · CLI");
-  metadata.busy = { id: "busy", source: "agent" };
-  await assert.rejects(
-    runtime.createDriveSession({ sessionId: "busy", clientName: "qz-cli" }),
-    (error) => error.code === "DRIVE_SESSION_OCCUPIED",
-  );
+  assert.equal(normalizeRuntimeSessionId(undefined), "default");
+  const first = await runtime.createDriveSession({ clientName: "qz-cli" });
+  const second = await runtime.createDriveSession({ clientName: "pi" });
+  assert.match(first.sessionId, /^[0-9a-f]{32}$/);
+  assert.match(second.sessionId, /^[0-9a-f]{32}$/);
+  assert.notEqual(first.sessionId, second.sessionId);
+  await repository.createMetadata({ id: "default", title: "Ordinary task" });
+  supervisor.setRuntime("default", { status: "running", runId: "ordinary-run" });
+  const third = await runtime.createDriveSession({ clientName: "other" });
+  assert.match(third.sessionId, /^[0-9a-f]{32}$/);
+  assert.equal(new Set([first.sessionId, second.sessionId, third.sessionId]).size, 3);
+  assert.equal((await repository.getMetadata("default")).title, "Ordinary task");
+  assert.equal(supervisor.getRuntime("default").runId, "ordinary-run");
+  assert.equal((await repository.getMetadata(first.sessionId)).title, "轻舟 · CLI");
+  assert.equal((await repository.getMetadata(second.sessionId)).title, "轻舟 · pi");
+
+  const ids = [first.sessionId, second.sessionId];
+  const opened = await Promise.all(ids.map((sessionId, i) => runtime.executeTool({ sessionId, calls: [
+    { id: "open", name: "open_tab", args: { url: `https://example.com/${i}`, tabAlias: "page" } },
+    { id: "read", name: "get_ax_tree", args: { tabRef: "page" } },
+  ] })));
+  assert.notEqual(opened[0].results[0].result.tabRef, opened[1].results[0].result.tabRef);
+  for (const [i, sessionId] of ids.entries()) {
+    assert.ok(opened[i].results.every(row => !row.isError));
+    assert.equal(opened[i].results[1].result.snapshot, `https://example.com/${i}`);
+    const read = await runtime.executeTool({ sessionId, name: "get_ax_tree", args: { tabRef: "page" } });
+    assert.equal(read.result.snapshot, `https://example.com/${i}`, "later connections retain only this session's alias");
+  }
+
+  await assert.rejects(runtime.executeTool({ sessionId: first.sessionId, name: "run_script",
+    args: { tabRef: "page", timeout: 30, code: "async () => 7" },
+  }), error => {
+    assert.equal(error.code, "SCRIPT_EVALUATION_FAILED");
+    assert.doesNotMatch(`${error.message} ${JSON.stringify(error.details)}`, /tabId|inner|工作标签页|working tab|target/i);
+    assert.match(error.message, /tabRef/);
+    return true;
+  });
+  const before = await repository.listMetadata();
+  const executed = executions;
+  for (const method of ["executeTool", "listTools", "getTool"]) {
+    for (const sessionId of [undefined, "", " ", "misspelled"]) {
+      await assert.rejects(runtime[method]({ sessionId, name: "list_tabs", args: {} }), error => {
+        assert.equal(error.code, sessionId === "misspelled" ? "DRIVE_SESSION_NOT_FOUND" : "DRIVE_SESSION_REQUIRED");
+        assert.match(error.message, /qz session create/);
+        assert.match(error.message, /qingzhou_create_drive_session/);
+        return true;
+      });
+    }
+  }
+  assert.equal(executions, executed);
+  assert.deepEqual(await repository.listMetadata(), before);
+  await assert.rejects(runtime.executeTool({ sessionId: "default", name: "list_tabs" }), error => error.code === "DRIVE_SESSION_OCCUPIED");
 });
 
 test("a drive create does not take over an existing task", async () => {
@@ -1108,8 +1224,7 @@ test("a drive create does not take over an existing task", async () => {
   await repository.createMetadata({ id: "busy", title: "Busy" });
   await assert.rejects(
     repository.createMetadata({ id: "busy", title: "轻舟 · CLI", source: "external-drive", driveGroupTitle: "轻舟 · CLI" }),
-    (error) => error.code === "DRIVE_SESSION_OCCUPIED"
-      && error.message === "这个会话已有任务在用，不能直接操作。请换一个新的 sessionId。",
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
   );
   const stored = await repository.getMetadata("busy");
   assert.equal(stored.title, "Busy");
@@ -1150,7 +1265,7 @@ test("drive catalogs omit run_script target and scope", async () => {
     parameters: runScript.function.parameters,
   });
   assert.equal(projected.signature, expectedSignature);
-  assert.equal(projected.description, "Run a page script.");
+  assert.equal(projected.description, t("drive.scriptDescription"));
   assert.doesNotMatch(projected.signature, /\b(?:target|scope)\b/);
   assert.doesNotMatch(JSON.stringify(projected), /\b(?:tabId|inner)\b/i);
   assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
@@ -1218,6 +1333,7 @@ test("drive catalogs omit run_script target and scope", async () => {
     trace: { get: async () => [] },
     async dispatchSidepanel() {},
   });
+  await runtime.createDriveSession({ sessionId: "drive-1" });
   const listed = await runtime.listTools({ sessionId: "drive-1" });
   const fetched = await runtime.getTool({ sessionId: "drive-1", name: "run_script" });
   assert.equal(listed.tools.length, 1);
@@ -1339,6 +1455,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       trace: { get: async () => [] },
       async dispatchSidepanel() {},
     });
+    await runtime.createDriveSession({ sessionId: "drive-1" });
     const listed = await runtime.listTools({ sessionId: "drive-1" });
     assert.ok(listed.tools.length > 1);
     for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);

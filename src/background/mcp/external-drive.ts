@@ -119,17 +119,28 @@ export function driveToolSignature(tool: { name: string; description?: string; p
   const properties = pageScript
     ? projectRunScriptCatalogProperties(sourceProperties, required)
     : projectDriveCatalogProperties(sourceProperties, required);
-  const args = Object.entries(properties).map(([key, spec]) => {
+  if (pageToolNeedsTabRef(tool.name, {})) required.add("tabRef");
+  const signature = (fields: Fields, needed: Set<string>) => `${tool.name}({${Object.entries(fields).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
       ? schema.enum.map(item => JSON.stringify(item)).join("|")
       : Array.isArray(schema.type)
         ? schema.type.filter(item => item !== "null").join("|") || "any"
         : typeof schema.type === "string" && schema.type ? schema.type : "any";
-    return `${key}${required.has(key) ? "" : "?"}:${type}`;
-  });
-  const description = driveCatalogDescription(tool.description);
-  return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
+    return `${key}${needed.has(key) ? "" : "?"}:${type}`;
+  }).join(", ")}})`;
+  let callSignature = signature(properties, required);
+  let description = pageScript ? t("drive.scriptDescription") : driveCatalogDescription(tool.description);
+  if (toolLocalName(tool.name) === "read_image" && properties.url) {
+    // The URL variant needs no page; show both valid shapes rather than a misleading optional ref.
+    const { tabRef: _tabRef, ...urlProperties } = properties;
+    const urlRequired = new Set(required);
+    urlRequired.delete("tabRef");
+    urlRequired.add("url");
+    callSignature += ` | ${signature(urlProperties, urlRequired)}`;
+    description = t("drive.readImageReference");
+  }
+  return { name: tool.name, signature: callSignature, description };
 }
 
 /** Built-in schemas keep tabId. Drive catalogs name that parameter tabRef and drop inner from enums. */
@@ -342,10 +353,24 @@ function scriptFailureText(body: Fields) {
     if (summary) text = `${text}\n${summary}`;
   }
   return {
-    error: text,
+    error: projectDriveScriptText(text),
     ...(hasLine ? { line } : {}),
     ...(hasColumn ? { column } : {}),
   };
+}
+
+/** Only failure metadata is projected. A successful script's returned value is opaque user data. */
+function projectDriveScriptText(text: string): string {
+  return text.split("\n").map(line => /tabId|\binner\b|工作标签页|working tab|\b(?:target|scope)\s*[:=]/i.test(line)
+    ? t("drive.scriptRecovery") : line).join("\n");
+}
+
+export function projectDriveScriptDiagnostic(value: unknown): unknown {
+  if (typeof value === "string") return projectDriveScriptText(value);
+  if (Array.isArray(value)) return value.map(projectDriveScriptDiagnostic);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, child]) =>
+    /tabId|^(?:target|scope|inner)$/i.test(key) ? [] : [[key, projectDriveScriptDiagnostic(child)]]));
 }
 
 function projectRunScriptDriveResult(result: unknown): unknown {
@@ -363,8 +388,8 @@ function projectRunScriptDriveResult(result: unknown): unknown {
     error: failure.error,
     ...(failure.line ? { line: failure.line } : {}),
     ...(failure.column ? { column: failure.column } : {}),
-    ...(body.diagnostic ? { diagnostic: body.diagnostic } : {}),
-    ...(trace.length ? { trace } : {}),
+    ...(body.diagnostic ? { diagnostic: projectDriveScriptDiagnostic(body.diagnostic) } : {}),
+    ...(trace.length ? { trace: projectDriveScriptDiagnostic(trace) } : {}),
   };
 }
 

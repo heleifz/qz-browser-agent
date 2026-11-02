@@ -1,5 +1,5 @@
 const request = ["timeout", "client"];
-export const EXEC_JSON_MESSAGE = "Pass one JSON object with name and args, or with calls. Quote it safely by piping stdin: qz exec <<'JSON'";
+export const EXEC_JSON_MESSAGE = "Pass one JSON object with name and args, or with calls. Quote it safely by piping stdin: qz exec --session ID <<'JSON'";
 export const DRIVE_SESSION_REQUIRED = "Pass the sessionId from qz session create.";
 const waiting = [...request, "wait", "stream"];
 const output = ["json", "plain", "no-color", "help"];
@@ -113,7 +113,7 @@ export const COMMANDS = {
   },
   session: { options: request, summary: "Create a direct-drive session",
     help: ["qz session create", "Create a direct-drive session and print sessionId on stdout.",
-      "Pass that id as --session on every later qz script, qz exec, and qz tools call.",
+      "Use that id on every later qz script --session ID, qz exec --session ID, and qz tools --session ID call.",
       "Those commands do not create a session, and they do not reuse the previous one.",
       "qz session create"],
     actions: { create: route("qingzhou_create_drive_session") },
@@ -121,8 +121,10 @@ export const COMMANDS = {
   script: { options: [...request, "session", "tab"], summary: "Run one page script",
     help: ["qz script --session ID --tab TABREF [FILE|-]", "Run an async JavaScript function on that page. stdout is only the returned value.",
       "--session is required. Create it with qz session create and pass that sessionId.",
-      "--tab is an alias or a numeric tab id. qz script - reads the script from stdin.",
-      "--timeout sets the script timeout in seconds and defaults to 120. The request waits 60 seconds longer.",
+      "--tab takes an alias or a tabRef returned by open_tab/list_tabs. qz script --session ID --tab TABREF - reads stdin.",
+      "--timeout sets the script timeout in seconds (0 < seconds <= 3600) and defaults to 120. The request waits 60 seconds longer.",
+      "For page changes use qz exec --session ID with run_script and args.mutatesPage:true.",
+      "Script failures print {code,error,trace?}; thrown/transport failures use {ok:false,error:{code,message}} with --json, or stderr on a terminal.",
       "qz script --session ID --tab page page.js", "qz script --session ID --tab page - <<'JS'"],
   },
   tools: { options: [...request, "session"], summary: "List browser tool signatures",
@@ -143,6 +145,8 @@ export const COMMANDS = {
       "--session is required. Create it with qz session create and pass that sessionId.",
       EXEC_JSON_MESSAGE,
       "stdout is JSON. Exit 0 when the tool succeeds, 2 when the arguments are invalid, and 1 when the tool fails.",
+      "Single-tool data is result.result; a successful run_script value is result.result.result. Batch rows are result.results; inspect each isError.",
+      "--timeout sets the client wait (default 180 seconds). run_script requests wait at least args.timeout + 60 seconds; limits.timeoutSeconds remains the batch execution budget.",
       "qz session create",
     ],
   },

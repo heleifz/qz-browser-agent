@@ -154,7 +154,7 @@ export function parseCommand(argv) {
     requireDriveSession("exec", options);
   } else if (command === "script") {
     if (words.length > 1) invalid("Use qz script --session ID --tab TABREF [FILE|-].");
-    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a numeric tab id.");
+    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a tabRef returned by open_tab/list_tabs.");
     requireDriveSession("script", options);
     options.file = words[0] ?? "-";
   } else if (command === "tools") {

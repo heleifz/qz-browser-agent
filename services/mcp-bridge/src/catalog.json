@@ -282,13 +282,14 @@
   },
   {
     "name": "qingzhou_list_tools",
-    "description": "列出当前 session 可用的轻舟内置工具和插件工具 schema。",
+    "description": "List tools for an existing session. Direct-drive sessions return compact signatures. Pass sessionId from qingzhou_create_drive_session; this call never creates a session.",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
+      "required": ["sessionId"],
       "title": "qingzhou_list_toolsArguments",
       "type": "object"
     }
@@ -354,7 +355,7 @@
   },
   {
     "name": "qingzhou_execute_tool",
-    "description": "在已连接的浏览器里执行现有工具。单次传 name 和 args。同一轮并行或带 tabAlias、tabRef 时改传 calls（每项含 id、name、args），不要拆成多次请求。",
+    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools.",
     "inputSchema": {
       "properties": {
         "name": {"title": "Name", "type": "string"},
@@ -385,6 +386,7 @@
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
+      "required": ["sessionId"],
       "title": "qingzhou_execute_toolArguments",
       "type": "object"
     }
@@ -406,7 +408,7 @@
   },
   {
     "name": "qingzhou_get_tool",
-    "description": "Read one browser tool's description and input schema by exact name in the selected task's context.",
+    "description": "Read a tool by exact name in an existing session. Direct drive returns a compact signature and description. Pass sessionId from qingzhou_create_drive_session; this call never creates a session.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -415,7 +417,7 @@
         "timeoutSeconds": {"type": ["number", "null"], "default": null},
         "clientId": {"type": "string", "default": ""}
       },
-      "required": ["name"]
+      "required": ["name", "sessionId"]
     }
   },
   {

@@ -60,6 +60,9 @@ test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catal
   assert.doesNotMatch(execute.description, /先读说明书/);
   assert.match(execute.description, /在已连接的浏览器里执行现有工具/);
   assert.match(driveToolCatalog()[1].description, /sessionId/);
+  for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
+    assert.ok(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required.includes("sessionId"), name);
+  }
 });
 
 test("Node bridge exposes the existing catalog through a real MCP SDK client", async t => {
@@ -521,11 +524,25 @@ test("drive calls require an explicit session id and do not invent one", async t
   const bridge = await withBridge(t);
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
-  const missing = await client.callTool({ name: "qingzhou_execute_tool", arguments: { name: "list_tabs", args: {} } });
-  assert.equal(missing.isError, true);
-  assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
-  assert.match(missing.content[0].text, /qz session create/);
-  assert.equal(bridge.state.pending.size, 0);
+  for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
+    const missing = await client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
+    assert.equal(missing.isError, true);
+    assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
+    assert.match(missing.content[0].text, /qz session create/);
+    assert.match(missing.content[0].text, /qingzhou_create_drive_session/);
+    assert.equal(bridge.state.pending.size, 0);
+    const unknown = client.callTool({ name, arguments: { sessionId: "missing", ...(name === "qingzhou_list_tools" ? {} : { name: "list_tabs" }) } });
+    const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+    assert.equal(request.params.sessionId, "missing");
+    assert.notEqual(request.method, "create_drive_session");
+    completeBrowser(bridge.state, request.id, { ok: false, code: "DRIVE_SESSION_NOT_FOUND",
+      error: "Session not found. Use qz session create (MCP: qingzhou_create_drive_session).",
+    });
+    const failed = await unknown;
+    assert.equal(failed.isError, true);
+    assert.equal(unpack(failed).code, "DRIVE_SESSION_NOT_FOUND");
+    assert.equal(bridge.state.pending.size, 0);
+  }
   const created = client.callTool({ name: "qingzhou_create_drive_session", arguments: {} });
   const [createRequest] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(createRequest.method, "create_drive_session");

@@ -23,7 +23,7 @@ test("qz exec help prints the JSON sentence", async () => {
   const deps = setup();
   assert.equal(await main(["exec", "--help"], deps), 0);
   assert.match(deps.stdout.text, /Pass one JSON object with name and args, or with calls/);
-  assert.match(deps.stdout.text, /qz exec <<'JSON'/);
+  assert.match(deps.stdout.text, /qz exec --session ID <<'JSON'/);
 });
 
 test("qz exec reads one JSON object and prints JSON", async () => {
@@ -229,6 +229,59 @@ test("qz script request timeout outlasts the script timeout", async () => {
   assert.equal(calls[1].args.args.timeout, 120);
   assert.equal(calls[1].args.timeoutSeconds, 180);
   assert.equal(calls[1].timeoutMs, 180000);
+});
+
+test("exec uses the same extended script wait as the bridge without changing execution budgets", async () => {
+  for (const [payload, option, expected] of [
+    [{ name: "run_script", args: { tabRef: "page", timeout: 300 } }, [], 360],
+    [{ name: "run_script", args: { tabRef: "page", timeout: 300 } }, ["--timeout", "900"], 900],
+    [{ calls: [{ id: "read", name: "run_script", args: { tabRef: "page", timeout: 300 } }], limits: { timeoutSeconds: 15 } }, [], 360],
+    [{ name: "run_script", args: { tabRef: "page", timeout: 0 } }, [], 86400],
+    [{ name: "list_tabs", args: {} }, [], 180],
+  ]) {
+    let seen;
+    const deps = setup({ callTool: async (_endpoint, _name, args, options) => {
+      seen = { args, options };
+      return { result: { ok: true, result: 7 } };
+    } });
+    assert.equal(await main(["exec", "--session", "created", ...option, JSON.stringify(payload)], deps), 0);
+    assert.equal(seen.options.timeoutMs, expected * 1000);
+    assert.deepEqual(seen.args.args, payload.args);
+    assert.deepEqual(seen.args.calls, payload.calls);
+    assert.deepEqual(seen.args.limits, payload.limits);
+  }
+});
+
+test("CLI presents unknown sessions and script failure envelopes without implicit creation", async () => {
+  for (const argv of [
+    ["exec", "--session", "missing", '{"name":"list_tabs","args":{}}'],
+    ["tools", "--session", "missing", "--json"],
+    ["script", "--session", "missing", "--tab", "page", "--json"],
+  ]) {
+    const calls = [];
+    const deps = setup({ readStdin: async () => "async () => 7", callTool: async (_endpoint, name) => {
+      calls.push(name);
+      throw Object.assign(new Error("Session not found. Use qz session create (MCP: qingzhou_create_drive_session)."), { code: "DRIVE_SESSION_NOT_FOUND" });
+    } });
+    assert.equal(await main(argv, deps), 1);
+    const output = JSON.parse(deps.stdout.text);
+    assert.equal(output.error.code, "DRIVE_SESSION_NOT_FOUND");
+    assert.match(output.error.message, /qz session create/);
+    assert.equal(calls.length, 1);
+    assert.ok(!calls.includes("qingzhou_create_drive_session"));
+  }
+  const failure = { ok: false, code: "SCRIPT_SYNTAX_ERROR", error: "SyntaxError: Unexpected token (2:4)" };
+  for (const command of ["script", "exec"]) {
+    const deps = setup({ readStdin: async () => "async () => 7", callTool: async () => ({
+      toolName: "run_script", sessionId: "created", result: failure,
+    }) });
+    const argv = command === "script" ? ["script", "--session", "created", "--tab", "page", "--json"]
+      : ["exec", "--session", "created", '{"name":"run_script","args":{"tabRef":"page","timeout":30,"code":"async () => 7"}}'];
+    assert.equal(await main(argv, deps), 1);
+    const output = JSON.parse(deps.stdout.text);
+    if (command === "script") assert.deepEqual(output, { code: failure.code, error: failure.error });
+    else { assert.equal(output.ok, true); assert.deepEqual(output.result.result, failure); }
+  }
 });
 
 test("drive commands require --session and session create prints the id", async () => {
