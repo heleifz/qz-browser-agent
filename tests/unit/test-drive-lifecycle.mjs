@@ -73,6 +73,27 @@ test('restart restores remaining idle time, expires yesterday, and preserves exp
   await assert.rejects(restarted.executeTool({ sessionId: 'recent', name: 'list_tabs' }), { code: 'DRIVE_SESSION_ENDED' });
 });
 
+test('retention cannot retire a drive call during asynchronous tool admission', async () => {
+  let release;
+  const f = fixture({ ready: new Promise(resolve => { release = resolve; }) });
+  const { sessionId } = await f.runtime.createDriveSession();
+  const pending = f.runtime.executeTool({ sessionId, name: 'list_tabs' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.runtime.drive.retireForRetention(sessionId), false);
+  release(); await pending;
+  assert.equal(f.runtime.drive.retireForRetention(sessionId), true);
+});
+
+test('pending retention cleanup cannot be reopened or executed after a restart', async () => {
+  const f = fixture();
+  f.metadata.retired = { id: 'retired', source: 'external-drive', driveRetentionPending: true };
+  await assert.rejects(f.runtime.executeTool({ sessionId: 'retired', name: 'list_tabs' }), { code: 'DRIVE_SESSION_ENDED' });
+  await assert.rejects(f.runtime.createDriveSession({ sessionId: 'retired' }), { code: 'DRIVE_SESSION_ENDED' });
+  await f.runtime.restoreDriveSessions();
+  assert.equal(f.stored.retired, undefined);
+  assert.deepEqual(f.calls, []);
+});
+
 test('idle deadline cannot be bypassed by admission before its timer runs', () => {
   const stops = [];
   const drive = createExternalDriveCoordinator({ idleMs: 10,

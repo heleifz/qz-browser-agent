@@ -78,6 +78,7 @@ interface McpOptions {
   dispatchSidepanel(message: Fields, port: ResponsePort): Promise<unknown>;
   storageKey?(): string;
   driveIdleMs?: number;
+  onDriveSettled?(): Promise<unknown>;
   userInputPermissions: Pick<Parameters<typeof createSessionUserInput>[0], "hasBrowserPermission" | "locationConsent">;
 }
 import {
@@ -107,6 +108,7 @@ export function createMcpRuntime({
   userInputPermissions,
   storageKey = () => "",
   driveIdleMs,
+  onDriveSettled = async () => {},
 }: McpOptions) {
   if (typeof dispatchSidepanel !== "function") throw new TypeError("dispatchSidepanel is required");
 
@@ -421,6 +423,7 @@ export function createMcpRuntime({
       if (String(existing.source || "") !== "external-drive") {
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
+      if (existing.driveRetentionPending === true) throw Object.assign(new Error(t("drive.sessionEnded")), { code: "DRIVE_SESSION_ENDED" });
       drive.assertActive(sessionId);
       return "external-drive";
     }
@@ -457,24 +460,30 @@ export function createMcpRuntime({
     if (!metadata) {
       throw Object.assign(new Error(t("drive.sessionNotFound")), { code: "DRIVE_SESSION_NOT_FOUND" });
     }
+    if (metadata.driveRetentionPending === true) {
+      throw Object.assign(new Error(t("drive.sessionEnded")), { code: "DRIVE_SESSION_ENDED" });
+    }
     return { sessionId, metadata };
   }
 
   async function createDriveSession(params: Fields = {}) {
     const requested = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
     const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
-    const source = await ensureDriveSession(sessionId, params.clientName);
-    if (source !== "external-drive") {
-      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
-    }
-    sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
-    drive.restore(sessionId, Date.now());
-    return { sessionId };
+    const release = drive.protect(sessionId);
+    try {
+      const source = await ensureDriveSession(sessionId, params.clientName);
+      if (source !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
+      drive.restore(sessionId, Date.now());
+      return { sessionId };
+    } finally { release(); void onDriveSettled(); }
   }
 
   async function restoreDriveSessions() {
     for (const [sessionId, metadata] of Object.entries(await sessions.listMetadata())) {
-      if (metadata.source !== "external-drive") continue;
+      if (metadata.source !== "external-drive" || metadata.driveRetentionPending === true) continue;
       const runtime = readRuntime(sessionId);
       drive.restore(sessionId, Number(runtime.driveLastActivityAt)
         || parseBeijingDateTime(runtime.updatedAt || metadata.createdAt) || Date.now());
@@ -503,6 +512,12 @@ export function createMcpRuntime({
   }
 
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
+    const release = drive.protect(typeof params.sessionId === "string" ? params.sessionId.trim() : "");
+    try { return await executeToolRequest(params, signal); }
+    finally { release(); void onDriveSettled(); }
+  }
+
+  async function executeToolRequest(params: Fields = {}, signal?: AbortSignal) {
     const language = getLanguage();
     const parsed = parseDriveRequest(params);
     if (!parsed.ok) throw parsed.error;

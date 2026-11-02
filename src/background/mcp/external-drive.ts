@@ -675,6 +675,7 @@ export function createExternalDriveCoordinator({
   const generation = new Map<string, number>();
   const active = new Map<string, number>();
   const ended = new Set<string>();
+  const admissions = new Map<string, number>();
 
   function assertActive(sessionId: string) {
     const runtime = getRuntime?.(sessionId);
@@ -728,6 +729,28 @@ export function createExternalDriveCoordinator({
 
   const coordinator = {
     assertActive,
+    protect(sessionId: string) {
+      if (sessionId) admissions.set(sessionId, (admissions.get(sessionId) || 0) + 1);
+      let released = false;
+      return () => {
+        if (released || !sessionId) return;
+        released = true;
+        const remaining = (admissions.get(sessionId) || 1) - 1;
+        if (remaining > 0) admissions.set(sessionId, remaining);
+        else admissions.delete(sessionId);
+      };
+    },
+    retireForRetention(sessionId: string) {
+      if (busy.has(sessionId) || admissions.has(sessionId)) return false;
+      ended.add(sessionId);
+      invalidate(sessionId);
+      return true;
+    },
+    forget(sessionId: string) {
+      invalidate(sessionId);
+      ended.delete(sessionId);
+      generation.delete(sessionId);
+    },
     restore(sessionId: string, lastActivity: number) {
       if (busy.has(sessionId) || timers.has(sessionId) || ended.has(sessionId)) return;
       const runtime = getRuntime?.(sessionId);
@@ -801,6 +824,14 @@ export function createExternalDriveCoordinator({
 export function noteExternalDriveStopped(sessionId: string, meta: Fields = {}) {
   if (!activeCoordinator) return true;
   return activeCoordinator.noteStopped(sessionId, meta);
+}
+
+export function protectExternalDriveSession(sessionId: string) {
+  return activeCoordinator?.protect(sessionId) || (() => {});
+}
+
+export function forgetExternalDriveSession(sessionId: string) {
+  activeCoordinator?.forget(sessionId);
 }
 
 /** True while a newer execute_tool lease owns this session. A late stop must not close its tabs. */

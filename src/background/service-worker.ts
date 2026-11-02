@@ -75,6 +75,8 @@ import {
   subscribeSkillToolRegistry,
 } from "./skills/skill-tool-runtime.js";
 import { createSerialQueue } from "./internal/serial-queue.js";
+import { createDriveSessionRetention } from "./session/drive-retention.js";
+import { removeOwnedSessionResources } from "./session/resource-cleanup.js";
 import {
   getLastTranscriptToolName,
 } from "../shared/session/session-codec.js";
@@ -525,6 +527,8 @@ sessionCommands = createSessionCommands({
   copyChatMessageDocuments: chatDocumentAttachments.copyMessageDocuments,
   removeChatSessionDocuments: chatDocumentAttachments.removeSessionDocuments,
   removeSessionObservations: async id => productRuntime.removeSession(id),
+  removeSessionResources: removeOwnedSessionResources,
+  onDriveSettled: () => driveRetention.request(),
   blockChatDocumentParsing: chatDocumentAttachments.blockSession,
   observeAgentEvent: (sessionId, event) => lifecycle.emit(sessionId, event, "committed"),
   getAutomationRuntime: () => automationRuntime,
@@ -830,9 +834,24 @@ const mcpRuntime = createMcpRuntime({
   },
   dispatchSidepanel: (message, port) => sidepanelTransport.dispatch(message, port),
   storageKey: qingzhouMcpBridgeStorageKey,
+  onDriveSettled: () => driveRetention.request(),
 });
 
-sessionRuntimeReady.then(() => mcpRuntime.restoreDriveSessions()).catch(error => {
+const driveRetention = createDriveSessionRetention({
+  listMetadata: sessionRepository.listMetadata,
+  getRuntime: sessionSupervisor.getRuntime,
+  isActive: sessionSupervisor.isActive,
+  retire: mcpRuntime.drive.retireForRetention,
+  remove: async (id, canRemove) => {
+    const result = await sessionCommands.deleteSessionRuntime(id, { source: "drive_retention" }, undefined, canRemove);
+    return result.deleted === true;
+  },
+});
+
+sessionRuntimeReady.then(async () => {
+  await mcpRuntime.restoreDriveSessions();
+  await driveRetention.request();
+}).catch(error => {
   console.warn("[轻舟] restore drive cleanup failed:", error);
 });
 

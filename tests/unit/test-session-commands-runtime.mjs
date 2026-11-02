@@ -55,6 +55,7 @@ await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
 await externalDriveSessionsRejectBuiltInMessages();
 await idleDriveStopPersistsTerminalState();
+await retentionCleanupRetriesWithoutOrphaningTheSession();
 
 console.log("session command runtime integration tests passed");
 
@@ -2024,6 +2025,31 @@ async function idleDriveStopPersistsTerminalState() {
   assert.equal(f.agents.has('idle-drive'), false);
 }
 
+async function retentionCleanupRetriesWithoutOrphaningTheSession() {
+  let fail = true;
+  const cleaned = [];
+  const f = createFixture({ removeSessionResources: async id => {
+    cleaned.push(id);
+    if (fail) throw new Error('document store unavailable');
+  } });
+  await f.repository.createMetadata({ id: 'retention-old', source: 'external-drive' });
+  await f.repository.createMetadata({ id: 'ordinary', title: 'Keep' });
+  f.setRuntime('retention-old', { status: 'idle' });
+  const skipped = await f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => false);
+  assert.equal(skipped.deleted, false);
+  assert.deepEqual(cleaned, []);
+  await assert.rejects(f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => true), /document store unavailable/);
+  assert.equal((await f.repository.getMetadata('retention-old')).driveRetentionPending, true);
+  assert.equal(f.repository.isWriteBlocked('retention-old'), true);
+  assert.equal(f.broadcasts.some(event => event.type === 'session_deleted'), false);
+  fail = false;
+  assert.equal((await f.commands.deleteSessionRuntime('retention-old', {}, undefined, async () => true)).deleted, true);
+  assert.equal(await f.repository.getMetadata('retention-old'), null);
+  assert.equal(f.runtimes.has('retention-old'), false);
+  assert.equal((await f.repository.getMetadata('ordinary')).title, 'Keep');
+  assert.deepEqual(cleaned, ['retention-old', 'retention-old']);
+}
+
 function createFixture(options = {}) {
   const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
@@ -2086,6 +2112,7 @@ function createFixture(options = {}) {
   };
   const revoke = async (sessionId, options = {}, remove = false) => {
     const id = normalizeId(sessionId);
+    if (options.canRemove && !await options.canRemove()) return null;
     const discardedPrompt = agents.get(id)?.discardUnstartedPrompt?.() || null;
     const snapshot = { ...snapshotFor(id), discardedPrompt };
     const task = tasks.get(id);
@@ -2323,6 +2350,7 @@ function createFixture(options = {}) {
       }
       return { deletedFileCount: 1, deletedModelCount: 1 };
     },
+    removeSessionResources: options.removeSessionResources,
     removeSessionObservations: async sessionId => {
       draftCleanupOrder.push(`observations:${sessionId}`);
       removedSessionObservations.push(sessionId);

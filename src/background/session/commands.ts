@@ -1,5 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
-import { externalDriveLeaseActive, noteExternalDriveStopped } from "../mcp/external-drive.js";
+import { externalDriveLeaseActive, forgetExternalDriveSession, noteExternalDriveStopped, protectExternalDriveSession } from "../mcp/external-drive.js";
 import type { Agent, AgentEvent, DynamicContext } from "../agent/agent.js";
 import type { createSessionSupervisor, SessionTask } from "./supervisor.js";
 import type { createSessionRepository } from "./repository.js";
@@ -53,7 +53,7 @@ interface SessionCommandsDependencies {
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
   >>;
   tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal" | "settleStoppedDriveTabs">
-    & Partial<Pick<Tabs, "restoreOwnedTabs">>>;
+    & Partial<Pick<Tabs, "restoreOwnedTabs" | "syncGroup">>>;
   sessionRuntimeReady: Promise<unknown>;
   sessionSupervisor: ReturnType<typeof createSessionSupervisor<Agent>>;
   sessionRepository: Repository;
@@ -72,6 +72,8 @@ interface SessionCommandsDependencies {
   copyChatMessageDocuments?: Documents["copyMessageDocuments"];
   removeChatSessionDocuments?(id: string): Promise<unknown>;
   removeSessionObservations?(id: string): Promise<unknown>;
+  removeSessionResources?(id: string): Promise<unknown>;
+  onDriveSettled?(): Promise<unknown>;
   blockChatDocumentParsing?(id: string): Promise<(() => void) | void>;
   observeAgentEvent?: ((id: string, event: AgentEvent) => unknown) | null;
   getAutomationRuntime(): { syncSessionOutcome(id: string): unknown };
@@ -151,6 +153,8 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
     copyChatMessageDocuments,
     removeChatSessionDocuments = async () => {},
     removeSessionObservations = async () => {},
+    removeSessionResources,
+    onDriveSettled = async () => {},
     blockChatDocumentParsing = async () => {},
     observeAgentEvent = null,
     getAutomationRuntime,
@@ -1879,7 +1883,7 @@ function clipText(value: unknown, maxChars: number) {
   return `${text.slice(0, maxChars)}\n[truncated: ${text.length - maxChars} chars omitted]`;
 }
 
-async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, canDelete?: () => Promise<boolean>) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -1889,7 +1893,19 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
   const snapshot = await sessionSupervisor.remove(id, {
     admissionSignal: signal,
     reason: "delete_session",
+    canRemove: canDelete,
     beforeRelease: async (revoked) => {
+      noteExternalDriveStopped(id, meta);
+      if (canDelete) {
+        await sessionRepository.patchMetadata(id, { driveRetentionPending: true });
+        const runtime = sessionSupervisor.getRuntime(id) || {};
+        const tabs = snapshotStoppedTabs(runtime);
+        if (tabs.ownedTabIds.length || tabs.createdTabIds.length || tabs.driveHandoffTabIds.length) {
+          await sessionTabs.settleStoppedDriveTabs(id, { ...tabs, keepTabs: runtime.driveKeepTabs === true, source: "drive_retention" });
+        }
+        await sessionTabs.syncGroup?.(id);
+        sessionRepository.beginDeletion(id);
+      }
       await releaseTerminalRunResources(
         id,
         revoked?.activeRunId || revoked?.liveState?.runId,
@@ -1897,26 +1913,37 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
       );
       const releaseDocumentParsing = await blockChatDocumentParsing(id);
       try {
-        stored = await deleteStoredSession(id);
-        await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
-        await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        if (canDelete) {
+          if (!removeSessionResources) throw new Error("Session resource cleanup is unavailable");
+          await removeSessionResources(id);
+          await removeSessionObservations(id);
+          stored = await sessionRepository.deleteSession(id, { strict: true });
+        } else {
+          stored = await deleteStoredSession(id);
+          await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
+          await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        }
       } finally {
         releaseDocumentParsing?.();
       }
     },
   });
+  if (!snapshot) return { sessionId: id, deleted: false };
   const stopped = Boolean(snapshot.hadTask || object(snapshot.liveState).isStreaming);
   const hadRuntime = Boolean(snapshot.hadAgent || snapshot.hadTask);
 
-  await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
+  if (!canDelete) await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
     console.debug("[轻舟] close deleted session owned tabs failed:", errorMessage(err));
   });
   sessionArtifacts.clearListSummaryPatch(id);
   sessionArtifacts.clearSummaryRefresh(id);
   sessionTranscript.remove(id);
   runtimeState.remove(id);
+  forgetExternalDriveSession(id);
   const result = {
     ...object(stored),
+    sessionId: id,
+    deleted: true,
     stopped,
     hadRuntime,
     requestedBy: meta.requestedBy || "",
@@ -1936,6 +1963,12 @@ function snapshotStoppedTabs(runtime: Fields) {
 }
 
 async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+  const release = protectExternalDriveSession(sessionId);
+  try { return await stopSessionWithChildren(sessionId, meta, signal); }
+  finally { release(); void onDriveSettled(); }
+}
+
+async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
   const driveRunId = meta.driveRunCaptured === true
@@ -2082,8 +2115,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     queueFollowUpResume("stop");
   }
 
-  const closeStoppedTabs = () => {
-    void (async () => {
+  const closeStoppedTabs = async () => {
+    await (async () => {
       for (const runId of driveRunIds) {
         try {
           await releaseRunResources({ sessionId: id, runId, eventType: "aborted" });
@@ -2113,7 +2146,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   };
 
   if (!hadRuntime) {
-    closeStoppedTabs();
+    void closeStoppedTabs();
     return {
       sessionId: id,
       stopped: false,
@@ -2126,7 +2159,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     };
   }
 
-  closeStoppedTabs();
+  if (externalDrive) await closeStoppedTabs();
+  else void closeStoppedTabs();
   const stateEvent = {
     type: "state",
     sessionId: id,

@@ -183,6 +183,15 @@ tombstone that rejects late writes. Stop preserves accepted steering and follow-
 delete clear them. A new run receives a new epoch.
 Reset completes after the empty model conversation, display history, and reset runtime are persisted.
 
+[Drive retention](../src/background/session/drive-retention.ts) keeps the 200 most recently active
+external-drive records. Older running or admitted Sessions remain protected until work settles.
+Creation, tool settlement, stop and startup request coalesced background cleanup. A guarded removal
+rechecks activity inside the Session command queue before revoking admission. The optional metadata
+flag `driveRetentionPending` keeps interrupted cleanup retryable; a missing flag means no pending cleanup.
+Strict removal deletes Session-owned documents, artifacts, resource links, transcript/checkpoint/runtime
+keys and unreferenced history images before removing metadata. Failures retry after 30 seconds and on
+startup. Global Data tables, gallery assets and downloaded files remain independent user resources.
+
 [Session codecs](../src/shared/session/session-codec.ts) normalize historical records when reading.
 The repository validates record and conversation versions before selecting or replacing a copy. The
 [format contract](../src/shared/session/session-format.ts) defines supported versions and errors.

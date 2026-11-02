@@ -169,7 +169,7 @@ script stdout 直接是返回值；exec 的脚本值在 result.result.result，M
 
 ## 收尾、隔天与出错恢复
 
-MCP 连接与业务 Session 不同：每个 CLI 进程会关闭自己的连接，**不会立即关闭业务标签**。同任务下一个进程继续显式带同一 sessionId。业务调用结束后空闲约 30 分钟，运行中的扩展会触发该会话清理；不要把传输连接结束当成清理完成的保证。
+MCP 连接与业务 Session 不同：每个 CLI 进程会关闭自己的连接，**不会立即关闭业务标签**。同任务下一个进程继续显式带同一 sessionId。业务调用结束后空闲约 30 分钟，运行中的扩展会触发该会话清理；不要把传输连接结束当成清理完成的保证。直驱记录按最近活动保留 200 条，较旧的进行中会话暂不清理，调用结束后再检查上限。
 
 任务完成只需 `qz cancel "$SID"`：结束会话并清理标签，不要再 close_tab。close_tab 仅用于会话进行中关闭单个标签；结束后执行工具返回 DRIVE_SESSION_ENDED，新任务重新 create。要保留打开的标签，用 full MCP 的 qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false})，full 地址由 qz mcp --profile full 获取。不要用全局 qz stop 收尾。
 
@@ -360,7 +360,7 @@ script stdout is the returned value. exec script values are at result.result.res
 
 ## Finish, reconnect and recover
 
-MCP connections and business Sessions are different. Each CLI process closes its connection, **not immediately its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; transport disconnection is not proof that cleanup completed.
+MCP connections and business Sessions are different. Each CLI process closes its connection, **not immediately its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; transport disconnection is not proof that cleanup completed. Keep the 200 most recently active drive records; older sessions are protected while work is in flight, then the limit is checked again.
 
 Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. To retain opened tabs, use full MCP qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false}); obtain the full URL with qz mcp --profile full. Do not use global qz stop for task cleanup.
 

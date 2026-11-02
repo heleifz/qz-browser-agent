@@ -180,11 +180,15 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     });
   }
 
-  async function remove(sessionId: string, options: RevokeOptions<A> = {}) {
+  async function remove(sessionId: string, options: RevokeOptions<A> & { canRemove?(): Promise<boolean> | boolean } = {}) {
     const id = requireSessionId(sessionId);
     return commandQueues.run(id, async () => {
       options.admissionSignal?.throwIfAborted();
-      const entry = handles.get(id);
+      let entry = handles.get(id);
+      if (entry) await settleReady(entry);
+      if (options.canRemove && !await options.canRemove()) return null;
+      options.admissionSignal?.throwIfAborted();
+      entry = handles.get(id);
       if (!entry) {
         const snapshot = emptyRevocation(id);
         if (typeof options.beforeRelease === "function") await options.beforeRelease(snapshot);
@@ -664,6 +668,10 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     getUserWait,
     has,
     hasAgent,
+    isActive(sessionId: string) {
+      const entry = handles.get(normalizeOptionalSessionId(sessionId));
+      return Boolean(entry && (hasActiveWork(entry) || entry.wait));
+    },
     size,
   });
 }
