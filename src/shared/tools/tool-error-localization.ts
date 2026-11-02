@@ -571,6 +571,18 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
   }
 }
 
+/** Keep the engine text for fixable script errors so the variable or property name survives localization. */
+function recoverableScriptError(text: string) {
+  if (/\b(?:ReferenceError|TypeError)\b/.test(text)) return text;
+  if (/\bSyntaxError\b|Unexpected token|Unexpected identifier/i.test(text)) return "";
+  if (/Cannot (?:read|set) propert(?:y|ies) of (?:null|undefined)/i.test(text)) return text;
+  if (/(?:null|undefined) is not an object/i.test(text)) return text;
+  if (/Can't find variable:/i.test(text)) return text;
+  if (/\bis not defined\b/i.test(text)) return text;
+  if (/\bis not a (?:function|constructor)\b/i.test(text)) return text;
+  return "";
+}
+
 function localizeByPattern(text: string, _details: Record<string, unknown> = {}) {
   if (!text) return "";
   let match = text.match(/^Unknown tool: (.+)$/i);
@@ -609,8 +621,8 @@ function localizeByPattern(text: string, _details: Record<string, unknown> = {})
   if (/URL did not return an image/i.test(text)) return t("toolError.IMAGE_URL_NOT_IMAGE.message");
   if (/CDP failed: .*scripting fallback failed:/i.test(text)) return t("toolError.SCRIPT_EXECUTION_UNAVAILABLE.message");
   if (/Script evaluation failed/i.test(text)) return t("toolError.SCRIPT_EVALUATION_FAILED.message");
-  if (/Cannot read propert(?:y|ies) of (null|undefined)/i.test(text)) return t("toolFailure.nullProperty");
-  if (/is not defined/i.test(text)) return t("toolFailure.undefinedVariable");
+  const recoverable = recoverableScriptError(text);
+  if (recoverable) return recoverable;
   if (/Unexpected token|Unexpected identifier|SyntaxError/i.test(text)) return t("toolFailure.scriptSyntax");
   if (/Failed to fetch/i.test(text)) return t("toolFailure.networkFailed");
   if (/Invalid regular expression/i.test(text)) return t("toolError.INVALID_REGEX.message");

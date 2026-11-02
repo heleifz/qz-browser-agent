@@ -237,6 +237,10 @@ const GENERIC_SCRIPT_ERRORS = new Set([
   "The script has a syntax error.",
   "内部脚本执行失败。",
   "The internal script failed.",
+  "脚本访问了空对象或未定义对象的属性。",
+  "The script accessed a property of null or undefined.",
+  "脚本引用了未定义的变量或对象。",
+  "The script referenced an undefined variable or object.",
 ]);
 
 function isGenericScriptError(text: string) {
@@ -340,14 +344,56 @@ function withTabRef(row: unknown): unknown {
   return { tabRef: id, ...rest };
 }
 
+/** Rename outward tabId keys. An existing tabRef wins. `_tabId` stays the verbose page-context key. */
+function renameTabIdFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map(item => {
+      const renamed = renameTabIdFields(item);
+      if (renamed !== item) changed = true;
+      return renamed;
+    });
+    return changed ? next : value;
+  }
+  if (!value || typeof value !== "object") return value;
+  const source = value as Fields;
+  let changed = false;
+  const out: Fields = {};
+  for (const [key, child] of Object.entries(source)) {
+    const next = renameTabIdFields(child);
+    if (next !== child) changed = true;
+    if (key === "tabId") {
+      changed = true;
+      if (!Object.hasOwn(source, "tabRef")) out.tabRef = next;
+      continue;
+    }
+    out[key] = next;
+  }
+  return changed ? out : value;
+}
+
+function exposeClosedTab(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const body = value as Fields;
+  const closed = body.closed;
+  if (typeof closed !== "number" || !Number.isFinite(closed) || Object.hasOwn(body, "tabRef")) return value;
+  return { ...body, tabRef: closed };
+}
+
 /** Drive results name the tab with tabRef. Internal execution still uses numeric tabId. */
 function exposeTabRef(name: string, value: unknown): unknown {
-  if (!TAB_IDENTITY.has(toolLocalName(name))) return value;
-  if (Array.isArray(value)) return value.map(withTabRef);
-  if (!value || typeof value !== "object") return value;
-  const body = value as Fields;
-  if (Array.isArray(body.tabs)) return { ...body, tabs: body.tabs.map(withTabRef) };
-  return withTabRef(body);
+  const local = toolLocalName(name);
+  let next = value;
+  if (TAB_IDENTITY.has(local)) {
+    if (Array.isArray(next)) next = next.map(withTabRef);
+    else if (next && typeof next === "object") {
+      const body = next as Fields;
+      next = Array.isArray(body.tabs) ? { ...body, tabs: body.tabs.map(withTabRef) } : withTabRef(body);
+    }
+  }
+  next = renameTabIdFields(next);
+  if (local === "close_tab") next = exposeClosedTab(next);
+  return next;
 }
 
 interface DriveOutcome {

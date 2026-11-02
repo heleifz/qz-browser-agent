@@ -154,6 +154,42 @@ for (const [language, label, message] of [
   assert.equal(skillT("skillNameAmbiguous", { name: "Shared title", names: "rt1, rt2" }), message);
 });
 
+for (const [language, syntax, failed] of [
+  ["zh-CN", "脚本语法错误。", "脚本执行失败。"],
+  ["en", "The script has a syntax error.", "The script failed."],
+]) withLanguage(language, () => {
+  const reference = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "ReferenceError: price is not defined",
+    details: { lineNumber: 4 },
+  });
+  assert.match(reference.error, /price is not defined/);
+  assert.equal(reference.error.includes("未定义的变量") || reference.error.includes("undefined variable"), false);
+
+  const typeError = localizeToolFailureText(
+    "TypeError: Cannot read properties of undefined (reading 'title')",
+    { code: "SCRIPT_EVALUATION_FAILED" },
+  );
+  assert.match(typeError, /reading 'title'/);
+
+  const safari = localizeToolFailureText("ReferenceError: Can't find variable: tools", { code: "SCRIPT_EVALUATION_FAILED" });
+  assert.match(safari, /tools/);
+
+  const unset = localizeToolFailureText("price is not defined");
+  assert.match(unset, /price/);
+
+  assert.equal(localizeToolFailureText("SyntaxError: Unexpected token", { code: "SCRIPT_EVALUATION_FAILED" }), syntax);
+  assert.equal(localizeToolFailureText("Script evaluation failed", { code: "SCRIPT_EVALUATION_FAILED" }), failed);
+  const restored = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "Script evaluation failed: ReferenceError: price is not defined",
+  });
+  assert.equal(restored.error, failed);
+  assert.match(restored.details.originalError, /price is not defined/);
+});
+
 console.log("tool error localization tests passed");
 
 for (const [details, message] of [

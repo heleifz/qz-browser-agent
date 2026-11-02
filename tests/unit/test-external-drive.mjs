@@ -253,6 +253,139 @@ test("named drive projection compacts scripts and this session's tabs, then caps
   assert.deepEqual(timedOut.value.trace, traces.slice(-5));
 });
 
+function ownTabId(value, seen = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) ownTabId(item, seen);
+    return seen;
+  }
+  if (!value || typeof value !== "object") return seen;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "tabId") seen.push(value);
+    else ownTabId(child, seen);
+  }
+  return seen;
+}
+
+test("drive results identify the page with tabRef", () => {
+  const navigate = projectNamedDriveResult("navigate", { tabRef: "page" }, {
+    tabId: 7,
+    url: "https://example.com/next",
+    pageMode: "desktop",
+    networkWatch: { watching: true, tabId: 7 },
+  });
+  assert.equal(navigate.value.tabRef, 7);
+  assert.equal(navigate.value.networkWatch.tabRef, 7);
+  assert.equal(navigate.value.url, "https://example.com/next");
+  assert.equal(ownTabId(navigate.value).length, 0);
+
+  const used = projectNamedDriveResult("use_tab", { tabRef: 7 }, {
+    tabId: 7,
+    active: false,
+    title: "Example",
+    url: "https://example.com/next",
+    windowId: 1,
+  });
+  assert.equal(used.value.tabRef, 7);
+  assert.equal(used.value.windowId, 1);
+  assert.equal(Object.hasOwn(used.value, "tabId"), false);
+
+  const closed = projectNamedDriveResult("close_tab", { tabRef: 7 }, { closed: 7 });
+  assert.equal(closed.value.closed, 7);
+  assert.equal(closed.value.tabRef, 7);
+  assert.equal(Object.hasOwn(closed.value, "tabId"), false);
+
+  const working = projectNamedDriveResult("get_working_tab", {}, {
+    hasWorkingTab: true,
+    id: 6,
+    title: "Current",
+    url: "https://example.com",
+    windowId: 2,
+  });
+  assert.equal(working.value.tabRef, 6);
+  assert.equal(Object.hasOwn(working.value, "id"), false);
+  assert.equal(Object.hasOwn(working.value, "tabId"), false);
+
+  const opened = projectNamedDriveResult("open_tab", {}, {
+    id: 5,
+    url: "https://example.com",
+    networkWatch: { watching: true, tabId: 5 },
+  });
+  assert.equal(opened.value.tabRef, 5);
+  assert.equal(opened.value.networkWatch.tabRef, 5);
+  assert.equal(Object.hasOwn(opened.value, "id"), false);
+
+  const shot = projectNamedDriveResult("screenshot", { tabRef: 5, verbose: true }, {
+    _tabId: 5,
+    tabId: 5,
+    method: "cdp",
+  });
+  assert.equal(shot.value.tabRef, 5);
+  assert.equal(shot.value._tabId, 5);
+  assert.equal(Object.hasOwn(shot.value, "tabId"), false);
+
+  const found = projectNamedDriveResult("find_elements", { tabRef: 5 }, {
+    matches: [{ id: "n1", tabId: 5, target: "css:button" }],
+  });
+  assert.equal(found.value.matches[0].id, "n1");
+  assert.equal(found.value.matches[0].tabRef, 5);
+  assert.equal(Object.hasOwn(found.value.matches[0], "tabId"), false);
+
+  const kept = projectNamedDriveResult("navigate", {}, { tabRef: "page", tabId: 9, url: "https://example.com" });
+  assert.equal(kept.value.tabRef, "page");
+  assert.equal(Object.hasOwn(kept.value, "tabId"), false);
+
+  const prefixed = projectNamedDriveResult("plugin__close_tab", {}, { closed: 8 });
+  assert.equal(prefixed.value.tabRef, 8);
+
+  const scriptValue = projectNamedDriveResult("run_script", { tabRef: "page" }, {
+    ok: true,
+    result: { tabId: 4, title: "kept" },
+    __runScriptEnvelope: true,
+  });
+  assert.equal(scriptValue.value.result.tabId, 4);
+});
+
+test("fixable script errors keep the identifier and syntax failures still restore", () => {
+  const reference = projectNamedDriveResult("run_script", { tabRef: "page" }, {
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "脚本引用了未定义的变量或对象。",
+    details: { originalError: "ReferenceError: price is not defined", lineNumber: 4, columnNumber: 2 },
+    __runScriptEnvelope: true,
+  });
+  assert.match(reference.value.error, /ReferenceError: price is not defined/);
+  assert.match(reference.value.error, /\(4:2\)/);
+  assert.doesNotMatch(reference.value.error, /未定义的变量/);
+
+  const typeError = projectNamedDriveResult("run_script", { tabRef: "page" }, {
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "The script accessed a property of null or undefined.",
+    details: { originalError: "TypeError: Cannot read properties of undefined (reading 'title')" },
+    __runScriptEnvelope: true,
+  });
+  assert.match(typeError.value.error, /reading 'title'/);
+
+  const passed = projectNamedDriveResult("run_script", { tabRef: "page" }, {
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "TypeError: document.querySelector is not a function",
+    __runScriptEnvelope: true,
+  });
+  assert.match(passed.value.error, /document\.querySelector is not a function/);
+
+  const catalog = projectNamedDriveResult("run_script", { tabRef: "page" }, {
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "脚本执行失败。",
+    details: { originalError: "Script evaluation failed: ReferenceError: price is not defined", lineNumber: 3, columnNumber: 1 },
+    __runScriptEnvelope: true,
+  });
+  assert.match(catalog.value.error, /price is not defined/);
+  assert.match(catalog.value.error, /\(3:1\)/);
+  assert.doesNotMatch(catalog.value.error, /^脚本执行失败/);
+});
+
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {
   const seen = [];
   const commits = [];
