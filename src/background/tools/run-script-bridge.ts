@@ -1,4 +1,4 @@
-import { driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
+import { type DriveToolObservation, driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -19,6 +19,7 @@ interface BridgeHost {
   canManageSessions(sessionId: string): Promise<boolean>;
   buildRunProfile(input: { sessionId: string; canManageSessions: boolean | undefined }): Promise<NonNullable<ToolContext["runProfile"]>>;
   getRunToolContext?(sessionId: string, runId: string): Promise<RunScriptToolContext | null>;
+  recordDriveTool?(input: DriveToolObservation): Promise<unknown>;
   applyNestedToolResult?(input: { sessionId: string; runId: string; toolName: string; args: Fields; result: unknown; isError: boolean }): Promise<unknown>;
   toolRuntime: {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
@@ -53,6 +54,7 @@ export function createRunScriptBridge({
   buildRunProfile,
   getRunToolContext = async () => null,
   applyNestedToolResult = async () => false,
+  recordDriveTool,
   toolRuntime,
   collectArtifacts,
   appendArtifacts = async () => {},
@@ -68,6 +70,26 @@ export function createRunScriptBridge({
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
 
   async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
+    let rawResult: unknown;
+    const response = await executeToolCall(message, sender, result => { rawResult = result; });
+    const sessionId = normalizeSessionId(message.sessionId);
+    const runId = String(message.runId || "").trim();
+    const name = String(message.toolName || "").trim();
+    const parent = getToolCallParent(message.parentCallId, sessionId, runId);
+    if (recordDriveTool && runId.startsWith("drive-") && name && name !== "__list_tools__"
+      && plainObject(response).code !== "RUN_STOPPED" && supervisor.isRunCurrent(sessionId, runId)
+      && (message.parentCallId === undefined || parent && !parent.signal?.aborted)) {
+      try {
+        await recordDriveTool({ sessionId, runId, name, args: plainObject(message.args),
+          result: rawResult ?? response.result ?? response, isError: response.isError === true });
+      } catch (error) {
+        logger.debug("[轻舟] persist nested drive tool failed:", error instanceof Error ? error.message : error);
+      }
+    }
+    return response;
+  }
+
+  async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown) => void) {
     await ready();
     let language = getLanguage();
     const respondFailure = (payload: unknown, options: { toolName?: string } = {}) => withLanguage(language, () => {
@@ -174,6 +196,7 @@ export function createRunScriptBridge({
       // A host or zero-timeout handler may complete after its run was revoked.
       const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (executionStopped) return respondFailure(executionStopped, { toolName });
+      observe(result);
       const output = plainObject(result);
       const isError = output.ok === false || output.isError === true || output.error != null;
       await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });

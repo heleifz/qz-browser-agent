@@ -29,6 +29,9 @@ const TAB_IDENTITY = new Set(["open_tab", "list_tabs", "get_working_tab", "use_t
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
 export interface DriveImage { mimeType: string; data: string }
+export interface DriveToolObservation {
+  sessionId: string; runId: string; name: string; args: Record<string, unknown>; result: unknown; isError: boolean;
+}
 type Fields = Record<string, unknown>;
 type ModelPolicy = { projectResult?(result: unknown): unknown } | null | undefined;
 export type DriveParse =
@@ -542,7 +545,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   aliases?: Readonly<Record<string, number>>;
   context?: Fields;
   refreshContext?(context: Fields): Fields;
-  onSettled?(call: { id: string; name: string; args: unknown; isError: boolean; result: unknown; images: DriveImage[] }): void;
+  onSettled?(call: { id: string; name: string; args: unknown; isError: boolean; result: unknown; rawResult: unknown; images: DriveImage[] }): void;
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
@@ -555,9 +558,10 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     deps.onSettled?.({
       id: published.id,
       name: published.name,
-      args: published.args,
+      args: published.call.args,
       isError: published.isError,
       result: projected.value,
+      rawResult: published.result,
       images: projected.images,
     });
     return published;

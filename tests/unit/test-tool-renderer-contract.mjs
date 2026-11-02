@@ -782,8 +782,8 @@ function testChatOpeningAvoidsIntermediateLayoutJumps() {
   const transitionBody = extractFunctionFromSource(sessionNavigationFeature, "transitionToSession");
   assert.match(
     transitionBody,
-    /await\s+options\.composer\?\.prepareSession\(next\)[\s\S]*setCurrentSessionId\(next,\s*\{\s*composerDraft\s*\}\)/,
-    "a Session transition should hydrate its Composer before committing the visible identity",
+    /await\s+Promise\.all\([\s\S]*options\.composer\?\.prepareSession\(next\)[\s\S]*mergeSessionRecord\?\.\(session\)[\s\S]*setCurrentSessionId\(next,\s*\{\s*composerDraft\s*\}\)/,
+    "a Session transition should hydrate its Composer and source metadata before committing the visible identity",
   );
   const switchSessionBody = extractFunctionFromSource(sessionNavigationFeature, "switchToSession");
   assert.match(

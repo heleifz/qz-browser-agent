@@ -95,7 +95,7 @@ export function groupConsecutiveToolTranscriptEntries(history: Entry[], options:
         runId: turn.runId,
       }));
     }
-    const visibleTools = visibleTimelineTools(turn.tools);
+    const visibleTools = groupTools ? visibleTimelineTools(turn.tools) : turn.tools;
     if (visibleTools.length) {
       const presentationAnchor = `${turn.key}:tools`;
       if (groupTools && visibleTools.length >= 2) {

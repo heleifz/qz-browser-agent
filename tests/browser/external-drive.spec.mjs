@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { textPdf } from "../support/text-pdf.mjs";
+import { readSessionSnapshot } from "../../src/shared/session/session-recovery.ts";
 import { expect, test } from "./fixtures.mjs";
 import { main } from "../../services/mcp-bridge/src/cli.mjs";
 import { callTool, readHealth } from "../../services/mcp-bridge/src/client.mjs";
@@ -257,6 +258,72 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
   }
 });
 
+test("drive timeline retains repeated batch IDs and nested script calls as separate cards", async () => {
+  test.setTimeout(180_000);
+  const { launchIsolatedExtensionMcp } = await import("../support/isolated-extension-mcp.mjs");
+  const fixture = await startPage();
+  const environment = await launchIsolatedExtensionMcp({ profilePrefix: "qz-drive-transcript-" });
+  const { page, bridge } = environment;
+  const stdout = { text: "", write(value) { this.text += value; } };
+  const stderr = { text: "", write(value) { this.text += value; } };
+  const dependencies = { stdout, stderr, findDaemon: async () => ({ endpoint: bridge.endpoint, health: await readHealth(bridge.endpoint) }) };
+  try {
+    const { sessionId } = await callTool(bridge.endpoint, "qingzhou_create_drive_session", {});
+    const cards = page.locator("#messages .msg-tool");
+    for (const [index, alias] of ["first", "second", "third"].entries()) {
+      const result = await exec(dependencies, stdout, stderr, { sessionId, calls: [
+        { id: "open", name: "open_tab", args: { url: `${fixture}/${alias}`, tabAlias: alias } },
+        { id: "read", name: "read_article", args: { tabRef: alias, limit: 6000 } },
+      ] });
+      expect(result.code, result.text || stderr.text).toBe(0);
+      expect(result.body.result.results.map(row => row.id)).toEqual(["open", "read"]);
+      if (index === 0) {
+        await page.locator('[data-tab="sessions"]').click();
+        await page.locator('[data-sessions-mode="external-drive"]').click();
+        await page.locator(`.session-card[data-id="${sessionId}"]`).click();
+        await expect(page.locator("#app")).toHaveAttribute("data-external-drive", "true");
+      }
+      await expect(cards).toHaveCount((index + 1) * 2);
+    }
+    stdout.text = stderr.text = "";
+    const scriptCode = `async () => {
+      await tools.read_article({tabRef:"first",limit:100});
+      await tools.wait({seconds:0});
+      await tools.read_article({tabRef:"second",limit:100});
+      return {title:"returned value is not the page title"};
+    }`;
+    expect(await main(["script", "--session", sessionId, "--tab", "first", "--json", "-"], {
+      ...dependencies, readStdin: async () => scriptCode,
+    }), stdout.text || stderr.text).toBe(0);
+    await expect(cards).toHaveCount(10);
+    await expect(cards.last().locator(".tool-args-preview")).toHaveText("(First page)");
+    await expect(cards.last()).not.toContainText("当前页面");
+    const result = await callTool(bridge.endpoint, "qingzhou_execute_tool", { sessionId, calls: [
+      { id: "read", name: "read_article", args: { tabRef: "third", limit: 100 } },
+      { id: "read", name: "read_article", args: { tabRef: "first", limit: 100 } },
+    ] });
+    expect(result.results.every(row => !row.isError)).toBe(true);
+    await expect(cards).toHaveCount(12);
+    const stored = await page.evaluate(async id => {
+      const recordKey = `_session_${id}`, checkpointKey = `_session_transcript_checkpoint_${id}`;
+      const values = await chrome.storage.local.get([recordKey, checkpointKey]);
+      return { record: values[recordKey], checkpoint: values[checkpointKey] };
+    }, sessionId);
+    const saved = readSessionSnapshot(stored.record, null, stored.checkpoint).transcript.filter(entry => entry.type === "tool");
+    expect(saved).toHaveLength(12);
+    expect(new Set(saved.map(row => row.toolCallId)).size).toBe(12);
+    expect(saved.filter(row => row.name === "open_tab")).toHaveLength(3);
+    expect(saved.find(row => row.name === "run_script").result._pageTitle).toBe("First page");
+    expect(saved.filter(row => row.name === "read_article" && row.args.tabRef === "second")
+      .every(row => row.result._pageTitle === "Second page")).toBe(true);
+    await page.reload();
+    await expect(page.locator("#app")).toHaveAttribute("data-external-drive", "true");
+    await expect(cards).toHaveCount(12);
+    expect(await cards.evaluateAll(nodes => new Set(nodes.map(node => node.id)).size)).toBe(12);
+    await callTool(bridge.endpoint, "qingzhou_stop_session", { sessionId });
+  } finally { await environment.close(); await fixture.close(); }
+});
+
 async function exec(dependencies, stdout, stderr, payload, timeout = "60") {
   stdout.text = "";
   stderr.text = "";
@@ -283,7 +350,8 @@ function startPage() {
       return;
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(page);
+    const title = { "/first": "First page", "/second": "Second page", "/third": "Third page" }[request.url] || "drive";
+    response.end(page.replace("<title>drive</title>", `<title>${title}</title>`));
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);

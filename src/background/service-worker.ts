@@ -763,6 +763,7 @@ const runScriptBridge = createRunScriptBridge({
     const entry = await sessionAgentHost.getLiveEntry(sessionId);
     return entry?.agent?.getRunToolContext(runId) || null;
   },
+  recordDriveTool: observation => mcpRuntime.recordNestedTool(observation),
   applyNestedToolResult: async ({ sessionId, ...payload }) => {
     const entry = await sessionAgentHost.getLiveEntry(sessionId);
     return entry?.agent?.applyNestedToolResult(payload) || false;

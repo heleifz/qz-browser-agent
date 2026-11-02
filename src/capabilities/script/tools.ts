@@ -820,7 +820,8 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
       input = args;
     }
     try {
-      if (input && typeof input === "object" && input.tabId == null && __qzSourceTabId) input.tabId = __qzSourceTabId;
+      if (!__qzRunId.startsWith("drive-") && input && typeof input === "object"
+        && input.tabId == null && input.tabRef == null && __qzSourceTabId) input.tabId = __qzSourceTabId;
     } catch (_e) {}
     const safeInput = __qzSafeValueForMessage(input || {});
     __qzPushTrace("tool.start", [toolName, safeInput]);

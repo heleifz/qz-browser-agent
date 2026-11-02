@@ -302,10 +302,12 @@ const batchNotes = await runtime.executeTool({
   ],
 });
 assert.equal(batchNotes.results.length, 2);
-assert.deepEqual(driveNotes.map(event => [event.toolCallId, event.toolName, event.isError, event.type]), [
-  ["tree", "get_ax_tree", false, "tool_execution_end"],
-  ["shot", "screenshot", false, "tool_execution_end"],
+assert.deepEqual(driveNotes.map(event => [event.toolName, event.isError, event.type]), [
+  ["get_ax_tree", false, "tool_execution_end"],
+  ["screenshot", false, "tool_execution_end"],
 ]);
+assert.equal(new Set(driveNotes.map(event => event.toolCallId)).size, 2);
+assert.ok(driveNotes.every(event => !["tree", "shot"].includes(event.toolCallId)));
 assert.equal(driveNotes.every(event => event.runId === "drive-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
 assert.deepEqual(persistedDriveSessions, ["drive-s"]);
 {

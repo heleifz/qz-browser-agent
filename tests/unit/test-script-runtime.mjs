@@ -31,7 +31,7 @@ async function fixture(mode) {
   const originals = { fetch, open: XMLHttpRequest.prototype.open, beacon: navigator.sendBeacon, console: { ...console } };
   return {
     context, calls,
-    run: (code, options = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run', toolExecutionId: 'parent-call' }),
+    run: (code, options = {}, context = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run', toolExecutionId: 'parent-call', ...context }),
     restored() {
       assert.equal(context.fetch, originals.fetch);
       assert.equal(XMLHttpRequest.prototype.open, originals.open);
@@ -78,6 +78,14 @@ for (const mode of ['development', 'production']) {
     `, f.context);
     assert.equal((await f.run('async () => await tools.read_article({})')).result, 42);
     assert.equal(f.context.lastToolMessage.parentCallId, 'parent-call');
+    assert.equal(f.context.lastToolMessage.args.tabId, 7, 'ordinary implicit targeting stays on the script page');
+    await f.run('async () => await tools.read_article({tabRef:"other"})');
+    assert.equal(f.context.lastToolMessage.args.tabRef, 'other');
+    assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'explicit references are never overwritten by the source page');
+    for (const code of ['async () => await tools.read_article({tabRef:"other"})', 'async () => await tools.read_article({})']) {
+      await f.run(code, {}, { runId: 'drive-live' });
+      assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'direct drive never injects an implicit page');
+    }
   });
 
   test(`${mode}: actual page expression serializes cyclic, exceptional and binary values`, async () => {

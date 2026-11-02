@@ -100,7 +100,7 @@ open_tab、navigate、list_tabs、close_tab、use_tab、get_ax_tree、find_eleme
 
 ## calls 是批次，不是事务
 
-calls 每项的 id 只是关联结果，不会把前项的返回值插值给后项。固定 alias 的 open/read 可同批；读到 uid、fileId、docModelId 后才能确定的下一步要拆请求。检查 `results` 中每项的 isError；失败不回滚已执行动作，不要盲目重放整批。一批最多 10 项，同会话只能有一批在执行。
+calls 每项的 id 只关联本次响应，不会合并历史调用，也不会把前项的返回值插值给后项。侧栏逐次展示顶层和脚本内的工具调用。固定 alias 的 open/read 可同批；读到 uid、fileId、docModelId 后才能确定的下一步要拆请求。检查 `results` 中每项的 isError；失败不回滚已执行动作，不要盲目重放整批。一批最多 10 项，同会话只能有一批在执行。
 
 例如两页对比：
 
@@ -291,7 +291,7 @@ Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale r
 
 ## calls is a batch, not a transaction
 
-Each call's id only correlates results; it does not interpolate earlier returned values into later arguments. Fixed-alias open/read calls may share a batch. Split requests when the next step requires an unknown uid, fileId or docModelId. Inspect each results item's isError. Failures do not roll back completed actions; do not blindly replay the entire batch. At most 10 items, and only one in-flight batch per session.
+Each call's id only correlates this response; it neither merges historical calls nor interpolates earlier values into later arguments. The side panel shows each top-level and in-script tool call separately. Fixed-alias open/read calls may share a batch. Split requests when the next step requires an unknown uid, fileId or docModelId. Inspect each results item's isError. Failures do not roll back completed actions; do not blindly replay the entire batch. At most 10 items, and only one in-flight batch per session.
 
 For a two-page comparison:
 
