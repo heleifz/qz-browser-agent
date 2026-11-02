@@ -49,15 +49,17 @@ async function waitUntil(predicate) {
   assert.fail("condition timed out");
 }
 
-test("drive MCP lists the guide and five tools; qz-cli keeps the full catalog", () => {
+test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catalog", () => {
   assert.equal(mcpCatalogProfile({ clientName: "qz-cli" }), "full");
   assert.equal(mcpCatalogProfile({ clientName: "bridge-test" }), "drive");
   assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
   const names = driveToolCatalog().map(tool => tool.name);
-  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
+  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
   assert.match(driveToolCatalog()[0].description, /先读说明书/);
-  assert.doesNotMatch(driveToolCatalog()[1].description, /先读说明书/);
-  assert.match(driveToolCatalog()[1].description, /在已连接的浏览器里执行现有工具/);
+  const execute = driveToolCatalog().find(tool => tool.name === "qingzhou_execute_tool");
+  assert.doesNotMatch(execute.description, /先读说明书/);
+  assert.match(execute.description, /在已连接的浏览器里执行现有工具/);
+  assert.match(driveToolCatalog()[1].description, /sessionId/);
 });
 
 test("Node bridge exposes the existing catalog through a real MCP SDK client", async t => {
@@ -515,13 +517,23 @@ test("a batch of two screenshots keeps each image with its call", () => {
   assert.equal(readFileSync(files.results[1].images[0]).toString(), "two");
 });
 
-test("one MCP connection reuses one generated drive session id", async t => {
+test("drive calls require an explicit session id and do not invent one", async t => {
   const bridge = await withBridge(t);
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
-  const other = await withClient(t, bridge);
-  async function driveCall(caller, name, args) {
-    const pending = caller.callTool({ name, arguments: args });
+  const missing = await client.callTool({ name: "qingzhou_execute_tool", arguments: { name: "list_tabs", args: {} } });
+  assert.equal(missing.isError, true);
+  assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
+  assert.match(missing.content[0].text, /qz session create/);
+  assert.equal(bridge.state.pending.size, 0);
+  const created = client.callTool({ name: "qingzhou_create_drive_session", arguments: {} });
+  const [createRequest] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+  assert.equal(createRequest.method, "create_drive_session");
+  assert.equal(createRequest.params.clientName, "bridge-test");
+  completeBrowser(bridge.state, createRequest.id, { ok: true, result: { sessionId: "kept-id" } });
+  assert.equal(unpack(await created).sessionId, "kept-id");
+  async function driveCall(name, args) {
+    const pending = client.callTool({ name, arguments: args });
     const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
     const tool = name === "qingzhou_get_tool"
       ? { name: args.name, description: "List", parameters: {} }
@@ -531,22 +543,15 @@ test("one MCP connection reuses one generated drive session id", async t => {
     await pending;
     return request;
   }
-  const first = await driveCall(client, "qingzhou_execute_tool", { name: "list_tabs", args: {} });
-  const listed = await driveCall(client, "qingzhou_list_tools", {});
-  const inspected = await driveCall(client, "qingzhou_get_tool", { name: "list_tabs" });
-  const explicit = await driveCall(client, "qingzhou_execute_tool", { name: "list_tabs", args: {}, sessionId: "kept-id" });
-  const second = await driveCall(other, "qingzhou_execute_tool", { name: "list_tabs", args: {} });
-  assert.match(first.params.sessionId, /^[0-9a-f]{32}$/);
-  assert.notEqual(first.params.sessionId, "default");
+  const listed = await driveCall("qingzhou_list_tools", { sessionId: "kept-id" });
+  const inspected = await driveCall("qingzhou_get_tool", { name: "list_tabs", sessionId: "kept-id" });
+  const explicit = await driveCall("qingzhou_execute_tool", { name: "list_tabs", args: {}, sessionId: "kept-id" });
   assert.equal(listed.method, "list_tools");
-  assert.equal(listed.params.sessionId, first.params.sessionId);
+  assert.equal(listed.params.sessionId, "kept-id");
   assert.equal(inspected.method, "get_tool");
-  assert.equal(inspected.params.name, "list_tabs");
-  assert.equal(inspected.params.sessionId, first.params.sessionId);
+  assert.equal(inspected.params.sessionId, "kept-id");
   assert.equal(explicit.params.sessionId, "kept-id");
-  assert.match(second.params.sessionId, /^[0-9a-f]{32}$/);
-  assert.notEqual(second.params.sessionId, first.params.sessionId);
-  assert.equal(Object.hasOwn(first.params, "runId"), false);
+  assert.equal(Object.hasOwn(explicit.params, "runId"), false);
 });
 
 test("MCP session deletion cancels pending work and invalidates the old session", async t => {

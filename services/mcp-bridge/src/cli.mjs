@@ -296,17 +296,23 @@ async function dispatchCommand(parsed, dependencies) {
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
   if (command === "exec") {
+    const flaggedSession = String(options.session || "").trim();
+    const payloadSession = String(execPayload.sessionId || "").trim();
+    if (payloadSession && flaggedSession && payloadSession !== flaggedSession) {
+      throw new QzError("invalid_arguments", "The --session option and sessionId select different sessions. Pass one id from qz session create.");
+    }
     const route = catalogExecRoute(execPayload);
     if (route) {
-      const sessionId = String(route.args.sessionId || options.session || "").trim();
+      const sessionId = String(route.args.sessionId || flaggedSession).trim();
+      const bindsSession = route.tool === "qingzhou_list_tools" || route.tool === "qingzhou_get_tool";
       const result = await call(running.endpoint, route.tool, {
         ...route.args,
-        ...(sessionId ? { sessionId } : {}),
+        ...(bindsSession && sessionId ? { sessionId } : {}),
         ...common,
       }, requestOptions);
       return { result, exitCode: 0 };
     }
-    const session = options.session && !execPayload.sessionId ? { sessionId: options.session } : {};
+    const session = flaggedSession && !execPayload.sessionId ? { sessionId: flaggedSession } : {};
     const result = await call(running.endpoint, "qingzhou_execute_tool", { ...execPayload, ...session, ...common }, requestOptions);
     const failed = execFailed(result);
     return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
@@ -417,6 +423,13 @@ async function dispatchCommand(parsed, dependencies) {
         : { ...result, snapshot };
     }
     return { result };
+  }
+  if (command === "session" && action === "create") {
+    const created = await call(running.endpoint, "qingzhou_create_drive_session", { ...common }, requestOptions);
+    const sessionId = String(created?.sessionId || "").trim();
+    if (!sessionId) throw new QzError("invalid_response", "The drive session was created without an ID. Run qz session create again.");
+    if (options.json) return { result: { sessionId } };
+    return { text: `sessionId ${sessionId}\n` };
   }
   let name, parameters;
   if (resource) {

@@ -104,14 +104,18 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   const inner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
   assert.equal(inner.ok, false);
   assert.equal(inner.error.code, "DRIVE_RUN_SCRIPT_TARGET");
-  assert.equal(inner.error.message, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
-  assert.doesNotMatch(inner.error.message, /\binner\b/i);
+  assert.equal(inner.error.message, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(inner.error.message, /\b(?:inner|target)\b/i);
   withLanguage("en", () => {
     const enInner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
     assert.equal(enInner.ok, false);
-    assert.equal(enInner.error.message, "Direct drive accepts only a page script with tabRef. Orchestrate with calls or execute_tool.");
-    assert.doesNotMatch(enInner.error.message, /\binner\b/i);
+    assert.equal(enInner.error.message, "Direct drive runs the script in the tab named by tabRef. Orchestrate with calls or execute_tool.");
+    assert.doesNotMatch(enInner.error.message, /\b(?:inner|target)\b/i);
   });
+  const scoped = prepareDriveToolCall("run_script", { tabRef: "page", scope: "inner", timeout: 1, code: "async () => 1" });
+  assert.equal(scoped.ok, true);
+  assert.equal(scoped.args.target, "page");
+  assert.equal(Object.hasOwn(scoped.args, "scope"), false);
   const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
   assert.equal(missing.ok, false);
   assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
@@ -184,8 +188,8 @@ test("a calls batch rejects inner run_script before that call runs", async () =>
   assert.equal(batch.results[0].result.tabRef, 3);
   assert.equal(batch.results[1].isError, true);
   assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
-  assert.equal(batch.results[1].result.error, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
-  assert.doesNotMatch(batch.results[1].result.error, /\binner\b/i);
+  assert.equal(batch.results[1].result.error, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(batch.results[1].result.error, /\b(?:inner|target)\b/i);
 });
 
 test("projection drops nodes and screenshot bytes", () => {
@@ -1049,6 +1053,56 @@ test("drive refresh keeps an empty runtime tab instead of the previous one", asy
   assert.equal(seen[1].pageUrl, "");
 });
 
+test("createDriveSession mints one external-drive id and keeps it", async () => {
+  const metadata = {};
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: () => false,
+        mintDriveRunId: () => "drive-run",
+        clearDriveRunId() {},
+        takeDriveRunForRelease: () => "",
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      getRuntime: () => ({ status: "idle" }),
+    },
+    tools: {
+      canManageSessions: async () => false,
+      buildRunProfile: async () => ({}),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames() {},
+      runtime: { getSchemas: () => [], execute: async () => ({}) },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    userInputPermissions: {
+      hasBrowserPermission: async () => false,
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+    },
+    async dispatchSidepanel() {},
+  });
+  assert.ok(runtime.describe().methods.includes("create_drive_session"));
+  const created = await runtime.createDriveSession({ clientName: "qz-cli" });
+  assert.match(created.sessionId, /^[0-9a-f]{32}$/);
+  assert.equal(metadata[created.sessionId].source, "external-drive");
+  assert.equal(metadata[created.sessionId].title, "轻舟 · CLI");
+  const again = await runtime.createDriveSession({ sessionId: created.sessionId, clientName: "other" });
+  assert.equal(again.sessionId, created.sessionId);
+  assert.equal(metadata[created.sessionId].title, "轻舟 · CLI");
+  metadata.busy = { id: "busy", source: "agent" };
+  await assert.rejects(
+    runtime.createDriveSession({ sessionId: "busy", clientName: "qz-cli" }),
+    (error) => error.code === "DRIVE_SESSION_OCCUPIED",
+  );
+});
+
 test("a drive create does not take over an existing task", async () => {
   const repository = createSessionRepository({ storage: createMemoryStorage() });
   await repository.createMetadata({ id: "busy", title: "Busy" });
@@ -1069,7 +1123,7 @@ test("a drive create does not take over an existing task", async () => {
   assert.equal(again.source, "external-drive");
 });
 
-test("drive catalogs show run_script target as page", async () => {
+test("drive catalogs omit run_script target and scope", async () => {
   const runScript = {
     type: "function",
     function: {
@@ -1089,7 +1143,7 @@ test("drive catalogs show run_script target as page", async () => {
       },
     },
   };
-  const expectedSignature = "run_script({timeout:number, target:\"page\", tabRef:string, args?:object, mutatesPage?:boolean, code:string})";
+  const expectedSignature = "run_script({timeout:number, tabRef:string, args?:object, mutatesPage?:boolean, code:string})";
   const projected = driveToolSignature({
     name: runScript.function.name,
     description: runScript.function.description,
@@ -1097,6 +1151,7 @@ test("drive catalogs show run_script target as page", async () => {
   });
   assert.equal(projected.signature, expectedSignature);
   assert.equal(projected.description, "Run a page script.");
+  assert.doesNotMatch(projected.signature, /\b(?:target|scope)\b/);
   assert.doesNotMatch(JSON.stringify(projected), /\b(?:tabId|inner)\b/i);
   assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
   assert.equal(runScript.function.parameters.properties.tabId.type, "number");
@@ -1227,7 +1282,11 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     assert.ok(watched.some(tool => tool.name === "get_working_tab"));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
     const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
-    assert.equal(runScript.signature, "run_script({timeout:number, target:\"page\", args?:object, mutatesPage?:boolean, code:string, tabRef:integer|string})");
+    assert.equal(runScript.signature, "run_script({timeout:number, args?:object, mutatesPage?:boolean, code:string, tabRef:integer|string})");
+    assert.doesNotMatch(runScript.signature, /\b(?:target|scope)\b/);
+    const ax = driveToolSignature(catalog.find(tool => tool.name === "get_ax_tree"));
+    assert.match(ax.signature, /scope\?:"viewport"\|"full"/);
+    assert.doesNotMatch(ax.signature, /"page"/);
 
     const runtime = createMcpRuntime({
       sessions: {

@@ -111,7 +111,9 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, batchSession);
     expect(savedTools).toEqual(["open_tab", "get_ax_tree", "act_on_element"]);
 
+    const smokeId = `drive-smoke-${Date.now().toString(36)}`;
     const smoke = await exec(dependencies, stdout, stderr, {
+      sessionId: smokeId,
       calls: [
         { id: "open", name: "open_tab", args: { url: `${fixture}/smoke`, tabAlias: "page" } },
         { id: "read", name: "get_ax_tree", args: { tabRef: "page" } },
@@ -119,7 +121,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, "120");
     expect(smoke.code, smoke.text || stderr.text).toBe(0);
     expect(smoke.body.result.results).toHaveLength(2);
-    expect(String(smoke.body.result.sessionId || "")).not.toBe("");
+    expect(smoke.body.result.sessionId).toBe(smokeId);
     expect(smoke.body.result.results.every((item) => item.isError !== true)).toBe(true);
     openedTabs.push(smoke.body.result.results[0].result.tabRef);
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
@@ -212,7 +214,8 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
 async function exec(dependencies, stdout, stderr, payload, timeout = "60") {
   stdout.text = "";
   stderr.text = "";
-  const code = await main(["exec", "--timeout", timeout, JSON.stringify(payload)], dependencies);
+  const session = payload?.sessionId ? ["--session", String(payload.sessionId)] : [];
+  const code = await main(["exec", ...session, "--timeout", timeout, JSON.stringify(payload)], dependencies);
   let body = null;
   try { body = JSON.parse(stdout.text); } catch { body = null; }
   return { code, text: stdout.text, body };

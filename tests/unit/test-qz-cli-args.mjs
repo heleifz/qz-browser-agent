@@ -51,8 +51,12 @@ test("settings supports reading, typed field updates, and JSON patches from stdi
 
 test("MCP only prints a URL; automation commands remain explicit", () => {
   assert.equal(parseCommand(["mcp"]).action, undefined);
-  assert.equal(parseCommand(["tools"]).command, "tools");
-  assert.equal(parseCommand(["tools", "open_tab"]).id, "open_tab");
+  assert.equal(parseCommand(["tools", "--session", "drive"]).command, "tools");
+  assert.equal(parseCommand(["tools", "--session", "drive", "open_tab"]).id, "open_tab");
+  assert.equal(parseCommand(["session", "create"]).action, "create");
+  rejects(["tools"], /requires --session/);
+  rejects(["session"], /qz session create/);
+  rejects(["session", "list"], /qz session create/);
   for (const args of [["mcp", "tools"], ["mcp", "call", "anything"], ["mcp", "--client", "browser"],
     ["tools", "show", "open_tab"], ["tools", "call", "open_tab", "-s", "task"],
     ["call", "open_tab", "-s", "task"], ["logs"], ["logs", "clear"], ["input", "task"],
@@ -222,7 +226,7 @@ test("valid commands and malformed syntax remain explicit", () => {
     ["skills", "tools"], ["tasks"], ["create", "Read this page"],
     ["show", "task"], ["cancel", "task"]]) assert.ok(parseCommand(args));
   for (const args of [["unknown"], ["status", "extra"], ["install", "qz"], ["install", "something"], ["tools", "one", "two"],
-    ["show"], ["show", "one", "two"], ["cancel", ""], ["tools", "--wat"], ["tools", "--session"]]) rejects(args);
+    ["show"], ["show", "one", "two"], ["cancel", ""], ["tools", "--session", "drive", "--wat"], ["tools", "--session"]]) rejects(args);
   const argv = ["create", "Read this page", "--title", "Research"];
   const before = [...argv];
   parseCommand(argv);
@@ -255,6 +259,7 @@ test("every declared CLI resource route maps to an advertised MCP schema", () =>
       export: ["export", "research", "--filename", "research.zip"] },
     settings: { get: ["get", "model"], set: ["set", "vision", "true"] },
     automations: { list: ["--limit", "5"], run: ["run", "daily"] },
+    session: { create: ["create"] },
   };
   const advertised = new Set(TOOL_CATALOG.map(tool => tool.name));
   for (const [command, definition] of Object.entries(COMMANDS)) {

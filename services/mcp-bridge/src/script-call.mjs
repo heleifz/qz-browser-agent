@@ -37,7 +37,8 @@ export function buildScriptRequest({ code = "", timeoutSeconds = 120, sessionId 
     },
   };
   const id = String(sessionId || "").trim();
-  if (id) request.sessionId = id;
+  if (!id) throw new Error("qz script requires --session <id>. Pass the sessionId from qz session create.");
+  request.sessionId = id;
   return request;
 }
 

@@ -1,5 +1,6 @@
 const request = ["timeout", "client"];
 export const EXEC_JSON_MESSAGE = "Pass one JSON object with name and args, or with calls. Quote it safely by piping stdin: qz exec <<'JSON'";
+export const DRIVE_SESSION_REQUIRED = "Pass the sessionId from qz session create.";
 const waiting = [...request, "wait", "stream"];
 const output = ["json", "plain", "no-color", "help"];
 const filename = options => options.filename ? { filename: options.filename } : {};
@@ -110,17 +111,25 @@ export const COMMANDS = {
   status: { options: [], summary: "Check the connection",
     help: ["qz status", "Show the local service and browser connection status."],
   },
+  session: { options: request, summary: "Create a direct-drive session",
+    help: ["qz session create", "Create a direct-drive session and print sessionId on stdout.",
+      "Pass that id as --session on every later qz script, qz exec, and qz tools call.",
+      "Those commands do not create a session, and they do not reuse the previous one.",
+      "qz session create"],
+    actions: { create: route("qingzhou_create_drive_session") },
+  },
   script: { options: [...request, "session", "tab"], summary: "Run one page script",
-    help: ["qz script --tab TABREF [FILE|-]", "Run an async JavaScript function on that page. stdout is only the returned value.",
+    help: ["qz script --session ID --tab TABREF [FILE|-]", "Run an async JavaScript function on that page. stdout is only the returned value.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
       "--tab is an alias or a numeric tab id. qz script - reads the script from stdin.",
       "--timeout sets the script timeout in seconds and defaults to 120. The request waits 60 seconds longer.",
-      "--session ID reuses a drive session. A new session prints sessionId on stderr.",
-      "qz script --tab page page.js", "qz script --tab page - --session ID <<'JS'"],
+      "qz script --session ID --tab page page.js", "qz script --session ID --tab page - <<'JS'"],
   },
   tools: { options: [...request, "session"], summary: "List browser tool signatures",
-    help: ["qz tools [NAME]", "List compact tool signatures, or show one tool.",
+    help: ["qz tools --session ID [NAME]", "List compact tool signatures, or show one tool.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
       "Blacklisted direct-drive tools are omitted for a drive session.",
-      "qz tools", "qz tools open_tab"],
+      "qz tools --session ID", "qz tools --session ID open_tab"],
   },
   skill: { options: ["lang"], summary: "Print the direct-drive guide",
     help: ["qz skill [--lang zh-CN|en]", "Print the direct-drive guide from skills/qz-browser-agent. This does not connect to the browser.",
@@ -129,11 +138,12 @@ export const COMMANDS = {
   },
   exec: { options: [...request, "session"], summary: "Run one browser tool or one batch",
     help: [
-      "qz exec [JSON|-]",
+      "qz exec --session ID [JSON|-]",
       "Run an existing browser tool through the connected browser. This is transport for qingzhou_execute_tool. It does not add tools or start a model.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
       EXEC_JSON_MESSAGE,
-      "stdout is JSON. Exit 0 when the tool succeeds, 2 when the JSON is invalid, and 1 when the tool fails.",
-      "qz connect",
+      "stdout is JSON. Exit 0 when the tool succeeds, 2 when the arguments are invalid, and 1 when the tool fails.",
+      "qz session create",
     ],
   },
   mcp: { options: ["profile"], summary: "Print the MCP URL",

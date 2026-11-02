@@ -122,7 +122,7 @@ export function createMcpRuntime({
       storageKey: storageKey(),
       methods: [
         "ping", "capabilities", "get_bridge_config", "save_bridge_config", "runtime_message",
-        "list_sessions", "create_session", "send_message", "follow_up", "continue_task",
+        "list_sessions", "create_session", "create_drive_session", "send_message", "follow_up", "continue_task",
         "submit_wait_form", "cancel_wait", "get_user_input", "respond_to_user_input", "get_session_state", "get_session_snapshot",
         "get_messages", "get_history", "stop_session", "clear_goal", "list_tools", "get_tool",
         "execute_tool", "list_data_tables", "list_skills", "get_skill", "get_skill_resource",
@@ -445,6 +445,16 @@ export function createMcpRuntime({
     return "external-drive";
   }
 
+  async function createDriveSession(params: Fields = {}) {
+    const requested = sessions.normalizeId(params.sessionId);
+    const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
+    const source = await ensureDriveSession(sessionId, params.clientName);
+    if (source !== "external-drive") {
+      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_REQUIRED" });
+    }
+    return { sessionId };
+  }
+
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
     const language = getLanguage();
     const parsed = parseDriveRequest(params);
@@ -651,6 +661,7 @@ export function createMcpRuntime({
     getSnapshot,
     listTools,
     getTool,
+    createDriveSession,
     executeTool,
     drive,
     listSkills: listAvailableSkills,

@@ -42,26 +42,36 @@ test("the packed drive guide is the qz-browser-agent skill, in one language, ins
   assert.doesNotMatch(source, /tabId/);
   assert.match(zh, /直驱结果用 tabRef 标识页面/);
   assert.match(en, /Direct-drive results name the page with tabRef/);
-  assert.match(zh, /直驱的 run_script 始终用 target page，并带 tabRef/);
-  assert.match(zh, /直驱只接受带 tabRef 的 page 脚本/);
-  assert.match(en, /Direct-drive run_script always uses target page and passes tabRef/);
-  assert.match(en, /Direct drive accepts only a page script with tabRef/);
+  assert.match(zh, /直驱的 run_script 在该页执行，并带 tabRef/);
+  assert.match(zh, /直驱脚本只在 tabRef 所指的标签页里运行/);
+  assert.match(en, /Direct-drive run_script passes tabRef and runs in that tab/);
+  assert.match(en, /The script runs in the tab named by tabRef/);
+  assert.doesNotMatch(source, /target:"page"|target page|第一次调用创建会话|The first call creates a session/);
+  assert.match(zh, /qz session create/);
+  assert.match(en, /qz session create/);
+  assert.match(zh, /scope 只能是 viewport 或 full/);
+  assert.match(en, /scope is only viewport or full/);
+  assert.match(zh, /漏掉 `--session` 退出码 2/);
+  assert.match(en, /Missing `--session` exits 2 and does not create or reuse a session/);
   const bridgeTools = readFileSync(new URL("../../services/mcp-bridge/src/tools.mjs", import.meta.url), "utf8");
   const instructions = bridgeTools.slice(bridgeTools.indexOf("const DRIVE_INSTRUCTIONS"), bridgeTools.indexOf("export function driveExtensionTimeoutSeconds"));
   assert.doesNotMatch(instructions, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
   assert.doesNotMatch(instructions, /返回的 id|a returned id/i);
   assert.doesNotMatch(instructions, /\binner\b/i);
-  assert.match(instructions, /直驱 run_script 始终用 target page 并带 tabRef/);
-  assert.match(instructions, /Direct-drive run_script always uses target page and passes tabRef/);
-  assert.match(instructions, /第一次调用创建会话并返回 session id/);
-  assert.match(instructions, /The first call creates a session and returns its session id/);
+  assert.doesNotMatch(instructions, /target page|第一次调用创建会话|The first call creates a session/);
+  assert.match(instructions, /qz session create/);
+  assert.match(instructions, /qingzhou_create_drive_session/);
+  assert.match(instructions, /不会自动建会话/);
+  assert.match(instructions, /does not create a session/);
   assert.match(instructions, /open_tab \/ list_tabs 返回的 tabRef/);
   assert.match(instructions, /the tabRef returned by open_tab or list_tabs/);
   assert.match(zh, /一个任务一个会话/);
-  assert.match(zh, /第一次调用创建会话并返回 session id/);
+  assert.match(zh, /先 `qz session create`，stdout 打出 `sessionId <id>`/);
+  assert.doesNotMatch(zh, /第一次调用创建会话/);
   assert.match(zh, /没传 tabRef 时，错误码只是 DRIVE_TAB_REF_REQUIRED/);
   assert.match(zh, /no_alias 只在已经传入别名/);
-  assert.match(en, /The first call creates a session and returns the session id/);
+  assert.match(en, /stdout prints `sessionId <id>`/);
+  assert.doesNotMatch(en, /The first call creates a session/);
   assert.match(en, /A missing tabRef is only DRIVE_TAB_REF_REQUIRED/);
   assert.match(en, /only when an alias was passed/);
   assert.match(zh, /tabAlias 建议写上，便于阅读，但不是必填/);
@@ -78,6 +88,7 @@ test("the packed drive guide is the qz-browser-agent skill, in one language, ins
 
 test("qz script runs on the page for one tabRef and prints only the returned value", () => {
   assert.throws(() => buildScriptRequest({ code: "return 1" }), /requires --tab/);
+  assert.throws(() => buildScriptRequest({ code: "return 1", tabRef: "page" }), /requires --session/);
   assert.deepEqual(buildScriptRequest({ code: "return 1", sessionId: " s ", tabRef: " page " }), {
     name: "run_script",
     args: { target: "page", tabRef: "page", timeout: 120, code: "return 1" },

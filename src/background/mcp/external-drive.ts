@@ -104,7 +104,10 @@ export function prepareDriveToolCall(name: string, args: unknown): { ok: true; a
     return { ok: false, error: driveError("DRIVE_TAB_REF_REQUIRED", t("drive.tabRefRequired")) };
   }
   const tabRef = typeof input.tabRef === "string" ? input.tabRef.trim() : input.tabRef;
-  return { ok: true, args: local === "run_script" ? { ...input, target: "page", tabRef } : { ...input, tabRef } };
+  if (local !== "run_script") return { ok: true, args: { ...input, tabRef } };
+  const next: Fields = { ...input, target: "page", tabRef };
+  delete next.scope;
+  return { ok: true, args: next };
 }
 
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
@@ -155,21 +158,23 @@ function withoutInnerEnum(spec: unknown) {
   return next;
 }
 
-/** Page scripts on the drive catalog name tabRef and stay on target page. The built-in schema is left unchanged. */
+/** Page scripts on the drive catalog name tabRef. target and scope stay off the model-facing signature. */
 function projectRunScriptCatalogProperties(sourceProperties: Fields, required: Set<string>) {
   const properties: Fields = {};
   const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
   for (const [key, spec] of Object.entries(sourceProperties)) {
+    if (key === "target" || key === "scope") continue;
     if (key === "tabId") {
       if (!hasTabRef) properties.tabRef = { type: "string" };
       continue;
     }
-    properties[key] = key === "target" ? { ...record(spec), enum: ["page"] } : spec;
+    properties[key] = spec;
   }
   if (!Object.hasOwn(properties, "tabRef")) properties.tabRef = { type: "string" };
-  required.add("target");
   required.add("tabRef");
   required.delete("tabId");
+  required.delete("target");
+  required.delete("scope");
   return properties;
 }
 
