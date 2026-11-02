@@ -15,6 +15,7 @@ import {
   runDriveCalls,
 } from "../../src/background/mcp/external-drive.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
+import { toolT as scriptToolT } from "../../src/capabilities/script/tool-messages.js";
 import { t as toolT } from "../../src/background/tools/messages.js";
 import { t } from "../../src/shared/i18n/backend.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
@@ -1072,13 +1073,13 @@ test("drive catalogs show run_script target as page", async () => {
     type: "function",
     function: {
       name: "run_script",
-      description: "Run a page script.\n- target:\"inner\" stays on the built-in catalog.",
+      description: "Run a page script.\n- target:\"inner\" stays on the built-in catalog.\nPass tabId only on the built-in schema.",
       parameters: {
         type: "object",
         properties: {
           timeout: { type: "number" },
           target: { type: "string", enum: ["page", "inner"], description: "page or inner" },
-          tabId: { type: "number" },
+          tabId: { type: "number", description: "Target tabId" },
           args: { type: "object" },
           mutatesPage: { type: "boolean" },
           code: { type: "string" },
@@ -1087,15 +1088,27 @@ test("drive catalogs show run_script target as page", async () => {
       },
     },
   };
+  const expectedSignature = "run_script({timeout:number, target:\"page\", tabRef:string, args?:object, mutatesPage?:boolean, code:string})";
   const projected = driveToolSignature({
     name: runScript.function.name,
     description: runScript.function.description,
     parameters: runScript.function.parameters,
   });
-  assert.equal(projected.signature, "run_script({timeout:number, target:\"page\", tabId?:number, args?:object, mutatesPage?:boolean, code:string})");
+  assert.equal(projected.signature, expectedSignature);
   assert.equal(projected.description, "Run a page script.");
-  assert.doesNotMatch(JSON.stringify(projected), /\binner\b/i);
+  assert.doesNotMatch(JSON.stringify(projected), /\b(?:tabId|inner)\b/i);
   assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
+  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
+  for (const language of ["zh-CN", "en"]) {
+    const hidden = withLanguage(language, () => driveToolSignature({
+      name: "run_script",
+      description: scriptToolT("runScriptDescription"),
+      parameters: runScript.function.parameters,
+    }));
+    assert.equal(hidden.signature, expectedSignature);
+    assert.equal(hidden.description, "");
+    assert.doesNotMatch(JSON.stringify(hidden), /\b(?:tabId|inner)\b/i);
+  }
 
   const metadata = { "agent-1": { id: "agent-1", source: "agent" } };
   const runtime = createMcpRuntime({
@@ -1154,12 +1167,14 @@ test("drive catalogs show run_script target as page", async () => {
   assert.equal(listed.tools.length, 1);
   assert.equal(listed.tools[0].signature, projected.signature);
   assert.equal(fetched.signature, projected.signature);
-  assert.doesNotMatch(JSON.stringify(listed), /\binner\b/i);
-  assert.doesNotMatch(JSON.stringify(fetched), /\binner\b/i);
+  assert.doesNotMatch(JSON.stringify(listed.tools[0]), /\b(?:tabId|inner)\b/i);
+  assert.doesNotMatch(JSON.stringify(fetched), /\b(?:tabId|inner)\b/i);
   const builtInList = await runtime.listTools({ sessionId: "agent-1" });
   const builtInTool = await runtime.getTool({ sessionId: "agent-1", name: "run_script" });
   assert.match(JSON.stringify(builtInList), /\binner\b/i);
+  assert.match(JSON.stringify(builtInList), /\btabId\b/);
   assert.match(JSON.stringify(builtInTool), /\binner\b/i);
+  assert.match(JSON.stringify(builtInTool), /\btabId\b/);
   assert.deepEqual(builtInTool.parameters.properties.target.enum, ["page", "inner"]);
 
   const bridge = createRunScriptBridge({
@@ -1182,7 +1197,9 @@ test("drive catalogs show run_script target as page", async () => {
   const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "drive-1" });
   const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
   assert.equal(driveList.result.tools[0].signature, projected.signature);
-  assert.doesNotMatch(JSON.stringify(driveList.result.tools[0]), /\binner\b/i);
+  assert.doesNotMatch(JSON.stringify(driveList.result.tools[0]), /\b(?:tabId|inner)\b/i);
   assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\binner\b/i);
+  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\btabId\b/);
   assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
+  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
 });

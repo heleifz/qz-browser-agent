@@ -113,10 +113,7 @@ export function driveToolSignature(tool: { name: string; description?: string; p
   const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
   const pageScript = toolLocalName(tool.name) === "run_script";
-  const properties = pageScript
-    ? { ...sourceProperties, target: { ...record(sourceProperties.target), enum: ["page"] } }
-    : sourceProperties;
-  if (pageScript) required.add("target");
+  const properties = pageScript ? projectRunScriptCatalogProperties(sourceProperties, required) : sourceProperties;
   const args = Object.entries(properties).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
@@ -126,8 +123,33 @@ export function driveToolSignature(tool: { name: string; description?: string; p
         : typeof schema.type === "string" && schema.type ? schema.type : "any";
     return `${key}${required.has(key) ? "" : "?"}:${type}`;
   });
-  const description = String(tool.description || "").split("\n").map(line => line.trim()).find(Boolean)?.slice(0, 240) || "";
+  const description = driveCatalogDescription(tool.description, pageScript);
   return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
+}
+
+/** Page scripts on the drive catalog name tabRef and stay on target page. The built-in schema is left unchanged. */
+function projectRunScriptCatalogProperties(sourceProperties: Fields, required: Set<string>) {
+  const properties: Fields = {};
+  const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
+  for (const [key, spec] of Object.entries(sourceProperties)) {
+    if (key === "tabId") {
+      if (!hasTabRef) properties.tabRef = { type: "string" };
+      continue;
+    }
+    properties[key] = key === "target" ? { ...record(spec), enum: ["page"] } : spec;
+  }
+  if (!Object.hasOwn(properties, "tabRef")) properties.tabRef = { type: "string" };
+  required.add("target");
+  required.add("tabRef");
+  required.delete("tabId");
+  return properties;
+}
+
+/** The built-in run_script description documents tabId and inner. Drive catalogs omit that line. */
+function driveCatalogDescription(description: unknown, pageScript: boolean) {
+  const line = String(description || "").split("\n").map(item => item.trim()).find(Boolean) || "";
+  if (pageScript && /\b(?:tabId|inner)\b/i.test(line)) return "";
+  return line.slice(0, 240);
 }
 
 function positiveSeconds(value: unknown) {
