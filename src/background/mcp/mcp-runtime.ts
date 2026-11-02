@@ -4,8 +4,11 @@ import { t } from "../../shared/i18n/backend.js";
 import {
   createExternalDriveCoordinator,
   driveGroupTitle,
+  driveToolSignature,
+  isDriveToolDefault,
   isDriveToolForbidden,
   parseDriveRequest,
+  prepareDriveToolCall,
   projectNamedDriveResult,
   runDriveCalls,
 } from "./external-drive.js";
@@ -386,7 +389,7 @@ export function createMcpRuntime({
     return {
       sessionId: catalog.sessionId,
       tools: catalog.externalDrive
-        ? catalog.tools.filter(tool => !isDriveToolForbidden(tool.name)).map(compactDriveTool)
+        ? catalog.tools.filter(tool => isDriveToolDefault(tool.name)).map(driveToolSignature)
         : catalog.tools,
     };
   }
@@ -398,7 +401,7 @@ export function createMcpRuntime({
       throw Object.assign(new Error(t("drive.toolForbidden", { name })), { code: "DRIVE_TOOL_FORBIDDEN" });
     }
     const found = catalog.tools.find(tool => tool.name === name) || null;
-    return found && catalog.externalDrive ? compactDriveTool(found) : found;
+    return found && catalog.externalDrive ? driveToolSignature(found) : found;
   }
 
   function rememberLoadedSkill(sessionId: string, name: string, result: unknown) {
@@ -490,12 +493,14 @@ export function createMcpRuntime({
       if (parsed.mode === "single") {
         const name = parsed.name;
         try {
-          const result = await settleDriveCall(tools.runtime.execute(name, plainObject(params.args), callSignal, context), callSignal);
+          const prepared = prepareDriveToolCall(name, params.args);
+          if (!prepared.ok) throw prepared.error;
+          const result = await settleDriveCall(tools.runtime.execute(name, prepared.args, callSignal, context), callSignal);
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectNamedDriveResult(name, params.args, result, tools.runtime.getModelPolicy?.(name) ?? null, { aliases });
-          noteDriveTool(name, params.args, projected.value, plainObject(projected.value).ok === false, projected.images);
+          const projected = projectNamedDriveResult(name, prepared.args, result, tools.runtime.getModelPolicy?.(name) ?? null, { aliases });
+          noteDriveTool(name, prepared.args, projected.value, plainObject(projected.value).ok === false, projected.images);
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
@@ -752,23 +757,6 @@ function driveAbortReason(signal: AbortSignal) {
   return signal.reason instanceof Error
     ? signal.reason
     : Object.assign(new Error("The drive call was aborted."), { name: "AbortError", code: "OPERATION_ABORTED" });
-}
-
-function compactDriveTool(tool: { name: string; description?: string; parameters?: unknown }) {
-  const parameters = plainObject(tool.parameters);
-  const properties = plainObject(parameters.properties);
-  const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
-  const args = Object.entries(properties).map(([key, spec]) => {
-    const schema = plainObject(spec);
-    const type = Array.isArray(schema.enum)
-      ? schema.enum.map(item => JSON.stringify(item)).join("|")
-      : Array.isArray(schema.type)
-        ? schema.type.filter(item => item !== "null").join("|") || "any"
-        : typeof schema.type === "string" && schema.type ? schema.type : "any";
-    return `${key}${required.has(key) ? "" : "?"}:${type}`;
-  });
-  const description = String(tool.description || "").split("\n").map(line => line.trim()).find(Boolean)?.slice(0, 240) || "";
-  return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
 }
 
 function plainObject(value: unknown, fallback: Fields = {}): Fields {

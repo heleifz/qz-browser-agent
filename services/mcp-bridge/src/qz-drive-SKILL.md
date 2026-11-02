@@ -1,284 +1,399 @@
 ---
-name: qz-drive
-description: Drive the connected browser. Put actions, waits, and reads in one run_script and return only the needed fields. Use qz script or qingzhou_execute_tool. Do not configure a qz model.
+name: qz-browser-agent
+description: Drive the connected browser directly. Use qz script or qingzhou_execute_tool with tabRef on the page. Do not configure a qz model. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
 不要配置轻舟模型
 
 <!-- qz-drive-guide:zh-CN -->
-把操作、等待和取数写进一个脚本，只 return 需要的字段。
+不要配置轻舟模型
 
-这是直驱的默认做法。一次 `run_script`，`target` 为 `"inner"`。脚本里用 `await tools.工具名(参数)` 调用已经存在的浏览器工具。成功时只要返回值。不要把整页快照、坐标或 trace 留在 return 里。
+这是轻舟的直驱说明书。外部 agent 自己编排，在已经连接的浏览器里开标签、读页面、操作元素。不启动轻舟内置模型，也不要调用 `qz create`。需要轻舟内置 agent 规划执行时，再读 references/create-task.md。
 
-`qz exec` 和单次 `qingzhou_execute_tool` 是辅助。只在一两步的简单操作或调试时用。同一件事不要拆成多轮单次调用。
+安装或更新这份技能用已经存在的命令，不要另找包名：
 
-不要配置轻舟模型。不要调用 `qz create`。不要用 curl 或 wget 取页面正文。bash 只处理本机文件。
-
-主范例：在一个公开表单页写入姓名和尺寸，只返回这两个字段。CLI 把下面的函数存成文件后执行 `qz script page.js`。MCP 用同一次 `qingzhou_execute_tool`，`name` 为 `run_script`，`args` 为 `{target:"inner", timeout:120, code}`，`code` 就是这个函数。两条路径是同一件事。
-
-```js
-async () => {
-  const tab = "page";
-  await tools.open_tab({ tabAlias: tab, url: "https://httpbin.org/forms/post" });
-  await tools.wait_for_element({ tabRef: tab, selector: "form" });
-  await tools.act_on_element({ tabRef: tab, target: "css:input[name=custname]", action: "fill", value: "Ada" });
-  await tools.act_on_element({ tabRef: tab, target: "css:select[name=size]", action: "select", value: "medium" });
-  await tools.act_on_element({ tabRef: tab, target: "css:textarea[name=comments]", action: "fill", value: "Packed in one script." });
-  const read = await tools.run_script({
-    tabRef: tab,
-    timeout: 10,
-    code: "async () => ({ name: document.querySelector('input[name=custname]')?.value || '', size: document.querySelector('select[name=size]')?.value || '' })",
-  });
-  return { name: read.result.name, size: read.result.size };
-}
+```bash
+npx skills add alibaba/qz-browser-agent -g
 ```
 
-`select` 的 `value` 先匹配 `option.value`，再匹配去掉首尾空白的可见文字，所以 `"medium"` 可以用。`wait_for_element` 的 `selector` 是原始 CSS，或带 `css:` 前缀。`uid:` 不能用于等待。成功时上面的脚本只留下姓名和尺寸，不要把整页 HTML 放进 return。
+CLI 的 `qz skill` 和 MCP 的 `qingzhou_guide` 返回的就是这一份。一条新连接读一次。不要每轮重读。`--lang zh-CN` 或 `en` 选择语言，否则看 `QZ_GUIDE_LANG` 和 `LANG`。
 
-多页也放进同一个脚本。打开第一页，其余页用 `navigate`。下面只返回标题和正文第一行非空文本。页面没有目标节点时返回标题和地址，不要返回空数组。
+连接。在装有扩展的这台机器上操作。先确认 Node.js 22 或更高，再看浏览器是否在线：
 
-```js
-async () => {
-  const tab = "page";
-  await tools.open_tab({ tabAlias: tab, url: "https://httpbin.org/html" });
-  await tools.wait_for_element({ tabRef: tab, selector: "h1" });
-  const heading = await tools.run_script({ tabRef: tab, timeout: 10, code: "async () => ({ heading: (document.querySelector('h1')?.textContent || '').trim() })" });
-  await tools.navigate({ tabRef: tab, url: "https://httpbin.org/robots.txt" });
-  await tools.wait_for_element({ tabRef: tab, selector: "body" });
-  const line = await tools.run_script({ tabRef: tab, timeout: 10, code: "async () => { const text = document.body?.innerText || ''; const row = text.split(/\\n/).map(item => item.trim()).find(Boolean) || ''; if (!row) return { title: document.title, href: location.href }; return { line: row }; }" });
-  return { heading: heading.result.heading, line: line.result.line || "", title: line.result.title || "", href: line.result.href || "" };
-}
+```sh
+node --version
+npx --yes qz-browser-agent@latest status --json
 ```
 
-这一次 return 里只有标题和第一行。正文为空时才带上页面标题和地址。不要把整段正文规则带回。
+看 `result.connected` 和 `result.browsers`。还没有配对时运行 `qz connect`。它启动本机服务，并在默认浏览器里打开配对页。浏览器里点一次确认。未连接时的下一句就是 `qz connect`，不要改去配模型。
 
-再看一次往返。表单脚本的 stdout 只有 `{"name":"Ada","size":"medium"}`。标题脚本的 stdout 只有 `heading` 和 `line`。不要把 `trace` 留在成功的 return 里。失败才把 `code`、`error` 和最后 5 条 trace 打到 stdout，退出码 1。没有 trace 时失败对象只有 `code` 和 `error`。
+要指定配置文件时，先拿配对地址再自己打开：
 
-`wait_for_element` 超时不抛错。先看 `found`。`found` 为 false 时不要读页面，把 `timeout` 调到 20 或改选择器后再跑同一段脚本。`select` 没写上时，把 `value` 改成 `medium` 这种 option value，不要改 action 的名字。
+```sh
+npx --yes qz-browser-agent@latest connect --no-open --json
+```
 
-`tools.list_tabs({})` 在脚本里也是本会话的短列表：`tabs` 里每项只有 `id`、`alias`、`title`、`url`，另有 `count` 和 `foreign`。别的会话的标签页只计入 `foreign`。要看用户自己打开的标签时才传 `scope:"all"`。`verbose:true` 才留下几何字段。
+返回里的 `result.url` 就是要打开的地址，`mcpUrl` 是 MCP 地址。把这个 URL 打开在用户选定的、已经装了轻舟的配置文件里。macOS Chrome 可以设 `QZ_PAIRING_URL` 和 `QZ_PROFILE_DIRECTORY`，然后：
 
-`qz exec {"name":"get_tool","args":{"name":"open_tab"}}` 与 `qz tools open_tab` 相同。`{"name":"capabilities"}` 列出能力，不会进浏览器工具执行。单次 `open_tab` 或 `wait_for_element` 仍然走 `qingzhou_execute_tool`。
+```sh
+open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
+```
 
-超长字符串也一样。脚本 `return` 的文本超过大约 48000 个字符时，stdout 是 `{truncated:true,totalChars,limitChars,preview}`，退出码仍是 0。预览留在 `preview`。不要因为对象里没有 `ok` 就再跑一遍。
+自定义用户数据目录时再加上 `--user-data-dir`。一次只绑定一个配置文件。打开前后各看一次 `browsers --json`，记下新出现的 `clientId`。之后的命令带 `--client` 这个 UUID。`--client` 只选择已经连上的浏览器，不能和 `connect --no-open` 或 `connect --name` 写在一起。
 
-同一会话的下一步用 stderr 里的 sessionId。`qz script page.js --session <id>` 接着写，不要新开一个 id，除非错误码是 `DRIVE_SESSION_OCCUPIED`。`DRIVE_SESSION_BUSY` 表示上一次调用还没结束，等它返回再发。脚本超时后请求仍会把 `code` 和 trace 送回来，因为请求比脚本多等 60 秒。
+`connect --name work` 给打开该地址的配置文件起名。不写名字时，已有名字保持不变，否则分配 `default`、`browser-2` 这样的名字。普通 `connect` 在需要配对时打开系统默认浏览器；已经只有一个在线浏览器时就复用它。
 
-脚本里的 `tools.list_tabs` 和顶层 `qz exec` 使用同一套精简，默认结果没有 `width` 或 `rect`。别名 `page` 只在本会话有效，下一轮继续用这个 `tabRef`，不要改用别的会话留下的数字 id。后补的 `open_tab` 不会追溯到前面已经写过的引用。
+扩展还没装时，让用户在目标配置文件里打开 Chrome 网上应用店并点添加。`npx --yes qz-browser-agent@latest install` 会打开商店页。手动安装用 GitHub 最新发行版的 ZIP。装好后完成首次数据说明，再打开配对地址。
 
-先读这份说明书。CLI：`qz skill` 或 `qz --help` 直接打印。语言用 `--lang zh-CN` 或 `en`，否则看 `QZ_GUIDE_LANG` 和 `LANG`。MCP：先调用一次 `qingzhou_guide`，它返回全文。不要每轮重读。默认 MCP 工具只有 `qingzhou_guide`、`qingzhou_execute_tool`、`qingzhou_list_tools`、`qingzhou_get_tool`、`qingzhou_bridge_status`。调试用 `qz mcp --profile full`，那是任务和诊断目录，不是默认。
+连不上时先看 `status --json` 里的地址。`connect --port` 只在服务还没起来时指定端口。已经在跑的服务保持原地址。只改地址不会连上，用户仍要点一次连接。升级不兼容时，等当前任务结束，运行 `npx --yes qz-browser-agent@latest stop`，更新并重新加载每个浏览器里的扩展，再 `qz connect`。`stop` 会断开所有浏览器。只断开一个浏览器时用那个浏览器的设置。
 
-会话。直驱会话的 source 是 `external-drive`。不传 `sessionId` 时，这一条 MCP 连接共用一个新 id。`qz script` 和 `qz exec` 每个进程都是新连接；省略 `--session` 会新建会话。成功或失败都把 `sessionId <id>` 写到 stderr。下一进程用 `qz script --session <id> file.js`。并行的几路各用自己的 sessionId。已有普通任务占用的 id 返回 `DRIVE_SESSION_OCCUPIED`，换一个新 id。同一会话已有调用在飞时返回 `DRIVE_SESSION_BUSY`，等它结束，不要再发一轮。`tabAlias` 只在本会话内有效，1–64 个字母、数字、下划线或连字符，不能全是数字。引用别名前，`open_tab` 必须已经出现。页面参数用 `tabRef`（别名或正整数标签页 id）。执行时它会变成 `tabId`。不要自己造 `page(...)` 或别的简写。
+配对完成后打印 MCP 地址：`npx --yes qz-browser-agent@latest mcp`。默认目录就是这套直驱工具：`qingzhou_guide`、`qingzhou_execute_tool`、`qingzhou_list_tools`、`qingzhou_get_tool`、`qingzhou_bridge_status`。`qz mcp --profile full` 是任务和诊断目录，不是默认。
 
-脚本怎么写。`code` 是单个 `async () => { ... }` 函数表达式。不要写 IIFE、`main()`，也不要在函数外 `return`。开头用一行注释说明页面、动作和目的。只通过 `tools.名字(参数)` 调用工具。名字、参数和错误码与 `qz exec`、`qingzhou_execute_tool` 相同。`tools.$list()` 查看当前可用工具，不要用 `Object.keys(tools)`。嵌套调用和 `$list` 使用同一份黑名单。`target:"inner"` 没有 `document`、`window`、DOM、`tabId`。要读页面字段，再调用 `tools.run_script({tabRef, timeout, code})`，那个内层脚本才有 `document`。`timeout` 单位是秒，脚本必填；`<= 0` 表示不限时，`> 0` 表示最多等待这么多秒。`qz script` 默认传 120，可用 `--timeout` 覆盖。请求再多等 60 秒。嵌套深度最多 3。复杂步骤用 `trace(...)`。失败时看返回的 `code` 和最多 5 条 trace，改脚本再跑，不要把失败结果原样再塞进下一轮上下文。
-
-成功时工具结果是 `{ok:true, result}`。`qz script` 的 stdout 只打印 `result`。失败时打印 `code`、`error` 和最后 5 条 trace，退出码 1。没有 trace 的失败只有 `code` 和 `error`。
-
-常用签名。未写「必填」的字段可省略。页面工具省略 `tabRef` 时用本会话工作标签页。
-
-- `tools.open_tab({url, tabAlias})` 打开网页。`url` 必填。新页面用 `tabAlias`，随后用 `tabRef` 引用。
-- `tools.navigate({url, tabRef})` 在已有标签页打开另一个 URL。`url` 必填。
-- `tools.act_on_element({tabRef, target, action, value, key})`。`target` 用 `uid:` 或 `css:`。`action` 是 `click`、`fill`、`press`、`select`、`check`、`uncheck`、`scroll`。`fill` 把 `value` 写入输入框，空字符串清空。`press` 传 `key`，例如 `"Enter"`。`select` 传 `value`。
-- `tools.wait_for_element({tabRef, selector, timeout, absent})`。`selector` 必填。`timeout` 默认 10 秒。`absent:true` 表示等到元素消失。超时不抛错，返回 `{found:false, timedOut:true}`。脚本要看 `found`，再读页面。
-- `tools.run_script({target, tabRef, timeout, code, mutatesPage})`。编排用 `target:"inner"`。页面读取省略 `target` 或用 `"page"`，并传 `tabRef`。`timeout` 与 `code` 必填。会改页面时 `mutatesPage:true`。
-- `tools.find_elements({tabRef, pattern, selector, roles, tags, types, limit})`。`limit` 默认 20。用它定位，不要先把整页 DOM 读回来。
-- `tools.get_ax_tree({tabRef, root, scope, depth, limit, actionsLimit})`。默认视口、`depth` 16、`limit` 120。只在需要元素 `uid:` 时调用，并缩小 `root` 或 `limit`。
-- `tools.list_tabs({})` 默认只返回本会话标签页：`{tabs:[{id, alias, title, url}], count, foreign}`。`scope:"all"` 列出全部网页标签。`verbose:true` 才保留几何字段。
-- `tools.screenshot({tabRef})` 不是默认步骤。字节走图片块，不会嵌进 JSON 文本。
-- `tools.load_skill({name})` 然后 `tools.load_skill_resource({name, path})`。同一站点已有 Skill 时先读它，再写临时脚本。
-- `tools.list_skills({scope, query})` 只有摘要。`tools.data_store(...)` 写表。大批行在脚本里分批写入，return 只留计数和至多 1–3 条 sample。
-
-少取数据。不要为了找一个按钮去 `list_tabs` 再 `get_ax_tree` 再截图。脚本里等待具体选择器，然后只 return 字段。不要调用 `get_trace`。单次结果大约超过 48000 个字符时变成 `{truncated:true, totalChars, limitChars, preview}`。`qz script` 仍以退出码 0 打印这个对象。JSON 不缩进。除非 `verbose:true`，结果里去掉 `_tabId`、`_pageTitle`、`_pageUrl`、`_pageContext`、`sessionId`、`runId`，以及 `rect`、`clickablePoint`、`parent`、`lineRange`、`actionable`。`list_tools` 不列出黑名单工具，返回 `name`、一行 `signature` 和短描述，不返回完整 JSON Schema。`qz tools` 打印这些签名；`qz tools 名字` 看一个工具。`qz exec` 的 `{"name":"list_tools"}` 与 `qz tools` 相同。
-
-文档。先 `tools.load_skill({name:"qingzhou-documents"})`。然后用 `qingzhou_documents__document_fetch`、`document_parse`、`document_read_chunk`、`document_create`、`document_download`、`document_list_artifacts`。这些文档工具的 `timeout` 可省略，默认 120 秒。其他脚本工具的 `timeout` 仍然必填。
-
-出错就停，把工具返回的 `code` 和那一句原样告诉用户，然后按下面改一次再试。
-
-- `DRIVE_TOOL_FORBIDDEN`：这个名字不能直驱，包括脚本里的 `tools.名字`。换一个允许的工具。
-- `DRIVE_SESSION_OCCUPIED`：这个 id 已有任务。用新的 sessionId。
-- `DRIVE_SESSION_BUSY`：这个会话正在执行。等当前调用结束。
-- `DRIVE_ARGUMENTS`：`name` 与 `calls` 只能二选一。`calls` 的每项要有 `id`、`name`，`args` 是对象。
-- `DRIVE_TOO_MANY_CALLS`：一批最多 10 个调用。
-- `DRIVE_BATCH_TIMEOUT`：`limits.timeoutSeconds` 到了。加大限制或把工作放进一个脚本。
-- `UNKNOWN_TOOL`：名字不存在。先 `qz tools` 或 `tools.$list()`，不要猜 `browser_open`、`open_url`。
-- `MISSING_REQUIRED_ARGUMENTS`：补上 `details.missing` 里的字段。
-- `INVALID_TIMEOUT`：`timeout` 必须是秒数。
-- `BATCH_TAB_REFERENCE_ERROR`：`tabRef` 或 `tabAlias` 不对，或 `open_tab` 排在引用之后。
-- `SESSION_TAB_UNOWNED`：标签页不属于本会话。用本会话的 `tabRef`，或先 `open_tab`。
-- `SESSION_TAB_NOT_WEB`：目标不是网页。换成本会话打开的网页标签。
-- `RUN_SCRIPT_TOOL_DEPTH_EXCEEDED`：嵌套超过 3 层。把调用展平到这个脚本里。
-- `OPERATION_ABORTED`：调用被取消或超时。先看页面是否已经变化，再决定要不要重试。
-- `BRIDGE_REQUEST_TIMEOUT`：桥接超时。浏览器里的操作可能还在跑。先看会话，不要立刻重发。
-
-不能直驱的名字：`ask_llm`、`manage_sessions`、`manage_settings`、`manage_guardrails`、`manage_skill_settings`、`qingzhou_call`、`create_skill`、`update_skill`、`delete_skill`、`manage_skill`、`edit_skill_resource`、`import_skill_from_page_zip`、`import_git_skill_repository`、`install_skill_to_git`、`import_page_zip`、`import_git_repository`、`manage_bookmarks`、`wait_for_user`、`ask_user`、`send_message`，以及任何 `mcp_` 开头的名字。侧栏对直驱会话只查看。不要通过脚本绕过黑名单。
-
-一轮请求长什么样。MCP 默认先 `qingzhou_guide`，之后每一轮尽量只有一次 `qingzhou_execute_tool`：
+黄金路径。连上之后做这两步，侧栏会出现标签组「轻舟 · 客户端名」：
 
 ```json
-{"name":"run_script","args":{"target":"inner","timeout":120,"code":"async () => { /* 页面、动作、目的 */ return { ok: true }; }"}}
+{"calls":[
+  {"id":"open","name":"open_tab","args":{"url":"https://example.com","tabAlias":"page"}},
+  {"id":"read","name":"get_ax_tree","args":{"tabRef":"page"}}
+]}
 ```
 
-同一会话的后续调用带上 stderr 里的 `sessionId`。CLI 等价写法是 `qz script - --session <id> <<'JS'`，脚本从 stdin 读入，不要包一层 JSON。`qz script file.js` 读文件。stdout 只有 `return` 的值。调试一两步时才用 `qz exec`，JSON 为 `{"name":"wait_for_element","args":{"tabRef":"page","selector":"#done"}}`。`calls` 同样只用于这种短批次：每项 `{id, name, args}`，一批最多 10 个，需要别名时把 `open_tab` 放在前面。
+CLI 等价写法是两次 `qz exec`，或一次 `calls`。`open_tab` 的返回字段是 `tabRef`，不是 `id`。你传的 `tabAlias` 同时可用。下一步页面工具用这个别名或这个 `tabRef`。
 
-操作结果留下动作是否发生，不留下坐标。`click` 看 `inputDelivered`。`fill` 看写入后的值。`press` 看 `pressed` 和 `key`。`select` 看选中的值。`check` 看选中状态。这些字段里如果还有 `rect`、`clickablePoint`、`parent`、`lineRange`、`actionable`，直驱会去掉，除非这次参数带 `verbose:true`。页面跳转看 `navigated` 或返回里的 URL 变化；没有这些字段就再读你关心的那一个节点，不要整页重抓。
+编排用你自己的批量 `calls` 或一次 `execute_tool`。同一会话里一批 calls 里多个 open 或 act 仍是一轮，不要为此新造工具名。不要把编排塞进 `target` 为 inner 的脚本。直驱不接受 `target:"inner"`。
 
-元素目标只有两种。`css:` 后面是 CSS 选择器，例如 `css:input[name=custname]` 或 `css:select[name=size]`。`uid:` 后面是 `get_ax_tree` 或 `find_elements` 返回的引用。等待只用 `selector`，不要把 `uid:` 传给 `wait_for_element`。选择器对不上时，改选择器或先 `find_elements({pattern, limit:5})`，不要改用截图坐标。
+`qz script` 只在需要页面 JavaScript 时用。它必须带 `--tab`，只在该页执行，能看见登录态，也能 `await tools.名字(参数)`。
 
-少取数据时按这个顺序。能写死选择器就不要读树。必须读树时把 `get_ax_tree` 的 `limit` 降到 40，并传 `root`。表格只在页面脚本里 `filter` 出需要的行。列表页只 return `{count, sample}`。文件先 `load_skill` 文档工具，用 `document_read_chunk` 的 `offset` 和 `limit` 读一块，不要一次 parse 完全文再塞进 return。`list_tabs` 默认已经是本会话的短列表；只有要找用户自己打开的标签时才传 `scope:"all"`。
+```sh
+qz script --tab page page.js
+```
 
-空闲大约 30 分钟没有新调用时，直驱会话会结束并关闭它打开的标签。需要留下标签时不要依赖空闲，先把结果取回。`qingzhou_stop_session` 不在默认工具列表里；结束观察用新的 sessionId 即可。侧栏能看到每次工具调用的平铺记录，直驱会话不能在侧栏发消息。
+```js
+async () => {
+  return { title: document.title, href: location.href };
+}
+```
 
-返回值怎么读。`open_tab` 成功时看 `id`，这是标签页数字 id，也可以当作下一次的 `tabRef`。同时记下你传的 `tabAlias`。`get_ax_tree` 成功时读 `snapshot` 文本，不要再要一份节点数组。`find_elements` 用返回的 `target` 作为下一次 `act_on_element` 的 `target`。页面 `run_script` 的有用值在 `result` 里，外层脚本把它放进自己的 `return`。直驱成功包一层 `{ok:true, result}`；`qz script` 去掉这层，stdout 就是内层 `result`。失败 stdout 是 JSON：`{"code":"……","error":"……","trace":[……]}`，`trace` 最多 5 条。stderr 始终有一行 `sessionId` 加空格加 id。退出码 0 是成功，1 是工具失败，2 是参数不合法。
+MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`args` 为 `{target:"page", tabRef, timeout, code}`。`tabRef` 必填。必须写上，也不要写 inner。不要把另一段 `run_script` 当成字符串嵌进这段脚本里当默认写法。要读页面，就在这一段页面脚本里读 `document`。
 
-第一次失败时只改一处。选择器超时：把 `wait_for_element` 的 `timeout` 调到 20，选择器改成页面上确实存在的那个。`select` 没选中：`value` 改成 option 的 value 或可见文字，不要改 action 的名字。填完没有出现预期文字：先 `fill`，再 `wait_for_element`，确认 `found` 后再按键。`SESSION_TAB_UNOWNED`：不要复用别的会话或用户标签的数字 id，除非本会话已经 `open_tab` 或明确接管。脚本抛错：看 `trace` 最后一条的 message，改那一行。不要为了重试而新开一个 sessionId，除非错误码是 `DRIVE_SESSION_OCCUPIED`。
+`code` 是单个 `async () => { ... }` 函数表达式。不要写 IIFE、`main()`，也不要在函数外 `return`。开头用一行注释说明页面、动作和目的。`timeout` 单位是秒，必填。`<= 0` 表示不限时，`> 0` 表示最多这么多秒。`qz script` 默认 120，可用 `--timeout` 覆盖。桥接请求再多等 60 秒，所以节点不会先于扩展报超时。不要为了等它先 sleep。
 
-参数记这几条。`timeout` 在脚本和 `wait_for_element` 上都是秒，不是毫秒。`limits.timeoutSeconds` 只限制一批 `calls` 的总时间，不代替脚本里的 `timeout`。`tabRef` 可以是别名或数字 id，不要两个都传。`open_tab` 不要传 `tabRef`。`act_on_element` 的 `target` 必填，`action` 必填。`fill` 和 `select` 要有 `value`。`press` 要有 `key`。`mutatesPage` 只在页面脚本会改 DOM 时设为 true，编排用的 inner 脚本不用设。`verbose` 只在你确实要坐标时加。`scope:"all"` 只加在 `list_tabs` 上。文档工具名字带前缀 `qingzhou_documents__`，不要写成 `document_fetch`。Skill 名字是 `qingzhou-documents`，中间是连字符。
+`tabRef` 是本会话的页面别名，或正整数标签页 id。别名 1–64 个字母、数字、下划线或连字符，不能全是数字。别名只在本会话有效，关闭该标签后失效。引用别名之前，`open_tab` 必须已经出现。本会话还没有别名时，先 `open_tab`，再用返回的 `tabRef`。不要自己造 `page(...)` 或其他简写。`open_tab` 用 `tabAlias`，不要传 `tabRef`。`list_tabs` 每一项的标签标识也是 `tabRef`。
 
-和内置任务的差别。直驱没有模型循环，也没有轻舟侧的规划。你写的脚本就是整轮操作。直驱会删掉黑名单工具、压短列表，并把成功的脚本结果收成 `{ok, result}`。内置任务继续使用自己的 run_script 说明，不改成这份直驱说明书。两边的工具名和参数一致，所以同一段 `code` 可以在 `qz script` 和 `qingzhou_execute_tool` 之间原样搬。不要为直驱另写一套函数名。
+直驱不使用工作标签页。带 `tabRef` 参数的页面工具如果没写，会被拒绝，错误码是 `DRIVE_TAB_REF_REQUIRED`。`act_on_screen` 没有这个参数。一批里每个页面调用都要写自己的 `tabRef`。同一标签同时只给一个会话。后来者失败，先拿到的会话不中断。
 
-取数停在能回答问题的那一层。只要姓名、尺寸、标题或正文第一行这类字段，不要返回整张表，也不要返回标题以外的装饰文字。能从 DOM 读到的字段就不要截图。能从选择器点到的控件就不要先取无障碍树。
+默认工具。`qz tools`、`qingzhou_list_tools` 和脚本里的 `tools.$list()` 默认只给这一档，每项是一行短签名加一句说明：
 
-不要把这份全文改写成另一套步骤。以这里的工具名、参数和错误码为准。页面脚本和编排脚本都写 `tools.名字(参数)`，不要再包一层助手函数。同一段 code 在 qz script 和 qingzhou_execute_tool 之间原样使用，不要改参数名。需要的字段写进 return。姓名和尺寸、标题和第一行就够了，不要把整页再带回去。
+`open_tab`、`navigate`、`list_tabs`、`close_tab`、`use_tab`、`get_ax_tree`、`find_elements`、`read_article`、`act_on_element`、`scroll_page`、`screenshot`、`wait_for_element`、`wait_for_navigation`、`run_script`、`load_skill`、`list_skills`。
 
-`qingzhou_guide` 写着先读说明书，返回的就是这份全文。一条新连接读一次。同一连接的后续轮次不要再调用 `qingzhou_guide`，除非换了语言，或手头的文本不完整。`qz skill` 不连接浏览器，只打印说明书。`qz --help` 在命令列表后面附上同一份文本。
+说明书档仍可调用，只是不在默认列表里。需要时用 `qz tools 名字` 或 `qingzhou_get_tool` 看签名。这一档包括 `read_dom`、`inspect_element`、`act_on_screen`、`get_working_tab`、次要等待（`wait`、`wait_for_response`、`wait_for_network_idle`）、钟点等待 `wait_until`、`document_*`、`list_images`、`collect_images`、`read_image`、`data_store`、`download_url`、`save_file`、`network_*`、`browse_history`、`set_page_mode`、`send_alert`，以及 `load_skill_resource`。文档工具名字仍带前缀 `qingzhou_documents__`。不要改这些名字。
 
-连接。先 `qz connect`。外部客户端使用 `qz mcp` 打印的地址。默认就是这份直驱目录。打印出来的文本和 Skill 文件是同一份。
+常用调用：
+
+- `open_tab({url, tabAlias})`。`url` 必填。
+- `navigate({url, tabRef})`。`url` 必填。
+- `act_on_element({tabRef, target, action, value, key})`。`target` 用 `uid:` 或 `css:`。`action` 是 `click`、`fill`、`press`、`select`、`check`、`uncheck`、`scroll`。
+- `wait_for_element({tabRef, selector, timeout, absent})`。`selector` 必填，是 CSS，不是 `uid:`。超时不抛错，看 `found`。
+- `wait_for_navigation({tabRef, timeout})` 等地址变化。
+- `get_ax_tree({tabRef, root, scope, depth, limit})`。只在需要 `uid:` 时调用，并缩小 `root` 或 `limit`。
+- `find_elements({tabRef, pattern, selector, limit})`。用返回的 `target` 做下一次 `act_on_element`。
+- `run_script({target:"page", tabRef, timeout, code})`。`tabRef`、`timeout`、`code` 必填。会改页面时再设 `mutatesPage:true`。
+- `load_skill({name})` 之后按需要 `load_skill_resource`。`list_skills` 只有摘要。
+
+少取数据。能写死选择器就不要先读整棵树，也不要为了找一个按钮连续 `list_tabs`、`get_ax_tree`、`screenshot`。`screenshot` 不是默认步骤。单次结果大约超过 48000 个字符时变成 `{truncated:true, totalChars, limitChars, preview}`。除非 `verbose:true`，结果里去掉 `_tabId`、`_pageTitle`、`_pageUrl`、`_pageContext`、`sessionId`、`runId`，以及 `rect`、`clickablePoint`、`parent`、`lineRange`、`actionable`。`list_tabs` 默认是本会话短列表：`{tabs:[{tabRef, alias, title, url}], count, foreign}`。只有要看用户自己打开的标签时才传 `scope:"all"`。
+
+会话。直驱会话的 source 是 `external-drive`。不传 `sessionId` 时，这一条 MCP 连接共用一个新 id。`qz script` 和 `qz exec` 每个进程都是新连接；省略 `--session` 会新建会话。成功或失败都把 `sessionId <id>` 写到 stderr。下一进程用 `--session <id>`。并行的几路各用自己的 sessionId。已有普通任务占用的 id 返回 `DRIVE_SESSION_OCCUPIED`，换一个新 id，不要循环重试。同一会话已有调用在飞时返回 `DRIVE_SESSION_BUSY`。瞬时忙最多自动重试一次。仍忙就等它结束，不要再开一轮，也不要 sleep 糊过去。
+
+标签。本会话 `open_tab` 打开的标签归本会话。客户端离开或空闲结束时清掉这些标签。用户原来就有的标签，以及 `use_tab` 接管的标签，只释放租约，绝不自动关。用户点一下该标签会交还：停自动化，标签留在原地。只有显式 `keep` 才留下标签组。不要跨进程沿用旧的 sessionId。隔天先 `qz connect`，再新开一轮黄金路径。看见昨天的「轻舟 · …」组时，把它当普通标签，不要假装还是昨天那个会话。
+
+出错就停。把返回的 `code` 和那一句原样告诉用户，改一处再试。脚本的语法错误、行列号和堆栈摘要会原样回来，不要盖成一句「脚本执行失败。」
+
+- 未连接或掉线：跑 `qz connect` 后再试。不要循环。
+- `DRIVE_SESSION_BUSY`：等这一批结束。瞬时忙只会自动重试一次。
+- `DRIVE_SESSION_OCCUPIED`：换一个新的 sessionId。
+- `DRIVE_TOOL_FORBIDDEN`：这个名字不能直驱，包括脚本里的 `tools.名字`。
+- `DRIVE_ARGUMENTS`：`name` 与 `calls` 只能二选一。`calls` 的每项要有 `id`、`name`，`args` 是对象。
+- `DRIVE_TOO_MANY_CALLS`：一批最多 10 个。
+- `DRIVE_BATCH_TIMEOUT`：`limits.timeoutSeconds` 到了。加大限制，或把页面读取放进带 `tabRef` 的 `qz script`。
+- `UNKNOWN_TOOL`：先 `qz tools` 或 `tools.$list()`。
+- `BATCH_TAB_REFERENCE_ERROR`：`tabRef` 或 `tabAlias` 不对，或 `open_tab` 排在引用之后。本会话还没有别名时，先 `open_tab`。
+- `DRIVE_TAB_REF_REQUIRED`：页面工具没有 `tabRef`。`open_tab` 用 `tabAlias`。`list_tabs`、`list_skills`、`load_skill`、`wait` 和 `wait_until` 不需要页面目标。
+- `SESSION_TAB_UNOWNED`：用本会话的 `tabRef`，或先 `open_tab`。
+- 登录墙：在这个浏览器里打开该站并登录，然后重试。
+- `BRIDGE_REQUEST_TIMEOUT`：不要先 sleep。脚本请求会比脚本超时多等 60 秒。看会话里这次调用是否还在跑，不要立刻重发。
+- `OPERATION_ABORTED`：先看页面是否已经变化，再决定要不要重试。
+
+不能直驱的名字：`ask_llm`、`manage_sessions`、`manage_settings`、`manage_guardrails`、`manage_skill_settings`、`manage_goal`、`example_echo`、`qingzhou_call`、`create_skill`、`update_skill`、`delete_skill`、`manage_skill`、`edit_skill_resource`、`import_skill_from_page_zip`、`import_git_skill_repository`、`install_skill_to_git`、`import_page_zip`、`import_git_repository`、`manage_bookmarks`、`wait_for_user`、`ask_user`、`send_message`，以及任何 `mcp_` 开头的名字。`run_script` 不在黑名单里。侧栏对直驱会话只查看。不要通过脚本绕过黑名单。
+
+返回值。`open_tab` 成功时看 `tabRef`。`get_ax_tree` 读 `snapshot` 文本。`find_elements` 用返回的 `target`。页面 `run_script` 的有用值在 `result` 里。直驱成功包一层 `{ok:true, result}`。`qz script` 去掉这层，stdout 就是 `result`。失败 stdout 是 JSON：`{"code":"……","error":"……","trace":[……]}`，`trace` 最多 5 条。退出码 0 是成功，1 是工具失败，2 是参数不合法。
+
+直驱细则。下面这些是同一条路径上的字段、返回和停手条件。写错一处就停，把返回的 code 和原句交给用户，改一处再试。
+
+open_tab。url 必填，用 http 或 https。tabAlias 可选。成功时看 tabRef，不要再找 id。你写的别名可以马上用在下一步。这个调用本身不要传 tabRef。
+
+navigate。url 必填。tabRef 指向已经打开的页面。地址变了以后，旧的 uid 不要沿用。先 wait_for_navigation，或再读一次缩小范围的 get_ax_tree。
+
+get_ax_tree。只为了拿到 uid。能写 root、depth、limit 就写。结果变成截断包时，先缩小范围，不要把 preview 当成完整树。
+
+find_elements。pattern 是可见文本或可访问名的片段，selector 是 CSS。返回的 target 原样交给 act_on_element。不要自己拼 uid 字符串。
+
+act_on_element。target 用 uid: 或 css:。action 只在 click、fill、press、select、check、uncheck、scroll 里选。fill 和 select 要 value。press 要 key。一次只做一个动作。
+
+scroll_page。没有可靠目标时先滚动再读树。它不代替 act_on_element 的 scroll。
+
+screenshot。不是默认步骤。树和选择器都不够时才拍。图片字节不进 JSON 正文。
+
+两个默认等待。wait_for_element 的 selector 是 CSS，超时看 found，不抛错。wait_for_navigation 等地址变化。wait_until 是钟点等待，参数是带时区的 until，不在默认列表里。它留在说明书档，仍可调用：用 qz tools wait_until 或 qingzhou_get_tool 看签名后再调。它不在黑名单里。说明书档还有 wait、wait_for_response、wait_for_network_idle。wait_for_user 和 ask_user 不能直驱。
+
+run_script。直驱入口强制 target 为 page，并且必须有 tabRef。内置 agent 自己的 inner 批处理还在，但这条直驱路径、qz script 和这份说明书都不使用它。页面脚本里可以 await tools.名字(参数)。直驱运行里的 tools.$list() 只返回默认档的短签名，每一项是名字、一行签名和一句说明。黑名单名字在脚本里同样会被拒绝。语法错误带回引擎原文、行列号和几行堆栈。若说明被改写成「脚本执行失败。」或「脚本语法错误，请检查引号、换行、括号或 return/await 的位置。」投影会改回 details 里的原文，并附上 (行:列)。
+
+load_skill 与 list_skills。list_skills 给摘要。需要正文时 load_skill，需要包内文件时再 load_skill_resource。不要为了直驱去改轻舟的模型或供应商设置。
+
+列表形状。默认 list_tabs 是 {tabs:[{tabRef, alias, title, url}], count, foreign}。scope 为 all 时才看用户自己打开的标签，每一项的标签标识仍然是 tabRef。get_working_tab、use_tab、close_tab、navigate 在直驱结果里也用 tabRef 标识页面。
+
+短签名。默认列表类似 open_tab({url, tabAlias?})。说明书档不在这个列表里，仍可用 qz tools 名字 或 qingzhou_get_tool 拿到签名后调用。不要因为默认列表没有它就当成不能调用。
+
+会话忙与占用。DRIVE_SESSION_BUSY 表示同一会话已有调用在飞。桥接对这个错误码最多自动重试一次。连接失败、需要登录、DRIVE_SESSION_OCCUPIED 都不循环。占用表示这个 id 已经是普通任务，换一个新的 sessionId。
+
+登录。没有单独的登录墙检测器。看到登录页或验证时停下来，让用户在这个浏览器里打开该站并登录，然后重试。
+
+离开。客户端断开，或空闲约 30 分钟后，本会话用 open_tab 打开的标签会被关掉。use_tab 接管的标签和用户原来的标签只释放租约，绝不自动关。用户点一下该标签会交还，标签留在原地。只有显式 keep 才留下标签组。不要跨进程恢复旧的 sessionId。下一次先 qz connect，再走黄金路径。
+
+同一标签。后到的会话拿不到，先拿到的会话不中断。这是租约冲突，换页面或换会话，不要循环去抢。
+
+桥接时间。MCP 上一次 run_script 的节点等待不短于脚本 timeout 再加 60 秒。脚本 timeout 小于等于 0 时，节点侧用等待上限，不要先 sleep。BRIDGE_REQUEST_TIMEOUT 先看这次调用是否还在跑。qz script 每个进程仍是一次新连接。要接着用同一个直驱会话，把 stderr 里的 sessionId 传到下一次 --session。这条路径不在进程之间复用 MCP 握手。
+
+安装。对外只有 skills/qz-browser-agent 这一份可发现技能。npx skills add alibaba/qz-browser-agent -g 装的就是它，里面带这份说明书和 references/create-task.md。
+
+不要再安装或寻找名叫 qz-drive 的技能。需要内置 agent 规划执行时，再读 references/create-task.md。
+
+调用示例。这些例子只用公开的示例站，用来核对参数形状，不是待答的题目。
+
+直驱不假设工作标签页。带 tabRef 参数的页面工具都要写上。open_tab 用 tabAlias。list_tabs、list_skills、load_skill、wait 和 wait_until 不需要页面目标。get_working_tab 只查询当前页，不在默认列表里，仍可调用。
+
+```json
+{"name":"navigate","args":{"url":"https://example.com/next","tabRef":"page"}}
+```
+
+```json
+{"name":"act_on_element","args":{"tabRef":"page","target":"css:button[type=submit]","action":"click"}}
+```
+
+```json
+{"name":"wait_for_element","args":{"tabRef":"page","selector":"main h1","timeout":10}}
+```
+
+```json
+{"name":"run_script","args":{"target":"page","tabRef":"page","timeout":30,"code":"async () => {\n  return { title: document.title, href: location.href };\n}"}}
+```
+
+失败时直驱把脚本收成这样。error 里是引擎原文，不是一句笼统的失败。trace 最多 5 条。
+
+```json
+{"ok":false,"code":"SCRIPT_SYNTAX_ERROR","error":"SyntaxError: Unexpected token (2:4)","line":2,"column":4}
+```
+
+qz tools 和 qingzhou_list_tools 的默认项是短签名，不是完整 JSON Schema。要看一个说明书档工具，再点名查询。查询本身不是调用。
+
+```text
+open_tab({url:string, tabAlias?:string})
+打开一个标签页。
+```
+
+本会话还没有别名就写了别名时，错误码是 BATCH_TAB_REFERENCE_ERROR，reason 是 no_alias。先 open_tab，再用返回的 tabRef。不要改成去配模型。
+
+直驱页面工具没写 tabRef 时，错误码是 DRIVE_TAB_REF_REQUIRED。run_script 写成 target inner 时，错误码是 DRIVE_RUN_SCRIPT_TARGET。这两条只挡直驱入口、脚本里的页面工具和 qz script。内置 agent 自己的 inner 批处理不走这里。
+
+节点等待。客户端 timeoutSeconds 是这一次 MCP 请求的等待。脚本 args.timeout 是页面脚本自己的秒数。节点实际等待取二者里更长的那个，并且脚本再加 60 秒。不要改写 limits.timeoutSeconds，那是一批 calls 的总预算。脚本 timeout 小于等于 0 时节点等待用 86400 秒作上限。
+
+同一条 MCP 连接省略 sessionId 时共用一个新 id。qz script 和 qz exec 每个进程都是新连接，所以省略 --session 会新开一个直驱会话。成功和失败都把 sessionId 打到 stderr。下一次带上它。并行的几路不要共用一个 id。
+
+再核对一遍停手。未连接时下一句只是 qz connect。瞬时忙自动重试一次之后仍忙，就等当前调用结束。普通任务占用的 id 直接换新，不要重试同一个 id。工具被黑名单拒绝时，换一个默认档或说明书档的名字，不要在脚本里换个写法绕过去。参数不合法时补 id、name 或对象 args。一批超过 10 个就拆开。一批总时间到了就加大 limits.timeoutSeconds，或把读取放进带 tabRef 的页面脚本。不知道名字时先看默认列表。别名写错、顺序写反、或本会话还没有别名，都停在 BATCH_TAB_REFERENCE_ERROR。标签不属于本会话时用本会话的 tabRef，或先 open_tab。请求超时不要先 sleep。调用被中止时先看页面是否已经变了。
+
+侧栏对直驱会话只查看。不要通过脚本绕过黑名单。不要配置轻舟模型。
+
+字段再记几条。timeout 在脚本和 wait_for_element 上都是秒。tabRef 可以是别名或正整数，数字字符串也可以，不要和另一个目标一起指到不同的页。open_tab 的 tabAlias 是 1–64 个字母、数字、下划线或连字符，不能全是数字。关闭该标签后别名失效。verbose 只在确实要坐标时加。scope 为 all 只加在 list_tabs 上。文档工具名字仍带 qingzhou_documents__ 前缀。Skill 包内文件走 load_skill_resource，不要把整包贴进对话。mutatesPage 只在页面脚本会改页面时设为 true，直驱不会替你推断。
+同一会话里一批 calls 里多个 open 或 act 仍是一轮，不要为此新造工具名。编排用 calls 或 execute_tool，不要塞进 inner。页面脚本只读 document，不要再嵌一段 run_script 字符串。fetch 少取：能写死选择器就不要先读整棵树。
+返回值再记一次。open_tab 成功看 tabRef。get_ax_tree 读 snapshot。find_elements 用返回的 target。页面脚本的有用值在 result。直驱成功是 {ok:true, result}。qz script 去掉这一层，stdout 就是 result。失败 stdout 是 JSON，退出码 0 成功，1 是工具失败，2 是参数不合法。
+
+不要用 curl 或 wget 取页面正文。bash 只处理本机文件。同一段页面脚本可以在 `qz script --tab` 和 `qingzhou_execute_tool` 之间原样使用。不要把这份全文改写成另一套步骤。
 <!-- qz-drive-guide:end -->
 
 <!-- qz-drive-guide:en -->
-Put the actions, the waits, and the reads in one script. Return only the fields you need.
+不要配置轻舟模型
 
-That is the default way to drive the connected browser. One `run_script` with `target` `"inner"`. Inside it, call existing browser tools with `await tools.tool_name(arguments)`. On success, return the value and nothing else. Do not return a full-page snapshot, coordinates, or the trace.
+This is the direct-drive guide. The external agent plans the work and uses the connected browser to open tabs, read pages, and act on elements. Do not start a qz model, and do not call `qz create`. When the built-in qz agent should plan and carry out the work, read references/create-task.md.
 
-`qz exec` and a single `qingzhou_execute_tool` call are auxiliary. Use them for one or two simple steps, or while debugging. Do not split one task into a round of single calls.
+Install or update this skill with the existing command. Do not invent another package name:
 
-不要配置轻舟模型. Do not call `qz create`. Do not use curl or wget to fetch page content. bash stays available for local files only.
-
-Main example: write a name and a size on a public form, and return only those two fields. From the CLI, save the function and run `qz script page.js`. From MCP, one `qingzhou_execute_tool` with `name` `run_script` and `args` `{target:"inner", timeout:120, code}` where `code` is this function. Both paths are the same call.
-
-```js
-async () => {
-  const tab = "page";
-  await tools.open_tab({ tabAlias: tab, url: "https://httpbin.org/forms/post" });
-  await tools.wait_for_element({ tabRef: tab, selector: "form" });
-  await tools.act_on_element({ tabRef: tab, target: "css:input[name=custname]", action: "fill", value: "Ada" });
-  await tools.act_on_element({ tabRef: tab, target: "css:select[name=size]", action: "select", value: "medium" });
-  await tools.act_on_element({ tabRef: tab, target: "css:textarea[name=comments]", action: "fill", value: "Packed in one script." });
-  const read = await tools.run_script({
-    tabRef: tab,
-    timeout: 10,
-    code: "async () => ({ name: document.querySelector('input[name=custname]')?.value || '', size: document.querySelector('select[name=size]')?.value || '' })",
-  });
-  return { name: read.result.name, size: read.result.size };
-}
+```bash
+npx skills add alibaba/qz-browser-agent -g
 ```
 
-`select` matches `option.value` first, then the visible label with surrounding whitespace removed, so `"medium"` works. `wait_for_element` `selector` is raw CSS or a `css:` prefix. `uid:` is not a wait selector. On success the script above keeps the name and the size. Do not return the page HTML.
+`qz skill` and MCP `qingzhou_guide` return this text. Read it once on a new connection. Do not read it again every turn. `--lang zh-CN` or `en` selects the language; otherwise `QZ_GUIDE_LANG` and `LANG` do.
 
-Several pages belong in the same script. Open the first URL and `navigate` the rest. Return only the heading and the first non-empty line. If the node is missing, return the title and the URL. Do not return an empty array.
+Connection. Run this on the machine where the extension is installed. Check Node.js 22 or later, then see whether a browser is online:
 
-```js
-async () => {
-  const tab = "page";
-  await tools.open_tab({ tabAlias: tab, url: "https://httpbin.org/html" });
-  await tools.wait_for_element({ tabRef: tab, selector: "h1" });
-  const heading = await tools.run_script({ tabRef: tab, timeout: 10, code: "async () => ({ heading: (document.querySelector('h1')?.textContent || '').trim() })" });
-  await tools.navigate({ tabRef: tab, url: "https://httpbin.org/robots.txt" });
-  await tools.wait_for_element({ tabRef: tab, selector: "body" });
-  const line = await tools.run_script({ tabRef: tab, timeout: 10, code: "async () => { const text = document.body?.innerText || ''; const row = text.split(/\\n/).map(item => item.trim()).find(Boolean) || ''; if (!row) return { title: document.title, href: location.href }; return { line: row }; }" });
-  return { heading: heading.result.heading, line: line.result.line || "", title: line.result.title || "", href: line.result.href || "" };
-}
+```sh
+node --version
+npx --yes qz-browser-agent@latest status --json
 ```
 
-That return holds the heading and the first line. The page title and URL appear only when the body line is empty. Do not return the whole text.
+Read `result.connected` and `result.browsers`. When nothing is paired, run `qz connect`. It starts the local service and opens the pairing page in the default browser. Confirm once in the browser. If the client is not connected, the next step is `qz connect`. Do not configure a model instead.
 
-Read the round trip once. The form script's stdout is only `{"name":"Ada","size":"medium"}`. The heading script's stdout has `heading` and `line`. Do not leave `trace` in a successful return. A failure prints `code`, `error`, and at most five trace rows on stdout and exits 1. A failure without a trace has `code` and `error` only.
+To choose a profile, take the pairing URL and open it yourself:
 
-`wait_for_element` does not throw on timeout. Check `found`. When `found` is false, do not read the page; set `timeout` to 20 or change the selector and run the same script. When `select` does not stick, change `value` to an option value such as `medium`. Do not rename the action.
+```sh
+npx --yes qz-browser-agent@latest connect --no-open --json
+```
 
-`tools.list_tabs({})` inside the script is the short list for this session. Each item has `id`, `alias`, `title`, and `url`, plus `count` and `foreign`. A different session only increases `foreign`. Pass `scope:"all"` to see a tab the user opened. `verbose:true` keeps geometry.
+`result.url` is the page to open. `mcpUrl` is the MCP address. Open that URL in the user-selected profile where qz is installed. On macOS Chrome, set `QZ_PAIRING_URL` and `QZ_PROFILE_DIRECTORY`, then:
 
-`qz exec {"name":"get_tool","args":{"name":"open_tab"}}` matches `qz tools open_tab`. `{"name":"capabilities"}` lists capabilities and does not execute a browser tool. One `open_tab` or `wait_for_element` still uses `qingzhou_execute_tool`.
+```sh
+open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
+```
 
-A long string follows the same rule. When returned text passes about 48000 characters, stdout is `{truncated:true,totalChars,limitChars,preview}` and the exit code stays 0. The preview stays in `preview`. Do not run it again only because `ok` is absent.
+For a custom user-data directory, also pass `--user-data-dir`. Bind one profile at a time. Compare `browsers --json` before and after, and keep the new `clientId`. Later commands pass `--client` with that UUID. `--client` selects an already connected browser. Do not combine it with `connect --no-open` or `connect --name`.
 
-The next step on this session uses the sessionId from stderr. Continue with `qz script page.js --session <id>`. Start a new id only for `DRIVE_SESSION_OCCUPIED`. `DRIVE_SESSION_BUSY` means the previous call is still running. A script timeout still returns `code` and trace, because the request waits 60 seconds longer.
+`connect --name work` names the profile that opens the URL. Without a name, an existing name stays, or qz allocates `default`, `browser-2`, and so on. Ordinary `connect` opens the system default browser when pairing is needed, and reuses the only online browser otherwise.
 
-Read this guide first. CLI: `qz skill` or `qz --help` prints it. `--lang zh-CN` or `en` selects the language; otherwise `QZ_GUIDE_LANG` and `LANG` do. MCP: call `qingzhou_guide` once. It returns the full text. Do not read it again every turn. The default MCP tools are `qingzhou_guide`, `qingzhou_execute_tool`, `qingzhou_list_tools`, `qingzhou_get_tool`, and `qingzhou_bridge_status`. `qz mcp --profile full` is the task and diagnostic catalog, not the default.
+If the extension is missing, ask the user to add it from the Chrome Web Store in that profile. `npx --yes qz-browser-agent@latest install` opens the listing. A manual install uses the ZIP from the latest GitHub release. After installation, finish the first-use notice, then open the pairing URL.
 
-Sessions. A drive session has source `external-drive`. Omit `sessionId` and this MCP connection keeps one new id. Each `qz script` or `qz exec` process is a new connection; omitting `--session` starts a session. Success and failure write `sessionId <id>` to stderr. The next process passes `qz script --session <id> file.js`. Parallel paths each use their own sessionId. An id that already belongs to a normal task returns `DRIVE_SESSION_OCCUPIED`; use a new id. A session that already has a call in flight returns `DRIVE_SESSION_BUSY`; wait for that call. `tabAlias` belongs to this session: 1–64 letters, digits, underscores, or hyphens, and not all digits. The `open_tab` that creates an alias comes before any call that uses it. Page arguments use `tabRef` (an alias or a positive integer tab id). Execution renames it to `tabId`. Do not invent `page(...)` or another shorthand.
+If pairing fails, compare the address in `status --json`. `connect --port` applies only before the service is running. A running service keeps its address. Changing the address does not connect until the user confirms. For an incompatible upgrade, wait for current work, run `npx --yes qz-browser-agent@latest stop`, update and reload the extension in every browser, then `qz connect`. `stop` disconnects every browser. Disconnect one browser from its own settings.
 
-How to write a script. `code` is one `async () => { ... }` function expression. No IIFE, no `main()`, no `return` outside the function. Start with a one-line comment naming the page, the action, and the purpose. Call tools only as `tools.name(arguments)`. Names, parameters, and error codes are the same ones `qz exec` and `qingzhou_execute_tool` use. `tools.$list()` lists the tools available now. Do not use `Object.keys(tools)`. Nested calls and `$list` use the same blacklist. `target:"inner"` has no `document`, `window`, DOM, or `tabId`. To read page fields, call `tools.run_script({tabRef, timeout, code})`. That inner page script has `document`. `timeout` is seconds and is required on scripts; `<= 0` means no limit, `> 0` is the maximum wait. `qz script` sends 120 unless `--timeout` says otherwise. The request waits 60 seconds longer. Nested depth stops at 3. Use `trace(...)` at important steps. On failure, read `code` and at most five trace rows, change the script, and run it again. Do not paste the failed payload back into the next turn.
+After pairing, print the MCP URL with `npx --yes qz-browser-agent@latest mcp`. The default catalog is this direct-drive set: `qingzhou_guide`, `qingzhou_execute_tool`, `qingzhou_list_tools`, `qingzhou_get_tool`, and `qingzhou_bridge_status`. `qz mcp --profile full` is the task and diagnostic catalog, not the default.
 
-A successful tool result is `{ok:true, result}`. `qz script` prints only `result` on stdout. A failure prints `code`, `error`, and the last five trace rows, and exits 1. A failure without a trace has `code` and `error` only.
-
-Common signatures. Fields not marked required may be omitted. Page tools use the session working tab when `tabRef` is omitted.
-
-- `tools.open_tab({url, tabAlias})` opens a page. `url` is required. Name a new page with `tabAlias` and refer to it with `tabRef`.
-- `tools.navigate({url, tabRef})` opens another URL in an existing tab. `url` is required.
-- `tools.act_on_element({tabRef, target, action, value, key})`. `target` is `uid:` or `css:`. `action` is `click`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll`. `fill` writes `value` into an input; `""` clears it. `press` sends `key`, for example `"Enter"`. `select` sends `value`.
-- `tools.wait_for_element({tabRef, selector, timeout, absent})`. `selector` is required. `timeout` defaults to 10 seconds. `absent:true` waits until the element is gone. A timeout returns `{found:false, timedOut:true}` and does not throw. Check `found`.
-- `tools.run_script({target, tabRef, timeout, code, mutatesPage})`. Orchestration uses `target:"inner"`. A page read omits `target` or uses `"page"` and passes `tabRef`. `timeout` and `code` are required. Set `mutatesPage:true` when the page script changes the page.
-- `tools.find_elements({tabRef, pattern, selector, roles, tags, types, limit})`. `limit` defaults to 20. Use it to locate elements. Do not read the whole DOM first.
-- `tools.get_ax_tree({tabRef, root, scope, depth, limit, actionsLimit})`. Defaults are the viewport, `depth` 16, and `limit` 120. Call it only when you need an element `uid:`, and narrow `root` or `limit`.
-- `tools.list_tabs({})` defaults to this session: `{tabs:[{id, alias, title, url}], count, foreign}`. `scope:"all"` lists every web tab. `verbose:true` keeps geometry.
-- `tools.screenshot({tabRef})` is not a default step. Bytes travel as image blocks, not as base64 inside JSON text.
-- `tools.load_skill({name})`, then `tools.load_skill_resource({name, path})`. When a Skill already covers the site, read it before writing a temporary script.
-- `tools.list_skills({scope, query})` returns summaries. `tools.data_store(...)` writes tables. Write large rows in batches inside the script. Return a count and at most one to three sample rows.
-
-Fetch less. Do not call `list_tabs`, then `get_ax_tree`, then a screenshot to find one button. Wait for the selector in the script and return the fields. Do not call `get_trace`. A result past about 48000 characters becomes `{truncated:true, totalChars, limitChars, preview}`. `qz script` still exits 0 and prints that object. JSON is compact. Unless `verbose:true`, results omit `_tabId`, `_pageTitle`, `_pageUrl`, `_pageContext`, `sessionId`, `runId`, `rect`, `clickablePoint`, `parent`, `lineRange`, and `actionable`. `list_tools` hides blacklisted tools and returns `name`, a one-line `signature`, and a short description, not a full JSON Schema. `qz tools` prints those signatures. `qz tools NAME` shows one tool. `qz exec` with `{"name":"list_tools"}` returns the same list.
-
-Documents. Call `tools.load_skill({name:"qingzhou-documents"})` first. Then `qingzhou_documents__document_fetch`, `document_parse`, `document_read_chunk`, `document_create`, `document_download`, and `document_list_artifacts`. Timeout on those document tools is optional and defaults to 120 seconds. Script tools besides those document tools still require `timeout`.
-
-On an error, stop. Tell the user the returned `code` and the returned sentence unchanged, then change one thing and retry.
-
-- `DRIVE_TOOL_FORBIDDEN`: direct drive cannot call this name, including `tools.name` inside a script. Use an allowed tool.
-- `DRIVE_SESSION_OCCUPIED`: a task already uses this id. Use a new sessionId.
-- `DRIVE_SESSION_BUSY`: this session already has a call in flight. Wait for it.
-- `DRIVE_ARGUMENTS`: pass `name` or `calls`, not both. Each call needs `id` and `name`. `args` is an object.
-- `DRIVE_TOO_MANY_CALLS`: a batch holds at most 10 calls.
-- `DRIVE_BATCH_TIMEOUT`: `limits.timeoutSeconds` elapsed. Raise it, or move the work into one script.
-- `UNKNOWN_TOOL`: the name does not exist. Run `qz tools` or `tools.$list()`. Do not guess `browser_open` or `open_url`.
-- `MISSING_REQUIRED_ARGUMENTS`: add the fields in `details.missing`.
-- `INVALID_TIMEOUT`: `timeout` must be a number of seconds.
-- `BATCH_TAB_REFERENCE_ERROR`: `tabRef` or `tabAlias` is wrong, or `open_tab` comes after the call that uses the alias.
-- `SESSION_TAB_UNOWNED`: the tab is not owned by this session. Use this session's `tabRef`, or `open_tab` first.
-- `SESSION_TAB_NOT_WEB`: the target is not a web page. Use a web tab this session opened.
-- `RUN_SCRIPT_TOOL_DEPTH_EXCEEDED`: nesting passed 3. Flatten the calls into this script.
-- `OPERATION_ABORTED`: the call was cancelled or timed out. Look at the page before retrying.
-- `BRIDGE_REQUEST_TIMEOUT`: the bridge timed out. The browser operation may still be running. Inspect the session before repeating it.
-
-Names direct drive cannot call: `ask_llm`, `manage_sessions`, `manage_settings`, `manage_guardrails`, `manage_skill_settings`, `qingzhou_call`, `create_skill`, `update_skill`, `delete_skill`, `manage_skill`, `edit_skill_resource`, `import_skill_from_page_zip`, `import_git_skill_repository`, `install_skill_to_git`, `import_page_zip`, `import_git_repository`, `manage_bookmarks`, `wait_for_user`, `ask_user`, `send_message`, and any name that starts with `mcp_`. The side panel for a drive session is view-only. Do not route around the blacklist from a script.
-
-What one turn looks like. On MCP, call `qingzhou_guide` first. After that, a turn should be one `qingzhou_execute_tool`:
+Golden path. After connect, these two calls show the tab group 「轻舟 · 客户端名」 in the side panel:
 
 ```json
-{"name":"run_script","args":{"target":"inner","timeout":120,"code":"async () => { /* page, action, purpose */ return { ok: true }; }"}}
+{"calls":[
+  {"id":"open","name":"open_tab","args":{"url":"https://example.com","tabAlias":"page"}},
+  {"id":"read","name":"get_ax_tree","args":{"tabRef":"page"}}
+]}
 ```
 
-Later calls on the same session pass the `sessionId` from stderr. The CLI form is `qz script - --session <id> <<'JS'`. The script is raw JavaScript on stdin, not a JSON wrapper. `qz script file.js` reads a file. stdout is only the returned value. Use `qz exec` for one or two debug steps, with JSON `{"name":"wait_for_element","args":{"tabRef":"page","selector":"#done"}}`. `calls` is the same kind of short batch: each item is `{id, name, args}`, at most 10, and an `open_tab` comes before the calls that use its alias.
+The CLI form is two `qz exec` calls, or one `calls` batch. A successful `open_tab` returns `tabRef`, not `id`. The `tabAlias` you passed stays valid. Later page tools use that alias or that `tabRef`.
 
-Action results say whether the action happened. They do not include coordinates. `click` reports `inputDelivered`. `fill` reports the value that was written. `press` reports `pressed` and `key`. `select` reports the chosen value. `check` reports the checked state. If those objects still contain `rect`, `clickablePoint`, `parent`, `lineRange`, or `actionable`, direct drive removes them unless this call passes `verbose:true`. Navigation is a `navigated` field or a changed URL. If neither is present, read the one node you care about. Do not fetch the page again.
+Orchestrate with your own `calls` batch or one `execute_tool`. Several opens or acts in one batch on the same session are still one round. Do not invent a tool name for that. Do not put orchestration in a script with `target` inner. Direct drive rejects `target:"inner"`.
 
-Element targets have two forms. `css:` is a CSS selector, for example `css:input[name=custname]` or `css:select[name=size]`. `uid:` is a reference returned by `get_ax_tree` or `find_elements`. Waits use `selector` only. Do not pass `uid:` to `wait_for_element`. If a selector misses, change the selector or call `find_elements({pattern, limit:5})`. Do not switch to screenshot coordinates.
+Use `qz script` only when you need JavaScript on the page. It requires `--tab`, runs only on that page, sees the login session, and can `await tools.name(arguments)`.
 
-Fetch less, in this order. A known selector does not need a tree. If you do need a tree, set `get_ax_tree` `limit` to 40 and pass `root`. Filter table rows inside the page script. A list page returns `{count, sample}`. For files, load the document Skill and read one piece with `document_read_chunk` `offset` and `limit`. Do not parse the whole file into the return value. `list_tabs` is already the short list for this session. Pass `scope:"all"` only when you must see a tab the user opened.
+```sh
+qz script --tab page page.js
+```
 
-After about 30 minutes without a call, the drive session ends and closes the tabs it opened. If you still need those tabs, read the result first. `qingzhou_stop_session` is not in the default tool list. Start a new sessionId when you want a fresh page. The side panel shows one flat row per tool call. A drive session cannot send a message from that panel.
+```js
+async () => {
+  return { title: document.title, href: location.href };
+}
+```
 
-How to read a result. A successful `open_tab` has `id`, the numeric tab id, which is also a valid later `tabRef`. Keep the `tabAlias` you passed. A successful `get_ax_tree` is the `snapshot` text. Do not ask for a second copy of the nodes. `find_elements` returns `target` values. Pass one of them as `act_on_element` `target`. A page `run_script` puts the useful value on `result`. The outer script returns that value. Direct drive wraps success as `{ok:true, result}`. `qz script` unwraps it, so stdout is the inner `result`. Failure stdout is JSON: `{"code":"…","error":"…","trace":[…]}`, with at most five trace rows. stderr always has one line, `sessionId`, a space, and the id. Exit 0 is success, 1 is a tool failure, and 2 is invalid arguments.
+The same MCP call is `qingzhou_execute_tool` with `name` `run_script` and `args` `{target:"page", tabRef, timeout, code}`. `tabRef` is required. Pass it, and do not pass inner. Do not nest another `run_script` as a string inside this script. Read `document` in this page script.
 
-On the first failure, change one thing. A selector timeout: set `wait_for_element` `timeout` to 20 and use a selector that exists on the page. A `select` that did not stick: change `value` to the option value or the visible label. Do not rename the action. Text missing after a fill: call `wait_for_element` and press a key only after `found` is true. `SESSION_TAB_UNOWNED`: do not reuse a numeric id from another session or from a tab the user opened, unless this session already called `open_tab` or took that tab. A thrown script: read the message on the last `trace` row and change that line. Do not start a new sessionId just to retry, unless the code is `DRIVE_SESSION_OCCUPIED`.
+`code` is one `async () => { ... }` function expression. No IIFE, no `main()`, and no `return` outside the function. Start with a one-line comment naming the page, the action, and the purpose. `timeout` is seconds and is required. `<= 0` means no limit. `> 0` is the maximum wait. `qz script` sends 120 unless `--timeout` says otherwise. The bridge waits 60 seconds longer, so the node process does not fail before the extension. Do not sleep first.
 
-Argument notes. `timeout` on scripts and on `wait_for_element` is seconds, not milliseconds. `limits.timeoutSeconds` bounds one `calls` batch. It does not replace the script `timeout`. `tabRef` is either an alias or a numeric id. Do not pass both. `open_tab` does not take `tabRef`. `act_on_element` requires `target` and `action`. `fill` and `select` need `value`. `press` needs `key`. Set `mutatesPage` only when a page script changes the DOM. An inner orchestration script does not set it. Add `verbose` only when you actually need coordinates. Add `scope:"all"` only on `list_tabs`. Document tool names use the prefix `qingzhou_documents__`. Do not call `document_fetch` without it. The Skill name is `qingzhou-documents`, with a hyphen.
+`tabRef` is a page alias in this session, or a positive integer tab id. An alias is 1–64 letters, digits, underscores, or hyphens, and not all digits. It belongs to this session and dies when the tab closes. The `open_tab` that creates an alias comes first. When this session has no alias yet, `open_tab` first, then use the returned `tabRef`. Do not invent `page(...)` or another shorthand. `open_tab` uses `tabAlias` and does not take `tabRef`. Each `list_tabs` row identifies the tab with `tabRef`.
 
-How this differs from a built-in task. Direct drive has no model loop and no planning step inside qz. The script you write is the whole turn. Direct drive drops blacklisted tools, shortens lists, and reduces a successful script to `{ok, result}`. A built-in task keeps its own run_script description. Tool names and parameters match on both sides, so the same `code` moves unchanged between `qz script` and `qingzhou_execute_tool`. Do not invent a second set of function names for direct drive.
+Direct drive does not use a working tab. A page tool that accepts `tabRef` is rejected with `DRIVE_TAB_REF_REQUIRED` when that field is missing. `act_on_screen` has no `tabRef` parameter. Every other page call in a batch sets its own `tabRef`. One tab has one session at a time. A later claimant fails. The session that already holds the tab is not interrupted.
 
-Stop at the layer that answers the question. Return the name and the size, or the heading and the first line. Do not return the whole table or the decorative text around the title. A field you can read from the DOM does not need a screenshot. A control you can address with a selector does not need an accessibility tree first.
+Default tools. `qz tools`, `qingzhou_list_tools`, and `tools.$list()` return this tier by default. Each item is a one-line signature and a short description:
 
-Do not rewrite this text into a second procedure. Use the tool names, parameters, and error codes written here. Page scripts and the orchestration script both call `tools.name(arguments)`. Do not wrap those calls in another helper. Use the same code unchanged for qz script and qingzhou_execute_tool. Do not rename parameters. Put the name and the size, or the heading and the first line, in the return. Do not bring the whole page back.
+`open_tab`, `navigate`, `list_tabs`, `close_tab`, `use_tab`, `get_ax_tree`, `find_elements`, `read_article`, `act_on_element`, `scroll_page`, `screenshot`, `wait_for_element`, `wait_for_navigation`, `run_script`, `load_skill`, `list_skills`.
 
-`qingzhou_guide` says to read the guide first and returns this text. Read it once per new connection. Do not call `qingzhou_guide` again on that connection unless you change language or the text you have is incomplete. `qz skill` does not connect to the browser. It only prints the guide. `qz --help` appends the same text after the command list.
+Guide-tier tools still run. They stay off the default list. Use `qz tools NAME` or `qingzhou_get_tool` for a signature. That tier includes `read_dom`, `inspect_element`, `act_on_screen`, `get_working_tab`, secondary waits (`wait`, `wait_for_response`, `wait_for_network_idle`), the clock wait `wait_until`, `document_*`, `list_images`, `collect_images`, `read_image`, `data_store`, `download_url`, `save_file`, `network_*`, `browse_history`, `set_page_mode`, `send_alert`, and `load_skill_resource`. Document tool names still use the prefix `qingzhou_documents__`. Do not rename them.
 
-Connect with `qz connect`. An external client uses the URL from `qz mcp`. That default is this drive catalog.
+Common calls:
+
+- `open_tab({url, tabAlias})`. `url` is required.
+- `navigate({url, tabRef})`. `url` is required.
+- `act_on_element({tabRef, target, action, value, key})`. `target` is `uid:` or `css:`. `action` is `click`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll`.
+- `wait_for_element({tabRef, selector, timeout, absent})`. `selector` is required CSS, not `uid:`. A timeout does not throw. Check `found`.
+- `wait_for_navigation({tabRef, timeout})` waits for the URL to change.
+- `get_ax_tree({tabRef, root, scope, depth, limit})`. Call it when you need a `uid:`, and narrow `root` or `limit`.
+- `find_elements({tabRef, pattern, selector, limit})`. Pass a returned `target` to the next `act_on_element`.
+- `run_script({target:"page", tabRef, timeout, code})`. `tabRef`, `timeout`, and `code` are required. Set `mutatesPage:true` when the script changes the page.
+- `load_skill({name})`, then `load_skill_resource` when you need a file. `list_skills` returns summaries.
+
+Fetch less. A known selector does not need a full tree, and one button does not need `list_tabs`, then `get_ax_tree`, then `screenshot`. `screenshot` is not a default step. A result past about 48000 characters becomes `{truncated:true, totalChars, limitChars, preview}`. Unless `verbose:true`, results omit `_tabId`, `_pageTitle`, `_pageUrl`, `_pageContext`, `sessionId`, `runId`, `rect`, `clickablePoint`, `parent`, `lineRange`, and `actionable`. `list_tabs` defaults to this session: `{tabs:[{tabRef, alias, title, url}], count, foreign}`. Pass `scope:"all"` only to see a tab the user opened.
+
+Sessions. A drive session has source `external-drive`. Omit `sessionId` and this MCP connection keeps one new id. Each `qz script` or `qz exec` process is a new connection; omitting `--session` starts a session. Success and failure write `sessionId <id>` to stderr. The next process passes `--session <id>`. Parallel paths each use their own sessionId. An id that already belongs to a normal task returns `DRIVE_SESSION_OCCUPIED`. Use a new id. Do not loop. A session that already has a call in flight returns `DRIVE_SESSION_BUSY`. A transient busy state retries once. If it is still busy, wait for that call. Do not start another round, and do not sleep through it.
+
+Tabs. Tabs this session opened with `open_tab` belong to the session. When the client leaves, or the session goes idle, those tabs are closed. Tabs the user already had, and tabs claimed with `use_tab`, only release the lease. They are never closed automatically. If the user activates the tab, automation stops and the tab stays. Only an explicit keep leaves the tab group. Do not reuse an old sessionId across processes. The next day, `qz connect`, then start a new golden path. A leftover 「轻舟 · …」 group is an ordinary tab group, not the old session.
+
+Stop on an error. Tell the user the returned `code` and the sentence, change one thing, and try again. A script syntax error, its line and column, and a short stack come back as the engine reported them. Do not replace that with a generic failure sentence.
+
+- Not connected, or the connection dropped: run `qz connect`, then try again. Do not loop.
+- `DRIVE_SESSION_BUSY`: wait for this batch. A transient busy state retries once.
+- `DRIVE_SESSION_OCCUPIED`: use a new sessionId.
+- `DRIVE_TOOL_FORBIDDEN`: direct drive cannot call this name, including `tools.name` inside a script.
+- `DRIVE_ARGUMENTS`: pass `name` or `calls`, not both. Each call needs `id`, `name`, and an object `args`.
+- `DRIVE_TOO_MANY_CALLS`: at most 10 calls in one batch.
+- `DRIVE_BATCH_TIMEOUT`: `limits.timeoutSeconds` elapsed. Raise the limit, or move a page read into `qz script` with `tabRef`.
+- `UNKNOWN_TOOL`: run `qz tools` or `tools.$list()` first.
+- `BATCH_TAB_REFERENCE_ERROR`: `tabRef` or `tabAlias` is wrong, or `open_tab` comes after the call that uses the alias. When this session has no alias yet, `open_tab` first.
+- `DRIVE_TAB_REF_REQUIRED`: a page tool has no `tabRef`. `open_tab` uses `tabAlias`. `list_tabs`, `list_skills`, `load_skill`, `wait`, and `wait_until` do not need a page target.
+- `SESSION_TAB_UNOWNED`: use this session's `tabRef`, or `open_tab` first.
+- Login wall: 在这个浏览器里打开该站并登录，然后重试。
+- `BRIDGE_REQUEST_TIMEOUT`: do not sleep first. A script request waits 60 seconds longer than the script timeout. Check whether that call is still running before you send it again.
+- `OPERATION_ABORTED`: see whether the page already changed before you retry.
+
+Names direct drive cannot call: `ask_llm`, `manage_sessions`, `manage_settings`, `manage_guardrails`, `manage_skill_settings`, `manage_goal`, `example_echo`, `qingzhou_call`, `create_skill`, `update_skill`, `delete_skill`, `manage_skill`, `edit_skill_resource`, `import_skill_from_page_zip`, `import_git_skill_repository`, `install_skill_to_git`, `import_page_zip`, `import_git_repository`, `manage_bookmarks`, `wait_for_user`, `ask_user`, `send_message`, and any name that starts with `mcp_`. `run_script` is not on that list. The side panel for a drive session is view-only. Do not route around the blacklist from a script.
+
+Results. A successful `open_tab` has `tabRef`. A successful `get_ax_tree` is the `snapshot` text. `find_elements` returns `target` values. A page `run_script` puts the useful value on `result`. Direct drive wraps success as `{ok:true, result}`. `qz script` unwraps it, so stdout is `result`. Failure stdout is JSON: `{"code":"…","error":"…","trace":[…]}`, with at most five trace rows. Exit 0 is success, 1 is a tool failure, and 2 is invalid arguments.
+
+Direct-drive details. These are the fields, return values, and stop conditions on this same path. Stop on the first error. Give the user the returned code and the sentence, change one thing, and try again.
+
+open_tab. url is required and uses http or https. tabAlias is optional. On success read tabRef. Do not look for id. The alias you passed is valid on the next call. This call does not take tabRef.
+
+navigate. url is required. tabRef names a tab that is already open. After the URL changes, do not reuse an old uid. Call wait_for_navigation, or read a smaller get_ax_tree.
+
+get_ax_tree. Use it for a uid. Set root, depth, or limit when you can. If the result is truncated, narrow the read. Do not treat preview as the full tree.
+
+find_elements. pattern is a fragment of visible text or an accessible name. selector is CSS. Pass a returned target to act_on_element unchanged. Do not assemble a uid string yourself.
+
+act_on_element. target is uid: or css:. action is one of click, fill, press, select, check, uncheck, or scroll. fill and select need value. press needs key. One action per call.
+
+scroll_page. Scroll, then read the tree, when you have no reliable target. It does not replace scroll on act_on_element.
+
+screenshot. This is not a default step. Use it when the tree and a selector are not enough. Image bytes stay out of the JSON body.
+
+Two default waits. wait_for_element takes a CSS selector. A timeout sets found and does not throw. wait_for_navigation waits for the URL to change. wait_until is a clock wait. Its argument is until, an absolute time with a time zone. It is not on the default list. It stays on the guide tier and is still callable: use qz tools wait_until or qingzhou_get_tool, then call it. It is not blacklisted. Guide-tier waits also include wait, wait_for_response, and wait_for_network_idle. wait_for_user and ask_user cannot be driven.
+
+run_script. The direct-drive entry forces target page and requires tabRef. The built-in agent's own inner batches still exist. This direct path, qz script, and this guide do not use them. A page script may await tools.name(arguments). tools.$list() during a drive run returns only the default tier, each item a name, a one-line signature, and one sentence. Blacklisted names fail inside the script too. A syntax error comes back as the engine text, with line, column, and a few stack lines. If a catalog sentence replaced that with a generic failure, the drive projection restores details.originalError and appends (line:column).
+
+load_skill and list_skills. list_skills returns summaries. load_skill when you need the body, then load_skill_resource for a file in the package. Do not change a qz model or provider for direct drive.
+
+List shape. The default list_tabs value is {tabs:[{tabRef, alias, title, url}], count, foreign}. scope all is the only way to see a tab the user opened, and each row still identifies the tab with tabRef. get_working_tab, use_tab, close_tab, and navigate also identify the page with tabRef in a drive result.
+
+Short signatures. A default row looks like open_tab({url, tabAlias?}). A guide-tier tool is absent from that list and still callable. qz tools NAME or qingzhou_get_tool returns its signature. Absence from the default list does not mean the tool is blocked.
+
+Busy and occupied. DRIVE_SESSION_BUSY means this session already has a call in flight. The bridge retries that code at most once. Connection failures, login, and DRIVE_SESSION_OCCUPIED do not loop. Occupied means the id already belongs to a normal task. Use a new sessionId.
+
+Login. There is no separate login-wall detector. When you see a login page or a challenge, stop and ask the user to open the site in this browser, sign in, and retry.
+
+Leaving. When the client disconnects, or the session is idle for about 30 minutes, tabs this session opened with open_tab are closed. Tabs claimed with use_tab, and tabs the user already had, only release the lease. They are never closed automatically. If the user activates the tab, automation stops and the tab stays. Only an explicit keep leaves the tab group. Do not resume an old sessionId across processes. Next time, qz connect, then the golden path.
+
+One tab. A later session does not take it. The session that already holds it is not interrupted. That is a lease conflict. Change the page or the session. Do not loop to take it.
+
+Bridge time. On MCP, the node wait for one run_script is at least the script timeout plus 60 seconds. When the script timeout is less than or equal to 0, the node side uses its upper bound. Do not sleep first. On BRIDGE_REQUEST_TIMEOUT, see whether that call is still running. Each qz script process is still a new connection. To continue the same drive session, pass the sessionId from stderr as --session on the next process. This path does not reuse an MCP handshake across processes.
+
+Install. The only discoverable skill is skills/qz-browser-agent. npx skills add alibaba/qz-browser-agent -g installs that skill, including this guide and references/create-task.md.
+
+Do not install or look for a skill named qz-drive. When the built-in agent should plan the work, read references/create-task.md.
+
+Call shapes. These examples only check argument shape. They are not questions to answer.
+
+Direct drive does not assume a working tab. Page tools that take tabRef set it. open_tab uses tabAlias. list_tabs, list_skills, load_skill, wait, and wait_until need no page target. get_working_tab only queries the current page. It is off the default list and still callable.
+
+A failed page script comes back with the engine text. trace has at most five rows. qz tools and qingzhou_list_tools return short signatures, not full JSON Schema. Ask for a guide-tier tool by name before you call it. The lookup is not the call.
+
+If this session has no alias yet and you pass one, the code is BATCH_TAB_REFERENCE_ERROR and the reason is no_alias. open_tab first, then use the returned tabRef. A page tool without tabRef returns DRIVE_TAB_REF_REQUIRED. Direct-drive run_script with target inner returns DRIVE_RUN_SCRIPT_TARGET. Those checks apply to the drive entry, to page tools inside a script, and to qz script. The built-in agent's own inner batches do not pass through them.
+
+Node wait. timeoutSeconds on the MCP request is the client wait. args.timeout on the script is the page script's own seconds. The node wait is the longer of the two, and the script gets 60 seconds more. Do not rewrite limits.timeoutSeconds. That is the budget for one calls batch. A script timeout less than or equal to 0 makes the node wait use 86400 seconds as its upper bound.
+
+Stop again on these. If nothing is connected, the next step is only qz connect. After one automatic retry, a still-busy session waits for the current call. An id owned by a normal task gets a new id, with no retry of the same id. A blacklisted name stays blacklisted inside a script. Invalid arguments need id, name, and an object args. More than 10 calls means split the batch. When the batch budget elapses, raise limits.timeoutSeconds or move the read into a page script with tabRef. An unknown name starts with the default list. A bad alias, a reversed open_tab, or a session with no alias yet stops at BATCH_TAB_REFERENCE_ERROR. A tab this session does not own needs this session's tabRef, or open_tab first. A request timeout does not start with sleep. After an abort, look at the page before you retry.
+
+The side panel for a drive session is view-only. Do not route around the blacklist from a script. Do not configure a qz model.
+
+Do not use curl or wget to fetch page content. bash stays available for local files only. The same page script works unchanged for `qz script --tab` and `qingzhou_execute_tool`. Do not rewrite this guide into another procedure.
 <!-- qz-drive-guide:end -->

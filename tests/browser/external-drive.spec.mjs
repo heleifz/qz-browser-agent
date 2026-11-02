@@ -55,7 +55,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     expect(opened.code, opened.text || stderr.text).toBe(0);
     expect(opened.body.result.toolName).toBe("open_tab");
     expect(opened.body.result.runId).toMatch(/^drive-/);
-    const tabId = opened.body.result.result.id;
+    const tabId = opened.body.result.result.tabRef;
     expect(typeof tabId).toBe("number");
     openedTabs.push(tabId);
     const firstRunId = opened.body.result.runId;
@@ -67,7 +67,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     const ax = await exec(dependencies, stdout, stderr, {
       sessionId,
       name: "get_ax_tree",
-      args: { tabId },
+      args: { tabRef: tabId },
     }, "90");
     expect(ax.code, ax.text || stderr.text).toBe(0);
     expect(ax.text).not.toMatch(/CDP_RUN_CONTEXT_REQUIRED/);
@@ -76,7 +76,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     const act = await exec(dependencies, stdout, stderr, {
       sessionId,
       name: "act_on_element",
-      args: { tabId, target: "css:#go", action: "click" },
+      args: { tabRef: tabId, target: "css:#go", action: "click" },
     }, "90");
     expect(act.code, act.text || stderr.text).toBe(0);
     expect(act.text).not.toMatch(/CDP_RUN_CONTEXT_REQUIRED/);
@@ -121,11 +121,11 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     expect(smoke.body.result.results).toHaveLength(2);
     expect(String(smoke.body.result.sessionId || "")).not.toBe("");
     expect(smoke.body.result.results.every((item) => item.isError !== true)).toBe(true);
-    openedTabs.push(smoke.body.result.results[0].result.id);
+    openedTabs.push(smoke.body.result.results[0].result.tabRef);
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
       sessionId: smoke.body.result.sessionId, timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
-    const batchTab = batch.body.result.results[0].result.id;
+    const batchTab = batch.body.result.results[0].result.tabRef;
     openedTabs.push(batchTab);
     expect(String(batch.body.result.results[1].result?.snapshot || "")).not.toBe("");
     expect(batch.text).not.toMatch(/CDP_RUN_CONTEXT_REQUIRED/);
@@ -141,7 +141,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       args: { url: `${fixture}/keep` },
     }, "90");
     expect(kept.code, kept.text || stderr.text).toBe(0);
-    const keptTab = kept.body.result.result.id;
+    const keptTab = kept.body.result.result.tabRef;
     const keptRunId = kept.body.result.runId;
     expect(keptRunId).toMatch(/^drive-/);
     openedTabs.push(keptTab);
@@ -179,7 +179,7 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     const claimed = await exec(dependencies, stdout, stderr, {
       sessionId: claimId,
       name: "use_tab",
-      args: { tabId: userTab },
+      args: { tabRef: userTab },
     }, "60");
     expect(claimed.code, claimed.text || stderr.text).toBe(0);
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {

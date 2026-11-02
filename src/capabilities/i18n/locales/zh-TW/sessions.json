@@ -229,7 +229,7 @@
   "sessions.externalDrive": "外部直驅",
   "sessions.externalDriveReadOnly": "這個工作階段由外部用戶端直接操作，這裡只能查看。",
   "sessions.externalDriveWelcomeTitle": "由外部 agent 直接操作",
-  "sessions.externalDriveWelcomeBody": "這個工作階段由外部 agent 透過 MCP 或 qz CLI 直接操作。在終端機執行下面的命令完成綁定。",
+  "sessions.externalDriveWelcomeBody": "這個工作階段由外部 agent 透過 MCP 或 qz CLI 直接操作。安裝或更新說明書：npx skills add alibaba/qz-browser-agent -g。再在終端機執行下面的命令完成綁定。",
   "sessions.externalDriveWelcomeCommandHint": "綁定目前的瀏覽器",
   "sessions.externalDriveWelcomeCopy": "複製",
   "sessions.externalDriveWelcomeCopied": "已複製"

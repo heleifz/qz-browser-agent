@@ -125,8 +125,17 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
     if (!Array.isArray(params.calls)) params.args ||= {};
     const displayName = String(clientName || "").trim();
     if (displayName) params.clientName = displayName;
-    return asyncTool ? { ...state.startExtensionJob("execute_tool", params, { ...options, connectionSignal }), sessionId: args.sessionId, clientId }
-      : state.callExtension("execute_tool", params, options);
+    const requestTimeout = driveExtensionTimeoutSeconds(params, args.timeoutSeconds || state.requestTimeoutSeconds || 180);
+    const callOptions = { ...options, timeoutSeconds: requestTimeout };
+    const invoke = () => asyncTool
+      ? { ...state.startExtensionJob("execute_tool", params, { ...callOptions, connectionSignal }), sessionId: args.sessionId, clientId }
+      : state.callExtension("execute_tool", params, callOptions);
+    try {
+      return await invoke();
+    } catch (error) {
+      if (error?.code === "DRIVE_SESSION_BUSY") return await invoke();
+      throw error;
+    }
   }
   const method = name === "qingzhou_abort_session" ? "stop_session" : name.slice("qingzhou_".length);
   let result = await state.callExtension(method, params, options);
@@ -245,7 +254,29 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。默认把操作、等待和取数写进一次 run_script（target 为 inner），只 return 需要的字段。单次调用只用于一两步或调试。Call qingzhou_guide once, then prefer one inner run_script.";
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。连上之后用 open_tab 和 get_ax_tree。页面工具必须带 tabRef。open_tab 用 tabAlias。页面脚本只跑 page。不要使用 target inner。Call qingzhou_guide once, then drive with open_tab and get_ax_tree. Page tools require tabRef. open_tab uses tabAlias. Page scripts run on the page.";
+
+/** Node waits at least as long as a page script plus 60 seconds, and never rewrites the extension payload timeout. */
+export function driveExtensionTimeoutSeconds(params, fallback = 180) {
+  const client = Number(params?.timeoutSeconds);
+  const base = Number.isFinite(client) && client > 0 ? client : Number(fallback) || 180;
+  const scripts = [];
+  if (params?.name === "run_script") scripts.push(params.args);
+  if (Array.isArray(params?.calls)) {
+    for (const call of params.calls) if (call?.name === "run_script") scripts.push(call.args);
+  }
+  let scriptMax = 0;
+  let unlimited = false;
+  for (const raw of scripts) {
+    const timeout = Number(raw && typeof raw === "object" ? raw.timeout : undefined);
+    if (!Number.isFinite(timeout)) continue;
+    if (timeout <= 0) unlimited = true;
+    else scriptMax = Math.max(scriptMax, timeout);
+  }
+  if (unlimited) return 86400;
+  if (scriptMax > 0) return Math.max(base, scriptMax + 60);
+  return base;
+}
 
 export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   const explicit = String(profile || "").trim().toLowerCase();

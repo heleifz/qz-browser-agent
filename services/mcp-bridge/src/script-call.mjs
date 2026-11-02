@@ -21,12 +21,17 @@ export function catalogExecRoute(payload) {
   return { tool, args };
 }
 
-/** Build the same run_script call qingzhou_execute_tool accepts. */
-export function buildScriptRequest({ code = "", timeoutSeconds = 120, sessionId = "" } = {}) {
+/** Build the same page run_script call qingzhou_execute_tool accepts. tabRef is required. */
+export function buildScriptRequest({ code = "", timeoutSeconds = 120, sessionId = "", tabRef = "" } = {}) {
+  const ref = typeof tabRef === "string" ? tabRef.trim() : tabRef;
+  if (ref == null || ref === "") {
+    throw new Error("qz script requires --tab TABREF. Pass an alias or a numeric tab id.");
+  }
   const request = {
     name: "run_script",
     args: {
-      target: "inner",
+      target: "page",
+      tabRef: ref,
       timeout: timeoutSeconds,
       code: String(code),
     },

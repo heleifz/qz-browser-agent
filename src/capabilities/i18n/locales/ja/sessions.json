@@ -229,7 +229,7 @@
   "sessions.externalDrive": "外部",
   "sessions.externalDriveReadOnly": "このセッションは外部クライアントが直接操作しています。ここでは閲覧のみです。",
   "sessions.externalDriveWelcomeTitle": "外部エージェントが直接操作します",
-  "sessions.externalDriveWelcomeBody": "このセッションは外部エージェントが MCP または qz CLI から直接操作します。ターミナルで次のコマンドを実行して接続します。",
+  "sessions.externalDriveWelcomeBody": "このセッションは外部エージェントが MCP または qz CLI から直接操作します。説明書のインストールまたは更新: npx skills add alibaba/qz-browser-agent -g。その後、ターミナルで次のコマンドを実行して接続します。",
   "sessions.externalDriveWelcomeCommandHint": "このブラウザを接続",
   "sessions.externalDriveWelcomeCopy": "コピー",
   "sessions.externalDriveWelcomeCopied": "コピーしました"

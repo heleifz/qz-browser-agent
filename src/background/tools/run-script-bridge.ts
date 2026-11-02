@@ -1,4 +1,4 @@
-import { isDriveToolForbidden, projectNamedDriveResult } from "../mcp/external-drive.js";
+import { driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -105,19 +105,25 @@ export function createRunScriptBridge({
       language = toolContext.language || language;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
+      const tools = [];
+      for (const schema of toolRuntime.getSchemas(toolContext)) {
+        const name = schema.function?.name || "";
+        if (!name || (driveRun && !isDriveToolDefault(name))) continue;
+        tools.push(driveRun
+          ? driveToolSignature({
+            name,
+            description: schema.function?.description || "",
+            parameters: schema.function?.parameters || {},
+          })
+          : {
+            name,
+            description: schema.function?.description || "",
+            parameters: schema.function?.parameters || {},
+          });
+      }
       return {
         ok: true,
-        result: {
-          tools: toolRuntime.getSchemas(toolContext).flatMap(schema => {
-            const name = schema.function?.name || "";
-            if (driveRun && isDriveToolForbidden(name)) return [];
-            return [{
-              name,
-              description: schema.function?.description || "",
-              parameters: schema.function?.parameters || {},
-            }];
-          }),
-        },
+        result: { tools },
         isError: false,
       };
     }
@@ -136,7 +142,19 @@ export function createRunScriptBridge({
       language = toolContext.language || language;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
-      const toolArgs = plainObject(message.args);
+      let toolArgs = plainObject(message.args);
+      if (driveRun && toolName !== "__list_tools__") {
+        const prepared = prepareDriveToolCall(toolName, toolArgs);
+        if (!prepared.ok) {
+          const failure = prepared.error as Error & { code?: string };
+          return respondFailure({
+            error: failure.message,
+            code: failure.code || "DRIVE_TAB_REF_REQUIRED",
+            details: { toolName },
+          }, { toolName });
+        }
+        toolArgs = prepared.args;
+      }
       const definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: toolContext.skillToolRegistrySnapshot, toolRegistrySnapshot: toolContext.toolRegistrySnapshot, language: toolContext.language });
       const result = await toolRuntime.execute(toolName, toolArgs, signal, {
         ...toolContext,

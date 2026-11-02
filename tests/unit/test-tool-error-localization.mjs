@@ -54,11 +54,13 @@ for (const code of [...codes].sort()) {
   assert.notEqual(label, code, `code should not be shown raw: ${code}`);
   assert.equal(label.includes("_"), false, `localized label should not contain underscores: ${code}`);
 }
-for (const [language, label] of [
-  ["zh-CN", "直驱不能调用此工具"],
-  ["en", "Direct drive cannot call this tool"],
+for (const [language, forbidden, target, tabRef] of [
+  ["zh-CN", "直驱不能调用此工具", "直驱脚本只跑页面", "直驱需要页面"],
+  ["en", "Direct drive cannot call this tool", "Page scripts only", "Page reference required"],
 ]) withLanguage(language, () => {
-  assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), label);
+  assert.equal(localizeToolFailureCode("DRIVE_TOOL_FORBIDDEN"), forbidden);
+  assert.equal(localizeToolFailureCode("DRIVE_RUN_SCRIPT_TARGET"), target);
+  assert.equal(localizeToolFailureCode("DRIVE_TAB_REF_REQUIRED"), tabRef);
 });
 
 assert.equal(localizeToolFailureCode("TOOL_NOT_EXECUTED"), "工具未执行");
@@ -152,6 +154,42 @@ for (const [language, label, message] of [
   assert.equal(skillT("skillNameAmbiguous", { name: "Shared title", names: "rt1, rt2" }), message);
 });
 
+for (const [language, syntax, failed] of [
+  ["zh-CN", "脚本语法错误。", "脚本执行失败。"],
+  ["en", "The script has a syntax error.", "The script failed."],
+]) withLanguage(language, () => {
+  const reference = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "ReferenceError: price is not defined",
+    details: { lineNumber: 4 },
+  });
+  assert.match(reference.error, /price is not defined/);
+  assert.equal(reference.error.includes("未定义的变量") || reference.error.includes("undefined variable"), false);
+
+  const typeError = localizeToolFailureText(
+    "TypeError: Cannot read properties of undefined (reading 'title')",
+    { code: "SCRIPT_EVALUATION_FAILED" },
+  );
+  assert.match(typeError, /reading 'title'/);
+
+  const safari = localizeToolFailureText("ReferenceError: Can't find variable: tools", { code: "SCRIPT_EVALUATION_FAILED" });
+  assert.match(safari, /tools/);
+
+  const unset = localizeToolFailureText("price is not defined");
+  assert.match(unset, /price/);
+
+  assert.equal(localizeToolFailureText("SyntaxError: Unexpected token", { code: "SCRIPT_EVALUATION_FAILED" }), syntax);
+  assert.equal(localizeToolFailureText("Script evaluation failed", { code: "SCRIPT_EVALUATION_FAILED" }), failed);
+  const restored = localizeToolFailurePayload({
+    ok: false,
+    code: "SCRIPT_EVALUATION_FAILED",
+    error: "Script evaluation failed: ReferenceError: price is not defined",
+  });
+  assert.equal(restored.error, failed);
+  assert.match(restored.details.originalError, /price is not defined/);
+});
+
 console.log("tool error localization tests passed");
 
 for (const [details, message] of [
@@ -183,16 +221,18 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
 
 {
   const messages = {}, labels = {};
-  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch", "conflicting_target"]) {
+  for (const reason of ["unknown_reference", "duplicate_alias", "forward_reference", "invalid_alias", "invalid_reference", "ambiguous_target", "outside_batch", "conflicting_target", "no_alias"]) {
     const payload = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason, tabRef: "a" } });
     messages[reason] = payload.error;
     labels[reason] = payload.codeLabel;
     assert.ok(!payload.error.includes("{tabRef}"), `${reason} interpolates tabRef`);
     assert.ok(payload.codeLabel && !payload.codeLabel.includes("BATCH_TAB"), `${reason} label stays human-readable`);
   }
-  assert.equal(new Set(Object.values(messages)).size, 8, "every reference reason owns its message");
-  assert.equal(new Set(Object.values(labels)).size, 8, "every reference reason owns its label");
+  assert.equal(new Set(Object.values(messages)).size, 9, "every reference reason owns its message");
+  assert.equal(new Set(Object.values(labels)).size, 9, "every reference reason owns its label");
   assert.equal(messages.unknown_reference, "当前任务没有已打开或本批待创建的别名「a」。请检查名称，或在 tabRef 中使用已返回的浏览器数字 ID。");
+  assert.equal(messages.no_alias, "本会话还没有页面别名。省略 tabRef，或先 open_tab。");
+  assert.equal(messages.outside_batch, "tabRef「a」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。");
   assert.equal(labels.duplicate_alias, "tabAlias 重复");
   const generic = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { tabRef: "a" } });
   assert.equal(generic.codeLabel, "标签页引用无法解析");

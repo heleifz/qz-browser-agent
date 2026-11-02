@@ -335,6 +335,7 @@ const driveBridge = createRunScriptBridge({
   toolRuntime: {
     resolveDefinition: () => ({ behavior: {} }),
     getSchemas: () => [
+      { function: { name: "open_tab", description: "Open a tab\nsecond", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
       { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
       { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
     ],
@@ -366,9 +367,18 @@ const driveList = await driveBridge.handleToolCall({
   sessionId: "s1",
   runId: "drive-1",
 });
-assert.deepEqual(driveList.result.tools.map(tool => tool.name), ["read_dom"]);
+assert.deepEqual(driveList.result.tools, [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }]);
+const missingPage = await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(missingPage.ok, false);
+assert.equal(missingPage.code, "DRIVE_TAB_REF_REQUIRED");
+assert.deepEqual(driveExecutions, []);
 assert.equal((await driveBridge.handleToolCall({
   toolName: "read_dom",
+  args: { tabRef: "page" },
   sessionId: "s1",
   runId: "drive-1",
 })).ok, true);
@@ -380,7 +390,7 @@ const driveTabs = await driveBridge.handleToolCall({
   runId: "drive-1",
 });
 assert.deepEqual(driveTabs.result, {
-  tabs: [{ id: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html" }],
+  tabs: [{ tabRef: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html" }],
   count: 1,
   foreign: 1,
 });

@@ -204,8 +204,10 @@ test("qz script request timeout outlasts the script timeout", async () => {
       return { sessionId: "s", result: { ok: true, result: 1 } };
     },
   });
-  assert.equal(await main(["script", "--timeout", "5"], timed), 0);
+  assert.equal(await main(["script", "--tab", "page", "--timeout", "5"], timed), 0);
   assert.equal(calls[0].name, "qingzhou_execute_tool");
+  assert.equal(calls[0].args.args.target, "page");
+  assert.equal(calls[0].args.args.tabRef, "page");
   assert.equal(calls[0].args.args.timeout, 5);
   assert.equal(calls[0].args.timeoutSeconds, 65);
   assert.equal(calls[0].timeoutMs, 65000);
@@ -216,7 +218,9 @@ test("qz script request timeout outlasts the script timeout", async () => {
       return { result: { ok: true, result: 1 } };
     },
   });
-  assert.equal(await main(["script"], defaults), 0);
+  assert.equal(await main(["script", "--tab", "page"], defaults), 0);
+  assert.equal(calls[1].args.args.target, "page");
+  assert.equal(calls[1].args.args.tabRef, "page");
   assert.equal(calls[1].args.args.timeout, 120);
   assert.equal(calls[1].args.timeoutSeconds, 180);
   assert.equal(calls[1].timeoutMs, 180000);

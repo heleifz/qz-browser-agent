@@ -139,9 +139,9 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
 
 ## 让你的 Agent 更会用浏览器
 
-Grok Bot、Claude Code、Codex、pi 等 Agent 遇到网页任务时，可以把它交给轻舟。轻舟在你的浏览器侧边栏里执行，过程看得见，结果再交回给 Agent，让它接着往下做。
+Grok Bot、Claude Code、Codex、pi 等 Agent 可以直接操作已经连接的浏览器。这一份 Skill 就是直驱说明书：开标签、读页面，用 `qz script` 或 MCP 操作。需要轻舟内置 agent 规划执行时，同一份 Skill 会指向 `references/create-task.md`。
 
-1. **安装 Skill**：让你的 Agent 学会怎么调用轻舟。
+1. **安装这一份 Skill**。它就是直驱说明书。
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```
