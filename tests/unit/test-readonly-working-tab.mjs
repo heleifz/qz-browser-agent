@@ -14,7 +14,7 @@ globalThis.chrome = {
   tabs: {
     async get(id) { return tabsById.get(id); },
     async sendMessage(tabId, message) {
-      if (message?.action === "ping") return { ok: true };
+      if (message?.action === "ping") return { ok: true, contentType: "text/html" };
       if (message?.action === "listImageElements") {
         const tab = tabsById.get(tabId);
         return {

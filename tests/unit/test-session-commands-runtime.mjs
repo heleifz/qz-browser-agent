@@ -54,6 +54,7 @@ await stopPortOrderingAndIdleNoOp();
 await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
 await externalDriveSessionsRejectBuiltInMessages();
+await idleDriveStopPersistsTerminalState();
 
 console.log("session command runtime integration tests passed");
 
@@ -2009,6 +2010,20 @@ async function externalDriveSessionsRejectBuiltInMessages() {
   await admitted.promise;
 }
 
+async function idleDriveStopPersistsTerminalState() {
+  const persisted = [];
+  const f = createFixture({ persistSessionRuntime: (id, options) => persisted.push({ id, options, state: { ...f.runtimes.get(id) } }) });
+  await f.repository.createMetadata({ id: 'idle-drive', source: 'external-drive' });
+  const result = await f.commands.stopSessionRuntime('idle-drive', { keepTabs: true });
+  assert.equal(result.status, 'aborted');
+  assert.equal(result.stopped, true);
+  assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true);
+  await f.commands.stopSessionRuntime('idle-drive');
+  assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true, 'repeated cancel preserves the original keep decision');
+  assert.ok(persisted.some(item => item.id === 'idle-drive' && item.options.terminal && item.state.status === 'aborted'));
+  assert.equal(f.agents.has('idle-drive'), false);
+}
+
 function createFixture(options = {}) {
   const baseRepository = createSessionRepository({ storage: options.storage || createMemoryStorage() });
   const repository = options.wrapRepository?.(baseRepository) || baseRepository;
@@ -2252,6 +2267,7 @@ function createFixture(options = {}) {
         };
       },
       closeOwnedTabsAfterTerminal: async (id, reason) => closedTabs.push([id, reason]),
+      settleStoppedDriveTabs: async (id, options) => closedTabs.push([id, options]),
     },
     sessionRuntimeReady: Promise.resolve(),
     sessionSupervisor: supervisor,

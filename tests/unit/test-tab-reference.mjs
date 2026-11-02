@@ -48,6 +48,9 @@ function fixture({ metadataReady = async () => {}, skillToolRegistrySnapshot } =
   register({ name:'read_ref', description:'read', page:'tab', behavior:{parallelRead:true},
     parameters:{type:'object',properties:{tabId:{type:'number'},target:{type:'string'}},required:['tabId']},
     execute(args){ executed.push({name:'read',...args}); return {tabId:args.tabId}; } });
+  register({ name:'no_page', description:'metadata',
+    parameters:{type:'object',properties:{}},
+    execute(args){ executed.push({name:'no_page',...args}); return {ok:true}; } });
   register({ name:'close_ref', description:'close', page:'tab',behavior:{parallelTab:true},
     parameters:{type:'object',properties:{tabId:{type:'number'}},required:['tabId']},
     async execute(args){await tabsApi.remove(args.tabId);return {closed:true};} });
@@ -193,7 +196,6 @@ test('Skill page alias consumers remain commit barriers in an Agent batch', asyn
 for (const [localName, tabRef, reason] of [
   ...pageSkillNames.map(name => [name, 'missing', 'unknown_reference']),
   ...['bad ref', 0, -1, 1.5, null, {}].map(ref => ['page', ref, 'invalid_reference']),
-  ...['inner', 'host', 'mcp', 'no_page'].map(name => [name, 'dy', 'invalid_reference']),
 ]) test(`Skill ${localName} rejects ${JSON.stringify(tabRef)} as ${reason} before dispatch`, async () => {
   const f = fixture({ skillToolRegistrySnapshot });
   await f.run([open('dy')]);
@@ -204,6 +206,18 @@ for (const [localName, tabRef, reason] of [
   assert.equal(end.result.code, 'BATCH_TAB_REFERENCE_ERROR');
   assert.equal(end.result.details.reason, reason);
   assert.equal(f.executed.filter(item => item.name === 'skill').length, 0);
+});
+
+test('page-independent calls validate and discard references in direct and batch execution', async () => {
+  const f = fixture();
+  await f.run([open('page'), call('metadata', 'no_page', { tabRef: 'page' })]);
+  assert.equal(f.events.filter(e => e.type === 'tool_execution_end').at(-1).isError, false);
+  assert.deepEqual(f.executed.at(-1), { name: 'no_page' });
+  await f.execute('no_page', { tabRef: 'page' });
+  assert.deepEqual(f.executed.at(-1), { name: 'no_page' });
+  await assert.rejects(f.execute('no_page', { tabRef: 'unknown' }), error => error.details.reason === 'unknown_reference');
+  await f.run([call('metadata', 'no_page', { tabRef: 'later' }), open('later')]);
+  assert.equal(f.events.filter(e => e.type === 'tool_execution_end').at(-2).result.details.reason, 'forward_reference');
 });
 
 for (const ref of [123,'123','00123']) test(`numeric reference ${JSON.stringify(ref)} uses the browser ID`,()=>{

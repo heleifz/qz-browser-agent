@@ -831,6 +831,10 @@ const mcpRuntime = createMcpRuntime({
   storageKey: qingzhouMcpBridgeStorageKey,
 });
 
+sessionRuntimeReady.then(() => mcpRuntime.restoreDriveSessions()).catch(error => {
+  console.warn("[轻舟] restore drive cleanup failed:", error);
+});
+
 const mcpResources = createMcpResourceRuntime();
 const mcpManagement = createMcpManagementRuntime({
   config: configRuntime,

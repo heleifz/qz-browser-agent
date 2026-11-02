@@ -1994,6 +1994,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     if (extra && !driveRunIds.includes(extra)) driveRunIds.push(extra);
   }
 
+  const externalDrive = (await getSessions())[id]?.source === "external-drive";
+  let keepDriveTabs = meta.keepTabs === true;
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
   let runId = before.runId || null;
@@ -2008,10 +2010,12 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};
       const checkpoint = sessionSupervisor.getRuntime(id) || before;
+      if (externalDrive && checkpoint.status === "aborted") keepDriveTabs = object(checkpoint).driveKeepTabs === true;
       pendingFollowUpMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingFollowUpMessages);
       pendingSteeringMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingSteeringMessages);
       hadRuntime = Boolean(
-        snapshot.hadTask
+        externalDrive
+        || snapshot.hadTask
         || checkpoint.running
         || isActiveSessionRuntimeStatus(checkpoint.status)
         || checkpoint.waitId
@@ -2024,6 +2028,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
       if (checkpoint.waitId) sessionSupervisor.rejectUserWait({ sessionId: id, waitId: String(checkpoint.waitId) });
       runtimeState.set(id, {
+        ...(externalDrive ? { driveKeepTabs: keepDriveTabs } : {}),
         status: "aborted",
         running: false,
         pendingStart: false,
@@ -2093,7 +2098,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
       if (!external && !hadRuntime) return;
       if (external) {
         await sessionTabs.settleStoppedDriveTabs(id, {
-          keepTabs: meta.keepTabs === true,
+          keepTabs: keepDriveTabs,
           source: "stop_session",
           runIds: driveRunIds,
           blocked: () => externalDriveLeaseActive(id),

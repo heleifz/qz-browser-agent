@@ -212,7 +212,7 @@ test("drive catalog page requirements agree with execution, including URL-only i
       assert.equal(prepareDriveToolCall(tool.name, { tabRef: "page" }).ok, true, tool.name);
     }
   }
-  for (const name of ["open_tab", "list_tabs", "act_on_screen", "get_working_tab", "wait_until"]) {
+  for (const name of ["open_tab", "list_tabs", "get_working_tab", "wait_until"]) {
     const tool = schemas.find(schema => schema.function.name === name).function;
     assert.equal(prepareDriveToolCall(name, {}).ok, true);
     assert.doesNotMatch(driveToolSignature(tool).signature, /\btabRef:/, name);
@@ -738,17 +738,19 @@ test("a second batch on the same session is rejected before another session is",
   });
 });
 
-test("an old drive release cannot clear a newer lease", () => {
+test("stop is terminal and a late release cannot resurrect the session", () => {
   const drive = createExternalDriveCoordinator();
   const first = drive.begin("s");
+  assert.equal(drive.noteStopped("s", { source: "drive_idle" }), false);
+  assert.equal(drive.isBusy("s"), true);
   drive.noteStopped("s", { source: "user" });
-  const second = drive.begin("s");
+  assert.equal(first.signal.aborted, true);
   first.release();
-  assert.equal(drive.isBusy("s"), true);
-  drive.noteStopped("s", { source: "drive_idle" });
-  assert.equal(drive.isBusy("s"), true);
-  second.release();
   assert.equal(drive.isBusy("s"), false);
+  assert.throws(() => drive.begin("s"), { code: "DRIVE_SESSION_ENDED" });
+  const restarted = createExternalDriveCoordinator({ getRuntime: () => ({ status: "aborted" }) });
+  assert.throws(() => restarted.begin("s"), { code: "DRIVE_SESSION_ENDED" });
+  assert.doesNotThrow(() => drive.begin("other").release());
 });
 
 test("a drive run id is current only until stop clears it", () => {
@@ -1130,7 +1132,8 @@ test("production normalization creates fresh isolated sessions even with an occu
       supervisor,
       listMetadata: repository.listMetadata,
       createMetadata: repository.createMetadata,
-      getRuntime: () => ({ status: "idle" }),
+      setRuntime: (id, patch) => supervisor.setRuntime(id, { ...supervisor.getRuntime(id), ...patch }),
+      getRuntime: id => supervisor.getRuntime(id) || { status: "idle" },
     },
     tools: {
       canManageSessions: async () => false,
@@ -1210,6 +1213,10 @@ test("production normalization creates fresh isolated sessions even with an occu
   const executed = executions;
   for (const method of ["executeTool", "listTools", "getTool"]) {
     for (const sessionId of [undefined, "", " ", "misspelled"]) {
+      if (method !== "executeTool" && sessionId === undefined) {
+        await runtime[method]({ name: "list_tabs" });
+        continue;
+      }
       await assert.rejects(runtime[method]({ sessionId, name: "list_tabs", args: {} }), error => {
         assert.equal(error.code, sessionId === "misspelled" ? "DRIVE_SESSION_NOT_FOUND" : "DRIVE_SESSION_REQUIRED");
         assert.match(error.message, /qz session create/);

@@ -45,6 +45,7 @@ export interface ElementAccess {
   ) => Promise<T>): Promise<T>;
   readMainDocumentId(tabId: number): Promise<string>;
 }
+export { assertHtmlPage } from "../../background/tools/page-access.js";
 export { waitForParsedDocument } from "../../background/tools/document-readiness.js";
 export { ensureOffscreenDocument } from "../../background/services/offscreen-document.js";
 export { createCdpKeyboard, primaryModifierForContext } from "../../background/tools/cdp-keyboard.js";

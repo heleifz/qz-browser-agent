@@ -275,6 +275,9 @@ registerTool({
     };
   },
   validateArgs: ({ target = "", actionable = false }) => {
+    if (String(target).trim() === "viewport") {
+      throw new ToolExecutionError("SCREENSHOT_TARGET_INVALID", toolT("screenshotViewportTarget"));
+    }
     if (!String(target || "").trim() || !actionable) return;
     throw new ToolExecutionError(
       "SCREENSHOT_COORDINATES_UNAVAILABLE",
@@ -294,6 +297,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
+      tabId: { type: "number", description: toolT("actOnScreenTab") },
       action: { type: "string", enum: ["click", "double_click", "long_press", "hover", "type", "press", "scroll", "drag"] },
       returnScreenshot: { type: "boolean", description: toolT("actOnScreenReturnScreenshot") },
       x: { type: "number", minimum: 0, description: toolT("actOnScreenX") },
@@ -477,6 +481,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
+      tabId: { type: "number", description: toolT("listImagesTabId") },
       table: { type: "string", description: toolT("collectImagesTable") },
       targets: { type: "array", items: { type: "string" }, description: toolT("collectImagesTargets", { targetDescription: getElementTargetDescription() }) },
       urls: { type: "array", items: { type: "string" }, description: toolT("collectImagesUrls") },
@@ -508,7 +513,7 @@ registerTool({
       format = "jpeg",
       quality = 0.88,
     } = args || {};
-    const { tabId } = args as typeof args & { tabId?: number };
+    const { tabId } = args;
     const tableDefaulted = !String(table || "").trim();
     const tableName = resolveImageCollectionTableName(table);
     const targetList = [...new Set(normalizeStringList(targets))];

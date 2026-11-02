@@ -49,7 +49,7 @@ open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ
 
 先 `qz session create`，stdout 打出 `sessionId <id>`；`--json` 则取 result.sessionId。MCP 调 qingzhou_create_drive_session，取返回的 sessionId。每次 create 都创建新会话，不启动模型。
 
-后续每次 `qz script --session ID`、`qz exec --session ID`、`qz tools --session ID` 都带同一 ID；MCP 对应调用显式传同一个 sessionId。漏掉 `--session` 退出码 2，不会新建，也不会沿用上次会话。不存在的 ID 返回 DRIVE_SESSION_NOT_FOUND；检查 ID 和浏览器选择，不要自造 ID。换新任务再 create，并行的独立任务各自创建会话。
+后续每次 `qz script --session ID`、`qz exec --session ID`、`qz tools --session ID` 都带同一 ID；MCP 执行工具时显式传同一个 sessionId；qingzhou_list_tools / qingzhou_get_tool 可不带会话查询基础目录；按名查询已加载 Skill 的工具时，qingzhou_get_tool 带 sessionId。漏掉 `--session` 退出码 2，不会新建，也不会沿用上次会话。不存在的 ID 返回 DRIVE_SESSION_NOT_FOUND；检查 ID 和浏览器选择，不要自造 ID。换新任务再 create，并行的独立任务各自创建会话。
 
 ### 可复制的黄金路径（Bash/Zsh）
 
@@ -76,17 +76,17 @@ JS
 
 `open_tab` 成功时看 tabRef，不是 id。tabAlias 建议写上，便于阅读，但不是必填。下一步使用别名，或 open_tab/list_tabs 返回的 tabRef。别名是 1–64 个字母、数字、下划线或连字符，不能全为数字；关闭标签后失效。tabRef 也可为返回的正整数或其数字字符串，不能凭空猜值。直驱结果用 tabRef 标识页面。
 
-页面工具始终传 `tabRef`。一批中每项都传自己的页面引用；缺失时返回 DRIVE_TAB_REF_REQUIRED。open_tab 不传 tabRef；list_tabs、list_skills、load_skill、wait、wait_until 不需要页面引用；read_image 传 url 时也不需要。act_on_screen 使用截图坐标凭据，没有 tabRef 参数。
+页面工具（包括 act_on_screen）始终传 `tabRef`。一批中每项都传自己的页面引用；缺失时返回 DRIVE_TAB_REF_REQUIRED。open_tab、list_tabs、list_skills、load_skill、wait、wait_until 不需要页面引用；read_image 传 url、collect_images 仅传 urls 时也不需要。非页面调用若带 tabRef，验证后忽略，不改变工具含义；wait 仍只等待指定时长，等页面加载用 wait_for_navigation。
 
 同一标签只归一个会话，后来者失败，不中断先占用者。查看用户标签用 list_tabs({scope:"all"})，接管前查询 use_tab 的签名和归属要求。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,alias,title,url}],count,foreign}`。
 
 ## 发现工具与常用参数
 
-`qz tools --session "$SID"`、qingzhou_list_tools({sessionId})、脚本 tools.$list() 默认返回短签名，不是完整 JSON Schema：
+`qz tools --session "$SID"`、qingzhou_list_tools({})（或带 sessionId）、脚本 tools.$list() 默认返回短签名，不是完整 JSON Schema：
 
 open_tab、navigate、list_tabs、close_tab、use_tab、get_ax_tree、find_elements、read_article、act_on_element、scroll_page、screenshot、wait_for_element、wait_for_navigation、run_script、load_skill、list_skills。
 
-说明书档不在默认列表但仍可按名查询：`qz tools --session "$SID" wait_until`，或 qingzhou_get_tool({sessionId,name:"wait_until"})。包括 read_dom、inspect_element、act_on_screen、get_working_tab、wait、wait_for_response、wait_for_network_idle、wait_until、文档工具、list_images、collect_images、read_image、data_store、download_url、save_file、network_*、browse_history、set_page_mode、send_alert、load_skill_resource。get_working_tab 仅查询页面，不替代显式引用；wait_until 的 until 是带时区的绝对时间。
+说明书档不在默认列表但仍可按名查询：`qz tools --session "$SID" wait_until`，或 qingzhou_get_tool({sessionId,name:"wait_until"})。包括 read_dom、inspect_element、act_on_screen、get_working_tab、wait、wait_for_response、wait_for_network_idle、wait_until、文档工具、list_images、collect_images、read_image、read_image_asset、data_store、download_url、list_downloads、save_file、network_watch、network_recent、network_body、read_console_messages、browse_history、set_page_mode、get_location、send_alert、load_skill_resource。get_working_tab 仅查询页面，不替代显式引用；wait_until 的 until 是带时区的绝对时间。
 
 - open_tab({url,tabAlias?})、navigate({tabRef,url})：url 用 http/https。
 - read_article({tabRef,limit:6000})：读正文；跟随 nextOffset 分段续读，不用树代替全文。
@@ -96,7 +96,7 @@ open_tab、navigate、list_tabs、close_tab、use_tab、get_ax_tree、find_eleme
 - wait_for_element({tabRef,selector,timeout?,absent?})：selector 是 CSS 或 css:，不是 uid:。普通等待检查 found；absent:true 成功时 found 也是 false，必须检查 timedOut 是否为 true，不能把超时当成功消失。
 - wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?})：等加载完成，不是等 URL 变化。调用时已经加载就立即返回 already_complete，不能证明上一动作成功。用 fromUrl 比较 urlChanged，再读页面确认结果。
 
-导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。能写可靠 CSS 就直接用，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。默认超过约 48000 字符的结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取。
+导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。能写可靠 CSS 就直接用，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。截视口不传 target；截元素传 uid: 或 css: 目标。默认超过约 48000 字符的结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取。
 
 ## calls 是批次，不是事务
 
@@ -141,7 +141,7 @@ JSON
 
 ## PDF：先加载文档 Skill
 
-先发现并加载 Skill；文档工具只在加载后可用。不要用 PDF 查看器的页面树代替文档正文。以下 URL/ID 是占位值：替换 URL，逐步取返回值再填写下一条，不要原样提交 FILE_ID/DOC_MODEL_ID。
+先发现并加载 Skill；文档工具只在加载后可用。PDF 阅读器不支持正文读取或页面操作；遇到 PDF_PAGE_UNSUPPORTED / 无法注入脚本时，用 qingzhou-documents 文档工具读取原始 PDF URL，不要换 CORS 代理或在线查看器。以下 URL/ID 是占位值：替换 URL，逐步取返回值再填写下一条，不要原样提交 FILE_ID/DOC_MODEL_ID。
 
 ```sh
 qz exec --session "$SID" '{"name":"list_skills","args":{}}'
@@ -171,14 +171,15 @@ script stdout 直接是返回值；exec 的脚本值在 result.result.result，M
 
 MCP 连接与业务 Session 不同：每个 CLI 进程会关闭自己的连接，**不会立即关闭业务标签**。同任务下一个进程继续显式带同一 sessionId。业务调用结束后空闲约 30 分钟，运行中的扩展会触发该会话清理；不要把传输连接结束当成清理完成的保证。
 
-任务完成后 `qz cancel "$SID"` 显式停止并清理本会话；或用 `qz exec --session "$SID" '{"name":"close_tab","args":{"tabRef":"page"}}'` 只关指定标签。要保留打开的标签，用 full MCP 的 qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false})，full 地址由 qz mcp --profile full 获取。不要用全局 qz stop 收尾。
+任务完成只需 `qz cancel "$SID"`：结束会话并清理标签，不要再 close_tab。close_tab 仅用于会话进行中关闭单个标签；结束后执行工具返回 DRIVE_SESSION_ENDED，新任务重新 create。要保留打开的标签，用 full MCP 的 qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false})，full 地址由 qz mcp --profile full 获取。不要用全局 qz stop 收尾。
 
-清理默认关闭本会话 open_tab 创建的标签；use_tab 接管的或用户原有的标签只释放租约，不自动关闭。用户主动激活标签会交还，自动化停止，标签保留。隔天视为新任务：qz connect，然后重新 create；昨天剩下的标签组是普通用户标签，不假定旧别名有效。
+清理默认关闭本会话 open_tab 创建的标签；use_tab 接管的或用户原有的标签只释放租约，不自动关闭。用户主动激活标签会交还，自动化停止，标签保留。扩展重启后恢复空闲清理期限，过期会话清理其创建的标签；显式保留或交还用户的标签不动。隔天视为新任务：qz connect，然后重新 create，不复用旧别名。
 
 错误只修一处再试，保留 code 和原句：
 
 - 未连接：qz connect，不循环重试、不配置模型。
 - DRIVE_SESSION_REQUIRED：先 create，携带 ID。DRIVE_SESSION_NOT_FOUND：检查 ID/浏览器；新任务重新 create。
+- DRIVE_SESSION_ENDED：会话已结束，无需补关标签；新任务重新 create。
 - DRIVE_SESSION_OCCUPIED：此 ID 是普通任务，改用 create 得到新 ID。
 - DRIVE_SESSION_BUSY：已有调用在飞；桥接最多自动重试一次，仍忙就等当前批次结束。
 - DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS：name 与 calls 二选一；每项 id/name、对象 args；一批最多 10 项。
@@ -239,7 +240,7 @@ qz skill and MCP qingzhou_guide return this guide. Read once on a new connection
 
 Run `qz session create` first: stdout prints `sessionId <id>`. With --json, read result.sessionId. On MCP call qingzhou_create_drive_session and read sessionId. Each create makes a new session without starting a model.
 
-Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID; corresponding MCP calls pass the same sessionId. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
+Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID; MCP tool execution passes the same sessionId. qingzhou_list_tools / qingzhou_get_tool may omit it for the base catalog. To inspect a loaded Skill tool by name, pass sessionId to qingzhou_get_tool. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
 
 ### Copyable golden path (Bash/Zsh)
 
@@ -266,17 +267,17 @@ JS
 
 A successful open_tab returns tabRef, not id. `tabAlias` is recommended for readability and is not required. Use that alias or the tabRef returned by open_tab/list_tabs next. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. A returned positive integer or its numeric string is also a tabRef; never guess one. Direct-drive results name the page with tabRef.
 
-Page tools always pass `tabRef`, including each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab takes no tabRef. list_tabs, list_skills, load_skill, wait and wait_until need no page reference; read_image with url also needs none. act_on_screen uses screenshot coordinate credentials and has no tabRef parameter.
+Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. Page-independent calls validate a supplied tabRef, then ignore it. wait still waits only for a duration; use wait_for_navigation for page loading.
 
 One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect user tabs and query use_tab's signature/ownership requirements before claiming one. Default list_tabs returns `{tabs:[{tabRef,alias,title,url}],count,foreign}` for this session.
 
 ## Discover tools and use their parameters
 
-`qz tools --session "$SID"`, qingzhou_list_tools({sessionId}), and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
+`qz tools --session "$SID"`, qingzhou_list_tools({}) (or with sessionId), and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
 
 open_tab, navigate, list_tabs, close_tab, use_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
 
-Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until` or qingzhou_get_tool({sessionId,name:"wait_until"}). These include read_dom, inspect_element, act_on_screen, get_working_tab, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, data_store, download_url, save_file, network_*, browse_history, set_page_mode, send_alert, and load_skill_resource. get_working_tab only queries a page, not a substitute for an explicit reference. wait_until takes an absolute until timestamp with a time zone.
+Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until` or qingzhou_get_tool({sessionId,name:"wait_until"}). These include read_dom, inspect_element, act_on_screen, get_working_tab, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. get_working_tab only queries a page, not a substitute for an explicit reference. wait_until takes an absolute until timestamp with a time zone.
 
 - open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
 - read_article({tabRef,limit:6000}): read body text; continue with nextOffset. Do not substitute an accessibility tree for document text.
@@ -286,7 +287,7 @@ Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`
 - wait_for_element({tabRef,selector,timeout?,absent?}): selector is CSS or css:, never uid:. Check found for ordinary waits. With absent:true, found:false also occurs on success; inspect timedOut to distinguish timeout from disappearance.
 - wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?}): wait for loading to finish, not for a URL change. An already loaded tab immediately returns already_complete, which does not prove the preceding action succeeded. Supply fromUrl to compute urlChanged and read the page to verify state.
 
-Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Prefer reliable CSS when known. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read.
+Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Prefer reliable CSS when known. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read.
 
 ## calls is a batch, not a transaction
 
@@ -331,7 +332,7 @@ Do not hide a request timeout with sleep. On BRIDGE_REQUEST_TIMEOUT inspect the 
 
 ## PDF: load the document Skill first
 
-Discover and load the Skill before using its document tools. Do not read a PDF viewer's page tree as document text. The URL and IDs below are placeholders: replace the URL, then read each response before filling the next command. Never send FILE_ID/DOC_MODEL_ID literally.
+Discover and load the Skill before using its document tools. PDF viewers do not support body reads or page actions. On PDF_PAGE_UNSUPPORTED or blocked script injection, use qingzhou-documents tools with the original PDF URL, not CORS proxies or online viewers. The URL and IDs below are placeholders: replace the URL, then read each response before filling the next command. Never send FILE_ID/DOC_MODEL_ID literally.
 
 ```sh
 qz exec --session "$SID" '{"name":"list_skills","args":{}}'
@@ -361,14 +362,15 @@ script stdout is the returned value. exec script values are at result.result.res
 
 MCP connections and business Sessions are different. Each CLI process closes its connection, **not immediately its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; transport disconnection is not proof that cleanup completed.
 
-At task completion, `qz cancel "$SID"` explicitly stops and cleans up this session. To close only one tab use `qz exec --session "$SID" '{"name":"close_tab","args":{"tabRef":"page"}}'`. To retain opened tabs, use full MCP qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false}); obtain the full URL with qz mcp --profile full. Do not use global qz stop for task cleanup.
+Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. To retain opened tabs, use full MCP qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false}); obtain the full URL with qz mcp --profile full. Do not use global qz stop for task cleanup.
 
-Cleanup closes tabs this session opened with open_tab. Claimed use_tab tabs and pre-existing user tabs only release leases, never close automatically. User activation hands a tab back, stops automation, and preserves the tab. The next day is a new task: qz connect, then create again. Leftover tab groups are ordinary user tabs; do not assume old aliases are valid.
+Cleanup closes tabs this session opened with open_tab. Claimed use_tab tabs and pre-existing user tabs only release leases, never close automatically. User activation hands a tab back, stops automation, and preserves the tab. Extension restarts restore the idle cleanup deadline; expired sessions close their created tabs, preserving explicitly kept or handed-back user tabs. The next day is a new task: qz connect, then create again, without reusing old aliases.
 
 Change one thing per retry and retain the error code and sentence:
 
 - Disconnected: qz connect, no loop and no model setup.
 - DRIVE_SESSION_REQUIRED: create first and pass its ID. DRIVE_SESSION_NOT_FOUND: check the ID/browser; create for a new task.
+- DRIVE_SESSION_ENDED: the session has ended; no further tab cleanup calls are needed. Create for a new task.
 - DRIVE_SESSION_OCCUPIED: the ID belongs to an ordinary task; create a new session.
 - DRIVE_SESSION_BUSY: a call is in flight. The bridge retries once; if still busy, wait for that batch.
 - DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS: name or calls, not both; each row needs id/name and object args; at most 10 calls.

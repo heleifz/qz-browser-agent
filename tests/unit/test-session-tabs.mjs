@@ -247,11 +247,12 @@ tabs.set(15, {
   groupId: -1,
 });
 runtimes.get("blank-owner").ownedTabIds.push(14, 15);
-const embeddedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 14, checkOnly: true });
-assert.equal(embeddedPdf.ok, true, "an owned Chrome PDF viewer with an embedded https URL is a page tab");
-assert.equal(embeddedPdf.tab.url, "https://example.test/file.pdf");
-const bareOwnedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 15, checkOnly: true });
-assert.equal(bareOwnedPdf.ok, true, "an owned bare Chrome PDF viewer is not SESSION_TAB_NOT_WEB");
+for (const tabId of [14, 15]) {
+  await assert.rejects(sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, checkOnly: true }),
+    { code: "PDF_PAGE_UNSUPPORTED" });
+  const tabOnly = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, tabOnly: true, checkOnly: true });
+  assert.equal(tabOnly.ok, true, "PDF tabs still support navigation and closing");
+}
 const bareForeignPdf = await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 15, checkOnly: true });
 assert.equal(bareForeignPdf.ok, false);
 assert.equal(bareForeignPdf.code, "SESSION_TAB_NOT_WEB");

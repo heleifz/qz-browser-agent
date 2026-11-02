@@ -249,7 +249,6 @@ export function resultToContent(result) {
   ];
 }
 
-const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
 const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
@@ -260,7 +259,7 @@ const GUIDE_TOOL = {
     properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。先 qingzhou_create_drive_session 或 qz session create，之后每次调用都带返回的 sessionId。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Call qingzhou_guide once. Create a session with qingzhou_create_drive_session or qz session create, then pass that sessionId on every call. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
+const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。先 qingzhou_create_drive_session 或 qz session create，之后每次执行工具都带返回的 sessionId；list_tools/get_tool 查询基础目录无需会话。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Call qingzhou_guide once. Create a session with qingzhou_create_drive_session or qz session create, then pass that sessionId on every tool execution. list_tools/get_tool can inspect the base catalog without a session. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
 
 export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   const explicit = String(profile || "").trim().toLowerCase();
@@ -293,7 +292,7 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
       if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
         if (!String(input.scope || "").trim()) input.scope = "session";
       }
-      if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
+      if (request.params.name === "qingzhou_execute_tool" && !String(input.sessionId || "").trim()) {
         throw new BridgeError("DRIVE_SESSION_REQUIRED", "Pass sessionId from qz session create (MCP: qingzhou_create_drive_session). CLI calls require --session. This call does not create a session.");
       }
       const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,

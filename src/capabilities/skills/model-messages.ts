@@ -19,6 +19,14 @@ const messages = defineMessages("skills-model", {
     "zh-CN": "可选待分析数据文本（追加在 prompt 之后，最长 300,000 字符）。",
     en: "Optional data text to analyze (appended after prompt, up to 300,000 chars).",
   },
+  listSkills: {
+    "zh-CN": "列出可加载的 Skill 名称；用 load_skill({name}) 加载指令并激活工具。",
+    en: "List available Skill names. Use load_skill({name}) to load instructions and activate tools.",
+  },
+  listSkillsScope: {
+    "zh-CN": "技能范围，默认 all。",
+    en: "Skill scope. Default: all.",
+  },
   loadSkill: {
     "zh-CN": "加载指定 Skill 的完整 Markdown 指令（content）、资源索引（resources，含 plugin.json、scripts、references 等）及运行环境说明，并在当前会话激活该 Skill 声明的扩展工具。需要读取单个资源文件内容时，调用 load_skill_resource(name, path)。",
     en: "Load a Skill's full Markdown instructions (content), resource index (resources, including plugin.json, scripts, and references), and runtime guidance, and activate its declared Skill tools for the current session. Call load_skill_resource(name, path) to read an individual resource file.",
@@ -32,8 +40,8 @@ const messages = defineMessages("skills-model", {
     en: "Include full content of all text resources. Default: false (prefer load_skill_resource for individual files).",
   },
   loadSkillResource: {
-    "zh-CN": "读取 Skill 包内单个资源文件（path）：文本资源按 start/maxChars 分段返回；DOCX、XLSX、PDF 自动解析并返回首块预览与 docModelId（续读长文档请先 load_skill(\"qingzhou-documents\") 再调 document_read_chunk）。读取 Skill 正文请用 load_skill。",
-    en: "Read a single resource file (path) from a Skill package: text resources return character slices via start/maxChars; DOCX, XLSX, and PDF resources are parsed automatically and return an initial preview plus docModelId (load qingzhou-documents and call document_read_chunk to read further). Use load_skill for the Skill Markdown body.",
+    "zh-CN": "读取 Skill 包内单个资源文件（path）：文本资源按 start/maxChars 分段返回；DOCX、XLSX、PDF 自动解析并返回首块预览与 docModelId（续读长文档请先 load_skill(\"qingzhou-documents\") 再调 qingzhou_documents__document_read_chunk）。读取 Skill 正文请用 load_skill。",
+    en: "Read a single resource file (path) from a Skill package: text resources return character slices via start/maxChars; DOCX, XLSX, and PDF resources are parsed automatically and return an initial preview plus docModelId (load qingzhou-documents and call qingzhou_documents__document_read_chunk to read further). Use load_skill for the Skill Markdown body.",
   },
   skillResourcePath: {
     "zh-CN": "必填。Skill 包内资源相对路径，如 plugin.json、scripts/collect.js、references/checklist.md、references/report.xlsx。",

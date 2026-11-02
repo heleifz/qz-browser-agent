@@ -124,7 +124,9 @@ Place each creator before its consumers. Readers can use a completed creator's p
 permit before its ownership is published; actions await the creator's commit. The runtime carries
 numeric targets and opaque authority through normal safety checks. Session ownership and working-tab
 selection publish only at ordered commit. Cancellation closes uncommitted creations. The host resolves aliases at direct-runtime boundaries too, and rejects unknown names without
-falling back to the working tab. UID and explicit page selectors must target the same tab. See [batch ordering and failure
+falling back to the working tab. A page-independent call validates a supplied `tabRef` and then
+discards it; it does not select, claim, or wait for that page. Page tools declare their target
+parameter, including coordinate actions and image collection. UID and explicit page selectors must target the same tab. See [batch ordering and failure
 semantics](../../docs/architecture.md#tool-and-skill-execution).
 
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies

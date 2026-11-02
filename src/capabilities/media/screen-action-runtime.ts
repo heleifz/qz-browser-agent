@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 import { IMAGE_MAX_EDGE } from "#sdk/shared/images";
+import { assertHtmlPage } from "#sdk/background/browser";
 import type { ToolContext, ToolErrorConstructor, ToolExtensionAPI } from "#sdk/background";
 import type { CdpCommand, BrowserDebugger } from "#sdk/background/browser";
 import type { MappedKey } from "#sdk/background/browser";
@@ -464,6 +465,7 @@ export function createScreenActionRuntime({
       frame = record(record(record(await sendCdp(tabId, "Page.getFrameTree", {}, context)).frameTree).frame);
     } catch (_error) {}
     const page = await getTabPageState(tabId);
+    assertHtmlPage(frame.url || page?.url, frame.mimeType);
     return {
       url: String(frame.url || page?.url || ""),
       loaderId: String(frame.loaderId || ""),

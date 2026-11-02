@@ -69,6 +69,18 @@ registerTool({
 const getSkillRuntimeGuidance = () => (modelT("runtimeGuidance"));
 
 registerTool({
+  name: "list_skills",
+  get description() { return modelT("listSkills"); },
+  get parameters() { return {
+    type: "object",
+    properties: {
+      scope: { type: "string", enum: ["all", "global", "site", "resident"], description: modelT("listSkillsScope") },
+    },
+  } as const; },
+  execute: (args, _signal, context = {}) => executeListSkillsAction(args, context),
+});
+
+registerTool({
   name: "load_skill",
   model: { preserveResult: true },
   get description() { return modelT("loadSkill"); },

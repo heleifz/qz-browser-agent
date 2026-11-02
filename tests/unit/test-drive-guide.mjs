@@ -75,7 +75,7 @@ test("the packed drive guide is the only discoverable skill, localized and bound
   assert.match(en, /A missing tabRef is DRIVE_TAB_REF_REQUIRED/);
   assert.match(en, /only when an alias was passed/);
   assert.match(zh, /tabAlias 建议写上，便于阅读，但不是必填/);
-  assert.match(zh, /页面工具始终传 `tabRef`/);
+  assert.match(zh, /页面工具（包括 act_on_screen）始终传 `tabRef`/);
   assert.match(en, /One task uses one session/);
   assert.match(en, /tabAlias` is recommended for readability and is not required/);
   assert.match(en, /Page tools always pass `tabRef`/);

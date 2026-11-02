@@ -1,5 +1,6 @@
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
+import { parseBeijingDateTime } from "../../shared/time-utils.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
@@ -358,19 +359,20 @@ export function createMcpRuntime({
 
   async function toolCatalog(params: Fields, reason: string) {
     await waitForToolsReady(reason);
-    const { sessionId, metadata } = await requireToolSession(params.sessionId);
-    const canManageSessions = await tools.canManageSessions(sessionId);
-    const externalDrive = metadata.source === "external-drive";
+    const selected = params.sessionId == null ? null : await requireToolSession(params.sessionId);
+    const sessionId = selected?.sessionId || "";
+    const canManageSessions = selected ? await tools.canManageSessions(sessionId) : false;
+    const externalDrive = !selected || selected.metadata.source === "external-drive";
     const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
-    const runtime = sessions.getRuntime(sessionId);
-    const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
+    const runtime = selected ? sessions.getRuntime(sessionId) : null;
+    const loadedNames = selected ? tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []) : [];
     const schemas = tools.runtime.getSchemas({
       runProfile,
       context: {
         dynamicContext: plainObject(params.dynamicContext),
-        workingTab: runtime.workingTab || null,
-        pageUrl: String(runtime.workingUrl || ""),
-        taskSiteTabs: runtime.visitedTaskSites || [],
+        workingTab: runtime?.workingTab || null,
+        pageUrl: String(runtime?.workingUrl || ""),
+        taskSiteTabs: runtime?.visitedTaskSites || [],
         loadedPluginSkillNames: loadedNames,
       },
       loadedPluginSkillNames: loadedNames,
@@ -418,6 +420,7 @@ export function createMcpRuntime({
       if (String(existing.source || "") !== "external-drive") {
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
+      drive.assertActive(sessionId);
       return "external-drive";
     }
     if (!sessions.createMetadata) return "";
@@ -463,7 +466,18 @@ export function createMcpRuntime({
     if (source !== "external-drive") {
       throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
     }
+    sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
+    drive.restore(sessionId, Date.now());
     return { sessionId };
+  }
+
+  async function restoreDriveSessions() {
+    for (const [sessionId, metadata] of Object.entries(await sessions.listMetadata())) {
+      if (metadata.source !== "external-drive") continue;
+      const runtime = readRuntime(sessionId);
+      drive.restore(sessionId, Number(runtime.driveLastActivityAt)
+        || parseBeijingDateTime(runtime.updatedAt || metadata.createdAt) || Date.now());
+    }
   }
 
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
@@ -475,6 +489,7 @@ export function createMcpRuntime({
     if (metadata.source !== "external-drive") {
       throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
     }
+    drive.assertActive(sessionId);
     const source = metadata.source;
     signal?.throwIfAborted();
     await waitForToolsReady("mcp_execute_tool");
@@ -681,6 +696,7 @@ export function createMcpRuntime({
     listTools,
     getTool,
     createDriveSession,
+    restoreDriveSessions,
     executeTool,
     drive,
     listSkills: listAvailableSkills,

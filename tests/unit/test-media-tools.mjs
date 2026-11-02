@@ -455,6 +455,11 @@ assert.equal(
   "a focused key press should dispatch without any actionable screenshot in its session/run scope",
 );
 const independentContext = { ...screenContext, sessionId: "scroll-without-screenshot", source: "run_script" };
+assert.throws(() => definitions.get("screenshot").validateArgs({ target: "viewport" }), error =>
+  error.code === "SCREENSHOT_TARGET_INVALID" && /target/.test(error.message));
+assert.doesNotThrow(() => definitions.get("screenshot").validateArgs({ actionable: true }));
+assert.ok(definitions.get("act_on_screen").parameters.properties.tabId);
+assert.ok(definitions.get("collect_images").parameters.properties.tabId);
 const screenAction = definitions.get("act_on_screen");
 await assert.rejects(screenAction.execute({ tabId: 3, action: "scroll", x: 500, y: 400, deltaY: 120,
   returnScreenshot: false }, undefined, independentContext), error => error.code === "SCREENSHOT_CONTEXT_STALE"

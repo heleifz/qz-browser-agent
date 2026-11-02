@@ -43,7 +43,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-31-fill-target";
+  const QZ_CONTENT_VERSION = "2026-11-02-document-type";
   const findElementRefs = new Map<string, WeakRef<Element>>();
   const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let findElementRefSequence = 0;
@@ -70,7 +70,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[msg.action];
     if (!handler) {
       if (msg.action === "ping") {
-        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness() });
+        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness(),
+          contentType: document.contentType, url: document.URL });
         return;
       }
       sendResponse(toolError("UNKNOWN_ACTION", `Unknown content action: ${msg.action}`, { action: msg.action }));

@@ -4,16 +4,24 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("media-tools", {
   screenshotDescription: {
-    "zh-CN": "截取当前视口或指定元素的已渲染区域，并始终以图片形式返回给 LLM。需随后用 act_on_screen 按坐标操作时传 actionable=true（不可与 target 同用），返回的 coordinateSpace 给出原始像素宽高，可直接将图上坐标传给 act_on_screen。传 destination 时额外把截图保存为该图集表的 image asset；传 target 时截取该元素区域。{targetGrammar}。",
-    en: "Capture the current viewport or the rendered region of a target element, and always return the image to the model. Pass actionable=true (cannot be combined with target) when you will act by coordinates with act_on_screen; the returned coordinateSpace gives the original pixel width and height. Pass destination to also save the capture as an image asset in that gallery table; pass target to capture a specific element. {targetGrammar}.",
+    "zh-CN": "截视口不传 target；截元素传 uid: 或 css: 目标。始终以图片形式返回。需随后用 act_on_screen 按坐标操作时传 actionable=true（不可与 target 同用），返回的 coordinateSpace 给出原始像素宽高，可直接将图上坐标传给 act_on_screen。传 destination 时额外把截图保存为该图集表的 image asset；传 target 时截取该元素区域。{targetGrammar}。",
+    en: "Omit target to capture the viewport; pass a uid: or css: target for an element. Always returns an image. Pass actionable=true (cannot be combined with target) when you will act by coordinates with act_on_screen; the returned coordinateSpace gives the original pixel width and height. Pass destination to also save the capture as an image asset in that gallery table; pass target to capture a specific element. {targetGrammar}.",
   },
   screenshotTabId: {
     "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页（target 为 uid:... 时也可省略）。",
     en: "Target tab ID. Defaults to the current task's working tab (optional when target is uid:...).",
   },
   screenshotTarget: {
-    "zh-CN": "元素截图目标（不可与 actionable=true 同用）。{targetDescription}",
-    en: "Target for an element screenshot (cannot be combined with actionable=true). {targetDescription}",
+    "zh-CN": "仅用于元素截图；截视口不传 target，不填 viewport。不可与 actionable=true 同用。{targetDescription}",
+    en: "Element screenshots only. For the viewport, omit target; do not pass viewport. Cannot be combined with actionable=true. {targetDescription}",
+  },
+  screenshotViewportTarget: {
+    "zh-CN": "截视口不传 target。截元素请传 uid: 或 css: 目标。",
+    en: "Omit target to capture the viewport. For an element, pass a uid: or css: target.",
+  },
+  actOnScreenTab: {
+    "zh-CN": "要操作的页面；坐标必须来自该页的可操作截图。",
+    en: "Page to operate. Coordinates must come from an actionable screenshot of this page.",
   },
   screenshotIndex: {
     "zh-CN": "target 为 css:... 且匹配多个元素时的 0-based 序号，默认 0。",
@@ -48,8 +56,8 @@ const messages = defineMessages("media-tools", {
     en: "Use this viewport screenshot as the coordinate basis for subsequent act_on_screen calls. Default: false (cannot be combined with target).",
   },
   actOnScreenDescription: {
-    "zh-CN": "依据最近一次 screenshot(actionable=true) 或 act_on_screen(returnScreenshot:true) 建立的坐标状态，直接按屏幕坐标或当前焦点操作页面。x/y/endX/endY 使用返回截图左上角为原点的原始像素坐标，范围见 coordinateSpace.width/height。不带 x/y 时无需预先截图：press/type 操作当前焦点，scroll 在当前视口中心滚动；传 x/y 时按截图坐标定位，type 先点击再输入；replace=true 且 text 为空表示清空。调用必须串行并显式填写 returnScreenshot（true 返回操作后观察截图并刷新坐标空间；false 不截图并在页面未跳变时沿用原坐标空间）。viewportChange 客观记录浏览器视口变化，coordinateBasisReady 表示当前坐标空间能否继续使用。移动模式自动转为触摸（click/double_click/long_press/drag），不支持 hover 或右键/中键。",
-    en: "Interact directly with the current task's page using the coordinate state established by the latest screenshot(actionable=true) or act_on_screen(returnScreenshot:true). x/y/endX/endY are original pixel coordinates measured from the top-left corner of the returned screenshot within coordinateSpace.width/height. Without x/y, no prior screenshot is needed: press/type act on the current focus and scroll scrolls at the viewport center; with x/y, actions target those screenshot coordinates and type clicks before typing; replace=true with empty text clears the field. Calls must be sequential and explicitly set returnScreenshot (true captures a post-action observation screenshot and refreshes the coordinate space; false skips capture and reuses the coordinate space while valid). viewportChange objectively records browser viewport changes; coordinateBasisReady indicates whether the current coordinate space remains usable. Mobile mode uses touch automatically (click/double_click/long_press/drag) and does not support hover or right/middle mouse buttons.",
+    "zh-CN": "操作指定页面；坐标依据必须来自该页最近一次 screenshot(actionable=true) 或 act_on_screen(returnScreenshot:true)。x/y/endX/endY 使用返回截图左上角为原点的原始像素坐标，范围见 coordinateSpace.width/height。不带 x/y 时无需预先截图：press/type 操作当前焦点，scroll 在当前视口中心滚动；传 x/y 时按截图坐标定位，type 先点击再输入；replace=true 且 text 为空表示清空。调用必须串行并显式填写 returnScreenshot（true 返回操作后观察截图并刷新坐标空间；false 不截图并在页面未跳变时沿用原坐标空间）。viewportChange 客观记录浏览器视口变化，coordinateBasisReady 表示当前坐标空间能否继续使用。移动模式自动转为触摸（click/double_click/long_press/drag），不支持 hover 或右键/中键。",
+    en: "Operate the selected page. Coordinates must come from that page's latest screenshot(actionable=true) or act_on_screen(returnScreenshot:true). x/y/endX/endY are original pixel coordinates measured from the top-left corner of the returned screenshot within coordinateSpace.width/height. Without x/y, no prior screenshot is needed: press/type act on the current focus and scroll scrolls at the viewport center; with x/y, actions target those screenshot coordinates and type clicks before typing; replace=true with empty text clears the field. Calls must be sequential and explicitly set returnScreenshot (true captures a post-action observation screenshot and refreshes the coordinate space; false skips capture and reuses the coordinate space while valid). viewportChange objectively records browser viewport changes; coordinateBasisReady indicates whether the current coordinate space remains usable. Mobile mode uses touch automatically (click/double_click/long_press/drag) and does not support hover or right/middle mouse buttons.",
   },
   actOnScreenReturnScreenshot: {
     "zh-CN": "必填。需要观察本次操作结果时传 true；已验证且无需逐步观察的连续操作传 false。",

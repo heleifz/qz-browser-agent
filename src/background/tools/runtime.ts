@@ -37,7 +37,7 @@ import { summarizeToolArgsForTrace } from "./trace-summary.js";
 import { createToolRegistry, isCoreToolSnapshot, withCommonToolParameters } from "./registry.js";
 import { ensureToolBrowserPermission } from "./browser-permissions.js";
 import { selectSkillResults } from "../skills/skill-selection.js";
-import { assertPageUrlAccessible } from "./page-access.js";
+import { assertHtmlPage, assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle } from "./behavior.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
@@ -118,18 +118,26 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
     if (!force) {
       try {
         const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
-        if (response?.ok === true) return response;
+        if (response?.ok === true && typeof response.contentType === "string") return response;
       } catch(_e) {
         // Inject the content script when it is missing.
       }
     }
     signal?.throwIfAborted();
-    await withContentSignal(chrome.scripting.executeScript({
-      target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
-      world: "ISOLATED",
-      files: ["content/article-extractor.js", "content/content-script.js"],
-      injectImmediately: true,
-    }), signal);
+    try {
+      await withContentSignal(chrome.scripting.executeScript({
+        target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
+        world: "ISOLATED",
+        files: ["content/article-extractor.js", "content/content-script.js"],
+        injectImmediately: true,
+      }), signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (/cannot access|cannot be scripted|extensions gallery|missing host permission/i.test(errorMessage(error))) {
+        throw new ToolExecutionError("PAGE_CONTENT_UNAVAILABLE", t("toolError.PAGE_CONTENT_UNAVAILABLE.message"));
+      }
+      throw error;
+    }
     signal?.throwIfAborted();
     const response = record(await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), signal));
     if (response?.ok !== true) {
@@ -160,7 +168,9 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
+  assertHtmlPage((await chrome.tabs.get(tabId)).url);
   const presence = await ensureContentScript(tabId, false, context);
+  assertHtmlPage(presence.url, presence.contentType);
   if (presence.documentReady === false) {
     const finishReadiness = context.measurePhase?.("readiness");
     try {
@@ -546,13 +556,11 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     parameters = resolvedPageParameters(definition);
     if (Object.hasOwn(record(args), "tabRef")) {
-      if (!definition.page || !parameters.properties.tabId || !resolvePageAccess(definition, record(args))) {
-        throw tabReferenceError("invalid_reference", record(args).tabRef, language);
-      }
       const { tabRef, ...input } = record(args);
       const tabId = resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
       if (input.tabId != null && input.tabId !== tabId) throw tabReferenceError("conflicting_target", tabRef, language);
-      args = { ...input, tabId };
+      // A reference is valid independently of whether this call uses a page.
+      args = resolvePageAccess(definition, input) ? { ...input, tabId } : input;
     }
     const uidTargets = elementTargetsOf(definition, record(args)).filter(isUidElementTarget);
     if (uidTargets.length && record(args).tabId != null && elementRuntime.elementUidTabId(uidTargets) !== record(args).tabId) {

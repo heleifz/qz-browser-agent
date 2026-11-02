@@ -61,7 +61,8 @@ test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catal
   assert.match(execute.description, /在已连接的浏览器里执行现有工具/);
   assert.match(driveToolCatalog()[1].description, /sessionId/);
   for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
-    assert.ok(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required.includes("sessionId"), name);
+    assert.equal(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required?.includes("sessionId") || false,
+      name === "qingzhou_execute_tool", name);
   }
 });
 
@@ -525,11 +526,19 @@ test("drive calls require an explicit session id and do not invent one", async t
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
   for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
-    const missing = await client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
-    assert.equal(missing.isError, true);
-    assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
-    assert.match(missing.content[0].text, /qz session create/);
-    assert.match(missing.content[0].text, /qingzhou_create_drive_session/);
+    const pending = client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
+    if (name === "qingzhou_execute_tool") {
+      const missing = await pending;
+      assert.equal(missing.isError, true);
+      assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
+      assert.match(missing.content[0].text, /qz session create/);
+    } else {
+      const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+      assert.equal(request.method, name.slice("qingzhou_".length));
+      assert.equal(request.params.sessionId, undefined);
+      completeBrowser(bridge.state, request.id, { ok: true, result: { name: "list_tabs", signature: "list_tabs({})" } });
+      assert.notEqual((await pending).isError, true);
+    }
     assert.equal(bridge.state.pending.size, 0);
     const unknown = client.callTool({ name, arguments: { sessionId: "missing", ...(name === "qingzhou_list_tools" ? {} : { name: "list_tabs" }) } });
     const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });

@@ -233,13 +233,11 @@ assert.equal((await runtime.getMessages("s1", { tail: true, num: 1 })).num, 1);
 const listedTools = await runtime.listTools({ sessionId: "s1", loadedPluginSkillNames: ["extra"] });
 assert.deepEqual(listedTools.tools.map(tool => tool.name), [...driveToolNames, ...blockedToolNames]);
 assert.equal(runProfiles.at(-1).externalDrive, false);
-const blankTools = await runtime.listTools({ sessionId: "" });
+const blankTools = await runtime.listTools();
 assert.equal(runProfiles.at(-1).externalDrive, true);
 assert.deepEqual(blankTools.tools.map(tool => tool.name), defaultDriveNames);
-const missingTools = await runtime.listTools({ sessionId: "not-created" });
-assert.equal(runProfiles.at(-1).externalDrive, true);
+await assert.rejects(runtime.listTools({ sessionId: "not-created" }), { code: "DRIVE_SESSION_NOT_FOUND" });
 assert.equal(Object.hasOwn(metadata, "not-created"), false);
-assert.deepEqual(missingTools.tools.map(tool => tool.name), defaultDriveNames);
 metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
 const driveTools = await runtime.listTools({ sessionId: "drive-listed" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
@@ -257,6 +255,7 @@ await assert.rejects(
   runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
   error => error.code === "DRIVE_SESSION_OCCUPIED",
 );
+await runtime.createDriveSession({ sessionId: "drive-s" });
 const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" }, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
 assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
@@ -280,7 +279,7 @@ for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask
   );
 }
 await assert.rejects(
-  () => runtime.getTool({ sessionId: "", name: "ask_user" }),
+  () => runtime.getTool({ name: "ask_user" }),
   error => error.code === "DRIVE_TOOL_FORBIDDEN",
 );
 
@@ -290,8 +289,9 @@ sessions.recordToolEvent = event => { driveNotes.push(event); };
 sessions.persistTranscript = async sessionId => { persistedDriveSessions.push(sessionId); };
 {
   const notedBefore = driveNotes.length;
-  await runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main", tabRef: "page" } });
-  assert.equal(driveNotes.length, notedBefore, "a legacy empty session does not record a drive transcript");
+  await assert.rejects(runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main", tabRef: "page" } }),
+    { code: "DRIVE_SESSION_REQUIRED" });
+  assert.equal(driveNotes.length, notedBefore, "an empty session does not execute or record a drive transcript");
   assert.equal(executed.at(-1).context.toolCallId || "", "");
 }
 const batchNotes = await runtime.executeTool({
@@ -404,6 +404,8 @@ assert.equal(snapshot.toolCount, driveToolNames.length + blockedToolNames.length
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);
 
+await runtime.createDriveSession({ sessionId: "drive-abort" });
+await runtime.createDriveSession({ sessionId: "drive-lease" });
 for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
   const original = tools[stage], controller = new AbortController();
   let release, entered;

@@ -413,15 +413,20 @@ prints the task and diagnostic catalog. A direct-drive session lists the default
 `qingzhou_list_tools`. `qingzhou_get_tool` still returns a guide-tier tool, and returns
 `DRIVE_TOOL_FORBIDDEN` for a blocked name. Set `wait: false` to receive a job ID and read the
 result with `qingzhou_get_tool_job`. The full catalog also provides `qingzhou_get_trace` and
-`qingzhou_clear_trace` for diagnostics. Create the session first. Later calls pass that
-`sessionId`. Omitting it returns `DRIVE_SESSION_REQUIRED`; an unknown ID returns
-`DRIVE_SESSION_NOT_FOUND`. Neither case creates a session. Check the browser selection and ID,
+`qingzhou_clear_trace` for diagnostics. MCP `qingzhou_list_tools` and `qingzhou_get_tool` can
+inspect the base catalog without a session. To inspect loaded Skill tools by name, pass
+`sessionId` to `qingzhou_get_tool`.
+Tool execution requires a created session: omitting `sessionId` returns `DRIVE_SESSION_REQUIRED`;
+an unknown ID returns `DRIVE_SESSION_NOT_FOUND`. Neither case creates a session. Check the browser selection and ID,
 or create a new task session with `qz session create` / `qingzhou_create_drive_session`.
 
 `qz session create` creates a fresh direct-drive session and prints `sessionId <id>` on stdout;
 with `--json`, read `result.sessionId`. `qz` abbreviates `npx --yes qz-browser-agent@latest` when
 it is not installed globally. See the [copyable drive workflow](../skills/qz-browser-agent/SKILL.md)
 for creation, tab aliases, dependent batches, PDF reading, and response examples.
+Finish with `qz cancel ID`; it ends the session and cleans up created tabs, so do not call
+`close_tab` afterward. Further execution returns `DRIVE_SESSION_ENDED`. Claimed/user tabs stay
+open; full MCP `qingzhou_stop_session({sessionId,keepTabs:true})` explicitly keeps created tabs too.
 
 `qz script --session ID --tab TABREF [FILE|-]` runs an async function on that tab. `--session` is
 required. `--tab` takes an alias or a tabRef returned by open_tab/list_tabs. stdout is the returned

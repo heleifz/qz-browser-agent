@@ -36,7 +36,6 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   for (const entry of entries) {
     const ref = entry.args.tabRef;
     if (Object.hasOwn(entry.args, "tabRef")) {
-      if (entry.policy?.kind !== "target") { entry.error = error("invalid_reference", ref); continue; }
       // Existing bindings win over an attempted duplicate open; its failure must not redirect readers.
       const producer = tabReferenceId(ref) === null && !Object.hasOwn(aliases, String(ref)) ? creators.get(String(ref)) : undefined;
       if (producer) {
@@ -107,7 +106,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       if (entry.args.tabId != null && entry.args.tabId !== tabId
         || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== tabId) throw error("conflicting_target", entry.args.tabRef);
       const { tabRef: _ref, ...args } = entry.args;
-      return { ...args, tabId };
+      return entry.policy?.kind === "target" ? { ...args, tabId } : args;
     },
     complete(item: T, result: unknown, isError: boolean) {
       const entry = byItem.get(item)!, id = validResult(entry, result, isError);

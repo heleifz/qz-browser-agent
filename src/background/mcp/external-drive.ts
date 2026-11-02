@@ -73,7 +73,7 @@ const PAGE_TAB_TOOLS = new Set([
   "get_ax_tree",
   "read_console_messages", "network_watch", "network_recent", "network_body",
   "wait_for_response", "wait_for_network_idle", "wait_for_navigation", "wait_for_element", "wait_for_user",
-  "screenshot", "list_images", "read_image",
+  "screenshot", "act_on_screen", "list_images", "collect_images", "read_image",
   "run_script", "run_skill_script",
   "import_skill_from_page_zip", "import_git_skill_repository", "install_skill_to_git",
 ]);
@@ -86,6 +86,8 @@ function pageToolNeedsTabRef(name: string, args: Fields) {
   const local = toolLocalName(name);
   if (!PAGE_TAB_TOOLS.has(name) && !PAGE_TAB_TOOLS.has(local)) return false;
   if (local === "read_image" && String(args.url ?? "").trim()) return false;
+  if (local === "collect_images" && Array.isArray(args.urls) && args.urls.some(url => String(url || "").trim())
+    && !(Array.isArray(args.targets) && args.targets.some(target => String(target || "").trim()))) return false;
   return true;
 }
 
@@ -131,14 +133,15 @@ export function driveToolSignature(tool: { name: string; description?: string; p
   }).join(", ")}})`;
   let callSignature = signature(properties, required);
   let description = pageScript ? t("drive.scriptDescription") : driveCatalogDescription(tool.description);
-  if (toolLocalName(tool.name) === "read_image" && properties.url) {
+  const urlField = toolLocalName(tool.name) === "collect_images" ? "urls" : "url";
+  if (["read_image", "collect_images"].includes(toolLocalName(tool.name)) && properties[urlField]) {
     // The URL variant needs no page; show both valid shapes rather than a misleading optional ref.
-    const { tabRef: _tabRef, ...urlProperties } = properties;
+    const { tabRef: _tabRef, targets: _targets, ...urlProperties } = properties;
     const urlRequired = new Set(required);
     urlRequired.delete("tabRef");
-    urlRequired.add("url");
+    urlRequired.add(urlField);
     callSignature += ` | ${signature(urlProperties, urlRequired)}`;
-    description = t("drive.readImageReference");
+    description = t(urlField === "urls" ? "drive.collectImagesReference" : "drive.readImageReference");
   }
   return { name: tool.name, signature: callSignature, description };
 }
@@ -430,7 +433,11 @@ export function projectNamedDriveResult(name: string, args: unknown, result: unk
   const value = name === "list_tabs" && input.scope !== "all" && !verbose
     ? compactDriveTabs(projected.value, options.aliases)
     : projected.value;
-  return { value: capDriveValue(exposeTabRef(name, value)), images: projected.images };
+  const local = toolLocalName(name);
+  const body = record(value);
+  const documented = ["load_skill", "load_skill_resource"].includes(local) && typeof body.runtime === "string"
+    ? { ...body, runtime: t("drive.skillRuntimeGuidance") } : value;
+  return { value: capDriveValue(exposeTabRef(name, documented)), images: projected.images };
 }
 
 function withTabRef(row: unknown): unknown {
@@ -663,6 +670,19 @@ export function createExternalDriveCoordinator({
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const generation = new Map<string, number>();
   const active = new Map<string, number>();
+  const ended = new Set<string>();
+
+  function assertActive(sessionId: string) {
+    const runtime = getRuntime?.(sessionId);
+    const lastActivity = Number(runtime?.driveLastActivityAt);
+    if (runtime?.status !== "aborted" && !ended.has(sessionId) && !active.has(sessionId)
+      && lastActivity > 0 && Date.now() - lastActivity >= idleMs) {
+      expire(sessionId, generationOf(sessionId));
+    }
+    if (ended.has(sessionId) || runtime?.status === "aborted") {
+      throw driveError("DRIVE_SESSION_ENDED", t("drive.sessionEnded"));
+    }
+  }
 
   function generationOf(sessionId: string) {
     return generation.get(sessionId) || 0;
@@ -674,28 +694,22 @@ export function createExternalDriveCoordinator({
     timers.delete(sessionId);
   }
 
-  function touch(sessionId: string, token: number) {
+  function touch(sessionId: string, token: number, lastActivity = Date.now()) {
     if (!sessionId || !stop) return;
     clearIdle(sessionId);
-    const timer = setTimeout(() => {
-      timers.delete(sessionId);
-      if (generationOf(sessionId) !== token || active.has(sessionId)) return;
-      generation.set(sessionId, token + 1);
-      const driveRunId = takeRunId?.(sessionId) || "";
-      controllers.get(sessionId)?.abort(driveError("OPERATION_ABORTED", t("agent.toolStopped")));
-      busy.delete(sessionId);
-      controllers.delete(sessionId);
-      active.delete(sessionId);
-      void stop(sessionId, {
-        source: "drive_idle",
-        cascade: false,
-        keepTabs: false,
-        driveRunCaptured: true,
-        driveRunId,
-      });
-    }, idleMs);
+    const timer = setTimeout(() => expire(sessionId, token), Math.max(0, lastActivity + idleMs - Date.now()));
     (timer as unknown as { unref?: () => void }).unref?.();
     timers.set(sessionId, timer);
+  }
+
+  function expire(sessionId: string, token: number) {
+    if (generationOf(sessionId) !== token || active.has(sessionId)) return;
+    ended.add(sessionId);
+    const driveRunId = takeRunId?.(sessionId) || "";
+    invalidate(sessionId);
+    void Promise.resolve(stop?.(sessionId, {
+      source: "drive_idle", cascade: false, keepTabs: false, driveRunCaptured: true, driveRunId,
+    })).catch(error => console.warn("[轻舟] idle drive cleanup failed:", error));
   }
 
   function invalidate(sessionId: string) {
@@ -709,15 +723,33 @@ export function createExternalDriveCoordinator({
   }
 
   const coordinator = {
+    assertActive,
+    restore(sessionId: string, lastActivity: number) {
+      if (busy.has(sessionId) || timers.has(sessionId) || ended.has(sessionId)) return;
+      const runtime = getRuntime?.(sessionId);
+      if (runtime?.status === "aborted") {
+        ended.add(sessionId);
+        if (![runtime.ownedTabIds, runtime.createdTabIds, runtime.driveHandoffTabIds].some(ids => Array.isArray(ids) && ids.length)) return;
+        void Promise.resolve(stop?.(sessionId, { source: "drive_recovery", cascade: false,
+          keepTabs: runtime.driveKeepTabs === true }))
+          .catch(error => console.warn("[轻舟] stopped drive cleanup failed:", error));
+        return;
+      }
+      setRuntime?.(sessionId, { driveLastActivityAt: lastActivity });
+      if (Date.now() - lastActivity >= idleMs) expire(sessionId, generationOf(sessionId));
+      else touch(sessionId, generationOf(sessionId), lastActivity);
+    },
     isBusy(sessionId: string) { return busy.has(sessionId); },
     hasActiveLease(sessionId: string) { return active.has(sessionId); },
     begin(sessionId: string, signal?: AbortSignal) {
+      assertActive(sessionId);
       if (sessionId && busy.has(sessionId)) throw driveError("DRIVE_SESSION_BUSY", t("drive.sessionBusy"));
       const token = sessionId ? generationOf(sessionId) : 0;
       if (sessionId) {
         busy.add(sessionId);
         active.set(sessionId, token);
         clearIdle(sessionId);
+        setRuntime?.(sessionId, { driveLastActivityAt: Date.now() });
       }
       const controller = new AbortController();
       if (sessionId) controllers.set(sessionId, controller);
@@ -734,6 +766,7 @@ export function createExternalDriveCoordinator({
           busy.delete(sessionId);
           active.delete(sessionId);
           if (controllers.get(sessionId) === controller) controllers.delete(sessionId);
+          setRuntime?.(sessionId, { driveLastActivityAt: Date.now() });
           touch(sessionId, token);
         },
       };
@@ -752,6 +785,7 @@ export function createExternalDriveCoordinator({
     noteStopped(sessionId: string, meta: Fields = {}) {
       if (!sessionId) return false;
       if (meta.source === "drive_idle" && active.has(sessionId)) return false;
+      ended.add(sessionId);
       invalidate(sessionId);
       return true;
     },

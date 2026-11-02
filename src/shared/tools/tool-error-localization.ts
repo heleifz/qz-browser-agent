@@ -45,6 +45,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   CDP_TAB_LEASE_CONFLICT: { label: "toolError.CDP_TAB_LEASE_CONFLICT.label", message: "toolError.CDP_TAB_LEASE_CONFLICT.message" },
   CONTENT_SCRIPT_MESSAGE_FAILED: { label: "toolError.CONTENT_SCRIPT_MESSAGE_FAILED.label", message: "toolError.CONTENT_SCRIPT_MESSAGE_FAILED.message" },
   CONTENT_SCRIPT_NOT_READY: { label: "toolError.CONTENT_SCRIPT_NOT_READY.label", message: "toolError.CONTENT_SCRIPT_NOT_READY.message" },
+  PDF_PAGE_UNSUPPORTED: { label: "toolError.PDF_PAGE_UNSUPPORTED.label", message: "toolError.PDF_PAGE_UNSUPPORTED.message" },
+  PAGE_CONTENT_UNAVAILABLE: { label: "toolError.PAGE_CONTENT_UNAVAILABLE.label", message: "toolError.PAGE_CONTENT_UNAVAILABLE.message" },
   DATA_DESTRUCTIVE_ACTION_DISABLED: { label: "toolError.DATA_DESTRUCTIVE_ACTION_DISABLED.label", message: "toolError.DATA_DESTRUCTIVE_ACTION_DISABLED.message" },
   DATA_ROW_CONFLICT: { label: "toolError.DATA_ROW_CONFLICT.label", message: "toolError.DATA_ROW_CONFLICT.message" },
   DATA_ROW_NOT_FOUND: { label: "toolError.DATA_ROW_NOT_FOUND.label", message: "toolError.DATA_ROW_NOT_FOUND.message" },

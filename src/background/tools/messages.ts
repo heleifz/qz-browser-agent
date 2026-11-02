@@ -28,8 +28,8 @@ const messages = defineMessages("tool-runtime", {
     en: "tabAlias \"{tabRef}\" has an invalid format. Use 1\u201364 letters, digits, underscores, or hyphens; aliases cannot be entirely numeric.",
   },
   batchTabReferenceInvalidReference: {
-    "zh-CN": "tabRef「{tabRef}」无效或不适用于该调用。请使用浏览器正整数 ID 或当前任务的有效页面别名。",
-    en: "tabRef \"{tabRef}\" is invalid or not allowed on this call. Use a positive integer browser ID or a valid page alias in this Session.",
+    "zh-CN": "tabRef「{tabRef}」格式无效。请使用 open_tab / list_tabs 返回的 tabRef，或本会话的页面别名。",
+    en: "tabRef \"{tabRef}\" has an invalid format. Use a tabRef returned by open_tab / list_tabs, or a page alias in this session.",
   },
   batchTabReferenceAmbiguousTarget: {
     "zh-CN": "本批包含多个 open_tab，无法确定目标页面。请在页面调用中通过 tabRef 明确指定。",

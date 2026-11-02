@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { textPdf } from "../support/text-pdf.mjs";
 import { expect, test } from "./fixtures.mjs";
 import { main } from "../../services/mcp-bridge/src/cli.mjs";
 import { callTool, readHealth } from "../../services/mcp-bridge/src/client.mjs";
@@ -57,11 +58,13 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, builtinId);
     expect(source).not.toBe("external-drive");
 
+    const baseCatalog = await callTool(environment.bridge.endpoint, "qingzhou_list_tools", {});
+    expect(baseCatalog.tools.map(tool => tool.name)).toContain("list_skills");
     const sessionId = await createDrive();
     const opened = await exec(dependencies, stdout, stderr, {
       sessionId,
       name: "open_tab",
-      args: { url: `${fixture}/drive` },
+      args: { url: `${fixture}/drive`, tabAlias: "page" },
     }, "90");
     expect(opened.code, opened.text || stderr.text).toBe(0);
     expect(opened.body.result.toolName).toBe("open_tab");
@@ -95,6 +98,18 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       const [injected] = await chrome.scripting.executeScript({ target: { tabId: id }, func: () => document.title });
       return injected.result;
     }, tabId), { timeout: 15_000 }).toBe("clicked");
+
+    const polish = await exec(dependencies, stdout, stderr, { sessionId, calls: [
+      { id: "wait", name: "wait", args: { tabRef: "page", seconds: 0 } },
+      { id: "list", name: "list_tabs", args: { tabRef: "page" } },
+      { id: "skills", name: "list_skills", args: { tabRef: "page" } },
+      { id: "press", name: "act_on_screen", args: { tabRef: "page", action: "press", key: "Escape", returnScreenshot: false } },
+    ] });
+    expect(polish.code, polish.text).toBe(0);
+    expect(polish.body.result.results.every(item => !item.isError)).toBe(true);
+    const screenshot = await exec(dependencies, stdout, stderr, { sessionId, name: "screenshot", args: { tabRef: "page", target: "viewport" } });
+    expect(screenshot.code).toBe(1);
+    expect(screenshot.text || stderr.text).toContain("SCREENSHOT_TARGET_INVALID");
 
     await expect(callTool(environment.bridge.endpoint, "qingzhou_send_message", {
       sessionId, text: "hello", timeoutSeconds: 15,
@@ -174,9 +189,8 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       name: "list_tabs",
       args: {},
     });
-    expect(again.code, again.text || stderr.text).toBe(0);
-    expect(again.body.result.runId).toMatch(/^drive-/);
-    expect(again.body.result.runId).not.toBe(keptRunId);
+    expect(again.code, again.text || stderr.text).toBe(1);
+    expect(again.text || stderr.text).toContain("DRIVE_SESSION_ENDED");
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
       sessionId: keptId, timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
@@ -209,6 +223,27 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
     }, { timeoutMs: 25_000 });
     await expect.poll(() => tabExists(environment.page, tabId), { timeout: 15_000 }).toBe(false);
     expect(firstRunId).toMatch(/^drive-/);
+    const afterCancel = await exec(dependencies, stdout, stderr, { sessionId, name: "close_tab", args: { tabRef: "page" } });
+    expect(afterCancel.code).toBe(1);
+    expect(afterCancel.text || stderr.text).toContain("DRIVE_SESSION_ENDED");
+
+    const pdfSession = await createDrive();
+    const pdf = await exec(dependencies, stdout, stderr, { sessionId: pdfSession, name: "open_tab",
+      args: { url: `${fixture}/document`, tabAlias: "pdf" } }, "90");
+    expect(pdf.code, pdf.text || stderr.text).toBe(0);
+    openedTabs.push(pdf.body.result.result.tabRef);
+    const pdfRead = await exec(dependencies, stdout, stderr, { sessionId: pdfSession, name: "read_article",
+      args: { tabRef: "pdf", limit: 1200 } });
+    expect(pdfRead.code, pdfRead.text || stderr.text).toBe(1);
+    expect(pdfRead.text || stderr.text).toContain("PDF_PAGE_UNSUPPORTED");
+    expect(pdfRead.text || stderr.text).toContain("qingzhou-documents");
+    expect(pdfRead.text || stderr.text).not.toMatch(/tabId|\binner\b/);
+    const pdfPress = await exec(dependencies, stdout, stderr, { sessionId: pdfSession, name: "act_on_screen",
+      args: { tabRef: "pdf", action: "press", key: "Escape", returnScreenshot: false } });
+    expect(pdfPress.code, pdfPress.text || stderr.text).toBe(1);
+    expect(pdfPress.text || stderr.text).toContain("PDF_PAGE_UNSUPPORTED");
+    expect(pdfPress.text || stderr.text).not.toContain("BATCH_TAB_REFERENCE_ERROR");
+    await callTool(environment.bridge.endpoint, "qingzhou_stop_session", { sessionId: pdfSession });
   } finally {
     await environment.page.evaluate(async (ids) => {
       const open = [];
@@ -241,7 +276,12 @@ function tabExists(page, tabId) {
 function startPage() {
   const page = `<!doctype html><title>drive</title><p id="status">drive-ok</p><button id="go" type="button">Go</button>
 <script>document.getElementById("go").addEventListener("click", () => { document.title = "clicked"; document.getElementById("status").textContent = "clicked"; });</script>`;
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
+    if (request.url === "/document") {
+      response.writeHead(200, { "content-type": "application/pdf" });
+      response.end(textPdf(["Drive PDF fixture"]));
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(page);
   });

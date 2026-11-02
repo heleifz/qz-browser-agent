@@ -58,7 +58,7 @@ globalThis.chrome = {
     },
     onUpdated: { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener) },
     async sendMessage(_id, message) {
-      if (message.action === 'ping') return { ok: true };
+      if (message.action === 'ping') return { ok: true, contentType: 'text/html' };
       contentCalls++; return never();
     },
   },
@@ -89,7 +89,7 @@ test('normal reads never wait for or start a page-state probe', async () => {
   reset();
   const sendMessage = chrome.tabs.sendMessage, executeScript = chrome.scripting.executeScript;
   let probes = 0;
-  chrome.tabs.sendMessage = async (_id, message) => message.action === 'ping' ? { ok: true } : { text: 'Ready', elements: [] };
+  chrome.tabs.sendMessage = async (_id, message) => message.action === 'ping' ? { ok: true, contentType: 'text/html' } : { text: 'Ready', elements: [] };
   chrome.scripting.executeScript = () => { probes++; return never(); };
   try {
     for (const name of ['read_article', 'find_elements']) {
@@ -111,7 +111,7 @@ test('ten concurrent page readers isolate targets and cancellation without updat
   reset();
   for (let id = 1; id <= 10; id++) tabs.set(id, { id, windowId: 2, url: `https://example.test/${id}`, title: `Page ${id}`, status: 'complete' });
   const sendMessage = chrome.tabs.sendMessage, releases = new Map();
-  chrome.tabs.sendMessage = async (id, message) => message.action === 'ping' ? { ok: true, documentReady: true }
+  chrome.tabs.sendMessage = async (id, message) => message.action === 'ping' ? { ok: true, documentReady: true, contentType: 'text/html' }
     : new Promise(resolve => releases.set(id, () => resolve({ text: `article ${id}` })));
   const controllers = Array.from({ length: 10 }, () => new AbortController());
   const pending = controllers.map((controller, index) => runtime.execute('read_article', { tabId: index + 1, limit: 100 }, controller.signal,
