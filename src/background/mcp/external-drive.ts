@@ -1,5 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
-import { getLanguage } from "../../shared/i18n/index.js";
+import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
@@ -110,8 +110,12 @@ export function prepareDriveToolCall(name: string, args: unknown): { ok: true; a
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
 export function driveToolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
   const parameters = record(tool.parameters);
-  const properties = record(parameters.properties);
+  const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
+  const pageScript = toolLocalName(tool.name) === "run_script";
+  const properties = pageScript
+    ? projectRunScriptCatalogProperties(sourceProperties, required)
+    : projectDriveCatalogProperties(sourceProperties, required);
   const args = Object.entries(properties).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
@@ -121,8 +125,69 @@ export function driveToolSignature(tool: { name: string; description?: string; p
         : typeof schema.type === "string" && schema.type ? schema.type : "any";
     return `${key}${required.has(key) ? "" : "?"}:${type}`;
   });
-  const description = String(tool.description || "").split("\n").map(line => line.trim()).find(Boolean)?.slice(0, 240) || "";
+  const description = driveCatalogDescription(tool.description);
   return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
+}
+
+/** Built-in schemas keep tabId. Drive catalogs name that parameter tabRef and drop inner from enums. */
+function projectDriveCatalogProperties(sourceProperties: Fields, required: Set<string>) {
+  const properties: Fields = {};
+  const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
+  for (const [key, spec] of Object.entries(sourceProperties)) {
+    if (key === "tabId") {
+      if (!hasTabRef) properties.tabRef = withoutInnerEnum(spec);
+      continue;
+    }
+    properties[key] = withoutInnerEnum(spec);
+  }
+  if (required.delete("tabId")) required.add("tabRef");
+  return properties;
+}
+
+function withoutInnerEnum(spec: unknown) {
+  const schema = record(spec);
+  if (!Array.isArray(schema.enum)) return spec;
+  const filtered = schema.enum.filter(item => String(item).toLowerCase() !== "inner");
+  if (filtered.length === schema.enum.length) return spec;
+  const next = { ...schema };
+  if (filtered.length) next.enum = filtered;
+  else delete next.enum;
+  return next;
+}
+
+/** Page scripts on the drive catalog name tabRef and stay on target page. The built-in schema is left unchanged. */
+function projectRunScriptCatalogProperties(sourceProperties: Fields, required: Set<string>) {
+  const properties: Fields = {};
+  const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
+  for (const [key, spec] of Object.entries(sourceProperties)) {
+    if (key === "tabId") {
+      if (!hasTabRef) properties.tabRef = { type: "string" };
+      continue;
+    }
+    properties[key] = key === "target" ? { ...record(spec), enum: ["page"] } : spec;
+  }
+  if (!Object.hasOwn(properties, "tabRef")) properties.tabRef = { type: "string" };
+  required.add("target");
+  required.add("tabRef");
+  required.delete("tabId");
+  return properties;
+}
+
+/** Drive catalogs show tabRef and do not teach inner. The built-in description string stays unchanged. */
+function driveCatalogDescription(description: unknown) {
+  const line = String(description || "").split("\n").map(item => item.trim()).find(Boolean) || "";
+  return projectDriveModelText(line).slice(0, 240);
+}
+
+/** Replace the parameter name without touching words such as workingTabId. */
+function projectDriveModelText(value: string) {
+  if (!/(?<![A-Za-z])tabId\b|\binner\b/i.test(value)) return value;
+  return value
+    .replace(/(?<![A-Za-z])tabId\b/g, "tabRef")
+    .replace(/\binner\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;:，。；：])/g, "$1")
+    .trim();
 }
 
 function positiveSeconds(value: unknown) {
@@ -406,19 +471,27 @@ interface DriveOutcome {
   projected?: { value: unknown; images: DriveImage[] };
 }
 
-function failed(call: DriveCall, error: unknown, args: unknown = call.args): DriveOutcome {
+/** Drive no_alias uses one sentence. Other drive-visible text names tabRef and does not teach inner. */
+export function driveNoAliasText(failure: unknown, fallback: string): string {
+  const body = record(failure);
+  const details = record(body.details);
+  if (String(body.code || "") === "BATCH_TAB_REFERENCE_ERROR" && details.reason === "no_alias") return t("drive.noAlias");
+  return projectDriveModelText(fallback);
+}
+
+function failed(call: DriveCall, error: unknown, args: unknown = call.args, language = getLanguage()): DriveOutcome {
   const err = record(error);
   const aborted = err.name === "AbortError" || err.name === "TimeoutError";
+  const code = aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED");
+  const fallback = typeof err.message === "string" && err.message ? err.message : String(error);
+  const message = withLanguage(language, () => driveNoAliasText(error, fallback));
   return {
     call,
     id: call.id,
     name: call.name,
     args,
     isError: true,
-    result: {
-      error: typeof err.message === "string" && err.message ? err.message : String(error),
-      code: aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
-    },
+    result: { error: message, code },
   };
 }
 
@@ -436,6 +509,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
+  const language = getLanguage();
   const canCommit = Boolean(deps.commitToolResult && deps.discardToolResult);
   function publish(outcome: DriveOutcome) {
     if (outcome.projected) return outcome;
@@ -457,7 +531,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   for (const call of calls) {
     const ready = prepareDriveToolCall(call.name, call.args);
     if (!ready.ok) {
-      blocked.set(call, failed(call, ready.error));
+      blocked.set(call, failed(call, ready.error, call.args, language));
       continue;
     }
     const next = { ...call, args: ready.args };
@@ -476,16 +550,16 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     dependencies: batch.dependencies,
     independent: batch.independent,
     completed: (call, outcome) => batch.complete(call, outcome.result, outcome.isError),
-    cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
+    cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args, language),
     tab: call => {
       try { return batch.observation(call) ? Number(record(batch.args(call)).tabId) || null : null; }
       catch { return null; }
     },
-    reject: (call, error) => failed(call, error),
+    reject: (call, error) => failed(call, error, call.args, language),
     execute: async (call, callSignal, parallel) => {
       let args: unknown = call.args;
       try { args = batch.args(call); }
-      catch (error) { return failed(call, error); }
+      catch (error) { return failed(call, error, call.args, language); }
       const base: Fields = {
         ...(deps.context || {}),
         preserveWorkingTab: batch.observation(call) === true,
@@ -503,7 +577,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         };
       } catch (error) {
         await deps.discardToolResult?.(undefined, context);
-        return failed(call, error, args);
+        return failed(call, error, args, language);
       }
     },
     commit: async outcome => {
@@ -512,7 +586,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         batch.assertDependenciesCommitted(outcome.call);
         if (!current.isError) await deps.commitToolResult?.(current.result, deps.signal, deps.context || {});
       } catch (error) {
-        current = failed(outcome.call, error, outcome.args);
+        current = failed(outcome.call, error, outcome.args, language);
       }
       await deps.discardToolResult?.(outcome.result, deps.context || {});
       batch.settle(outcome.call, current.result, current.isError);
@@ -521,7 +595,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   });
   const results = calls.map(call => {
     const plannedCall = plannedBySource.get(call);
-    const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }));
+    const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args, language));
     const images = outcome.projected?.images || [];
     return {
       id: outcome.id,

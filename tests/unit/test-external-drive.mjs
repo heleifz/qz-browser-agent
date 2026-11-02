@@ -5,6 +5,7 @@ import {
   createExternalDriveCoordinator,
   DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
+  driveToolSignature,
   isDriveToolDefault,
   isDriveToolForbidden,
   parseDriveRequest,
@@ -13,6 +14,9 @@ import {
   projectNamedDriveResult,
   runDriveCalls,
 } from "../../src/background/mcp/external-drive.js";
+import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
+import { toolT as scriptToolT } from "../../src/capabilities/script/tool-messages.js";
+import { t as toolT } from "../../src/background/tools/messages.js";
 import { t } from "../../src/shared/i18n/backend.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
@@ -20,6 +24,7 @@ import { createSessionRepository } from "../../src/background/session/repository
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 
 globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
+const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
 
 test("drive titles and request sentences stay on the existing tool", () => {
   assert.equal(driveGroupTitle("qz-cli"), "轻舟 · CLI");
@@ -99,19 +104,30 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   const inner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
   assert.equal(inner.ok, false);
   assert.equal(inner.error.code, "DRIVE_RUN_SCRIPT_TARGET");
+  assert.equal(inner.error.message, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(inner.error.message, /\binner\b/i);
+  withLanguage("en", () => {
+    const enInner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
+    assert.equal(enInner.ok, false);
+    assert.equal(enInner.error.message, "Direct drive accepts only a page script with tabRef. Orchestrate with calls or execute_tool.");
+    assert.doesNotMatch(enInner.error.message, /\binner\b/i);
+  });
   const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
   assert.equal(missing.ok, false);
   assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
   withLanguage("zh-CN", () => {
     const zh = prepareDriveToolCall("navigate", {});
     assert.equal(zh.ok, false);
-    assert.equal(zh.error.message, "直驱的页面工具必须带 tabRef。open_tab 用 tabAlias。不要漏掉 tabRef。");
+    assert.equal(zh.error.message, "页面工具必须带 tabRef。它可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+    assert.doesNotMatch(zh.error.message, /省略 tabRef/);
   });
   withLanguage("en", () => {
     const en = prepareDriveToolCall("navigate", {});
     assert.equal(en.ok, false);
-    assert.equal(en.error.message, "Direct-drive page tools require tabRef. open_tab uses tabAlias. Do not leave out tabRef.");
+    assert.equal(en.error.message, "Page tools require tabRef. It can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+    assert.doesNotMatch(en.error.message, /omit tabRef/i);
   });
+  assert.equal(prepareDriveToolCall("open_tab", { url: "https://example.com" }).ok, true);
   for (const name of ["navigate", "get_ax_tree", "read_dom", "use_tab", "close_tab", "screenshot", "act_on_element", "wait_for_element"]) {
     const rejected = prepareDriveToolCall(name, {});
     assert.equal(rejected.ok, false, name);
@@ -168,6 +184,8 @@ test("a calls batch rejects inner run_script before that call runs", async () =>
   assert.equal(batch.results[0].result.tabRef, 3);
   assert.equal(batch.results[1].isError, true);
   assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
+  assert.equal(batch.results[1].result.error, "直驱只接受带 tabRef 的 page 脚本。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(batch.results[1].result.error, /\binner\b/i);
 });
 
 test("projection drops nodes and screenshot bytes", () => {
@@ -384,6 +402,207 @@ test("fixable script errors keep the identifier and syntax failures still restor
   assert.match(catalog.value.error, /price is not defined/);
   assert.match(catalog.value.error, /\(3:1\)/);
   assert.doesNotMatch(catalog.value.error, /^脚本执行失败/);
+});
+
+test("direct drive resolves an alias and a returned tabRef", async () => {
+  const seen = [];
+  const run = (calls, aliases) => runDriveCalls(calls, {
+    signal: new AbortController().signal,
+    aliases,
+    execute: async (_name, args) => {
+      seen.push(args.tabId);
+      return { snapshot: "ok" };
+    },
+    getBatchTabPolicy: () => ({ kind: "target", implicit: false, observation: true }),
+  });
+  const byAlias = await run([{ id: "alias", name: "get_ax_tree", args: { tabRef: "page" } }], { page: 11 });
+  const byId = await run([
+    { id: "number", name: "get_ax_tree", args: { tabRef: 11 } },
+    { id: "digits", name: "get_ax_tree", args: { tabRef: "11" } },
+  ], {});
+  assert.equal(byAlias.results[0].isError, false);
+  assert.equal(byId.results[0].isError, false);
+  assert.equal(byId.results[1].isError, false);
+  assert.deepEqual(seen, [11, 11, 11]);
+  let missingPromise;
+  withLanguage("zh-CN", () => {
+    missingPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
+  });
+  const missing = await missingPromise;
+  assert.equal(missing.results[0].isError, true);
+  assert.equal(missing.results[0].result.code, "BATCH_TAB_REFERENCE_ERROR");
+  assert.equal(missing.results[0].result.error, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+  assert.doesNotMatch(missing.results[0].result.error, /省略 tabRef/);
+  let missingEnPromise;
+  withLanguage("en", () => {
+    missingEnPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
+  });
+  const missingEn = await missingEnPromise;
+  assert.equal(missingEn.results[0].result.error, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+  assert.doesNotMatch(missingEn.results[0].result.error, /omit tabRef/i);
+});
+
+test("single drive no_alias matches calls and the script bridge", async () => {
+  const throwNoAlias = () => {
+    const error = new Error("built-in alias");
+    error.code = "BATCH_TAB_REFERENCE_ERROR";
+    error.details = { reason: "no_alias", tabRef: "page" };
+    throw error;
+  };
+  const callBatch = (language) => {
+    let pending;
+    withLanguage(language, () => {
+      pending = runDriveCalls([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {
+        signal: new AbortController().signal,
+        aliases: {},
+        execute: async () => { throw new Error("planner should reject before execute"); },
+        getBatchTabPolicy: () => ({ kind: "target", implicit: false, observation: true }),
+      });
+    });
+    return pending;
+  };
+  const zhCalls = await callBatch("zh-CN");
+  const enCalls = await callBatch("en");
+  const zhSentence = withLanguage("zh-CN", () => t("drive.noAlias"));
+  const enSentence = withLanguage("en", () => t("drive.noAlias"));
+  assert.equal(zhCalls.results[0].result.error, zhSentence);
+  assert.equal(enCalls.results[0].result.error, enSentence);
+
+  const noted = [];
+  const metadata = {};
+  const driveRuns = new Map();
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: (sessionId, runId) => Boolean(runId) && driveRuns.get(sessionId) === runId,
+        mintDriveRunId(sessionId) {
+          if (!driveRuns.get(sessionId)) driveRuns.set(sessionId, `drive-${crypto.randomUUID()}`);
+          return driveRuns.get(sessionId);
+        },
+        clearDriveRunId(sessionId) { driveRuns.set(sessionId, ""); },
+        takeDriveRunForRelease(sessionId) {
+          const current = driveRuns.get(sessionId) || "";
+          driveRuns.set(sessionId, "");
+          return current;
+        },
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+      waitForRunObserved: async () => true,
+      getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
+      getLiveAgentEntry: async () => null,
+      setRuntime() {},
+      getStoredRuntime: () => null,
+      getLastMessages: async () => ({ messages: [] }),
+      getAgent: async () => null,
+      getTranscript: async () => [],
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      getConversation: async () => [],
+      compactTranscriptEvent: (event) => event,
+      getRuntime: () => ({ status: "idle", workingTabId: null }),
+      recordToolEvent(event) { noted.push(event); },
+    },
+    userInputPermissions: {
+      hasBrowserPermission: async () => false,
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+    },
+    tools: {
+      ready: async () => {},
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames: () => {},
+      runtime: {
+        getSchemas: () => [],
+        async execute(name) {
+          if (name === "get_ax_tree") throwNoAlias();
+          if (name === "list_tabs") throw new Error("plain failure");
+          return { ok: true };
+        },
+        getModelPolicy: () => null,
+        getBatchTabPolicy: () => null,
+        getTabAliases: () => ({}),
+      },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    async dispatchSidepanel() {},
+  });
+  const rejectMessage = async (language, params) => {
+    let pending;
+    withLanguage(language, () => {
+      pending = runtime.executeTool(params);
+    });
+    try {
+      await pending;
+    } catch (error) {
+      return error.message;
+    }
+    throw new Error("expected executeTool to reject");
+  };
+  const zhSingle = await rejectMessage("zh-CN", { sessionId: "drive-alias", name: "get_ax_tree", args: { tabRef: "page" }, clientName: "qz-cli" });
+  const enSingle = await rejectMessage("en", { sessionId: "drive-alias", name: "get_ax_tree", args: { tabRef: "page" }, clientName: "qz-cli" });
+  assert.equal(zhSingle, zhSentence);
+  assert.equal(enSingle, enSentence);
+  assert.equal(zhSingle, zhCalls.results[0].result.error);
+  assert.equal(enSingle, enCalls.results[0].result.error);
+  assert.equal(noted[0].result.error, zhSentence);
+  assert.equal(noted.at(-1).result.error, enSentence);
+  const plain = await rejectMessage("zh-CN", { sessionId: "drive-alias", name: "list_tabs", args: {} });
+  assert.equal(plain, "plain failure");
+  assert.doesNotMatch(plain, /--session/);
+
+  const scriptCall = async (language, runId) => {
+    const bridge = createRunScriptBridge({
+      supervisor: {
+        isRunCurrent: (_sessionId, id) => String(id).startsWith("drive-") || id === "run-current",
+        hasAgent: () => false,
+        getAbortSignal: () => new AbortController().signal,
+      },
+      getRuntime: () => ({ status: "running" }),
+      isTerminalRuntimeForRun: () => false,
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      getRunToolContext: async () => ({ language }),
+      toolRuntime: {
+        resolveDefinition: () => ({ behavior: {} }),
+        getSchemas: () => [],
+        async execute(name) {
+          if (name === "get_ax_tree") throwNoAlias();
+          return { ok: true };
+        },
+      },
+      collectArtifacts: () => [],
+    });
+    return bridge.handleToolCall({
+      toolName: "get_ax_tree",
+      args: { tabRef: "page" },
+      sessionId: "s1",
+      runId,
+    });
+  };
+  const zhScript = await scriptCall("zh-CN", "drive-1");
+  const enScript = await scriptCall("en", "drive-1");
+  const builtIn = await scriptCall("en", "run-current");
+  assert.equal(zhScript.error, zhSentence);
+  assert.equal(enScript.error, enSentence);
+  assert.equal(zhScript.error, zhSingle);
+  assert.equal(enScript.error, enSingle);
+  assert.doesNotMatch(builtIn.error, /--session/);
+  assert.match(builtIn.error, /no page alias yet/);
+
+  const builtInZh = withLanguage("zh-CN", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
+  const builtInEn = withLanguage("en", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
+  assert.doesNotMatch(builtInZh, /--session/);
+  assert.doesNotMatch(builtInEn, /--session/);
+  assert.notEqual(builtInZh, zhSentence);
+  assert.notEqual(builtInEn, enSentence);
 });
 
 test("one calls batch reuses tab aliases and the existing scheduler", async () => {
@@ -848,4 +1067,304 @@ test("a drive create does not take over an existing task", async () => {
   const again = await repository.createMetadata({ id: "fresh", title: "other", source: "external-drive" });
   assert.equal(again.title, "轻舟 · CLI");
   assert.equal(again.source, "external-drive");
+});
+
+test("drive catalogs show run_script target as page", async () => {
+  const runScript = {
+    type: "function",
+    function: {
+      name: "run_script",
+      description: "Run a page script.\n- target:\"inner\" stays on the built-in catalog.\nPass tabId only on the built-in schema.",
+      parameters: {
+        type: "object",
+        properties: {
+          timeout: { type: "number" },
+          target: { type: "string", enum: ["page", "inner"], description: "page or inner" },
+          tabId: { type: "number", description: "Target tabId" },
+          args: { type: "object" },
+          mutatesPage: { type: "boolean" },
+          code: { type: "string" },
+        },
+        required: ["timeout", "code"],
+      },
+    },
+  };
+  const expectedSignature = "run_script({timeout:number, target:\"page\", tabRef:string, args?:object, mutatesPage?:boolean, code:string})";
+  const projected = driveToolSignature({
+    name: runScript.function.name,
+    description: runScript.function.description,
+    parameters: runScript.function.parameters,
+  });
+  assert.equal(projected.signature, expectedSignature);
+  assert.equal(projected.description, "Run a page script.");
+  assert.doesNotMatch(JSON.stringify(projected), /\b(?:tabId|inner)\b/i);
+  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
+  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
+  for (const language of ["zh-CN", "en"]) {
+    const hidden = withLanguage(language, () => driveToolSignature({
+      name: "run_script",
+      description: scriptToolT("runScriptDescription"),
+      parameters: runScript.function.parameters,
+    }));
+    assert.equal(hidden.signature, expectedSignature);
+    assert.match(hidden.description, /tabRef/);
+    assert.doesNotMatch(JSON.stringify(hidden), /tabId|\binner\b/i);
+  }
+
+  const metadata = { "agent-1": { id: "agent-1", source: "agent" } };
+  const runtime = createMcpRuntime({
+    sessions: {
+      normalizeId: (value) => String(value || "").trim(),
+      requireId: (value) => String(value || "").trim(),
+      supervisor: {
+        isRunCurrent: () => false,
+        mintDriveRunId: () => "drive-run",
+        clearDriveRunId() {},
+        takeDriveRunForRelease: () => "",
+        getUserWait: () => null,
+        resolveUserWait: () => false,
+        rejectUserWait: () => false,
+      },
+      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+      waitForRunObserved: async () => true,
+      getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
+      getLiveAgentEntry: async () => null,
+      setRuntime() {},
+      getStoredRuntime: () => null,
+      getLastMessages: async () => ({ messages: [] }),
+      getAgent: async () => null,
+      getTranscript: async () => [],
+      listMetadata: async () => ({ ...metadata }),
+      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+      getConversation: async () => [],
+      compactTranscriptEvent: (event) => event,
+      getRuntime: () => ({ status: "idle", workingTabId: null }),
+    },
+    userInputPermissions: {
+      hasBrowserPermission: async () => false,
+      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+    },
+    tools: {
+      ready: async () => {},
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      loadedSkillNames: () => [],
+      recordLoadedSkillNames: () => {},
+      runtime: {
+        getSchemas: () => [runScript],
+        execute: async () => ({ ok: true }),
+        getModelPolicy: () => null,
+        getBatchTabPolicy: () => null,
+        getTabAliases: () => ({}),
+      },
+    },
+    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+    trace: { get: async () => [] },
+    async dispatchSidepanel() {},
+  });
+  const listed = await runtime.listTools({ sessionId: "drive-1" });
+  const fetched = await runtime.getTool({ sessionId: "drive-1", name: "run_script" });
+  assert.equal(listed.tools.length, 1);
+  assert.equal(listed.tools[0].signature, projected.signature);
+  assert.equal(fetched.signature, projected.signature);
+  assert.doesNotMatch(JSON.stringify(listed.tools[0]), /\b(?:tabId|inner)\b/i);
+  assert.doesNotMatch(JSON.stringify(fetched), /\b(?:tabId|inner)\b/i);
+  const builtInList = await runtime.listTools({ sessionId: "agent-1" });
+  const builtInTool = await runtime.getTool({ sessionId: "agent-1", name: "run_script" });
+  assert.match(JSON.stringify(builtInList), /\binner\b/i);
+  assert.match(JSON.stringify(builtInList), /\btabId\b/);
+  assert.match(JSON.stringify(builtInTool), /\binner\b/i);
+  assert.match(JSON.stringify(builtInTool), /\btabId\b/);
+  assert.deepEqual(builtInTool.parameters.properties.target.enum, ["page", "inner"]);
+
+  const bridge = createRunScriptBridge({
+    supervisor: {
+      isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+      hasAgent: () => true,
+      getAbortSignal: () => new AbortController().signal,
+    },
+    getRuntime: () => ({ status: "running" }),
+    isTerminalRuntimeForRun: () => false,
+    canManageSessions: async () => true,
+    buildRunProfile: async () => ({}),
+    toolRuntime: {
+      resolveDefinition: () => ({ behavior: {} }),
+      getSchemas: () => [runScript],
+      execute: async () => ({ ok: true }),
+    },
+    collectArtifacts: () => [],
+  });
+  const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "drive-1" });
+  const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
+  assert.equal(driveList.result.tools[0].signature, projected.signature);
+  assert.doesNotMatch(JSON.stringify(driveList.result.tools[0]), /\b(?:tabId|inner)\b/i);
+  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\binner\b/i);
+  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\btabId\b/);
+  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
+  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
+});
+
+function assertNoDriveTabLeak(label, value) {
+  const text = typeof value === "string" ? value : `${value?.signature || ""}\n${value?.description || ""}`;
+  assert.doesNotMatch(text, /tabId/, `${label} still shows tabId: ${text.slice(0, 240)}`);
+  assert.doesNotMatch(text, /\binner\b/i, `${label} still shows inner: ${text.slice(0, 240)}`);
+}
+
+test("drive catalogs hide tabId and inner for every default tool", async () => {
+  const metadata = { "agent-1": { id: "agent-1", source: "agent" } };
+  for (const language of ["zh-CN", "en"]) {
+    const schemas = withLanguage(language, () => JSON.parse(JSON.stringify(getToolSchemas({ language }))));
+    const catalog = schemas.map(schema => ({
+      name: schema.function?.name || "",
+      description: schema.function?.description || "",
+      parameters: schema.function?.parameters || {},
+      type: schema.type || "function",
+    })).filter(tool => tool.name);
+    const watched = catalog.filter(tool => isDriveToolDefault(tool.name) || tool.name === "get_working_tab");
+    assert.ok(watched.some(tool => tool.name === "list_tabs"));
+    assert.ok(watched.some(tool => tool.name === "use_tab"));
+    assert.ok(watched.some(tool => tool.name === "get_working_tab"));
+    for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
+    const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
+    assert.equal(runScript.signature, "run_script({timeout:number, target:\"page\", args?:object, mutatesPage?:boolean, code:string, tabRef:integer|string})");
+
+    const runtime = createMcpRuntime({
+      sessions: {
+        normalizeId: (value) => String(value || "").trim(),
+        requireId: (value) => String(value || "").trim(),
+        supervisor: {
+          isRunCurrent: () => false,
+          mintDriveRunId: () => "drive-run",
+          clearDriveRunId() {},
+          takeDriveRunForRelease: () => "",
+          getUserWait: () => null,
+          resolveUserWait: () => false,
+          rejectUserWait: () => false,
+        },
+        submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
+        waitForRunObserved: async () => true,
+        getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
+        getLiveAgentEntry: async () => null,
+        setRuntime() {},
+        getStoredRuntime: () => null,
+        getLastMessages: async () => ({ messages: [] }),
+        getAgent: async () => null,
+        getTranscript: async () => [],
+        listMetadata: async () => ({ ...metadata }),
+        createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
+        getConversation: async () => [],
+        compactTranscriptEvent: (event) => event,
+        getRuntime: () => ({ status: "idle", workingTabId: null }),
+      },
+      userInputPermissions: {
+        hasBrowserPermission: async () => false,
+        locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
+      },
+      tools: {
+        ready: async () => {},
+        canManageSessions: async () => true,
+        buildRunProfile: async () => ({}),
+        loadedSkillNames: () => [],
+        recordLoadedSkillNames: () => {},
+        runtime: {
+          getSchemas: () => schemas,
+          execute: async () => ({ ok: true }),
+          getModelPolicy: () => null,
+          getBatchTabPolicy: () => null,
+          getTabAliases: () => ({}),
+        },
+      },
+      skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
+      artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
+      trace: { get: async () => [] },
+      async dispatchSidepanel() {},
+    });
+    const listed = await runtime.listTools({ sessionId: "drive-1" });
+    assert.ok(listed.tools.length > 1);
+    for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);
+    for (const name of ["list_tabs", "use_tab", "get_working_tab", "navigate", "run_script"]) {
+      assertNoDriveTabLeak(`${language} get_tool ${name}`, await runtime.getTool({ sessionId: "drive-1", name }));
+    }
+    const builtInList = await runtime.getTool({ sessionId: "agent-1", name: "list_tabs" });
+    assert.match(JSON.stringify(builtInList), /tabId/);
+
+    const bridge = createRunScriptBridge({
+      supervisor: {
+        isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+        hasAgent: () => true,
+        getAbortSignal: () => new AbortController().signal,
+      },
+      getRuntime: () => ({ status: "running" }),
+      isTerminalRuntimeForRun: () => false,
+      canManageSessions: async () => true,
+      buildRunProfile: async () => ({}),
+      toolRuntime: {
+        resolveDefinition: () => ({ behavior: {} }),
+        getSchemas: () => schemas,
+        execute: async () => ({ ok: true }),
+      },
+      collectArtifacts: () => [],
+    });
+    const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: `drive-${language}` });
+    assert.ok(driveList.result.tools.length > 1);
+    for (const tool of driveList.result.tools) assertNoDriveTabLeak(`${language} $list ${tool.name}`, tool);
+    const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
+    assert.match(JSON.stringify(builtInScriptList.result.tools.find(tool => tool.name === "list_tabs")), /tabId/);
+  }
+  const zhSchemas = withLanguage("zh-CN", () => JSON.parse(JSON.stringify(getToolSchemas({ language: "zh-CN" }))));
+  const zhTool = (name) => driveToolSignature(zhSchemas.map(schema => ({
+    name: schema.function?.name || "",
+    description: schema.function?.description || "",
+    parameters: schema.function?.parameters || {},
+  })).find(tool => tool.name === name));
+  assert.match(zhTool("list_tabs").description, /只读页面工具可显式传 tabRef/);
+  assert.match(zhTool("get_working_tab").description, /标题、URL、tabRef/);
+  assert.match(zhTool("use_tab").signature, /tabRef/);
+  assert.doesNotMatch(`${zhTool("use_tab").signature}\n${zhTool("use_tab").description}`, /tabId/);
+
+  const rawClauses = [
+    ["list_tabs", "readOnlyUsable=true 表示只读页面工具可显式传 tabId 查看。命中安全策略的标签页仍返回标题、URL、tabId。"],
+    ["get_working_tab", "若命中安全策略，仍返回标题、URL、tabId，并标记 contentAccess=blocked。"],
+    ["use_tab", "归属其他任务的标签页可由只读页面工具显式传 tabId 查看。"],
+    ["list_tabs", "read-only page tools may inspect it by passing tabId explicitly. Tabs still return title, URL, and tabId."],
+    ["get_working_tab", "A tab blocked by a security policy still returns title, URL, and tabId with contentAccess=blocked."],
+    ["use_tab", "To inspect a tab owned by another task, pass tabId explicitly to a read-only page tool."],
+  ];
+  for (const [name, description] of rawClauses) {
+    const projected = driveToolSignature({
+      name,
+      description,
+      parameters: { type: "object", properties: { tabId: { type: "number", enum: ["page", "inner"], description: "pass tabId, not inner" } }, required: ["tabId"] },
+    });
+    assert.doesNotMatch(`${projected.signature}\n${projected.description}`, /tabId|\binner\b/i, description);
+    assert.match(projected.description, /tabRef/);
+    assert.match(projected.signature, /tabRef:"page"/);
+  }
+});
+
+test("a drive batch conflict names tabRef", async () => {
+  const builtIn = withLanguage("zh-CN", () => toolT("tabReferenceConflict", { tabRef: "page" }));
+  const builtInEn = withLanguage("en", () => toolT("tabReferenceConflict", { tabRef: "page" }));
+  assert.match(builtIn, /tabId/);
+  assert.match(builtInEn, /tabId/);
+  assert.match(withLanguage("zh-CN", () => t("toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message", { tabRef: "page" })), /tabId/);
+  const run = (language) => {
+    let pending;
+    withLanguage(language, () => {
+      pending = runDriveCalls([{ id: "mix", name: "get_ax_tree", args: { tabRef: "page", tabId: 99 } }], {
+        signal: new AbortController().signal,
+        aliases: { page: 11 },
+        execute: async () => { throw new Error("planner should reject before execute"); },
+        getBatchTabPolicy: () => ({ kind: "target", implicit: false, observation: true }),
+      });
+    });
+    return pending;
+  };
+  const zh = await run("zh-CN");
+  const en = await run("en");
+  assert.equal(zh.results[0].result.error, "tabRef「page」与同时提供的 tabRef 或元素 UID 指向不同页面。请只指定一个目标，或让两者指向同一页。");
+  assert.equal(en.results[0].result.error, "tabRef \"page\" conflicts with the supplied tabRef or element UID. Select one target, or make both refer to the same page.");
+  assert.doesNotMatch(zh.results[0].result.error, /tabId/);
+  assert.doesNotMatch(en.results[0].result.error, /tabId/);
 });

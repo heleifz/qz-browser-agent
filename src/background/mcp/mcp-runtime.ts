@@ -1,9 +1,11 @@
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { t } from "../../shared/i18n/backend.js";
+import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
   createExternalDriveCoordinator,
   driveGroupTitle,
+  driveNoAliasText,
   driveToolSignature,
   isDriveToolDefault,
   isDriveToolForbidden,
@@ -444,6 +446,7 @@ export function createMcpRuntime({
   }
 
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
+    const language = getLanguage();
     const parsed = parseDriveRequest(params);
     if (!parsed.ok) throw parsed.error;
     signal?.throwIfAborted();
@@ -504,6 +507,10 @@ export function createMcpRuntime({
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
+          if (error instanceof Error) {
+            const next = withLanguage(language, () => driveNoAliasText(error, error.message));
+            if (next !== error.message) error.message = next;
+          }
           noteDriveTool(name, params.args, driveToolFailure(error), true);
           throw error;
         }

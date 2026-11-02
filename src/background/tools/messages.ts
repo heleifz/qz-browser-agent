@@ -44,8 +44,8 @@ const messages = defineMessages("tool-runtime", {
     en: "tabRef \"{tabRef}\" only works in the same batch of calls as its open_tab. Use the tabRef returned by open_tab instead.",
   },
   batchTabReferenceNoAlias: {
-    "zh-CN": "本会话还没有页面别名。省略 tabRef，或先 open_tab。",
-    en: "This session has no page alias yet. Omit tabRef, or open_tab first.",
+    "zh-CN": "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。",
+    en: "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs.",
   },
   batchTabDependencyFailed: {
     "zh-CN": "tabAlias「{tabRef}」对应的 open_tab 未能建立有效页面，已跳过此次调用。请先处理该 open_tab 的错误，再重试。",

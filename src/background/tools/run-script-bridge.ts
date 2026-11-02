@@ -1,4 +1,4 @@
-import { driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
+import { driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -70,8 +70,15 @@ export function createRunScriptBridge({
   async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
     await ready();
     let language = getLanguage();
-    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
-      withLanguage(language, () => failureResponse(payload, options));
+    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) => withLanguage(language, () => {
+      const response = failureResponse(payload, options);
+      if (!String(message.runId || "").trim().startsWith("drive-")) return response;
+      const fallback = String(response.error || "");
+      const text = driveNoAliasText(response, fallback);
+      if (text === fallback) return response;
+      const result = plainObject(response.result);
+      return { ...response, error: text, message: text, result: { ...result, error: text, message: text } };
+    });
     const toolName = String(message.toolName || "").trim();
     if (!toolName) {
       return respondFailure({

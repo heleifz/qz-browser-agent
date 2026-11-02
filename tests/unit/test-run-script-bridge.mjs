@@ -341,6 +341,12 @@ const driveBridge = createRunScriptBridge({
     ],
     getTabAliases: () => ({ page: 7 }),
     async execute(name) {
+      if (name === "get_ax_tree") {
+        const error = new Error("built-in alias");
+        error.code = "BATCH_TAB_REFERENCE_ERROR";
+        error.details = { reason: "no_alias", tabRef: "page" };
+        throw error;
+      }
       driveExecutions.push(name);
       if (name === "list_tabs") {
         return [
@@ -412,5 +418,25 @@ const plainTabs = await driveBridge.handleToolCall({
 });
 assert.equal(Array.isArray(plainTabs.result), true);
 assert.equal(plainTabs.result[1].ownedByCurrentTask, false);
+const driveAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "drive-1",
+});
+assert.equal(driveAlias.ok, false);
+assert.equal(driveAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.match(driveAlias.error, /--session/);
+assert.match(driveAlias.error, /list_tabs/);
+assert.doesNotMatch(driveAlias.error, /省略 tabRef|omit tabRef/i);
+const builtInAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "run-current",
+});
+assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.doesNotMatch(builtInAlias.error, /--session|省略 tabRef|omit tabRef/i);
+assert.match(builtInAlias.error, /no page alias yet|还没有页面别名/);
 
 console.log("run_script bridge tests passed");
