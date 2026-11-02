@@ -113,7 +113,9 @@ export function driveToolSignature(tool: { name: string; description?: string; p
   const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
   const pageScript = toolLocalName(tool.name) === "run_script";
-  const properties = pageScript ? projectRunScriptCatalogProperties(sourceProperties, required) : sourceProperties;
+  const properties = pageScript
+    ? projectRunScriptCatalogProperties(sourceProperties, required)
+    : projectDriveCatalogProperties(sourceProperties, required);
   const args = Object.entries(properties).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
@@ -123,8 +125,34 @@ export function driveToolSignature(tool: { name: string; description?: string; p
         : typeof schema.type === "string" && schema.type ? schema.type : "any";
     return `${key}${required.has(key) ? "" : "?"}:${type}`;
   });
-  const description = driveCatalogDescription(tool.description, pageScript);
+  const description = driveCatalogDescription(tool.description);
   return { name: tool.name, signature: `${tool.name}({${args.join(", ")}})`, description };
+}
+
+/** Built-in schemas keep tabId. Drive catalogs name that parameter tabRef and drop inner from enums. */
+function projectDriveCatalogProperties(sourceProperties: Fields, required: Set<string>) {
+  const properties: Fields = {};
+  const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
+  for (const [key, spec] of Object.entries(sourceProperties)) {
+    if (key === "tabId") {
+      if (!hasTabRef) properties.tabRef = withoutInnerEnum(spec);
+      continue;
+    }
+    properties[key] = withoutInnerEnum(spec);
+  }
+  if (required.delete("tabId")) required.add("tabRef");
+  return properties;
+}
+
+function withoutInnerEnum(spec: unknown) {
+  const schema = record(spec);
+  if (!Array.isArray(schema.enum)) return spec;
+  const filtered = schema.enum.filter(item => String(item).toLowerCase() !== "inner");
+  if (filtered.length === schema.enum.length) return spec;
+  const next = { ...schema };
+  if (filtered.length) next.enum = filtered;
+  else delete next.enum;
+  return next;
 }
 
 /** Page scripts on the drive catalog name tabRef and stay on target page. The built-in schema is left unchanged. */
@@ -145,11 +173,21 @@ function projectRunScriptCatalogProperties(sourceProperties: Fields, required: S
   return properties;
 }
 
-/** The built-in run_script description documents tabId and inner. Drive catalogs omit that line. */
-function driveCatalogDescription(description: unknown, pageScript: boolean) {
+/** Drive catalogs show tabRef and do not teach inner. The built-in description string stays unchanged. */
+function driveCatalogDescription(description: unknown) {
   const line = String(description || "").split("\n").map(item => item.trim()).find(Boolean) || "";
-  if (pageScript && /\b(?:tabId|inner)\b/i.test(line)) return "";
-  return line.slice(0, 240);
+  return projectDriveModelText(line).slice(0, 240);
+}
+
+/** Replace the parameter name without touching words such as workingTabId. */
+function projectDriveModelText(value: string) {
+  if (!/(?<![A-Za-z])tabId\b|\binner\b/i.test(value)) return value;
+  return value
+    .replace(/(?<![A-Za-z])tabId\b/g, "tabRef")
+    .replace(/\binner\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;:，。；：])/g, "$1")
+    .trim();
 }
 
 function positiveSeconds(value: unknown) {
@@ -433,12 +471,12 @@ interface DriveOutcome {
   projected?: { value: unknown; images: DriveImage[] };
 }
 
-/** Drive no_alias uses one sentence. Built-in failures keep the caller's text. */
+/** Drive no_alias uses one sentence. Other drive-visible text names tabRef and does not teach inner. */
 export function driveNoAliasText(failure: unknown, fallback: string): string {
   const body = record(failure);
   const details = record(body.details);
   if (String(body.code || "") === "BATCH_TAB_REFERENCE_ERROR" && details.reason === "no_alias") return t("drive.noAlias");
-  return fallback;
+  return projectDriveModelText(fallback);
 }
 
 function failed(call: DriveCall, error: unknown, args: unknown = call.args, language = getLanguage()): DriveOutcome {

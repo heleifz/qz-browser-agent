@@ -100,7 +100,7 @@ MCP 的同一次调用是 `qingzhou_execute_tool`，`name` 为 `run_script`，`a
 - `run_script({target:"page", tabRef, timeout, code})`。`tabRef`、`timeout`、`code` 必填。会改页面时再设 `mutatesPage:true`。
 - `load_skill({name})` 之后按需要 `load_skill_resource`。`list_skills` 只有摘要。
 
-少取数据。能写死选择器就不要先读整棵树，也不要为了找一个按钮连续 `list_tabs`、`get_ax_tree`、`screenshot`。`screenshot` 不是默认步骤。单次结果大约超过 48000 个字符时变成 `{truncated:true, totalChars, limitChars, preview}`。除非 `verbose:true`，结果里去掉 `_tabId`、`_pageTitle`、`_pageUrl`、`_pageContext`、`sessionId`、`runId`，以及 `rect`、`clickablePoint`、`parent`、`lineRange`、`actionable`。`list_tabs` 默认是本会话短列表：`{tabs:[{tabRef, alias, title, url}], count, foreign}`。只有要看用户自己打开的标签时才传 `scope:"all"`。
+少取数据。能写死选择器就不要先读整棵树，也不要为了找一个按钮连续 `list_tabs`、`get_ax_tree`、`screenshot`。`screenshot` 不是默认步骤。单次结果大约超过 48000 个字符时变成 `{truncated:true, totalChars, limitChars, preview}`。直驱结果用 tabRef 标识页面。`list_tabs` 默认是本会话短列表：`{tabs:[{tabRef, alias, title, url}], count, foreign}`。只有要看用户自己打开的标签时才传 `scope:"all"`。
 
 会话。一个任务一个会话。第一次调用创建会话并返回 session id（stderr 上的 `sessionId <id>`）。同一任务的后续每次调用都显式带上这个 id（`--session` / sessionId）。CLI 不沿用上次会话。换新任务才开新会话。每个进程都是新连接。并行各用自己的 id。普通任务占用的 id 返回 `DRIVE_SESSION_OCCUPIED`，换新 id，不要重试。已有调用在飞时返回 `DRIVE_SESSION_BUSY`。瞬时忙自动重试一次，仍忙就等它结束。
 
@@ -314,7 +314,7 @@ Common calls:
 - `run_script({target:"page", tabRef, timeout, code})`. `tabRef`, `timeout`, and `code` are required. Set `mutatesPage:true` when the script changes the page.
 - `load_skill({name})`, then `load_skill_resource` when you need a file. `list_skills` returns summaries.
 
-Fetch less. A known selector does not need a full tree, and one button does not need `list_tabs`, then `get_ax_tree`, then `screenshot`. `screenshot` is not a default step. A result past about 48000 characters becomes `{truncated:true, totalChars, limitChars, preview}`. Unless `verbose:true`, results omit `_tabId`, `_pageTitle`, `_pageUrl`, `_pageContext`, `sessionId`, `runId`, `rect`, `clickablePoint`, `parent`, `lineRange`, and `actionable`. `list_tabs` defaults to this session: `{tabs:[{tabRef, alias, title, url}], count, foreign}`. Pass `scope:"all"` only to see a tab the user opened.
+Fetch less. A known selector does not need a full tree, and one button does not need `list_tabs`, then `get_ax_tree`, then `screenshot`. `screenshot` is not a default step. A result past about 48000 characters becomes `{truncated:true, totalChars, limitChars, preview}`. Direct-drive results name the page with tabRef. `list_tabs` defaults to this session: `{tabs:[{tabRef, alias, title, url}], count, foreign}`. Pass `scope:"all"` only to see a tab the user opened.
 
 Sessions. One task uses one session. The first call creates a session and returns the session id (`sessionId <id>` on stderr). Every later call in that task passes this id explicitly (`--session` / sessionId). The CLI does not resume the previous session. A new task starts a new session. Each process is a new connection. Parallel paths use their own ids. `DRIVE_SESSION_OCCUPIED` means use a new id and do not loop. `DRIVE_SESSION_BUSY` retries once, then wait.
 

@@ -39,6 +39,9 @@ test("the packed drive guide is the qz-browser-agent skill, in one language, ins
   assert.doesNotMatch(source, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
   assert.doesNotMatch(source, /返回的 id|a returned id/i);
   assert.doesNotMatch(source, /\binner\b/i);
+  assert.doesNotMatch(source, /tabId/);
+  assert.match(zh, /直驱结果用 tabRef 标识页面/);
+  assert.match(en, /Direct-drive results name the page with tabRef/);
   assert.match(zh, /直驱的 run_script 始终用 target page，并带 tabRef/);
   assert.match(zh, /直驱只接受带 tabRef 的 page 脚本/);
   assert.match(en, /Direct-drive run_script always uses target page and passes tabRef/);
