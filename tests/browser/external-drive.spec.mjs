@@ -1,11 +1,10 @@
 import { createServer } from "node:http";
 import { textPdf } from "../support/text-pdf.mjs";
-import { readSessionSnapshot } from "../../src/shared/session/session-recovery.ts";
 import { expect, test } from "./fixtures.mjs";
 import { main } from "../../services/mcp-bridge/src/cli.mjs";
 import { callTool, readHealth } from "../../services/mcp-bridge/src/client.mjs";
 
-test("external drive runs page tools, keeps claimed tabs, and refuses occupied sessions", async () => {
+test("external drive runs page tools, preserves user tabs, and refuses occupied sessions", async () => {
   test.setTimeout(360_000);
   const { launchIsolatedExtensionMcp } = await import("../support/isolated-extension-mcp.mjs");
   const fixture = await startPage();
@@ -210,7 +209,10 @@ test("external drive runs page tools, keeps claimed tabs, and refuses occupied s
       name: "use_tab",
       args: { tabRef: userTab },
     }, "60");
-    expect(claimed.code, claimed.text || stderr.text).toBe(0);
+    expect(claimed.code).toBe(1);
+    expect(claimed.text || stderr.text).toContain('DRIVE_TOOL_FORBIDDEN');
+    const readUserPage = await exec(dependencies, stdout, stderr, { sessionId: claimId, name: 'read_article', args: { tabRef: userTab, limit: 100 } }, '60');
+    expect(readUserPage.code, readUserPage.text || stderr.text).toBe(0);
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
       sessionId: claimId, timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
@@ -307,12 +309,12 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
     ] });
     expect(result.results.every(row => !row.isError)).toBe(true);
     await expect(cards).toHaveCount(12);
-    const stored = await page.evaluate(async id => {
+    const saved = await page.evaluate(async id => {
+      const { readSessionSnapshot } = await import('/shared/session/session-recovery.js');
       const recordKey = `_session_${id}`, checkpointKey = `_session_transcript_checkpoint_${id}`;
       const values = await chrome.storage.local.get([recordKey, checkpointKey]);
-      return { record: values[recordKey], checkpoint: values[checkpointKey] };
+      return readSessionSnapshot(values[recordKey], null, values[checkpointKey]).transcript.filter(entry => entry.type === 'tool');
     }, sessionId);
-    const saved = readSessionSnapshot(stored.record, null, stored.checkpoint).transcript.filter(entry => entry.type === "tool");
     expect(saved).toHaveLength(12);
     expect(new Set(saved.map(row => row.toolCallId)).size).toBe(12);
     expect(saved.filter(row => row.name === "open_tab")).toHaveLength(3);

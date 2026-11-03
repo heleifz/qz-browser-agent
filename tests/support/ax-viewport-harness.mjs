@@ -41,7 +41,7 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
     } finally { await send('Runtime.releaseObjectGroup', { objectGroup: 'ax-test' }); }
   }
   async function bind(selectors) {
-    // Match the production binder: one document handle, unique selectors, sequential reads.
+    // Fixture fallback binding for layout measurements; production token batching has separate contracts.
     const { root } = await send('DOM.getDocument', { depth: 0, pierce: true });
     const ids = [];
     for (const selector of selectors) {
@@ -59,7 +59,17 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
     clampLimit: (value, min, max) => value >= 100000 ? value : Math.max(min, Math.min(max, Math.floor(value))),
     makeSnapshotId: () => `t1.s${String(++sequence).padStart(5, '0')}`,
     elementTargetForUid: uid => `uid:${uid}`,
-    registerElementRef: ref => refs.set(ref.uid, ref),
+    registerElementRef: ref => refs.set(ref.uid, ref), // Baseline source uses the older host hook.
+    registerElementBinding: ref => {
+      const uid = ref.backendNodeId ? `${ref.snapshotId}.${ref.backendNodeId}` : undefined;
+      const bound = { ...ref, uid, target: uid ? `uid:${uid}` : ref.selector ? `css:${ref.selector}` : '' };
+      if (uid) refs.set(uid, bound);
+      return bound;
+    },
+    bindElementReferences: async (_tab, candidates) => {
+      const bound = await bind(candidates.map(item => item.selector || ''));
+      return candidates.map((ref, index) => ({ ...ref, backendNodeId: bound.ids[index], target: ref.selector ? `css:${ref.selector}` : '' }));
+    },
     resolveElementReference: async (_tab, { target }) => {
       const ref = refs.get(target.replace(/^uid:/, ''));
       const selector = target.startsWith('css:') ? target.slice(4) : !ref?.backendNodeId ? ref?.selector || '' : '';

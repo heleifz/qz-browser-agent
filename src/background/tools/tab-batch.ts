@@ -81,7 +81,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   }
   const parent = (entry: Entry) => parents.get(entry);
   const validResult = (entry: Entry, result: unknown, isError: boolean) => {
-    const value = record(result), id = value.tabId ?? value.id;
+    const value = record(result), id = value.tabRef ?? value.tabId ?? value.id;
     return entry.policy?.kind === "create" && !entry.error && !isError && !value.error
       && value.ok !== false && value.isError !== true && typeof id === "number" && Number.isInteger(id) && id > 0 ? id : null;
   };

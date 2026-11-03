@@ -1,6 +1,8 @@
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
+import { driveToolText } from "./tool-messages.js";
+import type { SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
@@ -13,7 +15,6 @@ import {
   parseDriveRequest,
   prepareDriveToolCall,
   projectNamedDriveResult,
-  projectDriveScriptDiagnostic,
   runDriveCalls,
   type DriveToolObservation,
 } from "./external-drive.js";
@@ -260,7 +261,7 @@ export function createMcpRuntime({
       disposition: taskInfo.disposition,
       wait: params.wait === true && started,
       waitForStart: started && params.wait !== true && params.waitForStart !== false,
-      runtime,
+      runtime: describeSessionRuntime(runtime),
       input: userInput.get({ sessionId }),
     }));
   }
@@ -276,7 +277,7 @@ export function createMcpRuntime({
         runId: runtime.runId,
         hasHistory: false,
         status: runtime.status,
-        runtime,
+        runtime: describeSessionRuntime(runtime),
         input: userInput.get({ sessionId: id }),
       }));
     }
@@ -294,7 +295,7 @@ export function createMcpRuntime({
         ...liveState,
         runId: runtime.runId || liveState.runId || null,
         status: runtime.status,
-        runtime,
+        runtime: describeSessionRuntime(runtime),
         input: userInput.get({ sessionId: id }),
       };
     });
@@ -403,7 +404,7 @@ export function createMcpRuntime({
     const name = String(params.name || params.toolName || "").trim();
     const catalog = await toolCatalog(params, "mcp_get_tool");
     if (catalog.externalDrive && isDriveToolForbidden(name)) {
-      throw Object.assign(new Error(t("drive.toolForbidden", { name })), { code: "DRIVE_TOOL_FORBIDDEN" });
+      throw Object.assign(new Error(driveToolText("unavailable")), { code: "DRIVE_TOOL_FORBIDDEN" });
     }
     const found = catalog.tools.find(tool => tool.name === name) || null;
     return found && catalog.externalDrive ? driveToolSignature(found) : found;
@@ -571,11 +572,6 @@ export function createMcpRuntime({
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
           if (error instanceof Error) {
-            if (name === "run_script") {
-              Object.assign(error, withLanguage(language, () => projectDriveScriptDiagnostic({
-                message: error.message, details: plainObject(error).details,
-              })));
-            }
             const next = withLanguage(language, () => driveNoAliasText(error, error.message));
             if (next !== error.message) error.message = next;
           }
@@ -859,6 +855,18 @@ function driveToolFailure(error: unknown) {
   return {
     error: message,
     code: aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
+  };
+}
+
+function describeSessionRuntime(state: Fields): SessionRuntimeObservation {
+  return {
+    status: state.status, running: Boolean(state.running), pendingStart: Boolean(state.pendingStart), runId: state.runId,
+    waitId: state.waitId, waitMessage: state.waitMessage, waitTitle: state.waitTitle, waitForm: state.waitForm,
+    interrupted: Boolean(state.interrupted), reason: state.reason, startedAt: state.startedAt, endedAt: state.endedAt, updatedAt: state.updatedAt,
+    currentToolName: state.currentToolName, currentToolStartedAt: state.currentToolStartedAt,
+    contextUsage: state.contextUsage, contextWindow: state.contextWindow, inputTokensEstimate: state.inputTokensEstimate,
+    tracker: state.tracker, goal: state.goal, pendingSteerings: state.pendingSteerings, pendingSteeringMessages: state.pendingSteeringMessages,
+    pendingFollowUps: state.pendingFollowUps, pendingFollowUpMessages: state.pendingFollowUpMessages,
   };
 }
 

@@ -106,6 +106,10 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   effects?(args: ToolArguments<S>, result: Result): readonly ToolEffect[];
   /** Pure boundary checks may preserve domain-specific errors before schema validation. */
   validateArgs?(args: Record<string, unknown>): undefined;
+  /** Input-only aliases; canonical fields win and only canonical names appear in the schema. */
+  argumentAliases?: Readonly<Record<string, string>>;
+  /** Hidden compatibility for retired enum values, normalized before validation. */
+  argumentValueAliases?: Readonly<Record<string, Readonly<Record<string, string>>>>;
   page?: ToolPageAccess | ((args: Record<string, unknown>) => ToolPageAccess);
   timeout?: ToolTimeout | ((args: ToolArguments<S>, name: string) => ToolTimeout);
   /** Compatibility for an established millisecond input alias; model schemas remain in seconds. */

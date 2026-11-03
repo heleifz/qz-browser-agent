@@ -1,17 +1,18 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { isElementReply, type ElementReply } from "#sdk/shared/browser";
+import { isElementReply, createElementObservation, type ElementObservation, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
 import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
+import { requireToolFields } from "#sdk/background/tools";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
   | "clickNotReadyResult" | "sendCdp" | "withDebugger"
   | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult" | "elementTargetForRef"
+  "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
@@ -105,7 +106,6 @@ export function registerPageElementTools({
   resolveElementReference,
   useElement,
   addElementTargetsToFindResult,
-  elementTargetForRef,
   elementTargetForSelector,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
   getElementTargetDescription,
@@ -172,14 +172,16 @@ const touch = createCdpTouch({ ToolExecutionError });
 
 registerTool({
   name: "read_article",
+  argumentValueAliases: { source: { selector: "target" } },
+  argumentAliases: { selector: "target" },
   behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "article extraction" } },
   get description() { return toolT("readArticleDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
       tabId: { type: "number", description: toolT("readArticleTabId") },
-      source: { type: "string", enum: ["auto", "selection", "article", "selector", "body"], description: toolT("readArticleSource") },
-      selector: { type: "string", description: toolT("readArticleSelector") },
+      source: { type: "string", enum: ["auto", "selection", "article", "target", "body"], description: toolT("readArticleSource") },
+      target: { type: "string", description: toolT("readArticleSelector") },
       offset: { type: "number", description: toolT("readArticleOffset") },
       limit: { type: "number", description: toolT("readArticleLimit") },
     },
@@ -187,23 +189,22 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, source = "auto", selector = "", offset = 0, limit }, _signal, context = {}) => {
-    if (source === "selector" && !String(selector || "").trim()) {
-      throw new ToolExecutionError(
-        "MISSING_SELECTOR",
-        t("readArticleRequiresASelectorWhenSourceSelector"),
-        { source, required: "selector" },
-      );
-    }
-    const target = source === "selector"
-      ? await resolveSelectorTarget(tabId, selector, 0, context)
-      : { tabId, selector };
-    return readBound(target, context, call => sendToContent(target.tabId, "readArticle", { source, selector: target.selector, offset, limit }, call, context));
+  validateArgs: args => {
+    if (args.source === "target") requireToolFields("read_article", args, ["target"], { requiredWhen: "source=target" });
+  },
+  execute: async ({ tabId, source = "auto", target: selector = "", offset = 0, limit }, _signal, context = {}) => {
+    const target = selector ? await resolveSelectorTarget(tabId, selector, 0, context) : { tabId, selector };
+    const mode = source === "target" || (source === "auto" && selector) ? "selector" : source;
+    return readBound(target, context, async call => {
+      const article = await sendToContent(target.tabId, "readArticle", { source: mode, selector: target.selector, offset, limit }, call, context);
+      return mode === 'selector' && 'target' in target ? { ...article, target: target.target } : article;
+    });
   },
 });
 
 registerTool({
   name: "read_dom",
+  argumentAliases: { selector: "target" },
   behavior: { timeoutResult: { kind: "read", pending: "DOM extraction" } },
   get description() { return toolT("readDomDescription"); },
   get parameters() { return {
@@ -212,19 +213,23 @@ registerTool({
       tabId: { type: "number", description: toolT("readArticleTabId") },
       offset: { type: "number", description: toolT("readDomOffset") },
       limit: { type: "number", description: toolT("readDomLimit") },
-      selector: { type: "string", description: toolT("readDomSelector") },
+      target: { type: "string", description: toolT("readDomSelector") },
     },
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, offset = 1, limit = 200, selector = "body" }, _signal, context = {}) => {
+  execute: async ({ tabId, offset = 1, limit = 200, target: selector = "body" }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
-    return readBound(target, context, call => sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call, context));
+    return readBound(target, context, async call => ({
+      ...await sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call, context),
+      target: target.target,
+    }));
   },
 });
 
 registerTool({
   name: "find_elements",
+  argumentAliases: { selector: "target" },
   behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "element scan" } },
   get description() { return toolT("findElementsDescription"); },
   get parameters() { return {
@@ -233,7 +238,7 @@ registerTool({
       tabId: { type: "number", description: toolT("readArticleTabId") },
       pattern: { type: "string", description: toolT("findElementsPattern") },
       flags: { type: "string", description: toolT("findElementsFlags") },
-      selector: { type: "string", description: toolT("findElementsSelector") },
+      target: { type: "string", description: toolT("findElementsSelector") },
       roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
       tags: { type: "array", items: { type: "string" }, description: toolT("findElementsTags") },
       types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
@@ -243,7 +248,7 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
+  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
       pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
@@ -281,13 +286,8 @@ registerTool({
           if (isCdpFallbackForbiddenError(error)) throw error;
         }
       }
-      return {
-        ...inspection,
-        tabId: ref.tabId,
-        target: ref.target || elementTargetForRef(inspection) || elementTargetForSelector(ref.selector),
-        uid: ref.uid || undefined,
-        selector: inspection?.selector || ref.selector,
-      };
+      const result = await addElementTargetsToFindResult({ ...inspection, selector: inspection?.selector || ref.selector }, ref.tabId, context, ref.ref);
+      return result;
     });
   },
 });
@@ -346,10 +346,24 @@ registerTool({
     tabId = ref.tabId;
     const selector = ref.selector;
     index = ref.index;
-    const resolvedTarget = ref.target || elementTargetForSelector(selector);
+    let resolvedTarget = ref.target || elementTargetForSelector(selector);
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, selector, action });
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
+    let observedElement: ElementObservation | undefined;
+    let observedSelector = '';
+    const actionElement = (candidate: unknown): ElementObservation | undefined => {
+      if (!isElementReply(candidate)) return undefined;
+      const handle = candidate.selector === observedSelector ? observedElement?.target : elementTargetForSelector(candidate.selector);
+      return createElementObservation(candidate, handle);
+    };
+    const contentOutcome = (reply: ElementReply) => ({
+      action: normalizedAction, target: resolvedTarget,
+      error: reply.error, code: reply.code, clicked: reply.clicked, filled: reply.filled,
+      submitted: reply.submitted, checked: reply.checked, pressed: reply.pressed,
+      key: reply.key, href: reply.href, navigated: reply.navigated, scrolledTo: reply.scrolledTo,
+      element: actionElement(reply.element), originalElement: actionElement(reply.originalElement),
+    });
     const fillToken = normalizedAction === "fill" && ref.uid
       ? `${ref.uid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : "";
     if (ref.uid) {
@@ -373,6 +387,14 @@ registerTool({
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction);
+    // Bind the observed node before the action can navigate or replace it. Never rebind
+    // an action's old summary against a new document after the side effect.
+    if (inspected._elementRef) {
+      const described = await addElementTargetsToFindResult(inspected, tabId, context, ref.ref);
+      if (described && typeof described === 'object') observedElement = described as ElementObservation;
+    } else observedElement = createElementObservation(inspected, resolvedTarget);
+    observedSelector = String(inspected.selector || '');
+    resolvedTarget = observedElement?.target || resolvedTarget;
 
     if (normalizedAction === "click") {
       const pageBefore = await getTabPageState(tabId);
@@ -411,17 +433,14 @@ registerTool({
             return {
               action: "click",
               target: resolvedTarget,
-              selector,
-              uid: ref.uid || undefined,
               index,
-              tabId,
               clickDispatched: false,
               method: "href_navigation",
               href: navigationUrl,
               ...pageDelta,
               ...(observedNavigation ? { observedNavigation } : {}),
-              element: resolved.element || current,
-              originalElement: inspected,
+              element: actionElement(resolved.element || current),
+              originalElement: actionElement(inspected),
             };
           } finally { observation.dispose(); }
         }
@@ -552,25 +571,20 @@ registerTool({
         receiptId = "";
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { tabId });
         if (!pageInputDelivered({ receipt, committed: pageDelta.navigated === true })) {
-          return inputNotDelivered({ action: "click", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId });
+          return inputNotDelivered({ action: "click", target: resolvedTarget, index });
         }
         return {
           action: "click",
           target: resolvedTarget,
-          selector,
-          uid: ref.uid || undefined,
           index,
-          tabId,
           clickDispatched: true,
           inputDelivered: true,
           method: pointSelector !== selector ? "cdp_resolved" : "cdp",
           href: current.href || resolved?.href || undefined,
-          clickedSelector: pointSelector,
-          clickedIndex: pointIndex,
           ...pageDelta,
           ...(observedNavigation ? { observedNavigation } : {}),
-          element: current,
-          originalElement: current !== inspected ? inspected : undefined,
+          element: actionElement(current),
+          originalElement: current !== inspected ? actionElement(inspected) : undefined,
         };
       } catch (err) {
         rethrowStaleElement(err);
@@ -580,12 +594,8 @@ registerTool({
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
         const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
         return {
-          ...fallback,
-          target: resolvedTarget,
-          selector,
-          uid: ref.uid || undefined,
+          ...contentOutcome(fallback),
           index,
-          tabId,
           clickDispatched: fallback.error ? false : Boolean(fallback.clicked || fallback.navigated),
           method: fallback.error ? "content_failed" : "content_fallback",
           cdpError: err instanceof Error ? err.message : String(err),
@@ -598,7 +608,7 @@ registerTool({
       }
     }
 
-    const identity = { action: normalizedAction, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId };
+    const identity = { action: normalizedAction, target: resolvedTarget, index };
     const assertActive = () => {
       if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), identity);
     };
@@ -645,10 +655,10 @@ registerTool({
           const valueMatches = !textInput || (typeof actual.value === "string"
             && equivalentText(actual.value) === equivalentText(value.replace(/\r\n?/g, "\n")));
           if (!valueMatches) return { ...identity, error: t("elementValueMismatch"), code: "ELEMENT_VALUE_MISMATCH",
-            filled: false, value: actual.value, submitDispatched: false, element: actual };
+            filled: false, value: actual.value, submitDispatched: false, element: actionElement(actual) };
           if (submit) {
             if (!actual.focused) return { ...identity, error: t("elementFocusLost"), code: "ELEMENT_FOCUS_FAILED",
-              filled: true, value: actual.value, submitDispatched: false, element: actual };
+              filled: true, value: actual.value, submitDispatched: false, element: actionElement(actual) };
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
             await inputKeyboard.press(tabId, "Enter", context);
             assertActive();
@@ -657,7 +667,7 @@ registerTool({
             ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;
           assertActive();
           return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
-            method: textInput ? "cdp" : "content", element: actual,
+            method: textInput ? "cdp" : "content", element: actionElement(actual),
             ...(navigation ? { ...navigation.pageDelta,
               ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
         } finally { observation?.dispose(); }
@@ -668,11 +678,11 @@ registerTool({
       assertActive();
       const desired = normalizedAction === "check";
       if (inspected.tag !== "input" || !["checkbox", "radio"].includes(String(inspected.type))) {
-        return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: inspected };
+        return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: actionElement(inspected) };
       }
-      if (inspected.checked === desired) return { ...identity, checked: desired, changed: false, element: inspected };
+      if (inspected.checked === desired) return { ...identity, checked: desired, changed: false, element: actionElement(inspected) };
       if (inspected.type === "radio" && !desired) {
-        return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: inspected };
+        return { ...identity, error: t("radioCannotBeUnchecked"), code: "ELEMENT_CHECK_STATE_MISMATCH", element: actionElement(inspected) };
       }
       return withDebugger(tabId, async (_target, send): Promise<Record<string, unknown>> => {
         assertActive();
@@ -681,9 +691,9 @@ registerTool({
         assertActive();
         if (current.error) return withElementActionHelp(current, normalizedAction);
         if (current.tag !== "input" || current.type !== inspected.type) {
-          return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: current };
+          return { ...identity, error: t("elementNotCheckable"), code: "NOT_CHECKABLE_ELEMENT", element: actionElement(current) };
         }
-        if (current.checked === desired) return { ...identity, checked: desired, changed: false, element: current };
+        if (current.checked === desired) return { ...identity, checked: desired, changed: false, element: actionElement(current) };
         const clickTarget = !current.disabled && isElementReply(current.element) ? current.element : current;
         if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
           inspection: clickTarget, originalInspection: current, resolved: null }) as Record<string, unknown>;
@@ -714,8 +724,8 @@ registerTool({
         assertActive();
         if (actual.error) return withElementActionHelp(actual, normalizedAction);
         if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...identity, error: t("elementCheckStateMismatch"),
-          code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, element: actual };
-        return { ...identity, checked: desired, changed: true, method: "cdp", inputDelivered: true, element: actual };
+          code: "ELEMENT_CHECK_STATE_MISMATCH", checked: actual.checked, element: actionElement(actual) };
+        return { ...identity, checked: desired, changed: true, method: "cdp", inputDelivered: true, element: actionElement(actual) };
       }, context);
     }
 
@@ -726,7 +736,7 @@ registerTool({
           error: "key is required for press action",
           code: "MISSING_KEY",
           details: { target: resolvedTarget, selector, index, action: "press", examples: [{ key: "Enter" }, { key: "Escape" }, { key: "Tab" }] },
-          element: inspected,
+          element: actionElement(inspected),
         };
       }
       const preparedKey = keyboard.normalize(pressedKey);
@@ -774,8 +784,8 @@ registerTool({
             await guardedKeyboard.press(tabId!, preparedKey, context);
           }
         }, context);
-        if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey });
-        const result = { action: "press", target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: inspected };
+        if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, index, key: pressedKey });
+        const result = { action: "press", target: resolvedTarget, index, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: actionElement(inspected) };
         return observeNavigation ? await finishPress(result) : result;
       } catch (err) {
         rethrowStaleElement(err);
@@ -783,7 +793,7 @@ registerTool({
         if (dispatched || frameId || isCdpFallbackForbiddenError(err)) throw err;
         if (observeNavigation) await startObservation();
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound, context);
-        const result = { ...fallback, target: resolvedTarget, selector, uid: ref.uid || undefined, index, tabId, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: fallback.element || inspected };
+        const result = { ...contentOutcome(fallback), index, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: actionElement(fallback.element || inspected) };
         return observeNavigation ? await finishPress(result) : result;
       } finally { observation?.dispose(); }
     }
@@ -791,14 +801,10 @@ registerTool({
     const contentAction = async () => {
       const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
       return {
-        ...fallback,
-        target: resolvedTarget,
-        selector,
-        uid: ref.uid || undefined,
+        ...contentOutcome(fallback),
         index,
-        tabId,
         method: fallback.error ? "content_failed" : "content",
-        element: fallback.element || inspected,
+        element: actionElement(fallback.element || inspected),
       };
     };
     return contentAction();
@@ -837,9 +843,7 @@ registerTool({
     const scrolled = await readBound(ref, context, call => sendToContent(ref.tabId, "scrollPage", { direction, pixels, selector: ref.selector }, call, context));
     return {
       ...scrolled,
-      tabId: ref.tabId,
       target: ref.target,
-      selector: ref.selector,
       index: ref.index,
     };
   },

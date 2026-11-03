@@ -21,10 +21,14 @@ registerAccessibilityTools({
   registerTool: value => { definition = value; }, ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
   makeSnapshotId: () => "snapshot", elementTargetForUid: uid => `uid:${uid}`,
-  registerElementRef: ref => refs.push(ref),
+  registerElementBinding: ref => {
+    const uid = ref.backendNodeId ? `snapshot.${ref.backendNodeId}` : undefined;
+    const bound = { ...ref, uid, target: uid ? `uid:${uid}` : ref.selector ? `css:${ref.selector}` : '' };
+    refs.push(bound); return bound;
+  },
   resolveElementReference: async () => ({ tabId: 8, target: "css:button", selector: "button", index: 0 }),
   backendNodeIdForSelector: async () => 2,
-  bindBackendNodes: async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 2) }),
+  bindElementReferences: async (_tabId, candidates) => candidates.map(ref => ({ ...ref, backendNodeId: ref.selector ? 2 : 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => input,
   withDebugger: async (id, fn, context) => {
@@ -38,7 +42,7 @@ registerAccessibilityTools({
 const context = { sessionId: "owner", runId: "run" };
 const result = await definition.execute({ tabId: 8 }, null, context);
 assert.equal(result.returnedNodeCount, 2);
-assert.match(result.snapshot, /target=uid:snapshot\.1 button "Continue"/);
+assert.match(result.snapshot, /target=uid:snapshot\.2 button "Continue"/);
 assert.equal("actions" in result, false);
 assert.equal("headings" in result, false);
 assert.deepEqual(result.canvases, overview.canvases);

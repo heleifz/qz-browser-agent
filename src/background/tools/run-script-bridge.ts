@@ -1,4 +1,4 @@
-import { type DriveToolObservation, driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult } from "../mcp/external-drive.js";
+import { type DriveToolObservation, driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectDriveToolSurface } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -6,7 +6,7 @@ import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/art
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
 import type { RegisteredTool } from "./registry.js";
-import type { ToolBehavior } from "../../shared/contracts/tool.js";
+import type { ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
 type Fields = Record<string, unknown>;
 interface RunScriptToolContext extends ToolContext { loadedPluginSkillNames?: unknown; skillToolRegistrySnapshot?: unknown }
@@ -23,7 +23,7 @@ interface BridgeHost {
   applyNestedToolResult?(input: { sessionId: string; runId: string; toolName: string; args: Fields; result: unknown; isError: boolean }): Promise<unknown>;
   toolRuntime: {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
-    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior> } | null;
+    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior>; model?: Readonly<ToolModelPolicy> } | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
     getTabAliases?(sessionId: string): Readonly<Record<string, number>>;
   };
@@ -221,11 +221,10 @@ export function createRunScriptBridge({
           logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
         }
       }
-      const projected = driveRun && toolName === "list_tabs"
-        ? projectNamedDriveResult(toolName, toolArgs, result, null, {
-          aliases: toolRuntime.getTabAliases?.(sessionId),
-        }).value
-        : result;
+      const modelResult = definition?.model?.projectResult ? definition.model.projectResult(result) : result;
+      const projected = driveRun
+        ? projectDriveToolSurface(toolName, toolArgs, modelResult, toolRuntime.getTabAliases?.(sessionId))
+        : modelResult;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {
         ok: true,
@@ -297,7 +296,7 @@ export function createRunScriptBridge({
 
 function stripNestedToolPresentation(result: unknown, stripImage = false) {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const { _display, ...rest } = plainObject(result);
+  const { _display, _debug, _rawCdp, _plugin, ...rest } = plainObject(result);
   if (!stripImage) return rest;
   const { _image, _imageDetail, ...withoutImage } = rest;
   return withoutImage;

@@ -17,6 +17,7 @@ export async function launchIsolatedExtensionMcp({
   headless = true,
   requestTimeoutSeconds = 300,
   downloadDirectory,
+  extensionDir = EXTENSION_PATH,
 } = {}) {
   const bridge = await startIsolatedMcpBridge({ requestTimeoutSeconds });
   const diagnostics = [];
@@ -38,8 +39,8 @@ export async function launchIsolatedExtensionMcp({
       args: [
         "--lang=zh-CN",
         "--disable-features=DisableLoadExtensionCommandLineSwitch",
-        `--disable-extensions-except=${EXTENSION_PATH}`,
-        `--load-extension=${EXTENSION_PATH}`,
+        `--disable-extensions-except=${extensionDir}`,
+        `--load-extension=${extensionDir}`,
       ],
     });
     // Keep the compatibility probe away from a developer's bridge on the default port.

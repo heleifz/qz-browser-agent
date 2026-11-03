@@ -1,3 +1,4 @@
+import { createElementObservation, type ImageObservation } from "#sdk/shared/browser";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -13,9 +14,9 @@ type MediaHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "sendToContent" | "assertTabAllowed" | "assertUrlAllowed" | "clampNumber"
   | "sendCdp" | "withDebugger" | "getPageContext"> & Pick<ToolExtensionAPI["element"],
-  "resolveSelectorTarget" | "resolveElementReference" | "makeSnapshotId" | "makeElementUid" | "registerElementRef"
-  | "elementTargetForUid" | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
-  | "getElementTargetDescription" | "callElement" | "bindBackendNodes" | "readMainDocumentId"> & PageObservationHost & {
+  "resolveSelectorTarget" | "resolveElementReference" | "bindElementReferences"
+  | "elementTargetForSelector" | "elementTargetForRef" | "elementTargetGrammar"
+  | "getElementTargetDescription" | "callElement"> & PageObservationHost & {
   queryDataRows?: typeof queryDataRows; updateDataTableMetadata?: typeof updateDataTableMetadata;
   upsertDataRows?: typeof upsertDataRows; saveImageAsset?: typeof saveImageAsset;
   now?(): number;
@@ -67,10 +68,7 @@ export function registerMediaTools({
   sendToContent: contentRequest,
   resolveSelectorTarget,
   resolveElementReference,
-  makeSnapshotId,
-  makeElementUid = (snapshotId: string, seq: number, mark = "") => `${snapshotId}.${mark}${seq}`,
-  registerElementRef,
-  elementTargetForUid,
+  bindElementReferences,
   elementTargetForSelector,
   elementTargetForRef,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
@@ -79,8 +77,6 @@ export function registerMediaTools({
     const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 });
     return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
   },
-  bindBackendNodes = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) }),
-  readMainDocumentId = async () => "",
   getTabPageState,
   pageStateDelta,
   commitObservedPageNavigation,
@@ -228,7 +224,7 @@ registerTool({
     const effectiveTabId = ref?.tabId || tabId;
     let collection = null;
     if (String(destination || "").trim()) {
-      context.reportPartial?.({ tabId: effectiveTabId, _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
+      context.reportPartial?.({ _image: shot.dataUrl, method: shot.method, actionable: false }, "image collection save confirmation");
       collection = await saveScreenshotToImageCollection({
         shot,
         destination,
@@ -245,10 +241,7 @@ registerTool({
       method: shot.method,
       ...(String(destination || "").trim() ? { destination: normalizeImageCollectionTableName(destination) } : {}),
       saved: Boolean(collection?.assetId),
-      tabId: effectiveTabId,
-      target: ref?.target || undefined,
-      uid: ref?.uid || undefined,
-      selector: shot.selector || ref?.selector || undefined,
+      ...createElementObservation({}, ref?.target),
       index: ref?.index,
       clip: shot.clip || undefined,
       clipped: shot.clipped || undefined,
@@ -330,12 +323,13 @@ registerTool({
 
 registerTool({
   name: "list_images",
+  argumentAliases: { selector: "target" },
   get description() { return toolT("listImagesDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
       tabId: { type: "number", description: toolT("listImagesTabId") },
-      selector: { type: "string", description: toolT("listImagesSelector") },
+      target: { type: "string", description: toolT("listImagesSelector") },
       minWidth: { type: "number", description: toolT("listImagesMinWidth") },
       minHeight: { type: "number", description: toolT("listImagesMinHeight") },
       visibleOnly: { type: "boolean", description: toolT("listImagesVisibleOnly") },
@@ -344,45 +338,19 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
+  execute: async ({ tabId, target: selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     if (!target.tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "list_images" });
     const result = target.uid
       ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
       : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit });
     if (result?.error) return result;
-    const snapshotId = makeSnapshotId(target.tabId, context);
     const listed = (result.images || []).slice(0, clampNumber(limit, 1, 1000, 100));
-    const selectors = listed.map(item => String(item.selector || ""));
-    let bound = { loaderId: "", ids: selectors.map(() => 0) };
-    try {
-      bound = await bindBackendNodes(target.tabId, selectors, context);
-    } catch (error) {
-      const code = errorCode(error);
-      // A read-only tab cannot attach the debugger. Keep the images and resolve them by selector.
-      if (code !== "SESSION_TAB_UNOWNED" && code !== "SESSION_TAB_FOREIGN") throw error;
-    }
-    const documentId = await readMainDocumentId(target.tabId);
-    const images = listed.map((item, rank) => {
-        const uid = makeElementUid(snapshotId, rank + 1, "i");
-        registerElementRef({
-          uid,
-          tabId: target.tabId,
-          sessionId: context.sessionId || "",
-          pageUrl: result.pageUrl || "",
-          selector: item.selector || "",
-          index: 0,
-          role: "img",
-          name: item.alt || item.title || "",
-          imageSrc: item.currentSrc || item.src || "",
-          imageIndex: item.index,
-          backendNodeId: bound.ids[rank] || undefined,
-          loaderId: bound.loaderId || undefined,
-          documentId: documentId || undefined,
-          source: "list_images",
-        });
-        return imageDiscoveryResultItem(item, elementTargetForUid(uid));
-      });
+    const bindings = await bindElementReferences(target.tabId, listed.map(item => ({
+      ...item, index: 0, role: "img", name: item.alt || item.title || "",
+      imageSrc: item.currentSrc || item.src || "", imageIndex: item.index,
+    })), context, target.ref);
+    const images = listed.map((item, index) => imageDiscoveryResultItem(item, bindings[index].target));
     const pageContext = imageDiscoveryPageContext(result.pageContext);
     return {
       ok: result.ok !== false,
@@ -391,7 +359,6 @@ registerTool({
       pageUrl: clipImageDiscoveryText(result.pageUrl, 2048),
       pageTitle: clipImageDiscoveryText(result.pageTitle, 500),
       ...(pageContext ? { pageContext } : {}),
-      tabId: target.tabId,
       images,
       note: toolT("imageCandidatesGuidance"),
     };
@@ -794,11 +761,8 @@ registerTool({
         code: canvasResult?.code || errorCode(err) || "IMAGE_DOM_READ_FAILED",
 	        details: {
 	          ...(canvasResult?.details || {}),
-	          selector: ref.selector,
-	          target: ref.target,
-	          uid: ref.uid || undefined,
-	          index: ref.index,
-          tabId: ref.tabId,
+          target: ref.target,
+          index: ref.index,
           src,
           currentSrc: canvasResult?.currentSrc || "",
           fallbackError: record(err).message || "",
@@ -1163,7 +1127,6 @@ function buildImageCollectionRow({ candidate = {}, image = null, asset = null, t
     pageUrl,
     pageTitle: candidate.pageTitle || pageMeta.pageTitle || "",
     target,
-    selector,
     originalIndex: candidate.originalIndex ?? "",
     alt: image?.alt || candidate.alt || "",
     title: image?.title || candidate.title || "",
@@ -1178,7 +1141,6 @@ function buildImageCollectionRow({ candidate = {}, image = null, asset = null, t
     source: image?.sourceKind || candidate.sourceKind || "",
     assetSha256: asset?.sha256 || "",
     deduped: Boolean(asset?.deduped),
-    tabId: tabId || "",
     table: tableName,
     collectedAt,
     error,
@@ -1204,7 +1166,6 @@ function imageCollectionColumns() {
     "captureMethod",
     "source",
     "target",
-    "selector",
     "originalIndex",
     "collectedAt",
     "sourceKey",
@@ -1267,13 +1228,12 @@ function normalizeStringList(value: unknown) {
   return list.map(item => String(item || "").trim()).filter(Boolean);
 }
 
-function imageDiscoveryResultItem(item: ImageMetadata = {}, target = "") {
+function imageDiscoveryResultItem(item: ImageMetadata = {}, target = ""): ImageObservation {
   const source = String(item.currentSrc || item.src || "").trim();
   const context = imageDiscoveryTextContext(item.context, [item.alt, item.title]);
   return {
     index: item.index,
-    rank: item.rank,
-    selector: clipImageDiscoveryText(item.selector, 1000),
+    rank: finiteImageMetadataNumber(item.rank),
     alt: clipImageDiscoveryText(item.alt, 500),
     title: clipImageDiscoveryText(item.title, 500),
     loading: clipImageDiscoveryText(item.loading, 80),
@@ -1285,7 +1245,7 @@ function imageDiscoveryResultItem(item: ImageMetadata = {}, target = "") {
     hasSrcset: item.hasSrcset === true || Boolean(String(item.srcset || "").trim()),
     ...(context ? { context } : {}),
     ...imageSourceResultFields(source),
-    target,
+    ...createElementObservation({}, target),
   };
 }
 
@@ -1334,7 +1294,6 @@ function normalizeImageDiscoveryText(value: unknown, lowerCase = true) {
 function imageCollectionFailureItem(row: Fields = {}) {
   return {
     target: row.target || undefined,
-    selector: clipImageDiscoveryText(row.selector, 1000) || undefined,
     ...imageSourceResultFields(row.src),
     error: clipImageDiscoveryText(row.error, 1000),
     code: row.errorCode || "",
@@ -1421,8 +1380,8 @@ function normalizeImageDiscoveryRect(input: unknown = {}) {
   return {
     x: finiteImageMetadataNumber(record(input).x),
     y: finiteImageMetadataNumber(record(input).y),
-    w: finiteImageMetadataNumber(record(input).w),
-    h: finiteImageMetadataNumber(record(input).h),
+    width: finiteImageMetadataNumber(record(input).width ?? record(input).w),
+    height: finiteImageMetadataNumber(record(input).height ?? record(input).h),
   };
 }
 
@@ -1558,10 +1517,7 @@ function buildReadImageResult({ dataUrl, detail, tabId, target, uid, selector, i
   return {
     _image: dataUrl,
     _imageDetail: normalizeImageDetail(detail),
-    tabId: tabId || undefined,
-    target: resolvedTarget,
-    uid: uid || undefined,
-    selector,
+    ...createElementObservation({}, resolvedTarget),
     index: index ?? undefined,
     method,
     src: metadata.src || metadata.currentSrc || "",
@@ -1573,7 +1529,7 @@ function buildReadImageResult({ dataUrl, detail, tabId, target, uid, selector, i
     height: metadata.height || undefined,
     resized: metadata.resized || undefined,
     ...(metadata.animationFlattened ? { animationFlattened: true } : {}),
-    rect: metadata.rect || undefined,
+    rect: metadata.rect ? normalizeImageDiscoveryRect(metadata.rect) : undefined,
     mimeType: metadata.mimeType || dataUrl.slice(5, dataUrl.indexOf(";")),
     bytes: metadata.bytes || estimateDataUrlBytes(dataUrl),
     note: resolvedTarget

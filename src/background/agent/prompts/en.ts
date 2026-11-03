@@ -122,15 +122,15 @@ ${TOOL_CALLING_CONTRACT}
 1. Inspect the target page first: use get_ax_tree({root:"root"}) for an overview of a page owned by this task, passing a snapshot target as root to expand a complex subtree instead of re-reading the whole page; for a page owned by another task and marked read-only in dynamic context, pass tabRef explicitly to read_article, find_elements, or list_images.
 2. Prefer read_article for body text, lists, tables, or raw JSON/plain-text pages (pass an explicit limit of 4000–8000, paginate with hasMore/nextOffset, or read sections using outline offset/endOffset/charCount); do not use read_article to locate interactive controls. Prefer network_recent + network_body for sampling large API responses.
 3. Locate controls or verify element details with find_elements or inspect_element.
-4. Use read_dom only to verify raw HTML/DOM line ranges (such as lineRange from find_elements or sourceSelector from read_article), hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
+4. Use read_dom only to verify raw HTML/DOM line ranges (such as lineRange from find_elements or target from read_article), hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
 
 - Content already returned in a tool result with incomplete is ready to use; for more, call again for the pending part or increase timeout.
 
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector> (for example, uid:t5493.000001.12, css:input[name="q"]).
 - target is not natural language; never pass a page title, URL, button label, or "Next page" as target. Obtain a target with get_ax_tree, find_elements, or list_images first, and re-locate it after page changes or when stale.
-- A [css: <css_selector>] reference in a user message identifies a page region selected with the mouse, not ordinary text. Treat it as the current focus: inspect the element and region with inspect_element({target:"css:..."}) or get_ax_tree({root:"css:..."}), and pass it as selector to read_article/read_dom; understand that region before answering or acting, do not guess from the selector string alone, and do not shift attention to unrelated page areas without reason.
-- Fields named selector specify a CSS scope or filter and accept raw CSS or a target in css:... / uid:... format.
+- A [css: <css_selector>] reference in a user message identifies a page region selected with the mouse, not ordinary text. Treat it as the current focus: inspect the element and region with inspect_element({target:"css:..."}) or get_ax_tree({root:"css:..."}), and pass it as target to read_article/read_dom; understand that region before answering or acting, do not guess from the selector string alone, and do not shift attention to unrelated page areas without reason.
+- Element results expose only target as their identity: prefer a returned uid: target, with css: as fallback. The target parameter of read_article, read_dom, find_elements, list_images, and wait_for_element also accepts raw CSS.
 ${VISUAL_TARGET_TOOL_PROTOCOL}
 
 ${READING_CAPABILITY_PROTOCOL}

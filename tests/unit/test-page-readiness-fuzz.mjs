@@ -14,7 +14,7 @@ globalThis.chrome = {
       return { ...tab };
     },
     async sendMessage(id, message) {
-      if (message.action === "ping") return { ok: true, documentReady: true, contentType: "text/html" };
+      if (message.action === "ping") return { ok: true, documentReady: true, contentType: "text/html", elementRefs: 1 };
       const tab = fixture.tabs.get(id);
       const observation = { id, url: tab.url, pendingUrl: tab.pendingUrl, run: fixture.run, time: Date.now() };
       fixture.reads.push(observation);

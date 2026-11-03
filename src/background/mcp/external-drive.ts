@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
+import { driveToolText } from "./tool-messages.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import { planTabBatch } from "../tools/tab-batch.js";
@@ -14,18 +15,16 @@ const FORBIDDEN = new Set([
   "qingzhou_call", "create_skill", "update_skill", "delete_skill", "manage_skill",
   "edit_skill_resource", "import_skill_from_page_zip", "import_git_skill_repository",
   "install_skill_to_git", "import_page_zip", "import_git_repository", "manage_bookmarks",
-  "wait_for_user", "ask_user", "send_message",
+  "wait_for_user", "ask_user", "send_message", "use_tab", "get_working_tab", "run_skill_script",
 ]);
 
 /** Default qz tools / list_tools / tools.$list tier. Guide-tier names stay callable by name. */
 const DRIVE_DEFAULT_TOOLS = new Set([
-  "open_tab", "navigate", "list_tabs", "close_tab", "use_tab",
+  "open_tab", "navigate", "list_tabs", "close_tab",
   "get_ax_tree", "find_elements", "read_article", "act_on_element", "scroll_page",
   "screenshot", "wait_for_element", "wait_for_navigation",
   "run_script", "load_skill", "list_skills",
 ]);
-
-const TAB_IDENTITY = new Set(["open_tab", "list_tabs", "get_working_tab", "use_tab", "close_tab", "navigate"]);
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
 export interface DriveImage { mimeType: string; data: string }
@@ -117,6 +116,7 @@ export function prepareDriveToolCall(name: string, args: unknown): { ok: true; a
 
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
 export function driveToolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
+  if (isDriveToolForbidden(tool.name)) throw driveError("DRIVE_TOOL_FORBIDDEN", driveToolText("unavailable"));
   const parameters = record(tool.parameters);
   const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
@@ -135,7 +135,9 @@ export function driveToolSignature(tool: { name: string; description?: string; p
     return `${key}${needed.has(key) ? "" : "?"}:${type}`;
   }).join(", ")}})`;
   let callSignature = signature(properties, required);
-  let description = pageScript ? t("drive.scriptDescription") : driveCatalogDescription(tool.description);
+  let description = pageScript ? t("drive.scriptDescription")
+    : tool.name === "list_tabs" ? driveToolText("listTabs")
+      : tool.name === "navigate" ? driveToolText("navigate") : driveCatalogDescription(tool.description);
   const urlField = toolLocalName(tool.name) === "collect_images" ? "urls" : "url";
   if (["read_image", "collect_images"].includes(toolLocalName(tool.name)) && properties[urlField]) {
     // The URL variant needs no page; show both valid shapes rather than a misleading optional ref.
@@ -155,24 +157,13 @@ function projectDriveCatalogProperties(sourceProperties: Fields, required: Set<s
   const hasTabRef = Object.hasOwn(sourceProperties, "tabRef");
   for (const [key, spec] of Object.entries(sourceProperties)) {
     if (key === "tabId") {
-      if (!hasTabRef) properties.tabRef = withoutInnerEnum(spec);
+      if (!hasTabRef) properties.tabRef = spec;
       continue;
     }
-    properties[key] = withoutInnerEnum(spec);
+    properties[key] = spec;
   }
   if (required.delete("tabId")) required.add("tabRef");
   return properties;
-}
-
-function withoutInnerEnum(spec: unknown) {
-  const schema = record(spec);
-  if (!Array.isArray(schema.enum)) return spec;
-  const filtered = schema.enum.filter(item => String(item).toLowerCase() !== "inner");
-  if (filtered.length === schema.enum.length) return spec;
-  const next = { ...schema };
-  if (filtered.length) next.enum = filtered;
-  else delete next.enum;
-  return next;
 }
 
 /** Page scripts on the drive catalog name tabRef. target and scope stay off the model-facing signature. */
@@ -198,18 +189,7 @@ function projectRunScriptCatalogProperties(sourceProperties: Fields, required: S
 /** Drive catalogs show tabRef and do not teach inner. The built-in description string stays unchanged. */
 function driveCatalogDescription(description: unknown) {
   const line = String(description || "").split("\n").map(item => item.trim()).find(Boolean) || "";
-  return projectDriveModelText(line).slice(0, 240);
-}
-
-/** Replace the parameter name without touching words such as workingTabId. */
-function projectDriveModelText(value: string) {
-  if (!/(?<![A-Za-z])tabId\b|\binner\b/i.test(value)) return value;
-  return value
-    .replace(/(?<![A-Za-z])tabId\b/g, "tabRef")
-    .replace(/\binner\b/gi, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\s+([,.;:，。；：])/g, "$1")
-    .trim();
+  return line.slice(0, 240);
 }
 
 function positiveSeconds(value: unknown) {
@@ -237,7 +217,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
   const timeoutSeconds = positiveSeconds(record(params.limits).timeoutSeconds);
   if (!hasCalls) {
     if (!name) return { ok: false, error: driveError("DRIVE_ARGUMENTS", "execute_tool requires name") };
-    if (isDriveToolForbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name })) };
+    if (isDriveToolForbidden(name)) return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", driveToolText("unavailable")) };
     return { ok: true, mode: "single", name, timeoutSeconds, maxCalls: budget };
   }
   const calls: DriveCall[] = [];
@@ -249,7 +229,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
       return { ok: false, error: driveError("DRIVE_ARGUMENTS", t("drive.callShape")) };
     }
     if (isDriveToolForbidden(callName)) {
-      return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", t("drive.toolForbidden", { name: callName })) };
+      return { ok: false, error: driveError("DRIVE_TOOL_FORBIDDEN", driveToolText("unavailable")) };
     }
     calls.push({ id, name: callName, args: record(call.args) });
   }
@@ -287,6 +267,7 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null, 
   delete value._display;
   delete value._debug;
   delete value._rawCdp;
+  delete value._plugin;
   if (Array.isArray(value.nodes) && "snapshot" in value) delete value.nodes;
   const images: DriveImage[] = [];
   const raw = value._image;
@@ -359,24 +340,10 @@ function scriptFailureText(body: Fields) {
     if (summary) text = `${text}\n${summary}`;
   }
   return {
-    error: projectDriveScriptText(text),
+    error: text,
     ...(hasLine ? { line } : {}),
     ...(hasColumn ? { column } : {}),
   };
-}
-
-/** Only failure metadata is projected. A successful script's returned value is opaque user data. */
-function projectDriveScriptText(text: string): string {
-  return text.split("\n").map(line => /tabId|\binner\b|工作标签页|working tab|\b(?:target|scope)\s*[:=]/i.test(line)
-    ? t("drive.scriptRecovery") : line).join("\n");
-}
-
-export function projectDriveScriptDiagnostic(value: unknown): unknown {
-  if (typeof value === "string") return projectDriveScriptText(value);
-  if (Array.isArray(value)) return value.map(projectDriveScriptDiagnostic);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).flatMap(([key, child]) =>
-    /tabId|^(?:target|scope|inner)$/i.test(key) ? [] : [[key, projectDriveScriptDiagnostic(child)]]));
 }
 
 function projectRunScriptDriveResult(result: unknown): unknown {
@@ -394,8 +361,8 @@ function projectRunScriptDriveResult(result: unknown): unknown {
     error: failure.error,
     ...(failure.line ? { line: failure.line } : {}),
     ...(failure.column ? { column: failure.column } : {}),
-    ...(body.diagnostic ? { diagnostic: projectDriveScriptDiagnostic(body.diagnostic) } : {}),
-    ...(trace.length ? { trace: projectDriveScriptDiagnostic(trace) } : {}),
+    ...(body.diagnostic ? { diagnostic: body.diagnostic } : {}),
+    ...(trace.length ? { trace } : {}),
   };
 }
 
@@ -418,8 +385,8 @@ function compactDriveTabs(value: unknown, aliases?: Readonly<Record<string, numb
   const owned = rows.filter(tab => tab.ownedByCurrentTask === true);
   return {
     tabs: owned.map(tab => {
-      const alias = String(tab.alias || tab.tabAlias || aliasForTab(tab.id, aliases) || "");
-      return { tabRef: tab.id, ...(alias ? { alias } : {}), title: tab.title || "", url: tab.url || "" };
+      const alias = String(tab.alias || tab.tabAlias || aliasForTab(tab.tabRef, aliases) || "");
+      return { tabRef: tab.tabRef, ...(alias ? { alias } : {}), title: tab.title || "", url: tab.url || "", active: tab.active === true };
     }),
     count: owned.length,
     foreign: rows.length - owned.length,
@@ -433,72 +400,14 @@ export function projectNamedDriveResult(name: string, args: unknown, result: unk
   const script = name === "run_script" || record(result).__runScriptEnvelope === true || record(record(result).result).__runScriptEnvelope === true;
   if (script) return { value: capDriveValue(projectRunScriptDriveResult(result)), images: [] };
   const projected = projectDriveResult(result, policy, { verbose });
-  const value = name === "list_tabs" && input.scope !== "all" && !verbose
-    ? compactDriveTabs(projected.value, options.aliases)
-    : projected.value;
-  const local = toolLocalName(name);
-  const body = record(value);
-  const documented = ["load_skill", "load_skill_resource"].includes(local) && typeof body.runtime === "string"
-    ? { ...body, runtime: t("drive.skillRuntimeGuidance") } : value;
-  return { value: capDriveValue(exposeTabRef(name, documented)), images: projected.images };
+  return { value: capDriveValue(projectDriveToolSurface(name, input, projected.value, options.aliases)), images: projected.images };
 }
 
-function withTabRef(row: unknown): unknown {
-  if (!row || typeof row !== "object" || Array.isArray(row) || !Object.hasOwn(row as Fields, "id")) return row;
-  const { id, ...rest } = row as Fields;
-  return { tabRef: id, ...rest };
-}
-
-/** Rename outward tabId keys. An existing tabRef wins. `_tabId` stays the verbose page-context key. */
-function renameTabIdFields(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    let changed = false;
-    const next = value.map(item => {
-      const renamed = renameTabIdFields(item);
-      if (renamed !== item) changed = true;
-      return renamed;
-    });
-    return changed ? next : value;
-  }
-  if (!value || typeof value !== "object") return value;
-  const source = value as Fields;
-  let changed = false;
-  const out: Fields = {};
-  for (const [key, child] of Object.entries(source)) {
-    const next = renameTabIdFields(child);
-    if (next !== child) changed = true;
-    if (key === "tabId") {
-      changed = true;
-      if (!Object.hasOwn(source, "tabRef")) out.tabRef = next;
-      continue;
-    }
-    out[key] = next;
-  }
-  return changed ? out : value;
-}
-
-function exposeClosedTab(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const body = value as Fields;
-  const closed = body.closed;
-  if (typeof closed !== "number" || !Number.isFinite(closed) || Object.hasOwn(body, "tabRef")) return value;
-  return { ...body, tabRef: closed };
-}
-
-/** Drive results name the tab with tabRef. Internal execution still uses numeric tabId. */
-function exposeTabRef(name: string, value: unknown): unknown {
-  const local = toolLocalName(name);
-  let next = value;
-  if (TAB_IDENTITY.has(local)) {
-    if (Array.isArray(next)) next = next.map(withTabRef);
-    else if (next && typeof next === "object") {
-      const body = next as Fields;
-      next = Array.isArray(body.tabs) ? { ...body, tabs: body.tabs.map(withTabRef) } : withTabRef(body);
-    }
-  }
-  next = renameTabIdFields(next);
-  if (local === "close_tab") next = exposeClosedTab(next);
-  return next;
+/** The script bridge uses the same public surface, without imposing the model's output budget. */
+export function projectDriveToolSurface(name: string, args: unknown, result: unknown, aliases?: Readonly<Record<string, number>>) {
+  const input = record(args);
+  const value = name === "list_tabs" && input.scope !== "all" && input.verbose !== true ? compactDriveTabs(result, aliases) : result;
+  return value;
 }
 
 interface DriveOutcome {
@@ -516,7 +425,7 @@ export function driveNoAliasText(failure: unknown, fallback: string): string {
   const body = record(failure);
   const details = record(body.details);
   if (String(body.code || "") === "BATCH_TAB_REFERENCE_ERROR" && details.reason === "no_alias") return t("drive.noAlias");
-  return projectDriveModelText(fallback);
+  return fallback;
 }
 
 function failed(call: DriveCall, error: unknown, args: unknown = call.args, language = getLanguage()): DriveOutcome {

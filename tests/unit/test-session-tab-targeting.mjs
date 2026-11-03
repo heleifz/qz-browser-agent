@@ -94,7 +94,7 @@ globalThis.chrome = {
         message: { ...message },
         frameId: Number.isInteger(options.frameId) ? options.frameId : null,
       });
-      if (message.action === "ping") return { ok: true, contentType: "text/html" };
+      if (message.action === "ping") return { ok: true, contentType: "text/html", elementRefs: 1 };
       if (message.action === "readArticle") {
         const tab = state.tabs.find(item => Number(item.id) === Number(tabId));
         return {
@@ -542,7 +542,7 @@ const sendMessage = chrome.tabs.sendMessage;
 chrome.tabs.sendMessage = async (tabId, message = {}, options = {}) => {
   const frameId = Number.isInteger(options.frameId) ? options.frameId : null;
   state.sendMessages.push({ tabId: Number(tabId), message: { ...message }, frameId });
-  if (message.action === "ping") return { ok: true, contentType: "text/html" };
+  if (message.action === "ping") return { ok: true, contentType: "text/html", elementRefs: 1 };
   // Child frames also have the content script. An unscoped message would run there.
   if (frameId !== 0) {
     frameRuns.push("child");

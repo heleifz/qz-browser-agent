@@ -25,7 +25,7 @@ export async function runToolWithTimeout(
   let onAbort = () => {};
   const reportPartial: NonNullable<ToolContext["reportPartial"]> = (result, pending) => {
     if (settled || timedOut || controller.signal.aborted) return;
-    const pageState = result.tabId === partial?.result.tabId ? partial?.result.pageState : undefined;
+    const pageState = (result.tabRef ?? result.tabId) === (partial?.result.tabRef ?? partial?.result.tabId) ? partial?.result.pageState : undefined;
     partial = { result: structuredClone({ ...(pageState ? { pageState } : {}), ...result }), pending };
   };
   const abort = new Promise<never>((_, reject) => {

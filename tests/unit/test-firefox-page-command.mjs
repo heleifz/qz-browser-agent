@@ -53,7 +53,9 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
   const frames = new Map([[0, page.mainFrame()], [7, child]]);
   for (const frame of frames.values()) await frame.evaluate(() => {
     globalThis.chrome = { runtime: { id: 'frame-test' } };
+    globalThis.__qzElementRefVersion = 1;
     globalThis.__qzInvoke = (node, payload) => {
+      if (payload.action === 'resolveElementRefs') return [document.querySelector('button'), null];
       if (!node?.isConnected || node.ownerDocument !== document) return { code: 'STALE_ELEMENT_UID' };
       return { id: node.id, action: payload.action };
     };
@@ -105,6 +107,17 @@ for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and c
   const result = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: ISOLATED_CONTENT_INVOKE,
     arguments: [{ value: { action: 'inspectElement' } }], returnByValue: true }, session);
   assert.deepEqual(result.result.value, { id: 'inner', action: 'inspectElement' });
+  const batch = await send('Runtime.callFunctionOn', { executionContextId: context.id, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+    arguments: [{ value: { action: 'resolveElementRefs', elementRefs: ['one', 'gone'] } }], returnByValue: false, objectGroup: 'bind-batch' }, session);
+  assert.equal(batch.result.subtype, 'array');
+  const properties = await send('Runtime.getProperties', { objectId: batch.result.objectId, ownProperties: true }, session);
+  assert.equal(properties.result[0].value.subtype, 'node');
+  assert.equal(properties.result[1].value.subtype, 'null');
+  assert.equal((await send('DOM.describeNode', { objectId: properties.result[0].value.objectId }, session)).node.backendNodeId, button.backendDOMNodeId);
+  await send('Runtime.releaseObjectGroup', { objectGroup: 'bind-batch' }, session);
+  const original = await send('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: ISOLATED_CONTENT_INVOKE,
+    arguments: [{ value: { action: 'inspectElement' } }], returnByValue: true }, session);
+  assert.deepEqual(original.result.value, { id: 'inner', action: 'inspectElement' }, 'releasing a binding batch cannot invalidate another live object group');
   // Page tools dispatch in root coordinates even when the bound node is in a frame.
   const point = await page.evaluate(() => {
     const frame = document.querySelector('iframe'), outer = frame.getBoundingClientRect();
@@ -240,7 +253,11 @@ for (const kind of ['srcdoc', 'blank', 'same-src']) test(`Firefox duplicate ifra
       registerTool: value => { definition = value; }, ToolExecutionError,
       clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
       makeSnapshotId: () => 'snapshot', elementTargetForUid: uid => `uid:${uid}`,
-      registerElementRef: ref => refs.push(ref),
+      registerElementBinding: ref => {
+        const bound = { ...ref, uid: `snapshot.${refs.length}`, target: `uid:snapshot.${refs.length}` };
+        refs.push(bound); return bound;
+      },
+      bindElementReferences: async () => [],
       sendToContent: async () => ({ title: 'Outer', url: page.url(), actions: [] }),
       withDebugger: async (_id, run) => run({}, send), elementTargetGrammar: 'target grammar',
     });

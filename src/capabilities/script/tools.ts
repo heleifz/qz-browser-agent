@@ -425,9 +425,24 @@ registerTool({
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
-    return isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run);
+    const execution = await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run));
+    return String(context.runId || '').startsWith('drive-') ? describePageScriptExecution(record(execution)) : execution;
   },
 });
+
+/** Build the page-only operation result here; execution-world diagnostics remain private. */
+function describePageScriptExecution(execution: Fields) {
+  const image = normalizeRunScriptObservation(execution);
+  if (execution.ok !== false) return { ok: true, result: execution.result, ...(image || {}) };
+  const details = record(execution.details);
+  return {
+    ok: false, code: String(execution.code || 'SCRIPT_EVALUATION_FAILED'), error: String(execution.error || execution.message || ''),
+    details: { lineNumber: details.lineNumber, columnNumber: details.columnNumber, stack: details.stack },
+    diagnostic: { category: 'page_script', suggestedNextStep: toolT('pageScriptRecovery') },
+    trace: Array.isArray(execution.trace) ? execution.trace.slice(-5) : [],
+    ...(image || {}),
+  };
+}
 
 function isToolApiReferenceError(error: unknown) {
   return /\b(?:tools|tool) is not defined\b|can't find variable:\s*(?:tools|tool)\b/i.test(String(error || ""));

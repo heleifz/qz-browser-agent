@@ -1,4 +1,9 @@
 /** Public browser contracts and operations, independent of extension implementation paths. */
+export { createElementObservation } from "../../shared/contracts/element-observation.js";
+export type { ElementObservation, ImageObservation, CanvasObservation } from "../../shared/contracts/element-observation.js";
+export { directDriveSkillGuidance } from "../../shared/tools/drive-guidance.js";
+export { pageReferenceForResult } from "../../shared/tab-reference.js";
+export type { PageObservation } from "../../shared/contracts/page-observation.js";
 export { isElementReply, isPageOverview } from "../../shared/contracts/page-content.js";
 export type { ElementReply, PageAction, PageCanvas, PageOverview } from "../../shared/contracts/page-content.js";
 export { wrapRunScriptSource } from "../../shared/run-script-source.js";

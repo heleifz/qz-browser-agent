@@ -34,7 +34,7 @@ test('documented default and guide tool names resolve in the actual drive catalo
   const defaultText = guide.split('The default tier is:')[1].split('\n\n')[1];
   const defaults = defaultText.match(/\b[a-z]+(?:_[a-z]+)*\b/g);
   assert.deepEqual(new Set(defaults), new Set([...names].filter(isDriveToolDefault)));
-  const guideText = guide.split('These include ')[1].split('. get_working_tab')[0];
+  const guideText = guide.split('These include ')[1].split('. wait_until')[0];
   const guideNames = guideText.split(',').map(name => name.trim().replace(/^and /, '')).filter(name => name !== 'document tools');
   const mentioned = new Set([...defaults, ...guideNames,
     ...guide.matchAll(/"name":"([a-z_]+)"/g)].map(item => typeof item === 'string' ? item : item[1]));

@@ -18,7 +18,7 @@ globalThis.chrome = {
     async sendMessage(_tabId, message) {
       if (message.action === "ping") {
         if (contentReady && ackDelay) await pause(ackDelay);
-        return { ok: contentReady, documentReady, contentType, url: tab.url };
+        return { ok: contentReady, documentReady, contentType, url: tab.url, elementRefs: 1 };
       }
       if (message.action === 'awaitDocument') return new Promise(resolve => { completeDocument = () => { documentReady = true; resolve({ ok: true }); }; });
       reads++;

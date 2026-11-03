@@ -78,25 +78,27 @@ JS
 
 页面工具（包括 act_on_screen）始终传 `tabRef`。一批中每项都传自己的页面引用；缺失时返回 DRIVE_TAB_REF_REQUIRED。open_tab、list_tabs、list_skills、load_skill、wait、wait_until 不需要页面引用；read_image 传 url、collect_images 仅传 urls 时也不需要。非页面调用若带 tabRef，验证后忽略，不改变工具含义；wait 仍只等待指定时长，等页面加载用 wait_for_navigation。
 
-同一标签只归一个会话，后来者失败，不中断先占用者。查看用户标签用 list_tabs({scope:"all"})，接管前查询 use_tab 的签名和归属要求。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,alias,title,url}],count,foreign}`。
+同一标签只归一个会话，后来者失败，不中断先占用者。查看其他网页用 list_tabs({scope:"all"})，只读操作显式传 tabRef；修改页面需使用本会话拥有的页面。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,alias,title,url,active}],count,foreign}`。active 表示用户正在看的标签，不会替页面工具选择目标。
 
 ## 发现工具与常用参数
 
 `qz tools --session "$SID"`、qingzhou_list_tools({})（或带 sessionId）、脚本 tools.$list() 默认返回短签名，不是完整 JSON Schema：
 
-open_tab、navigate、list_tabs、close_tab、use_tab、get_ax_tree、find_elements、read_article、act_on_element、scroll_page、screenshot、wait_for_element、wait_for_navigation、run_script、load_skill、list_skills。
+open_tab、navigate、list_tabs、close_tab、get_ax_tree、find_elements、read_article、act_on_element、scroll_page、screenshot、wait_for_element、wait_for_navigation、run_script、load_skill、list_skills。
 
-说明书档不在默认列表但仍可按名查询：`qz tools --session "$SID" wait_until`，或 qingzhou_get_tool({sessionId,name:"wait_until"})。包括 read_dom、inspect_element、act_on_screen、get_working_tab、wait、wait_for_response、wait_for_network_idle、wait_until、文档工具、list_images、collect_images、read_image、read_image_asset、data_store、download_url、list_downloads、save_file、network_watch、network_recent、network_body、read_console_messages、browse_history、set_page_mode、get_location、send_alert、load_skill_resource。get_working_tab 仅查询页面，不替代显式引用；wait_until 的 until 是带时区的绝对时间。
+说明书档不在默认列表但仍可按名查询：`qz tools --session "$SID" wait_until`，或 qingzhou_get_tool({sessionId,name:"wait_until"})。包括 read_dom、inspect_element、act_on_screen、wait、wait_for_response、wait_for_network_idle、wait_until、文档工具、list_images、collect_images、read_image、read_image_asset、data_store、download_url、list_downloads、save_file、network_watch、network_recent、network_body、read_console_messages、browse_history、set_page_mode、get_location、send_alert、load_skill_resource。wait_until 的 until 是带时区的绝对时间。
 
 - open_tab({url,tabAlias?})、navigate({tabRef,url})：url 用 http/https。
-- read_article({tabRef,limit:6000})：读正文；跟随 nextOffset 分段续读，不用树代替全文。
+- read_article({tabRef,target?,limit:6000})：读正文；跟随 nextOffset 分段续读，不用树代替全文。
 - get_ax_tree({tabRef,root?,scope?,depth?,limit?})：取 snapshot 中的 uid。scope 只能是 viewport 或 full。省略时 root="root" 用 viewport，uid:/css: 根用 full；缩小 root/limit，勿把截断 preview 当完整树。
-- find_elements({tabRef,pattern?,selector?,limit?})：pattern 是正则，默认忽略大小写，不是字面文本。字面 `a.b` 要用 JSON 字符串 `"a\\.b"`；其它正则元字符也需转义。返回 target 原样交给元素工具。
+- find_elements({tabRef,pattern?,target?,limit?})：pattern 是正则，默认忽略大小写，不是字面文本。字面 `a.b` 要用 JSON 字符串 `"a\\.b"`；其它正则元字符也需转义。返回 target 原样交给元素工具。
 - act_on_element({tabRef,target,action,value?,key?})：target 用 uid: 或 css:；action 仅 click、fill、press、select、check、uncheck、scroll。fill/select 需要 value，press 需要 key，一次一个动作。
-- wait_for_element({tabRef,selector,timeout?,absent?})：selector 是 CSS 或 css:，不是 uid:。普通等待检查 found；absent:true 成功时 found 也是 false，必须检查 timedOut 是否为 true，不能把超时当成功消失。
+- wait_for_element({tabRef,target,timeout?,absent?})：优先用 uid:，css: 或裸 CSS 兜底。普通等待检查 found；absent:true 表示原节点已移除或不可见，成功时 found 也是 false，必须检查 timedOut 是否为 true，不能把超时当成功消失。
 - wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?})：等加载完成，不是等 URL 变化。调用时已经加载就立即返回 already_complete，不能证明上一动作成功。用 fromUrl 比较 urlChanged，再读页面确认结果。
 
-导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。能写可靠 CSS 就直接用，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。截视口不传 target；截元素传 uid: 或 css: 目标。默认超过约 48000 字符的结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取。
+导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。优先复用返回的 uid；没有 uid 时用可靠 CSS，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。截视口不传 target；截元素传 uid: 或 css: 目标。默认超过约 48000 字符的结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取。
+
+元素身份只有 target，值优先为 uid:…，无法绑定时为 css:…；AX、find_elements、list_images、inspect_element、wait_for_element 返回的 target 可直接用于 act_on_element、inspect_element、screenshot。list_images({tabRef,target?,limit?}) 的图片以 uid 为主，绑定失败回落 css:。read_article/read_dom/find_elements/list_images/wait_for_element 的元素或范围参数统一叫 target；get_ax_tree 的范围参数保留 root。
 
 ## calls 是批次，不是事务
 
@@ -173,7 +175,7 @@ MCP 连接与业务 Session 不同：每个 CLI 进程会关闭自己的连接�
 
 任务完成只需 `qz cancel "$SID"`：结束会话并清理标签，不要再 close_tab。close_tab 仅用于会话进行中关闭单个标签；结束后执行工具返回 DRIVE_SESSION_ENDED，新任务重新 create。要保留打开的标签，用 full MCP 的 qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false})，full 地址由 qz mcp --profile full 获取。不要用全局 qz stop 收尾。
 
-清理默认关闭本会话 open_tab 创建的标签；use_tab 接管的或用户原有的标签只释放租约，不自动关闭。用户主动激活标签会交还，自动化停止，标签保留。扩展重启后恢复空闲清理期限，过期会话清理其创建的标签；显式保留或交还用户的标签不动。隔天视为新任务：qz connect，然后重新 create，不复用旧别名。
+清理默认关闭本会话 open_tab 创建的标签；用户原有或已交还用户的标签不会自动关闭。用户主动激活标签会交还，自动化停止，标签保留。扩展重启后恢复空闲清理期限，过期会话清理其创建的标签；显式保留或交还用户的标签不动。隔天视为新任务：qz connect，然后重新 create，不复用旧别名。
 
 错误只修一处再试，保留 code 和原句：
 
@@ -269,25 +271,27 @@ A successful open_tab returns tabRef, not id. `tabAlias` is recommended for read
 
 Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. Page-independent calls validate a supplied tabRef, then ignore it. wait still waits only for a duration; use wait_for_navigation for page loading.
 
-One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect user tabs and query use_tab's signature/ownership requirements before claiming one. Default list_tabs returns `{tabs:[{tabRef,alias,title,url}],count,foreign}` for this session.
+One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,alias,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
 
 ## Discover tools and use their parameters
 
 `qz tools --session "$SID"`, qingzhou_list_tools({}) (or with sessionId), and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
 
-open_tab, navigate, list_tabs, close_tab, use_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
+open_tab, navigate, list_tabs, close_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
 
-Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until` or qingzhou_get_tool({sessionId,name:"wait_until"}). These include read_dom, inspect_element, act_on_screen, get_working_tab, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. get_working_tab only queries a page, not a substitute for an explicit reference. wait_until takes an absolute until timestamp with a time zone.
+Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until` or qingzhou_get_tool({sessionId,name:"wait_until"}). These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
 
 - open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
-- read_article({tabRef,limit:6000}): read body text; continue with nextOffset. Do not substitute an accessibility tree for document text.
+- read_article({tabRef,target?,limit:6000}): read body text; continue with nextOffset. Do not substitute an accessibility tree for document text.
 - get_ax_tree({tabRef,root?,scope?,depth?,limit?}): read snapshot for uids. scope is only viewport or full. Omitted scope uses viewport for root="root", full for a uid:/css: root. Narrow root/limit; a truncated preview is not the full tree.
-- find_elements({tabRef,pattern?,selector?,limit?}): pattern is a regex, case-insensitive by default, not literal text. For literal `a.b`, use the JSON string `"a\\.b"`; escape other regex metacharacters too. Pass returned target unchanged to element tools.
+- find_elements({tabRef,pattern?,target?,limit?}): pattern is a regex, case-insensitive by default, not literal text. For literal `a.b`, use the JSON string `"a\\.b"`; escape other regex metacharacters too. Pass returned target unchanged to element tools.
 - act_on_element({tabRef,target,action,value?,key?}): target is uid: or css:. action is click, fill, press, select, check, uncheck, or scroll. fill/select need value; press needs key. One action per call.
-- wait_for_element({tabRef,selector,timeout?,absent?}): selector is CSS or css:, never uid:. Check found for ordinary waits. With absent:true, found:false also occurs on success; inspect timedOut to distinguish timeout from disappearance.
+- wait_for_element({tabRef,target,timeout?,absent?}): prefer uid:, with css: or bare CSS as fallback. Check found for ordinary waits. absent:true means the original node was removed or is invisible; found:false also occurs on success, so inspect timedOut to distinguish timeout from disappearance.
 - wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?}): wait for loading to finish, not for a URL change. An already loaded tab immediately returns already_complete, which does not prove the preceding action succeeded. Supply fromUrl to compute urlChanged and read the page to verify state.
 
-Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Prefer reliable CSS when known. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read.
+Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Reuse returned uids first; use reliable CSS when no uid is available. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read.
+
+An element has one identity field: target, preferably uid:…, falling back to css:… when binding fails. AX, find_elements, list_images, inspect_element and wait_for_element return targets to pass directly to act_on_element, inspect_element or screenshot. list_images({tabRef,target?,limit?}) prefers uids for images, falling back to css: when binding fails. Element/range arguments for read_article/read_dom/find_elements/list_images/wait_for_element are named target; get_ax_tree keeps root for its range.
 
 ## calls is a batch, not a transaction
 
@@ -364,7 +368,7 @@ MCP connections and business Sessions are different. Each CLI process closes its
 
 Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. To retain opened tabs, use full MCP qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false}); obtain the full URL with qz mcp --profile full. Do not use global qz stop for task cleanup.
 
-Cleanup closes tabs this session opened with open_tab. Claimed use_tab tabs and pre-existing user tabs only release leases, never close automatically. User activation hands a tab back, stops automation, and preserves the tab. Extension restarts restore the idle cleanup deadline; expired sessions close their created tabs, preserving explicitly kept or handed-back user tabs. The next day is a new task: qz connect, then create again, without reusing old aliases.
+Cleanup closes tabs this session opened with open_tab. Pre-existing user tabs and tabs handed back to the user never close automatically. User activation hands a tab back, stops automation, and preserves the tab. Extension restarts restore the idle cleanup deadline; expired sessions close their created tabs, preserving explicitly kept or handed-back user tabs. The next day is a new task: qz connect, then create again, without reusing old aliases.
 
 Change one thing per retry and retain the error code and sentence:
 

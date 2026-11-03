@@ -50,7 +50,7 @@ test("drive titles and request sentences stay on the existing tool", () => {
     const forbidden = parseDriveRequest({ name: "ask_llm", args: {} });
     assert.equal(forbidden.ok, false);
     assert.equal(forbidden.error.code, "DRIVE_TOOL_FORBIDDEN");
-    assert.equal(forbidden.error.message, "不能通过直驱调用 ask_llm。");
+    assert.equal(forbidden.error.message, "此工具不对直驱开放。请查询可用工具；页面操作显式传入 tabRef。");
     for (const name of [
       "delete_skill", "manage_bookmarks", "manage_skill_settings", "import_page_zip",
       "manage_goal", "example_echo", "plugin__manage_goal", "plugin__example_echo",
@@ -85,7 +85,8 @@ test("drive titles and request sentences stay on the existing tool", () => {
 test("direct-drive run_script stays on the page and script errors keep the engine text", () => {
   assert.equal(isDriveToolDefault("open_tab"), true);
   assert.equal(isDriveToolDefault("list_skills"), true);
-  assert.equal(isDriveToolDefault("use_tab"), true);
+  assert.equal(isDriveToolDefault("use_tab"), false);
+  assert.equal(isDriveToolForbidden("use_tab"), true);
   assert.equal(isDriveToolDefault("wait_for_element"), true);
   assert.equal(isDriveToolDefault("wait_for_navigation"), true);
   assert.equal(isDriveToolDefault("wait_until"), false);
@@ -95,7 +96,7 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   assert.equal(isDriveToolDefault("manage_goal"), false);
   assert.equal(isDriveToolDefault("run_script"), true);
   assert.equal(isDriveToolForbidden("wait_until"), false);
-  assert.equal(isDriveToolForbidden("get_working_tab"), false);
+  assert.equal(isDriveToolForbidden("get_working_tab"), true);
   assert.equal(isDriveToolForbidden("wait_for_user"), true);
   assert.equal(isDriveToolForbidden("ask_user"), true);
   const page = prepareDriveToolCall("run_script", { tabRef: " page ", timeout: 5, code: "async () => 1" });
@@ -212,7 +213,7 @@ test("drive catalog page requirements agree with execution, including URL-only i
       assert.equal(prepareDriveToolCall(tool.name, { tabRef: "page" }).ok, true, tool.name);
     }
   }
-  for (const name of ["open_tab", "list_tabs", "get_working_tab", "wait_until"]) {
+  for (const name of ["open_tab", "list_tabs", "wait_until"]) {
     const tool = schemas.find(schema => schema.function.name === name).function;
     assert.equal(prepareDriveToolCall(name, {}).ok, true);
     assert.doesNotMatch(driveToolSignature(tool).signature, /\btabRef:/, name);
@@ -287,7 +288,7 @@ test("named drive projection compacts scripts and this session's tabs, then caps
     { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false, usable: false },
   ], null, { aliases: { form: 1 } });
   assert.deepEqual(tabs.value, {
-    tabs: [{ tabRef: 1, alias: "form", title: "owned", url: "https://a.example" }],
+    tabs: [{ tabRef: 1, alias: "form", title: "owned", url: "https://a.example", active: false }],
     count: 1,
     foreign: 1,
   });
@@ -360,11 +361,11 @@ test("drive results identify the page with tabRef", () => {
     windowId: 1,
   });
   assert.equal(used.value.tabRef, 7);
-  assert.equal(used.value.windowId, 1);
+  assert.equal(used.value.windowId, undefined);
   assert.equal(Object.hasOwn(used.value, "tabId"), false);
 
   const closed = projectNamedDriveResult("close_tab", { tabRef: 7 }, { closed: 7 });
-  assert.equal(closed.value.closed, 7);
+  assert.equal(closed.value.closed, true);
   assert.equal(closed.value.tabRef, 7);
   assert.equal(Object.hasOwn(closed.value, "tabId"), false);
 
@@ -394,7 +395,7 @@ test("drive results identify the page with tabRef", () => {
     method: "cdp",
   });
   assert.equal(shot.value.tabRef, 5);
-  assert.equal(shot.value._tabId, 5);
+  assert.equal(shot.value._tabId, undefined);
   assert.equal(Object.hasOwn(shot.value, "tabId"), false);
 
   const found = projectNamedDriveResult("find_elements", { tabRef: 5 }, {
@@ -1403,7 +1404,7 @@ test("drive catalogs omit run_script target and scope", async () => {
 
 function assertNoDriveTabLeak(label, value) {
   const text = typeof value === "string" ? value : `${value?.signature || ""}\n${value?.description || ""}`;
-  assert.doesNotMatch(text, /tabId/, `${label} still shows tabId: ${text.slice(0, 240)}`);
+  assert.doesNotMatch(text, /tabId|workingTab|isWorkingTab|working tab|工作标签|use_tab|get_working_tab|\bselector\b/i, `${label} leaks retired targeting concepts: ${text.slice(0, 240)}`);
   assert.doesNotMatch(text, /\binner\b/i, `${label} still shows inner: ${text.slice(0, 240)}`);
 }
 
@@ -1417,10 +1418,9 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       parameters: schema.function?.parameters || {},
       type: schema.type || "function",
     })).filter(tool => tool.name);
-    const watched = catalog.filter(tool => isDriveToolDefault(tool.name) || tool.name === "get_working_tab");
+    const watched = catalog.filter(tool => isDriveToolDefault(tool.name));
     assert.ok(watched.some(tool => tool.name === "list_tabs"));
-    assert.ok(watched.some(tool => tool.name === "use_tab"));
-    assert.ok(watched.some(tool => tool.name === "get_working_tab"));
+    assert.ok(!watched.some(tool => ['use_tab', 'get_working_tab'].includes(tool.name)));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
     const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
     assert.equal(runScript.signature, "run_script({timeout:number, args?:object, mutatesPage?:boolean, code:string, tabRef:integer|string})");
@@ -1484,9 +1484,10 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     const listed = await runtime.listTools({ sessionId: "drive-1" });
     assert.ok(listed.tools.length > 1);
     for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);
-    for (const name of ["list_tabs", "use_tab", "get_working_tab", "navigate", "run_script"]) {
+    for (const name of ["list_tabs", "navigate", "run_script"]) {
       assertNoDriveTabLeak(`${language} get_tool ${name}`, await runtime.getTool({ sessionId: "drive-1", name }));
     }
+    for (const name of ['use_tab', 'get_working_tab', 'run_skill_script']) await assert.rejects(runtime.getTool({ sessionId: 'drive-1', name }), { code: 'DRIVE_TOOL_FORBIDDEN' });
     const builtInList = await runtime.getTool({ sessionId: "agent-1", name: "list_tabs" });
     assert.match(JSON.stringify(builtInList), /tabId/);
 
@@ -1519,10 +1520,9 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     description: schema.function?.description || "",
     parameters: schema.function?.parameters || {},
   })).find(tool => tool.name === name));
-  assert.match(zhTool("list_tabs").description, /只读页面工具可显式传 tabRef/);
-  assert.match(zhTool("get_working_tab").description, /标题、URL、tabRef/);
-  assert.match(zhTool("use_tab").signature, /tabRef/);
-  assert.doesNotMatch(`${zhTool("use_tab").signature}\n${zhTool("use_tab").description}`, /tabId/);
+  assert.match(zhTool("list_tabs").description, /active 表示用户正在看的标签/);
+  assert.match(zhTool("list_tabs").description, /显式传 tabRef/);
+  for (const name of ['use_tab', 'get_working_tab']) assert.throws(() => zhTool(name), { code: 'DRIVE_TOOL_FORBIDDEN' });
 
   const rawClauses = [
     ["list_tabs", "readOnlyUsable=true 表示只读页面工具可显式传 tabId 查看。命中安全策略的标签页仍返回标题、URL、tabId。"],
@@ -1533,6 +1533,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     ["use_tab", "To inspect a tab owned by another task, pass tabId explicitly to a read-only page tool."],
   ];
   for (const [name, description] of rawClauses) {
+    if (isDriveToolForbidden(name)) { assert.throws(() => driveToolSignature({name, description}), {code:'DRIVE_TOOL_FORBIDDEN'}); continue; }
     const projected = driveToolSignature({
       name,
       description,

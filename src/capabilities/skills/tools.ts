@@ -1,3 +1,4 @@
+import { directDriveSkillGuidance } from '#sdk/shared/browser';
 import { modelT } from "./model-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -66,7 +67,7 @@ registerTool({
 // Skills
 // ===========================================================================
 
-const getSkillRuntimeGuidance = () => (modelT("runtimeGuidance"));
+const getSkillRuntimeGuidance = (context?: ToolContext) => String(context?.runId || '').startsWith('drive-') ? directDriveSkillGuidance() : modelT("runtimeGuidance");
 
 registerTool({
   name: "list_skills",
@@ -126,7 +127,7 @@ registerTool({
       builtin: skill.builtin === true,
       readOnly: skill.readOnly === true,
       updatedAt: skill.updatedAt,
-      runtime: getSkillRuntimeGuidance(),
+      runtime: getSkillRuntimeGuidance(context),
       content: skill.content,
       resources: summarizeSkillResources(skill.resources, { includeContent: includeResources }),
       ...summarizeSkillMcpFields(skill),

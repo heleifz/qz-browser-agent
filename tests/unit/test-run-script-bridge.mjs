@@ -396,7 +396,7 @@ const driveTabs = await driveBridge.handleToolCall({
   runId: "drive-1",
 });
 assert.deepEqual(driveTabs.result, {
-  tabs: [{ tabRef: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html" }],
+  tabs: [{ tabRef: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
   count: 1,
   foreign: 1,
 });

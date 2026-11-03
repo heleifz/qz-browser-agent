@@ -79,7 +79,7 @@ const storedImageRows = new Map();
 const imageMetadataWrites = [];
 const imageUpserts = [];
 let imageWriteError = null;
-let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 0) });
+let bindBackendNodesImpl = async (_tabId, selectors = []) => ({ loaderId: "", ids: selectors.map(() => 77) });
 let readImageDataUrl = "data:image/png;base64,aW1hZ2U=";
 let readImageFailure = null;
 let listImageResults = [];
@@ -196,14 +196,25 @@ const runtime = registerMediaTools({
     if (stored) return { tabId: stored.tabId, target, selector: stored.selector, index: 0, uid, ref: stored };
     return { tabId, target, selector: String(target || "").replace(/^css:/, "") || "img", index: 0 };
   },
-  makeSnapshotId(tabId) { return `t${tabId}_snapshot`; },
-  registerElementRef(ref) { elementRefs.set(ref.uid, { ...ref }); },
-  elementTargetForUid(uid) { return uid ? `uid:${uid}` : ""; },
+  async bindElementReferences(tabId, refs, context) {
+    let bound;
+    try { bound = await bindBackendNodesImpl(tabId, refs.map(ref => ref.selector)); }
+    catch (error) {
+      if (!['SESSION_TAB_FOREIGN', 'SESSION_TAB_UNOWNED'].includes(error.code)) throw error;
+      return refs.map(ref => ({ ...ref, target: `css:${ref.selector}` }));
+    }
+    return refs.map((ref, index) => {
+      const uid = bound.ids[index] ? `t${tabId}_snapshot.i${index + 1}` : undefined;
+      const next = { ...ref, tabId, sessionId: context.sessionId, pageUrl: tabPageUrl, documentId: mainDocumentId,
+        uid, backendNodeId: bound.ids[index], loaderId: bound.loaderId, target: uid ? `uid:${uid}` : `css:${ref.selector}` };
+      if (uid) elementRefs.set(uid, next);
+      return next;
+    });
+  },
   elementTargetForSelector(selector) { return selector ? `css:${selector}` : ""; },
   elementTargetForRef(ref) { return ref?.target || ""; },
   elementTargetGrammar: "target grammar",
   getElementTargetDescription: () => "target description",
-  bindBackendNodes(tabId, selectors) { return bindBackendNodesImpl(tabId, selectors); },
   async getTabPageState(tabId) { return { tabId, url: tabPageUrl, title: "Example" }; },
   pageStateDelta(before, after) {
     return {
@@ -1610,7 +1621,8 @@ try {
   assert.equal(foreignListed.count, listedImages.length);
   assert.equal(foreignListed.images.length, 1);
   assert.equal(foreignListed.images[0].src, "https://example.test/hero-a.png");
-  assert.equal(elementRefs.get("t3_snapshot.i1").backendNodeId, undefined);
+  assert.equal(foreignListed.images[0].target, 'css:#gallery > img.hero');
+  assert.equal(foreignListed.images[0].uid, undefined);
   bindBackendNodesImpl = async () => { throw new ToolExecutionError("SECURITY_GUARDRAIL_BLOCKED", "blocked"); };
   await assert.rejects(
     definitions.get("list_images").execute({ tabId: 3 }, undefined, { sessionId: "session-a" }),
@@ -1810,6 +1822,10 @@ assert.equal(savedScreenshot.saved, true);
 assert.equal(savedScreenshot.totalRows, 1);
 assert.ok(savedScreenshot._image, "saving a screenshot still returns image input to the model");
 assert.equal(savedScreenshot.assetId, storedImageRows.get("saved-screenshots")[0].assetId);
+for (const rows of storedImageRows.values()) for (const row of rows) {
+  assert.equal(Object.hasOwn(row, 'selector'), false, 'managed gallery rows do not reintroduce a second element identity');
+  assert.equal(Object.hasOwn(row, 'tabId'), false, 'managed gallery rows use the public page reference');
+}
 assert.deepEqual(imageUpserts.at(-1), { table: "saved-screenshots", dedupField: "sourceKey" });
 assert.equal(savedScreenshot.artifacts[0].rowCount, 1);
 assert.equal(savedScreenshot.artifacts[0].kind, "image_collection");
@@ -2076,9 +2092,7 @@ registerMediaTools({
   sendToContent: fallbackContent,
   resolveSelectorTarget: fallbackElements.resolveSelectorTarget,
   resolveElementReference: fallbackElements.resolveElementReference,
-  makeSnapshotId: fallbackElements.makeSnapshotId,
-  makeElementUid: fallbackElements.makeElementUid,
-  registerElementRef: fallbackElements.registerElementRef,
+  bindElementReferences: fallbackElements.bindElementReferences,
   elementTargetForUid: fallbackElements.elementTargetForUid,
   elementTargetForSelector: fallbackElements.elementTargetForSelector,
   elementTargetForRef: fallbackElements.elementTargetForRef,
@@ -2125,7 +2139,11 @@ registerPageElementTools({
 });
 const unownedListed = await fallbackDefinitions.get("list_images").execute({ tabId: foreignTabId }, undefined, { sessionId: "session-a" });
 assert.equal(unownedListed.images.length, 2);
-assert.match(unownedListed.images[1].target, /^uid:/);
+assert.match(unownedListed.images[1].target, /^css:/);
+assert.equal(unownedListed.images[1].uid, undefined);
+const legacyImageTarget = 'uid:t15.00000e.i2';
+fallbackElements.registerElementRef({ uid: legacyImageTarget.slice(4), tabId: foreignTabId, sessionId: 'session-a',
+  pageUrl: 'https://example.test/', selector: fallbackImages[1].selector, imageSrc: fallbackImages[1].src });
 assert.equal(unownedListed.images[1].tabId, undefined, "image candidates keep the existing target fields");
 const unownedRead = await fallbackDefinitions.get("read_image").execute({
   tabId: foreignTabId,
@@ -2154,7 +2172,7 @@ const contentBeforeMutation = fallbackContentCalls.length;
 await assert.rejects(
   fallbackDefinitions.get("act_on_element").execute({
     tabId: foreignTabId,
-    target: unownedListed.images[1].target,
+    target: legacyImageTarget,
     action: "click",
   }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_ELEMENT_UID",
@@ -2178,7 +2196,7 @@ await assert.rejects(
 );
 liveFallbackImages[1] = { ...liveFallbackImages[1], src: "https://example.test/changed.png", currentSrc: "https://example.test/changed.png" };
 await assert.rejects(
-  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: unownedListed.images[1].target }, undefined, { sessionId: "session-a" }),
+  fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: legacyImageTarget }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_IMAGE_TARGET",
   "selector fallback must reject an image whose source changed after listing",
 );
@@ -2188,7 +2206,7 @@ await assert.rejects(
   fallbackDefinitions.get("collect_images").execute({
     table: "fallback-images",
     tabId: foreignTabId,
-    targets: [unownedListed.images[1].target],
+    targets: [legacyImageTarget],
   }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_IMAGE_TARGET",
   "collection uses the same source check when a uid falls back to its selector",
@@ -2196,13 +2214,17 @@ await assert.rejects(
 mainDocumentId = "doc-live";
 const stamped = await fallbackDefinitions.get("list_images").execute({ tabId: 5 }, undefined, { sessionId: "session-a" });
 assert.equal(stamped.code, undefined, JSON.stringify(stamped));
-const liveImage = await fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" });
+assert.match(stamped.images[0].target, /^css:/);
+const stampedTarget = 'uid:t5.00000f.1';
+fallbackElements.registerElementRef({ uid: stampedTarget.slice(4), tabId: 5, sessionId: 'session-a',
+  pageUrl: tabPageUrl, documentId: mainDocumentId, selector: fallbackImages[0].selector, imageSrc: fallbackImages[0].src });
+const liveImage = await fallbackDefinitions.get("read_image").execute({ target: stampedTarget }, undefined, { sessionId: "session-a" });
 assert.equal(liveImage.code, undefined, JSON.stringify(liveImage));
 mainDocumentId = "doc-next";
 await assert.rejects(
-  fallbackDefinitions.get("read_image").execute({ target: stamped.images[0].target }, undefined, { sessionId: "session-a" }),
+  fallbackDefinitions.get("read_image").execute({ target: stampedTarget }, undefined, { sessionId: "session-a" }),
   error => error?.code === "STALE_ELEMENT_UID",
-  "a list_images uid dies after the same url loads a new document",
+  "a legacy selector UID still dies after the same URL loads a new document",
 );
 mainDocumentId = "";
 

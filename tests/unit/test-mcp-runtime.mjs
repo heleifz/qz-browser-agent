@@ -272,10 +272,10 @@ assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp
 assert.equal((await runtime.getTool({ sessionId: "s1", name: "manage_bookmarks" })).name, "manage_bookmarks");
 assert.equal((await runtime.getTool({ sessionId: "drive-listed", name: "browse_history" })).name, "browse_history");
 assert.equal(await runtime.getTool({ sessionId: "drive-listed", name: "not_a_tool" }), null);
-for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "qingzhou_skill_author__delete_skill", "mcp_call_tool"]) {
+for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "use_tab", "get_working_tab", "qingzhou_skill_author__delete_skill", "mcp_call_tool"])  {
   await assert.rejects(
     () => runtime.getTool({ sessionId: "drive-listed", name }),
-    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message === `不能通过直驱调用 ${name}。`,
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message === '此工具不对直驱开放。请查询可用工具；页面操作显式传入 tabRef。',
   );
 }
 await assert.rejects(

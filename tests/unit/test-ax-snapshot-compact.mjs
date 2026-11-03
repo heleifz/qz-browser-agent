@@ -30,25 +30,22 @@ registerAccessibilityTools({
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value)))),
   makeSnapshotId: element.makeSnapshotId,
-  makeElementUid: (...args) => {
-    const uid = element.makeElementUid(...args);
-    generatedUids.push(uid);
-    return uid;
-  },
   elementTargetForUid: element.elementTargetForUid,
-  registerElementRef: ref => {
-    registeredRefs.push(ref);
-    element.registerElementRef(ref);
+  registerElementBinding: ref => {
+    const bound = element.registerElementBinding(ref);
+    if (bound.uid) { generatedUids.push(bound.uid); registeredRefs.push(bound); }
+    return bound;
   },
   resolveElementReference: element.resolveElementReference,
   backendNodeIdForSelector: async () => 0,
-  bindBackendNodes: async () => scenario.bound,
+  bindElementReferences: async (_tabId, refs) => refs.map((ref, index) => ({ ...ref, backendNodeId: scenario.bound.ids[index] || 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => scenario.overview,
   callElement: async () => scenario.overview,
   readMainDocumentId: element.readMainDocumentId,
   withDebugger: async (_id, fn) => fn({}, async (method, params = {}) => {
     if (method === "Accessibility.getFullAXTree") { scenario.fetchParams = params; return { nodes: scenario.nodes }; }
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: 'main', loaderId: scenario.bound.loaderId } } };
     if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientHeight: 600 } };
     if (method === "DOMSnapshot.captureSnapshot") return scenario.geometry || {};
     if (method === "DOM.describeNode") return scenario.describe(params);
@@ -118,7 +115,7 @@ for (const text of displayText) {
 }
 assert.equal(displayOnly.returnedNodeCount, 1 + displayText.length + targetRoles.length);
 assert.deepEqual(registeredRefs.map(ref => ref.role), ["RootWebArea", ...targetRoles], "display text must not register element references");
-assert.deepEqual(generatedUids, registeredRefs.map((_ref, index) => `${displayOnly.snapshotId}.${index}`), "display text must not allocate UIDs");
+assert.deepEqual(generatedUids, registeredRefs.map((_ref, index) => `${displayOnly.snapshotId}.${index + 1}`), "display text must not allocate UIDs");
 const roleTargets = targetRoles.map(role => line(displayOnly.snapshot, `"${role} target"`).match(/target=(uid:\S+)/)?.[1]);
 assert.equal(new Set(roleTargets).size, targetRoles.length, "controls and structural nodes keep unique targets");
 for (const [index, target] of roleTargets.entries()) {
@@ -389,11 +386,12 @@ const selectorOnly = await run({
 assert.doesNotMatch(line(selectorOnly.snapshot, "heading"), /\bbutton\b/);
 const selectorButton = line(selectorOnly.snapshot, "button");
 assert.match(selectorButton, /button "Search"/);
-const selectorTarget = selectorButton.match(/target=(uid:\S+)/)?.[1];
+const selectorTarget = 'css:main > button.only';
+assert.ok(selectorButton.includes(`target=${JSON.stringify(selectorTarget)}`));
 const resolvedSelector = await element.resolveElementReference(8, { target: selectorTarget }, context);
 assert.equal(resolvedSelector.selector, "main > button.only", "an unbound action keeps its selector");
 assert.equal(resolvedSelector.index, 0);
-assert.equal(Number(resolvedSelector.ref.backendNodeId || 0), 0);
+assert.equal(resolvedSelector.uid, undefined, 'a CSS fallback is not a node UID');
 
 const indexed = await run({
   overview: {
@@ -403,8 +401,9 @@ const indexed = await run({
   bound: { loaderId: "loader", ids: [0] },
   nodes: [ax({ id: "root", backend: 1, role: "RootWebArea", name: "Page" })],
 });
-const indexedTarget = line(indexed.snapshot, "Second").match(/target=(uid:\S+)/)?.[1];
-const resolvedIndexed = await element.resolveElementReference(8, { target: indexedTarget }, context);
+const indexedTarget = 'css:button.dup';
+assert.ok(line(indexed.snapshot, 'Second').includes(`target=${JSON.stringify(indexedTarget)} index=1`));
+const resolvedIndexed = await element.resolveElementReference(8, { target: indexedTarget, index: 1 }, context);
 assert.equal(resolvedIndexed.selector, "button.dup");
 assert.equal(resolvedIndexed.index, 1);
 
@@ -501,7 +500,8 @@ const rectOnly = await run({
 });
 assert.match(line(rectOnly.snapshot, "Rect inside"), /target=/);
 assert.doesNotMatch(rectOnly.snapshot, /Rect below|Unknown action|↑|↓/);
-assert.equal(registeredRefs.length, 2, "only the root and measured in-band synthetic action get targets");
+assert.equal(registeredRefs.length, 1, "only the root has a backend node UID");
+assert.match(line(rectOnly.snapshot, 'Rect inside'), /target="css:#inside"/, 'an unbound in-band action uses CSS');
 assert.deepEqual(rectOnly.viewportOmitted, { above: 0, below: 0, unmeasured: 0 });
 const foldedNodes = [
   ax({ id: "root", backend: 1, role: "RootWebArea", children: ["region", "about"] }),

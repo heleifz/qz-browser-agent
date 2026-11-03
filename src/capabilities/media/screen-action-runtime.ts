@@ -286,7 +286,6 @@ export function createScreenActionRuntime({
         const result = {
           status: "completed",
           action,
-          tabId,
           ...(snapshot ? {
             sourceScreenshotId: snapshot.id,
             sourceCoordinateSpace: snapshot.coordinateSpace,
@@ -371,7 +370,7 @@ export function createScreenActionRuntime({
   function register(tabId: number, state: State, shot: Screenshot, context: ToolContext) {
     const cssWidth = Number(shot.cssWidth), cssHeight = Number(shot.cssHeight);
     if (![cssWidth, cssHeight].every(value => Number.isFinite(value) && value > 0)) {
-      throw new ToolExecutionError("SCREENSHOT_COORDINATES_UNAVAILABLE", t("theCurrentVisualViewportCouldNotBeMeasuredFor"), { tabId });
+      throw new ToolExecutionError("SCREENSHOT_COORDINATES_UNAVAILABLE", t("theCurrentVisualViewportCouldNotBeMeasuredFor"), {});
     }
     const createdAt = timestamp();
     prune();
@@ -457,7 +456,7 @@ export function createScreenActionRuntime({
       throw new ToolExecutionError(
         "SCREENSHOT_COORDINATES_UNAVAILABLE",
         t("theCurrentVisualViewportCouldNotBeMeasuredFor"),
-        { tabId, viewport: raw },
+        { viewport: raw },
       );
     }
     let frame: Fields = {};
@@ -758,7 +757,7 @@ export function createScreenActionRuntime({
   }
 
   function abortedError(tabId: number) {
-    return new ToolExecutionError("OPERATION_ABORTED", "Screen action was aborted.", { tabId });
+    return new ToolExecutionError("OPERATION_ABORTED", "Screen action was aborted.", {});
   }
 
   function createInputDispatchState(context: ToolContext, tabId: number, action: string) {

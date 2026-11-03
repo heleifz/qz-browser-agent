@@ -15,12 +15,12 @@ const node = (id, role, disabled) => ({
   properties: disabled === undefined ? [] : [property("disabled", disabled)],
 });
 const tree = (nodes, root = "root") => [
-  { nodeId: root, role: { value: "RootWebArea" }, childIds: nodes.map(node => node.nodeId) },
+  { nodeId: root, backendDOMNodeId: 1000, role: { value: "RootWebArea" }, childIds: nodes.map(node => node.nodeId) },
   ...nodes.map(node => ({ ...node, parentId: root })),
 ];
 
 function harness(nodes, handlers = {}) {
-  const calls = [], refs = [], partials = [];
+  const calls = [], refs = [], partials = [], uids = new Map();
   const responses = {
     "Accessibility.getFullAXTree": () => ({ nodes: structuredClone(nodes) }),
     "Page.getFrameTree": () => ({}),
@@ -39,7 +39,14 @@ function harness(nodes, handlers = {}) {
     registerTool: value => { definition = value; }, ToolExecutionError,
     clampLimit: (value, min, max) => Math.max(min, Math.min(value, max)),
     makeSnapshotId: () => "snapshot", elementTargetForUid: uid => `uid:${uid}`,
-    registerElementRef: ref => refs.push(ref),
+    registerElementBinding: ref => {
+      const key = `${ref.frameId || ''}:${ref.backendNodeId}`;
+      if (!uids.has(key)) uids.set(key, `snapshot.${uids.size}`);
+      const bound = { ...ref, uid: uids.get(key), target: `uid:${uids.get(key)}` };
+      refs.push(bound);
+      return bound;
+    },
+    bindElementReferences: async () => [],
     sendToContent: async () => ({ title: "Page", url: "https://example.test/", actions: [] }),
     withDebugger: async (_id, fn) => fn({}, send), elementTargetGrammar: "target grammar",
   });
@@ -91,7 +98,7 @@ test("zero candidates makes zero correction calls and never adds disabled", asyn
     "Runtime.callFunctionOn": () => ({ result: { value: true } }),
   });
   const result = await h.run();
-  assert.deepEqual(h.calls.map(call => call.method), ["Accessibility.getFullAXTree", "Page.getFrameTree"]);
+  assert.deepEqual(h.calls.map(call => call.method), ["Page.getFrameTree", "Accessibility.getFullAXTree", "Page.getFrameTree"]);
   assertDisabled(result, 1, false);
   assertDisabled(result, 2, false);
   assertDisabled(result, 3, true);

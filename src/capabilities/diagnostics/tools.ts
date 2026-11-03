@@ -285,7 +285,6 @@ async function enablePreNavigationNetworkWatch(tabId: number, {
   return {
     watching: true,
     startedBeforeNavigation: true,
-    tabId: monitor.tabId,
     maxRecords: monitor.maxRecords,
     records: monitor.order.length,
     inFlight: monitor.inFlight.size,
@@ -495,7 +494,6 @@ registerTool({
       .reverse();
     return {
       watching: true,
-      tabId: monitor.tabId,
       records: rows.length,
       totalBuffered: monitor.records.length,
       results: rows,
@@ -520,7 +518,6 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords }, context);
     return {
       watching: true,
-      tabId: monitor.tabId,
       maxRecords: monitor.maxRecords,
       records: monitor.order.length,
       inFlight: monitor.inFlight.size,
@@ -564,7 +561,6 @@ registerTool({
       .reverse()
       .map(networkRecordSummary);
     return {
-      tabId: monitor.tabId,
       records: rows.length,
       inFlight: monitor.inFlight.size,
       results: rows,
@@ -593,10 +589,10 @@ registerTool({
       return {
         error: `Network request not found: ${requestId}`,
         code: "NETWORK_REQUEST_NOT_FOUND",
-        details: { tabId: monitor.tabId, requestId },
+        details: { requestId },
       };
     }
-    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url", tabId: monitor.tabId });
+    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url" });
     const body = await getNetworkBody(monitor.tabId, requestId, clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT), context);
     return { ...networkRecordSummary(record), ...body };
   },
@@ -652,15 +648,14 @@ registerTool({
         cleanup();
         const summary = networkRecordSummary(record);
         if (!includeBody) {
-          resolve({ tabId: monitor.tabId, matched: true, response: summary });
+          resolve({ matched: true, response: summary });
           return;
         }
         try {
           const body = await getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context);
-          resolve({ tabId: monitor.tabId, matched: true, response: summary, body });
+          resolve({ matched: true, response: summary, body });
         } catch (err) {
           resolve({
-            tabId: monitor.tabId,
             matched: true,
             response: summary,
             bodyError: {
@@ -682,7 +677,6 @@ registerTool({
       timer = setTimeout(() => {
         cleanup();
         resolve({
-          tabId: monitor.tabId,
           matched: false,
           timedOut: true,
           timeoutSeconds: timeoutMsValue / 1000,
@@ -750,7 +744,7 @@ registerTool({
       };
       const complete = () => {
         cleanup();
-        resolve({ tabId: monitor.tabId, idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
+        resolve({ idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
       };
       const scheduleIdle = () => {
         clearTimeout(idleTimer);
@@ -765,7 +759,6 @@ registerTool({
       timeoutTimer = setTimeout(() => {
         cleanup();
         resolve({
-          tabId: monitor.tabId,
           idle: false,
           timedOut: true,
           timeoutSeconds: timeoutMsValue / 1000,

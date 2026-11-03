@@ -14,7 +14,7 @@ globalThis.chrome = {
   tabs: {
     async get(id) { return tabsById.get(id); },
     async sendMessage(tabId, message) {
-      if (message?.action === "ping") return { ok: true, contentType: "text/html" };
+      if (message?.action === "ping") return { ok: true, contentType: "text/html", elementRefs: 1 };
       if (message?.action === "listImageElements") {
         const tab = tabsById.get(tabId);
         return {
@@ -83,14 +83,18 @@ test("read_image on an unclaimed tab leaves the working tab in place", async () 
   const listed = await f.runtime.execute("list_images", { tabId: tabB.id }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(listed.code, undefined, JSON.stringify(listed));
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabA.id, "listing an unclaimed tab stays on A");
-  const read = await f.runtime.execute("read_image", { target: listed.images[0].target }, undefined, { sessionId: "s", runId: "run" });
+  assert.match(listed.images[0].target, /^css:/, 'without a debugger binding the producer must not invent a UID');
+  // Historical selector-only image UIDs retain their read-only routing semantics.
+  f.runtime.element.registerElementRef({ uid: 't8.000001.1', tabId: tabB.id, sessionId: 's', selector: 'img.only', imageIndex: 0, imageSrc: 'https://example.test/b.png' });
+  const target = 'uid:t8.000001.1';
+  const read = await f.runtime.execute("read_image", { target }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(read.code, undefined, JSON.stringify({ code: read.code, error: read.error, message: read.message }));
   assert.equal(read.tabId, tabB.id);
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabA.id, "a read-only uid on unclaimed tab B must leave the working tab on A");
 
   const current = f.supervisor.getRuntime("s");
   f.supervisor.setRuntime("s", { ...current, ownedTabIds: [tabA.id, tabB.id], workingTabId: tabA.id });
-  const owned = await f.runtime.execute("read_image", { target: listed.images[0].target }, undefined, { sessionId: "s", runId: "run" });
+  const owned = await f.runtime.execute("read_image", { target }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(owned.code, undefined, JSON.stringify({ code: owned.code, error: owned.error, message: owned.message }));
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabB.id, "a claimed tab still becomes the working tab");
 });

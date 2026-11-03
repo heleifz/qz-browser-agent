@@ -63,11 +63,12 @@ test("a newly named tool declares unload behavior once for direct script and for
 });
 
 test("built-in unload declarations retain navigation, closing, click, submit and key protection", async () => {
+  runtime.element.registerElementRef({ uid: 'known', tabId: 31, sessionId: 'session', backendNodeId: 42 });
   for (const [name, args] of [
     ["navigate", { url: "https://example.test/next" }],
     ["close_tab", { tabId: 31 }],
     ["act_on_element", { target: "css:button", action: "click" }],
-    ["act_on_element", { target: "uid:unknown", action: "click" }],
+    ["act_on_element", { target: "uid:known", action: "click" }],
     ["act_on_element", { target: "css:input", action: "fill", value: "search", submit: true }],
     ...["Enter", "Return", "Space"].map(key => ["act_on_element", { target: "css:input", action: "press", key }]),
   ]) {
@@ -75,6 +76,7 @@ test("built-in unload declarations retain navigation, closing, click, submit and
     assert.equal(result.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED", `${name} ${JSON.stringify(args)}`);
     assert.equal(result.details.sourceTabId, 31);
   }
+  assert.equal((await nested('act_on_element', { target: 'uid:unknown', action: 'click' })).code, 'STALE_ELEMENT_UID');
   const policy = runtime.resolveDefinition("act_on_element").behavior.mayUnloadPage;
   assert.equal(policy({ action: "press", value: "Enter" }), true);
   for (const args of [{ action: "fill", submit: false }, { action: "press", key: "Tab" }, { action: "check" }, { action: "scroll" }]) {

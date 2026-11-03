@@ -4,20 +4,20 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("page-tools", {
   readArticleDescription: {
-    "zh-CN": "读取目标页面整理后的正文 Markdown（保留标题、列表、链接、代码和表格，也支持纯文本或原始 JSON 页面）。读正文优先使用本工具，不要用于寻找可操作控件。返回 offset/limit 指定的正文片段及 totalChars/hasMore/nextOffset/sourceSelector/linkCount；长文用 nextOffset 续读。outline 为带 offset/endOffset/charCount 的目录，可按 offset 和 limit 读指定章节；需原始 DOM 证据时把 sourceSelector 传给 read_dom。limit 必填，建议 4000–8000，范围 1000–20000。",
-    en: "Read cleaned main content from the target page as Markdown (preserving headings, lists, links, code, and tables; also works on plain-text or raw JSON pages). Prefer this tool for reading body text, not for finding interactive controls. Returns the offset/limit text segment plus totalChars/hasMore/nextOffset/sourceSelector/linkCount; pass nextOffset to continue reading. outline lists sections with offset/endOffset/charCount; pass sourceSelector to read_dom when raw DOM evidence is needed. limit is required (recommended 4000–8000, range 1000–20000).",
+    "zh-CN": "读取目标页面整理后的正文 Markdown（保留标题、列表、链接、代码和表格，也支持纯文本或原始 JSON 页面）。读正文优先使用本工具，不要用于寻找可操作控件。返回 offset/limit 指定的正文片段及 totalChars/hasMore/nextOffset/target/linkCount；长文用 nextOffset 续读。outline 为带 offset/endOffset/charCount 的目录，可按 offset 和 limit 读指定章节；需原始 DOM 证据时把 target 传给 read_dom。limit 必填，建议 4000–8000，范围 1000–20000。",
+    en: "Read cleaned main content from the target page as Markdown (preserving headings, lists, links, code, and tables; also works on plain-text or raw JSON pages). Prefer this tool for reading body text, not for finding interactive controls. Returns the offset/limit text segment plus totalChars/hasMore/nextOffset/target/linkCount; pass nextOffset to continue reading. outline lists sections with offset/endOffset/charCount; pass target to read_dom when raw DOM evidence is needed. limit is required (recommended 4000–8000, range 1000–20000).",
   },
   readArticleTabId: {
     "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
     en: "Target tab ID. Defaults to the current task's working tab.",
   },
   readArticleSource: {
-    "zh-CN": "读取来源，默认 auto（依次尝试 selection、article、selector、body）。",
-    en: "Content source. Default: auto (tries selection, article, selector, then body).",
+    "zh-CN": "读取来源，默认 auto（依次尝试 selection、article、target、body）。",
+    en: "Content source. Default: auto (tries selection, article, target, then body).",
   },
   readArticleSelector: {
-    "zh-CN": "source=selector 必填（auto 可选）的范围；支持原始 CSS 或 target 格式 css:... / uid:...。",
-    en: "Scope for source=selector (optional for auto). Accepts raw CSS or a target in css:... / uid:... format.",
+    "zh-CN": "读取范围（source=target 必填），优先 uid:，css: 或裸 CSS 兜底；auto 指定 target 时只读此范围。",
+    en: "Scope required for source=target: prefer uid:, with css: or bare CSS as fallback; auto reads this scope when target is supplied.",
   },
   readArticleOffset: {
     "zh-CN": "起始字符 offset，默认 0；续读传 nextOffset，读章节传 outline 的 offset。",
@@ -28,8 +28,8 @@ const messages = defineMessages("page-tools", {
     en: "Required character count to return. Recommended: 4000–8000; range: 1000–20000.",
   },
   readDomDescription: {
-    "zh-CN": "按行分页读取目标页面的实时 DOM HTML（剔除 script/style/noscript/svg），返回带 1-indexed 行号的 content、totalLines 和 hasMore。用于读取 find_elements 的 lineRange、read_article 的 sourceSelector，或验证隐藏字段、form/action、id/class/data-testid、p/br 等 DOM 结构。",
-    en: "Read paginated live DOM HTML by line (script/style/noscript/svg removed), returning 1-indexed numbered content, totalLines, and hasMore. Use to inspect lineRange from find_elements, sourceSelector from read_article, or DOM structure such as hidden fields, form/action, id/class/data-testid, and p/br.",
+    "zh-CN": "按行分页读取目标页面的实时 DOM HTML（剔除 script/style/noscript/svg），返回带 1-indexed 行号的 content、totalLines 和 hasMore。用于读取 find_elements 的 lineRange、read_article 的 target，或验证隐藏字段、form/action、id/class/data-testid、p/br 等 DOM 结构。",
+    en: "Read paginated live DOM HTML by line (script/style/noscript/svg removed), returning 1-indexed numbered content, totalLines, and hasMore. Use to inspect lineRange from find_elements, target from read_article, or DOM structure such as hidden fields, form/action, id/class/data-testid, and p/br.",
   },
   readDomOffset: {
     "zh-CN": "起始行号（1-indexed），默认 1。",
@@ -40,12 +40,12 @@ const messages = defineMessages("page-tools", {
     en: "Number of lines to read. Default: 200.",
   },
   readDomSelector: {
-    "zh-CN": "读取范围，默认 body；支持原始 CSS 或 target 格式 css:... / uid:...。",
-    en: "Scope to read. Default: body. Accepts raw CSS or a target in css:... / uid:... format.",
+    "zh-CN": "读取范围 target，优先 uid:，css: 或裸 CSS 兜底，默认 body。",
+    en: "Target scope: prefer uid:, with css: or bare CSS as fallback; defaults to body.",
   },
   findElementsDescription: {
-    "zh-CN": "按范围、语义属性和可选正则查找页面元素候选（优先排序可操作、视口内、匹配更明确的元素）。pattern 是可选过滤条件：不传 pattern 时会列出 selector/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 selector、role/name/text/rect/actionable/inViewport/lineRange 等摘要；需原始 HTML 时将 lineRange 传给 read_dom。",
-    en: "Find candidate page elements by scope, semantic filters, and an optional regex (prioritizing actionable, in-viewport, and specific matches). pattern is an optional filter: when omitted, lists candidates matching selector/tags/roles/types. Returns a target usable directly with inspect_element/act_on_element, plus selector, role/name/text/rect/actionable/inViewport/lineRange summaries; pass lineRange to read_dom for raw HTML.",
+    "zh-CN": "按范围、语义属性和可选正则查找页面元素候选（优先排序可操作、视口内、匹配更明确的元素）。pattern 是可选过滤条件：不传 pattern 时会列出 target/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 role/name/text/rect/actionable/inViewport/lineRange 等摘要；需原始 HTML 时将 lineRange 传给 read_dom。",
+    en: "Find candidate page elements by scope, semantic filters, and an optional regex (prioritizing actionable, in-viewport, and specific matches). pattern is an optional filter: when omitted, lists candidates matching target/tags/roles/types. Returns a target usable directly with inspect_element/act_on_element, plus role/name/text/rect/actionable/inViewport/lineRange summaries; pass lineRange to read_dom for raw HTML.",
   },
   findElementsPattern: {
     "zh-CN": "可选正则，匹配 name、aria-label、placeholder、value、id、name/title/data-testid、href、text、role、tag、class。",
@@ -56,8 +56,8 @@ const messages = defineMessages("page-tools", {
     en: "RegExp flags. Default: i.",
   },
   findElementsSelector: {
-    "zh-CN": "查找范围（穿透 open Shadow DOM），默认 body；支持原始 CSS 或 target 格式 css:... / uid:...。",
-    en: "Search scope (pierces open Shadow DOM). Default: body. Accepts raw CSS or a target in css:... / uid:... format.",
+    "zh-CN": "查找范围 target（穿透 open Shadow DOM），优先 uid:，css: 或裸 CSS 兜底，默认 body。",
+    en: "Target search scope: prefer uid:, with css: or bare CSS as fallback; pierces open Shadow DOM and defaults to body.",
   },
   findElementsRoles: {
     "zh-CN": "可选 ARIA role 过滤（含显式与隐式 role），如 button/link/textbox/checkbox。",

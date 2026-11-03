@@ -27,9 +27,9 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. Traces stay in the worker and a timeout reads the last five once. See policy risk in the audit guide.",
   }],
-  ["dynamic-code:e78830823858460286c6355bfb8af085dd3762df57a4feb3d1c7a38e237fc8a5", {
+  ["dynamic-code:07aefc76404494b85dbd305be26b906d8af28775eb5e20de41fdd90505aa5eb7", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
-    reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for the reviewed CDP callers, including explicit user/Agent page scripts. Compiles in the page realm only, never the isolated world or extension context.",
+    reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
   ["worker-source:11dbf0fbcc7d404174d299c143971229f57622a4762a30c84e6cbf27220a7a60", {
     files: /^runner-sandbox\.js$/u,
@@ -42,10 +42,10 @@ const REVIEWED = new Map([
     ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
     ["be122f24e710bfad076f995e0d161ee83918f7827035abcf299d65c7e14c5a17", "capabilities/script/tools", "Entire createScriptTools factory. Drive calls never inject a default tab, and explicit tabRef suppresses the ordinary page default. Identity remains JSON-serialized data; source and run-owned execution are unchanged. Page traces stay on the CDP-held promise; an inner timeout reads the last five once. Policy risk remains."],
-    ["e1026a3accc9f907512ec6d6eeed9728cfbd86b130ad009452f3bee13803b70c", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant from isolated-page-calls; validates live context identity."],
+    ["a82cb8d3f50ecf7adc2c51ec08d08bab7a5b04dfd07e188151af3309222e36f0", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant; validates live context identity and the element-reference protocol version."],
     ["c56fb6154c392cf8fece033fcc496139904617749a4fb93acae372347b20b1fd", "background/tools/element-runtime", "Calls the packaged ISOLATED_CONTENT_INVOKE bridge constant; action parameters are passed as CDP values, not code."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
-    ["7f6e6f3165ecda0c11e2a89f1aabe046dff991b58099c2d8e982e0796566a3ab", "background/tools/element-runtime", "bindFindElementRefs resolves find_elements tokens through the packaged ISOLATED_CONTENT_INVOKE bridge with action resolveFindElement; token/action values travel as CDP arguments, not code."],
+    ["68e72086f2242efc3822ad975e9a33411cc6183df9f73938ea99ebbba63b3cfb", "background/tools/element-runtime", "bindContentElementRefs resolves bounded batches of original-node tokens through the packaged ISOLATED_CONTENT_INVOKE bridge; token arrays are CDP values, not code. It checks the document/frame and limits concurrent node descriptions."],
   ].map(([digest, module, reason]) => [`cdp-execution:${digest}`, {
     files: new RegExp(`^(?:background/service-worker|${module})\\.js$`, "u"), reason,
   }]),

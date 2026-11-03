@@ -124,8 +124,8 @@ const messages = defineMessages("wait-tools", {
     en: "Target tab ID. Defaults to the current task's working tab.",
   },
   waitForElementSelector: {
-    "zh-CN": "目标 CSS 选择器（支持原始 CSS 或 css:...，不支持 uid:... 快照引用）。",
-    en: "Target CSS selector (accepts raw CSS or css:...; uid:... is not supported).",
+    "zh-CN": "元素 target，优先 uid:，css: 或裸 CSS 兜底；uid 的 absent 表示原节点已移除或不可见。",
+    en: "Element target: prefer uid:, with css: or bare CSS as fallback; absent for a uid means the original node was removed or is invisible.",
   },
   waitForElementAbsent: {
     "zh-CN": "是否等待元素消失，默认 false。",

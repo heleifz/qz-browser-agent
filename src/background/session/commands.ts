@@ -211,11 +211,12 @@ function normalizeCanManageSessionId(value: unknown = "") {
 
 
 async function listSessionsRuntime({
+  publicView = false,
   limit = 100,
   excludeSessionId = "",
   sessionId = "",
   scope = "",
-}: { limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
+}: { publicView?: boolean; limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
   await sessionRuntimeReady;
   const excluded = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
   const requestedId = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -233,7 +234,7 @@ async function listSessionsRuntime({
   }
   const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
   return {
-    sessions: sessions.slice(0, max).map((session) => formatSessionRuntimeRecord(session)),
+    sessions: sessions.slice(0, max).map((session) => formatSessionRuntimeRecord(session, { publicView })),
   };
 }
 
@@ -1693,7 +1694,7 @@ function compactSessionRecord(session: Partial<SessionMetadata> & { id: string }
   };
 }
 
-function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false } = {}) {
+function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false, publicView = false } = {}) {
   const runtime = getSessionRuntimeState(session.id);
   const base = compact
     ? {
@@ -1714,8 +1715,7 @@ function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: st
     runtimeReason: runtime.reason,
     tracker: runtime.tracker,
     goal: canExposeSessionGoal(session) ? runtime.goal : null,
-    workingTab: runtime.workingTab,
-    visitedTaskSites: runtime.visitedTaskSites,
+    ...(publicView ? {} : { workingTab: runtime.workingTab, visitedTaskSites: runtime.visitedTaskSites }),
     pendingSteerings: runtime.pendingSteerings,
     pendingFollowUps: runtime.pendingFollowUps,
   };
@@ -2147,6 +2147,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
   if (!hadRuntime) {
     void closeStoppedTabs();
+    if (meta.source === 'mcp_bridge') return { sessionId: id, stopped: false, status: String(before.status || 'idle') } satisfies import('../../shared/contracts/session-observation.js').SessionStopReceipt;
     return {
       sessionId: id,
       stopped: false,
@@ -2173,6 +2174,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   broadcast(stateEvent);
   broadcast({ type: "sessions_changed", action: "run_state", sessionId: id });
 
+  if (meta.source === 'mcp_bridge') return { sessionId: id, stopped: true, status: String(runtime.status) } satisfies import('../../shared/contracts/session-observation.js').SessionStopReceipt;
   return {
     sessionId: id,
     stopped: true,

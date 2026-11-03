@@ -242,7 +242,7 @@ function parseToolCallArguments(value: unknown): unknown {
 function sanitizeToolResultForLLM(result: unknown, policy: Readonly<ToolModelPolicy>): unknown {
   const projected = policy.projectResult ? policy.projectResult(result) : result;
   if (projected == null || typeof projected !== "object" || Array.isArray(projected)) return projected;
-  const { _display, _debug, _rawCdp, ...out } = record(projected);
+  const { _display, _debug, _rawCdp, _plugin, ...out } = record(projected);
   return out;
 }
 

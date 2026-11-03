@@ -3,18 +3,19 @@ import { t } from "./i18n.js";
 import { createPageModeRuntime, pageModeStates } from "./page-mode.js";
 import { navigateTab } from "./navigation.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import type { TabReference } from '#sdk/shared/browser';
+import type { TabReference, PageObservation } from '#sdk/shared/browser';
 import type { ToolContext } from '#sdk/background';
 type TabsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "assertTabAllowed" | "assertUrlAllowed" | "assertPageUrlAccessible" | "enablePreNavigationNetworkWatch"
   | "withDebugger" | "getDebuggerConnectionId" | "setDebuggerRetention" | "releaseDebugger"> & { defaultNetworkLimit?: number };
 interface UsableTab extends TabReference {
+  pageMode?: string; contentAccess?: string;
   usable?: boolean; ownedByCurrentTask?: boolean; securityGuardrailBlocked?: boolean;
   unusableCode?: string; unusableReason?: string; claimRequired?: boolean;
   isWorkingTab?: boolean; readOnlyUsable?: boolean; ownerSessionId?: string;
 }
-import { formatTab, isPageTab } from "#sdk/shared/browser";
+import { formatTab, isPageTab, pageReferenceForResult } from "#sdk/shared/browser";
 import {
   annotateSecurityGuardrailTab,
   annotateSecurityGuardrailTabs,
@@ -51,9 +52,21 @@ registerTool({
     const guardrails = await getSecurityGuardrails();
     const formatted = tabs.filter(isPageTab).map((tab) => ({ ...formatTab(tab), ...modes.describePage(Number(tab.id)) }));
     const annotated = annotateSecurityGuardrailTabs(formatted, guardrails);
-    return await annotateTabsWithSessionUsability(annotated, context);
+    const available = await annotateTabsWithSessionUsability(annotated, context);
+    return available.map(tab => describeToolTab(tab, String(context.runId || '').startsWith('drive-')));
   },
 });
+
+function describeToolTab(tab: UsableTab, direct = false): PageObservation & { isWorkingTab?: boolean; claimRequired?: boolean } {
+  return {
+    tabRef: pageReferenceForResult(undefined, Number(tab.id)), title: String(tab.title || ''), url: String(tab.url || ''), active: Boolean(tab.active), pinned: Boolean(tab.pinned),
+    pageMode: tab.pageMode === 'mobile' ? 'mobile' : 'desktop',
+    usable: tab.usable, readOnlyUsable: tab.readOnlyUsable, ownedByCurrentTask: tab.ownedByCurrentTask,
+    ownerSessionId: tab.ownerSessionId, contentAccess: tab.contentAccess,
+    securityGuardrailBlocked: tab.securityGuardrailBlocked, unusableCode: tab.unusableCode, unusableReason: tab.unusableReason,
+    ...(!direct ? { isWorkingTab: tab.isWorkingTab, claimRequired: tab.claimRequired } : {}),
+  };
+}
 
 async function annotateTabsWithSessionUsability(tabs: UsableTab[] = [], context: ToolContext = {}) {
   const sessionId = typeof context?.sessionId === "string" ? context.sessionId.trim() : "";
@@ -140,7 +153,7 @@ registerTool({
     }
     return {
       hasWorkingTab: true,
-      ...annotateSecurityGuardrailTab(formatTab(tab), await getSecurityGuardrails()),
+      ...describeToolTab(annotateSecurityGuardrailTab(formatTab(tab), await getSecurityGuardrails())),
       ...modes.describePage(tabId),
     };
   },
@@ -184,7 +197,7 @@ registerTool({
       }
       const tabId = await claimCreatedTab(tab, url, context, signal);
       claimed = true;
-      context.reportPartial?.({ id: tabId, tabId, requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
+      context.reportPartial?.({ tabRef: pageReferenceForResult(undefined, tabId), requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
       // Preserve the host's private runtime bindings when allowing setup on the new blank tab.
       if (mode === "mobile") await modes.change(tabId, mode, signal,
         Object.assign(Object.create(context), { allowPreNavigationBlank: true }), false);
@@ -198,7 +211,7 @@ registerTool({
           ? "Operation aborted before navigating tab" : "Operation aborted while opening tab", { url, tabId });
       }
       await navigateTab(tabId, url, assertTabAllowedBySecurityGuardrails, signal);
-      return { id: tabId, url,
+      return { tabRef: pageReferenceForResult(undefined, tabId), url,
         ...modes.describePage(tabId), ...(watchNetwork ? { networkWatch } : {}) };
     } catch (error) {
       const timedOut = signal?.aborted && signal.reason?.code === "TOOL_TIMEOUT";
@@ -257,7 +270,7 @@ registerTool({
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ tabId }) => {
     await chrome.tabs.remove(tabId);
-    return { closed: tabId };
+    return { closed: true };
   },
 });
 
@@ -285,12 +298,10 @@ registerTool({
     }
 
     return {
-      tabId,
       active: Boolean(before.active),
       visibleChanged: false,
       title: before.title || "",
       url: before.url || "",
-      windowId: before.windowId,
       focusedWindow: false,
       note: toolT("workingTabSelected"),
       ...modes.describePage(tabId),
@@ -321,7 +332,7 @@ registerTool({
     await assertPageUrlAccessible(url);
     assertUrlAllowedBySecurityGuardrails(url, await getSecurityGuardrails(), { tool: "navigate", source: "url" });
     if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "navigate" });
-    context.reportPartial?.({ tabId, requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
+    context.reportPartial?.({ requestedUrl: url, ...modes.describePage(tabId) }, "navigation commit");
     await modes.preparePage(tabId, "navigate", signal, context);
     const networkWatch = watchNetwork
       ? await enablePreNavigationNetworkWatch(tabId, { resetNetwork, networkMaxRecords }, context)
@@ -331,7 +342,6 @@ registerTool({
     }
     await navigateTab(tabId, url, assertTabAllowedBySecurityGuardrails, signal);
     return {
-      tabId,
       url,
       ...modes.describePage(tabId),
       ...(networkWatch ? { networkWatch } : {}),

@@ -124,15 +124,15 @@ ${TOOL_CALLING_CONTRACT}
 1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览，局部细节把 snapshot 中的 target 作为 root 展开子树，不要反复全页读取；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
 2. 读正文、列表、表格或纯文本/JSON 页面优先用 read_article（显式传 limit，建议 4000–8000，按 hasMore/nextOffset 续读，或按 outline 的 offset/endOffset/charCount 读章节），不要用 read_article 寻找可操作控件。大型接口采样优先用 network_recent + network_body。
 3. 定位控件或核实元素状态用 find_elements 或 inspect_element。
-4. read_dom 只用于验证原始 HTML/DOM 行号片段（如 find_elements 的 lineRange、read_article 的 sourceSelector）、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
+4. read_dom 只用于验证原始 HTML/DOM 行号片段（如 find_elements 的 lineRange、read_article 的 target）、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
 
 - 带 incomplete 的工具结果中，已返回的内容可直接使用；需要更多时针对 pending 的部分再次调用，或加大 timeout。
 
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>（如 uid:t5493.000001.12、css:input[name="q"]）。
 - target 不是自然语言；不要把页面标题、URL、按钮文案或「下一页」当成 target。没有 target 时先用 get_ax_tree、find_elements 或 list_images 获取；页面变化或 target 失效后重新定位。
-- 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及所在区域，读取内容时作为 read_article/read_dom 的 selector；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
-- 工具字段名为 selector 时表示 CSS 范围或过滤条件，可传原始 CSS，也可传 target 格式 css:... / uid:...。
+- 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及所在区域，读取内容时作为 read_article/read_dom 的 target；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
+- 元素结果只用 target 表示身份：优先复用返回的 uid: 目标，css: 兜底。read_article、read_dom、find_elements、list_images、wait_for_element 的 target 参数也接受原始 CSS。
 ${VISUAL_TARGET_TOOL_PROTOCOL}
 
 ${READING_CAPABILITY_PROTOCOL}

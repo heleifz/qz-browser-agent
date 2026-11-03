@@ -506,6 +506,24 @@ that executed speculatively before the producer's commit failed. Independent pag
 operations already issued may still finish after cancellation; closed provisional tabs and revoked
 run authority prevent their late publication.
 
+Element observations use one registry and public handle, `target: "uid:…"` (or `css:…` when binding fails).
+Content supplies short-lived references to the observed nodes. Background resolves batches of at most
+100 references in the owning frame, bounds concurrent node descriptions to eight, and registers backend
+node identities with document and Session scope. AX nodes use the same registration helper. Firefox
+keeps separate remote-object handles per object group and uses weak node indexing.
+
+[Element result projection](../src/shared/tools/element-result-projection.ts) removes auxiliary selectors,
+bare UIDs and private node IDs at model boundaries. Tools opt in through `model.projectResult`; Agent,
+direct-drive and nested script tool results apply that policy. Runtime bindings and renderer inputs stay
+intact. Arbitrary script return values, page content and user-owned Data rows are not rewritten.
+The five scoped readers expose `target`; retired `selector` arguments and the old `read_article.source`
+value normalize before validation. New image-collection rows store `target` and `tabRef`.
+
+Direct-drive catalogs omit implicit task-page selection tools. Every page operation requires an explicit
+`tabRef`; `list_tabs.active` still identifies the tab visible to the user and never selects a tool target.
+MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
+metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.
+
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security
 guards](../src/background/security-guardrails-runtime.ts) check navigation, fetch, scripts, Skills,

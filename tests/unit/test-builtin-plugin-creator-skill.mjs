@@ -308,7 +308,7 @@ assert.match(loadedSiteSkillAuthor.content, /用户共同设计 gate/);
 assert.match(loadedSiteSkillAuthor.content, /get_ax_tree\(\{ root:"root" \}\)/);
 assert.match(loadedSiteSkillAuthor.content, /read_article[\s\S]*显式传 `limit`/);
 assert.match(loadedSiteSkillAuthor.content, /outline[\s\S]*offset\/endOffset\/charCount/);
-assert.match(loadedSiteSkillAuthor.content, /sourceSelector[\s\S]*read_dom/);
+assert.match(loadedSiteSkillAuthor.content, /target[\s\S]*read_dom/);
 assert.match(loadedSiteSkillAuthor.content, /lineRange[\s\S]*read_dom/);
 assert.doesNotMatch(loadedSiteSkillAuthor.content, /includeLinks|includeHtml|context_store|read_dom\([^)]*depth/);
 assert.equal(loadedSiteSkillAuthor.readOnly, true);

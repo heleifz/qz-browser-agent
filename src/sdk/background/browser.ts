@@ -27,6 +27,8 @@ export interface ElementAccess {
   makeSnapshotId(tabId: number, context?: ToolContext): string;
   makeElementUid(snapshotId: string, seq: number, mark?: string): string;
   registerElementRef(ref: ElementReference): void;
+  registerElementBinding(ref: ElementReference): ElementReference & { target: string };
+  bindElementReferences(tabId: number, candidates: readonly ElementReference[], context?: ToolContext, scope?: ElementReference): Promise<(ElementReference & { target: string })[]>;
   elementTargetForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;
   elementTargetForRef(ref?: ElementReference): string;
@@ -35,7 +37,7 @@ export interface ElementAccess {
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
-  addElementTargetsToFindResult(value: unknown, tabId?: number, context?: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">): Promise<unknown>;
+  addElementTargetsToFindResult(value: unknown, tabId?: number, context?: ToolContext, scope?: ElementReference): Promise<unknown>;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
   /** Bind unique selectors in one document; a frame scope also rejects a changed loader. */
   bindBackendNodes(tabId: number, selectors: string[], context?: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">): Promise<{ loaderId: string; ids: number[] }>;

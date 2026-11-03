@@ -127,14 +127,13 @@ registerAccessibilityTools({
   ToolExecutionError,
   clampLimit: (value, min, max) => Math.max(min, Math.min(max, Math.floor(Number(value)))),
   makeSnapshotId: element.makeSnapshotId,
-  makeElementUid: element.makeElementUid,
   elementTargetForUid: element.elementTargetForUid,
-  registerElementRef: element.registerElementRef,
+  registerElementBinding: element.registerElementBinding,
   resolveElementReference: element.resolveElementReference,
   backendNodeIdForSelector: async () => 0,
-  bindBackendNodes: async (_tabId, selectors, _context, scope) => {
-    bindings.push({ selectors, scope });
-    return { loaderId: scope?.loaderId || "main-loader", ids: boundIds };
+  bindElementReferences: async (_tabId, refs, _context, scope) => {
+    bindings.push({ selectors: refs.map(ref => ref.selector), scope });
+    return refs.map((ref, index) => ({ ...ref, backendNodeId: boundIds[index], target: ref.selector ? `css:${ref.selector}` : '' }));
   },
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
   sendToContent: async () => ({ title: "Page", url: "https://example.com/forms/post", viewport: { height: 600 }, actions: overviewActions }),

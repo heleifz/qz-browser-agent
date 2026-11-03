@@ -427,7 +427,11 @@ for (const scenario of [
       const execute = chrome.scripting.executeScript.bind(chrome.scripting);
       chrome.scripting.executeScript = async options => {
         if (options.injectImmediately && String(options.func).includes("=> null")) {
-          await execute({ target: options.target, world: "MAIN", func: () => { window.finishMount?.(); } });
+          await execute({ target: options.target, world: "MAIN", func: () => {
+            // UID observation also reads document identity before editing. Only the
+            // post-fill observer is the intended trigger for this replacement.
+            if (window.original?.value === '灵隐寺') window.finishMount?.();
+          } });
         }
         return execute(options);
       };
