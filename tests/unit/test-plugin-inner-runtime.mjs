@@ -36,7 +36,7 @@ const manifest = {
       title: "Inner query",
       runtime: "inner",
       script: "scripts/runtime.js",
-      parameters: { type: "object", properties: { value: { type: "string" } } },
+      parameters: { type: "object", properties: { value: { type: "string" }, tabId: { type: "string", description: "External record tabId" } } },
     },
     {
       name: "page_check",
@@ -64,7 +64,8 @@ commitSkillToolRegistryCandidate(prepareSkillToolRegistryFromSkills([{
 const schemas = getActiveSkillToolSchemasSync({ language: "zh-CN" });
 const innerSchema = schemas.find(item => item.function.name === "runtime_example__inner_query");
 assert.ok(innerSchema);
-assert.equal(Object.hasOwn(innerSchema.function.parameters.properties, "tabId"), false);
+assert.deepEqual(innerSchema.function.parameters.properties.tabId, manifest.tools[0].parameters.properties.tabId);
+assert.equal(Object.hasOwn(innerSchema.function.parameters.properties, "tabRef"), false);
 assert.match(innerSchema.function.description, /无需网页，可读取 Skill 设置并请求其允许的网络来源/);
 assert.doesNotMatch(innerSchema.function.description, /内部 Worker|\$plugin|runtime:/);
 const pageSchema = schemas.find(item => item.function.name === "runtime_example__page_check");
@@ -87,7 +88,7 @@ const dispatch = async (name, args, signal, context) => {
 
 const innerResult = await executeSkillTool(
   "runtime_example__inner_query",
-  { timeout: 20, value: "hello" },
+  { timeout: 20, value: "hello", tabId: "business-record" },
   null,
   { sessionId: "session-1" },
   dispatch,
@@ -98,6 +99,7 @@ assert.equal(dispatches[0].name, "run_skill_script");
 assert.equal(dispatches[0].args.target, "inner");
 assert.equal(Object.hasOwn(dispatches[0].args, "tabId"), false);
 assert.equal(dispatches[0].args.args.value, "hello");
+assert.equal(dispatches[0].args.args.tabId, "business-record", "a non-page Skill field is not a page control");
 assert.deepEqual(dispatches[0].args.args.$plugin.config, {
   endpoint: "https://api.example.test",
   token: "private-token",

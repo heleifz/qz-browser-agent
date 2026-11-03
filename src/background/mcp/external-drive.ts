@@ -182,7 +182,7 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
 
 const DATA_URL = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/u;
 
-/** Apply the declared model policy and transport screenshot bytes separately. */
+/** Apply the declared model policy, separate screenshot bytes and bound the text result. */
 export function projectDriveResult(result: unknown, policy: ModelPolicy = null): { value: unknown; images: DriveImage[] } {
   let projected = result;
   try {
@@ -190,7 +190,7 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null):
   } catch {
     projected = result;
   }
-  if (!projected || typeof projected !== "object" || Array.isArray(projected)) return { value: projected, images: [] };
+  if (!projected || typeof projected !== "object" || Array.isArray(projected)) return { value: capDriveValue(projected), images: [] };
   const value = { ...(projected as Fields) };
   const images: DriveImage[] = [];
   const raw = value._image;
@@ -200,12 +200,10 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null):
     const match = DATA_URL.exec(raw);
     if (match?.[1] && match[2]) images.push({ mimeType: match[1], data: match[2].replace(/\s+/gu, "") });
   }
-  return { value, images };
+  return { value: capDriveValue(value), images };
 }
 
 export const DRIVE_RESULT_CHAR_LIMIT = 48_000;
-
-const SCRIPT_SUCCESS_PREFIX = '{"ok":true,"result":';
 
 function capDriveValue(value: unknown): unknown {
   if (isToolFailure(value)) return value;
@@ -213,19 +211,12 @@ function capDriveValue(value: unknown): unknown {
   try { text = JSON.stringify(value) ?? ""; }
   catch { return value; }
   if (text.length <= DRIVE_RESULT_CHAR_LIMIT) return value;
-  const previewText = text.startsWith(SCRIPT_SUCCESS_PREFIX) ? text.slice(SCRIPT_SUCCESS_PREFIX.length) : text;
   return {
     truncated: true,
     totalChars: text.length,
     limitChars: DRIVE_RESULT_CHAR_LIMIT,
-    preview: previewText.slice(0, DRIVE_RESULT_CHAR_LIMIT),
+    preview: text.slice(0, DRIVE_RESULT_CHAR_LIMIT),
   };
-}
-
-/** Transport screenshots separately and cap model bodies; producers own the public DTO. */
-export function projectNamedDriveResult(_name: string, _args: unknown, result: unknown, policy: ModelPolicy = null): { value: unknown; images: DriveImage[] } {
-  const projected = projectDriveResult(result, policy);
-  return { value: capDriveValue(projected.value), images: projected.images };
 }
 
 interface DriveOutcome {
@@ -272,7 +263,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   const canCommit = Boolean(deps.commitToolResult && deps.discardToolResult);
   function publish(outcome: DriveOutcome) {
     if (outcome.projected) return outcome;
-    const projected = projectNamedDriveResult(outcome.name, outcome.args, outcome.result, deps.getModelPolicy?.(outcome.name) ?? null);
+    const projected = projectDriveResult(outcome.result, deps.getModelPolicy?.(outcome.name) ?? null);
     const published = { ...outcome, projected };
     deps.onSettled?.({
       id: published.id,

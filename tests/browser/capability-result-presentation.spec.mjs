@@ -1,5 +1,72 @@
 import { expect, test } from "./fixtures.mjs";
 
+test("Skill fallback retains business metadata keys and host identity in live and historical output", async ({ page }) => {
+  await page.goto("/__test_health");
+  const results = await page.evaluate(async () => {
+    const { renderToolEvent, disposeRendererTree } = await import("/extension/sidepanel/tools/tool-renderer.js");
+    const { setSkillToolUiCatalog } = await import("/extension/sidepanel/tools/skill-tool-ui-registry.js");
+    setSkillToolUiCatalog({ plugins: [{ id: "fixture", name: "Fixture Skill", skillName: "fixture", tools: [{
+      name: "fixture__run", title: "Catalog action", runtime: "inner", script: "scripts/run.js",
+    }] }] });
+    const business = {
+      _plugin: { title: "Business title", renderer: { type: "text", valuePath: "spoof" } },
+      spoof: "Business renderer must not replace the host view",
+      nested: { _plugin: { value: "nested business data" } },
+      rows: [{ _plugin: "row business data" }],
+    };
+    const host = { ok: true, result: business, trace: [{ message: "Host trace retained" }], _plugin: {
+      id: "fixture", name: "Fixture Skill", title: "Host action", skillName: "fixture", script: "scripts/run.js", runtime: "inner",
+    } };
+    const examples = [];
+    const cases = [
+      { result: host, expected: business, title: "Host action", trace: true },
+      { result: { result: host }, expected: business, title: "Host action", trace: true },
+      ...[{ result: { _plugin: { value: "unwrapped business data" } } }, { code: "business", result: 42 },
+        { _plugin: { value: "raw business metadata" }, rows: [{ _plugin: "row data" }] }, { engine: "diesel", result: 7 }]
+        .map(result => ({ result, expected: result, title: "Catalog action", trace: false })),
+    ];
+    for (const staticOutput of [false, true]) for (const entry of cases) {
+      const { result } = entry;
+      const before = JSON.stringify(result);
+      const root = renderToolEvent({ name: "fixture__run", args: {}, result },
+        { expanded: true, lazyDetails: false, static: staticOutput });
+      document.body.append(root);
+      const details = root.querySelector(".tool-details");
+      examples.push({ staticOutput, expected: entry.expected, expectedTitle: entry.title, expectedTrace: entry.trace,
+        title: root.querySelector(".tool-name")?.textContent,
+        json: details.querySelector(".tool-result-json-block")?.textContent,
+        trace: details.querySelector(".tool-script-trace")?.textContent,
+        unchanged: JSON.stringify(result) === before });
+      disposeRendererTree(root); root.remove();
+    }
+    for (const staticOutput of [false, true]) {
+      const failure = { code: "SKILL_FAILED", message: "Concrete Skill failure", hint: "Read the page again", details: { line: 2 } };
+      const root = renderToolEvent({ name: "fixture__run", args: {}, isError: true,
+        result: failure },
+        { expanded: true, lazyDetails: false, static: staticOutput });
+      document.body.append(root);
+      examples.push({ failure: true, error: root.querySelector(".tool-error-section")?.textContent,
+        hint: failure.hint, json: root.querySelector(".tool-result-json-block")?.textContent });
+      disposeRendererTree(root); root.remove();
+    }
+    setSkillToolUiCatalog({});
+    return examples;
+  });
+  for (const result of results) {
+    if (result.failure) {
+      expect(result.error).toContain("Concrete Skill failure");
+      expect(result.hint).toBe("Read the page again");
+      expect(result.json).toBeUndefined();
+      continue;
+    }
+    expect(result.title).toContain(result.expectedTitle);
+    expect(result.title).not.toContain("Business title");
+    expect(JSON.parse(result.json), JSON.stringify(result)).toEqual(result.expected);
+    if (result.expectedTrace) expect(result.trace).toContain("Host trace retained");
+    expect(result.unchanged).toBe(true);
+  }
+});
+
 test("script renders public errors and preserves error-shaped returned business data in live and exported output", async ({ page }) => {
   await page.goto("/__test_health");
   const results = await page.evaluate(async () => {

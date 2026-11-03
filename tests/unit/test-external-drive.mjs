@@ -11,7 +11,6 @@ import {
   parseDriveRequest,
   prepareDriveToolCall,
   projectDriveResult,
-  projectNamedDriveResult,
   runDriveCalls,
 } from "../../src/background/mcp/external-drive.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
@@ -156,7 +155,7 @@ test("drive preserves user data with names that overlap private implementation f
   const userValue = { tabId: 7, _tabId: 7, inner: "user value", target: "inner", scope: "custom",
     selector: "value", nested: { workingTabId: "data", uid: "data" } };
   const before = structuredClone(userValue);
-  assert.deepEqual(projectNamedDriveResult("run_script", {}, { ok: true, result: userValue }).value,
+  assert.deepEqual(projectDriveResult({ ok: true, result: userValue }).value,
     { ok: true, result: before });
   assert.deepEqual(userValue, before);
 });
@@ -231,17 +230,22 @@ test("projection preserves business fields while separating screenshot bytes", (
 
 test("drive caps large results without rewriting public business data", () => {
   const tabs = { tabs: [{ tabRef: "form", title: "Form", url: "https://example.test", active: true }], count: 1, foreign: 0 };
-  assert.deepEqual(projectNamedDriveResult("list_tabs", {}, tabs).value, tabs);
-  for (const name of ["read_dom", "run_script"]) {
-    const result = name === "run_script" ? { ok: true, result: { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) } }
-      : { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) };
-    const capped = projectNamedDriveResult(name, {}, result).value;
+  assert.deepEqual(projectDriveResult(tabs).value, tabs);
+  const body = { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) };
+  for (const result of [body, { ok: true, result: body }, { result: body, ok: true },
+    { trace: ["started"], ok: true, result: body }, [body], body.text]) {
+    const serialized = JSON.stringify(result);
+    const capped = projectDriveResult(result).value;
     assert.equal(capped.truncated, true);
     assert.equal(capped.limitChars, DRIVE_RESULT_CHAR_LIMIT);
-    assert.ok(capped.totalChars > DRIVE_RESULT_CHAR_LIMIT);
+    assert.equal(capped.totalChars, serialized.length);
     assert.equal(capped.preview.length, DRIVE_RESULT_CHAR_LIMIT);
-    assert.match(capped.preview, /^\{"text":/);
+    assert.equal(capped.preview, serialized.slice(0, DRIVE_RESULT_CHAR_LIMIT), 'previews retain the original envelope and field order');
+    assert.equal(JSON.stringify(result), serialized, 'the source result is unchanged');
   }
+  const exactLimit = 'x'.repeat(DRIVE_RESULT_CHAR_LIMIT - 2);
+  assert.equal(projectDriveResult(exactLimit).value, exactLimit);
+  assert.equal(projectDriveResult(exactLimit + 'x').value.truncated, true);
 });
 
 

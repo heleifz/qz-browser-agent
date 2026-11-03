@@ -106,9 +106,9 @@ snapshot. Any build-time capability can use these fields through `qz.registerToo
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
 marks a tool that may touch global resources. Skill/plugin tools (`source: "plugin"`) are always barriers;
 manifest fields cannot opt them into parallel execution. `run_skill_script` remains a barrier.
-`run_script` declares `parallelTab: true` and a barrier predicate: inner mode or code that may use
-host tools is a barrier; no-tools page code uses the normal tab lane. Omitting `target` means page,
-and `mutatesPage` controls effects rather than classification. The capability's conservative static
+`run_script` declares `parallelTab: true` and a barrier predicate: execution without `tabRef` or code
+that may use host tools is a barrier; no-tools page code uses the normal tab lane. Supplying `tabRef`
+selects page execution, and `mutatesPage` controls effects rather than classification. The capability's conservative static
 classifier also selects bridge installation. Input/args-only code needs no bridge. Unknown syntax
 stays a barrier; missing tool access in a no-bridge invocation returns an error without replay.
 Parallel page observations read the current page mode without restoring a disconnected

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createMemoryStorage } from '../support/memory-storage.mjs';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
-import { isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectNamedDriveResult, runDriveCalls } from '../../src/background/mcp/external-drive.js';
+import { isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectDriveResult, runDriveCalls } from '../../src/background/mcp/external-drive.js';
 
 globalThis.chrome = {
   runtime: { getURL: path => `chrome-extension://test/${path}` },
@@ -56,7 +56,7 @@ test('list_skills really executes before loading a Skill and accepts a valid pag
   assert.ok(listed.names.includes('qingzhou-documents'));
   const loaded = await f.runtime.execute('load_skill', { name: 'qingzhou-documents', tabRef: 'shop' }, undefined, f.context);
   assert.equal(loaded.name, 'qingzhou-documents');
-  const projected = projectNamedDriveResult('load_skill', {}, loaded).value;
+  const projected = projectDriveResult(loaded).value;
   assert.doesNotMatch(projected.runtime, /\binner\b|tabId|working tab|工作标签页/);
   assert.match(projected.runtime, /qingzhou_documents__document_read_chunk/);
   assert.deepEqual(f.targets, [], 'metadata calls must not select or claim a tab');

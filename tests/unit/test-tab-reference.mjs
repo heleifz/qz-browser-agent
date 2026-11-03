@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Validator } from '@cfworker/json-schema';
 import { bindCreatedTabResult } from '../../src/shared/contracts/page-observation.js';
 import { createSessionTabs } from '../../src/background/session/tabs.js';
 import { normalizeSessionRuntime } from '../../src/background/session/runtime-reducer.js';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
 import { getActiveSkillToolSchemasSync, getSkillToolParameters, prepareSkillToolRegistryFromSkills } from '../../src/background/skills/skill-tool-runtime.js';
 import { QINGZHOU_SKILL_FORMAT, QINGZHOU_SKILL_SCHEMA_VERSION } from '../../src/shared/skills/skill-utils.js';
-import { SKILL_MANIFEST_FORMAT, SKILL_MANIFEST_SCHEMA_VERSION } from '../../src/shared/skills/skill-manifest.js';
+import { SKILL_MANIFEST_FORMAT, SKILL_MANIFEST_SCHEMA_VERSION, normalizeSkillManifest } from '../../src/shared/skills/skill-manifest.js';
+import { withLanguage } from '../../src/shared/i18n/index.js';
 import { planTabBatch } from '../../src/background/tools/tab-batch.js';
 import { resolveTabReference } from '../../src/background/tools/tab-reference.js';
 import { Agent } from '../../src/background/agent/agent.js';
@@ -74,7 +76,7 @@ function fixture({ metadataReady = async () => {}, skillToolRegistrySnapshot } =
   };
 }
 
-const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([{
+const installedTabReferenceSkill = {
   name: 'tab-reference-skill', scope: 'resident',
   format: QINGZHOU_SKILL_FORMAT, schemaVersion: QINGZHOU_SKILL_SCHEMA_VERSION,
   resources: [
@@ -85,9 +87,12 @@ const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([{
         { name: 'authored', parameters: { type: 'object', properties: {
           tabRef: { type: ['integer', 'string'], description: 'Page to inspect' },
         }, required: ['tabRef'] } },
-        { name: 'legacy', description: 'Inspect the page selected by tabId', parameters: { type: 'object', properties: {
-          tabId: { type: 'integer', description: 'Page selected by tabId' },
-        }, required: ['tabId'] } },
+        { name: 'legacy', description: 'Inspect the page selected by tabRef and retain payload.tabId', parameters: { type: 'object', properties: {
+          tabId: { type: 'integer', enum: [999], description: 'Page selected by tabId' },
+        }, required: ['tabId'], anyOf: [{ required: ['tabId'] }, false],
+        allOf: [{ properties: { tabId: { type: 'integer', enum: [999] } } }],
+        oneOf: [{ required: ['tabId'] }, { required: ['alternatePage'] }],
+        }, args: { tabId: 999, note: 'literal tabId', payload: { tabId: 'authored data' } } },
         { name: 'inner', runtime: 'inner' }, { name: 'host', runtime: 'host' },
         { name: 'mcp', runtime: 'mcp', mcp: { server: 'fixture', tool: 'read' } },
         { name: 'no_page', runtime: 'page', needsPage: false },
@@ -95,7 +100,8 @@ const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([{
     }) },
     { path: 'scripts/read.js', type: 'script', content: 'async () => ({ ok: true })' },
   ],
-}]);
+};
+const skillToolRegistrySnapshot = prepareSkillToolRegistryFromSkills([installedTabReferenceSkill]);
 const skillCall = (localName, args = {}) => call(`skill-${localName}`, `tab_skill__${localName}`, { timeout: 5, ...args });
 
 const pageSkillNames = ['page', 'default', 'authored', 'legacy'];
@@ -109,8 +115,10 @@ for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agr
       assert.doesNotMatch(schema.parameters.properties.tabRef.description, /\btabId\b/);
       assert.equal(schema.parameters.properties.tabId, undefined);
       assert.deepEqual(schema.parameters.required, ['timeout', 'tabRef']);
+      assert.deepEqual(schema.parameters.properties.tabRef, withLanguage(language, () => getSkillToolParameters({}).properties.tabRef));
       assert.match(schema.description, /\btabRef\b/);
-      assert.doesNotMatch(schema.description, /\btabId\b/);
+      assert.equal(schema.description.split('\n')[0], skillToolRegistrySnapshot.toolIndex.get(schema.name).tool.description,
+        'authored purpose text is not rewritten as a protocol field');
       const definition = f.runtime.resolveDefinition(schema.name, options);
       assert.equal(definition.page, 'owned');
       assert.deepEqual(definition.parameters, schema.parameters);
@@ -134,18 +142,34 @@ for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agr
   }
 });
 
-test('Legacy selector normalization leaves installed declarations intact and deduplicates required fields', () => {
+test('Legacy page controls normalize at manifest discovery without rewriting installed resources', () => {
   const tool = skillToolRegistrySnapshot.toolIndex.get('tab_skill__legacy').tool;
   const before = JSON.stringify(tool);
   const parameters = getSkillToolParameters(tool);
   assert.equal(parameters.properties.tabId, undefined);
   assert.deepEqual(parameters.required, ['timeout', 'tabRef']);
   assert.equal(JSON.stringify(tool), before);
-  assert.equal(tool.parameters.properties.tabId.type, 'integer');
-  assert.deepEqual(getSkillToolParameters({ ...tool, parameters: {
-    ...tool.parameters, properties: { ...tool.parameters.properties, tabRef: { type: 'string', description: 'Canonical target' } },
-    required: ['tabId', 'tabRef'],
-  } }).required, ['timeout', 'tabRef']);
+  assert.equal(tool.parameters.properties.tabId, undefined);
+  assert.deepEqual(tool.parameters.required, ['tabRef']);
+  assert.deepEqual(tool.parameters.anyOf, [{ required: ['tabRef'] }, false]);
+  const validator = new Validator(structuredClone(parameters));
+  for (const tabRef of ['source', 101, '101']) {
+    const result = validator.validate({ timeout: 5, tabRef });
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+  }
+  const installed = JSON.parse(installedTabReferenceSkill.resources[0].content).tools.find(item => item.name === 'legacy');
+  assert.equal(installed.parameters.properties.tabId.type, 'integer');
+  assert.deepEqual(installed.parameters.required, ['tabId']);
+  const mixed = normalizeSkillManifest({ id: 'mixed-page-control', tools: [{
+    name: 'inspect', script: 'scripts/read.js', parameters: {
+      ...installed.parameters, properties: { ...installed.parameters.properties, tabRef: { type: 'string', description: 'Canonical target' } },
+      required: ['tabId', 'tabRef'],
+    },
+  }] }, installedTabReferenceSkill).tools[0];
+  assert.equal(mixed.parameters.properties.tabId, undefined);
+  assert.deepEqual(mixed.parameters.properties.tabRef, { type: ['integer', 'string'] });
+  assert.deepEqual(mixed.parameters.required, ['tabRef']);
+  assert.deepEqual(getSkillToolParameters(mixed).required, ['timeout', 'tabRef']);
 });
 
 for (const localName of pageSkillNames) test(`Skill ${localName} resolves explicit references and rejects implicit page fallback through the script host`, async () => {
@@ -166,6 +190,10 @@ for (const localName of pageSkillNames) test(`Skill ${localName} resolves explic
     assert.equal(Object.hasOwn(f.executed.at(-1), 'tabRef'), false);
     assert.equal(Object.hasOwn(f.executed.at(-1).args, 'tabRef'), false);
     assert.equal(f.executed.at(-1).args.tabId, 101);
+    if (localName === 'legacy') {
+      assert.equal(f.executed.at(-1).args.note, 'literal tabId');
+      assert.deepEqual(f.executed.at(-1).args.payload, { tabId: 'authored data' });
+    }
   }
 });
 

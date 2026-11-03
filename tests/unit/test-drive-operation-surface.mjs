@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElementObservation } from '../../src/shared/contracts/element-observation.js';
 import { pageReferenceForResult } from '../../src/shared/tab-reference.js';
-import { projectNamedDriveResult, isDriveToolDefault, isDriveToolForbidden, driveToolSignature } from '../../src/background/mcp/external-drive.js';
+import { projectDriveResult, isDriveToolDefault, isDriveToolForbidden, driveToolSignature } from '../../src/background/mcp/external-drive.js';
 import { createMcpTransport } from '../../src/background/transports/mcp.js';
 import { createRunScriptBridge } from '../../src/background/tools/run-script-bridge.js';
 import { registerTabsNavigationTools } from '../../src/capabilities/tabs/tools.js';
@@ -42,7 +42,7 @@ test('list_tabs constructs public discovery rows and preserves active independen
   assertPublic(rows); assert.deepEqual(rows, {tabs:[{tabRef:'page',title:'Page',url:'https://example.test',active:true}],count:1,foreign:0});
   assert.equal(Object.hasOwn(rows.tabs[0],'isWorkingTab'),false);assert.equal(Object.hasOwn(rows.tabs[0],'windowId'),false);
   for(const args of [{},{scope:'all'},{verbose:true}]) {
-    const {value}=projectNamedDriveResult('list_tabs',args,rows);
+    const {value}=projectDriveResult(rows);
     assert.doesNotMatch(JSON.stringify(value),/workingTab|isWorkingTab|tabId|windowId/);
     assert.equal((Array.isArray(value)?value:value.tabs)[0].active,true);
   }
@@ -70,7 +70,7 @@ test('nested tools return their source DTO without a recursive field filter or a
     toolRuntime:{resolveDefinition:()=>({behavior:{}}),getSchemas:()=>[],execute:async()=>result},collectArtifacts:()=>[]});
   const response=await bridge.handleToolCall({toolName:'find_elements',args:{tabRef:5},sessionId:'surface',runId:'drive-test'});
   assert.equal(response.ok,true);assertPublic(response.result);assert.equal(response.result.text.length,50000);
-  const opaque=projectNamedDriveResult('run_script',{}, {ok:true,result:{selector:'data',tabId:'data',mode:'selector'}});
+  const opaque=projectDriveResult({ok:true,result:{selector:'data',tabId:'data',mode:'selector'}});
   assert.deepEqual(opaque.value.result,{selector:'data',tabId:'data',mode:'selector'});
 });
 
@@ -216,7 +216,7 @@ test('large ToolErrors retain their native contract instead of becoming truncati
   const failure = toolError('SCRIPT_EVALUATION_FAILED', 'Failure', {
     hint: 'Fix the script and retry.', details: { line: 2, trace: [{ message: 'x'.repeat(50000) }] },
   });
-  assert.deepEqual(projectNamedDriveResult('run_script', {}, failure).value, failure);
+  assert.deepEqual(projectDriveResult(failure).value, failure);
 });
 
 
@@ -263,7 +263,7 @@ test('business keys survive drive projection while owned presentation remains pr
     _rawCdp: 'user raw data', _plugin: { source: 'user' }, selector: 'inventory', tabId: 'business field' };
   const metadata = { _pageTitle: 'Observed page', _pageUrl: 'https://example.test/', _display: { type: 'native preview' } };
   const result = bindToolResultPresentation(structuredClone(business), metadata);
-  assert.deepEqual(projectNamedDriveResult('custom_skill__business', {}, result).value, business);
+  assert.deepEqual(projectDriveResult(result).value, business);
   assert.deepEqual(getToolResultPresentation(result), metadata);
   assert.equal(Object.hasOwn(result, '_pageTitle'), false);
   assert.equal(Object.hasOwn(result, '_pageUrl'), false);

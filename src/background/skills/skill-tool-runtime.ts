@@ -31,6 +31,7 @@ import { listSkills } from "./runtime.js";
 import { trace as runtimeTrace } from "../trace.js";
 import {
   discoverSkillManifests,
+  SKILL_PAGE_TAB_REF_PARAMETER,
   skillMatchesContext,
 } from "../../shared/skills/skill-manifest.js";
 import {
@@ -65,7 +66,7 @@ const SKILL_DOCUMENT_HOST_TIMEOUT_PROPERTY = {
   get description() { return skillToolT("documentHostTimeout"); },
 } as const;
 const SKILL_TOOL_TAB_REF_PROPERTY = {
-  type: ["integer", "string"],
+  ...SKILL_PAGE_TAB_REF_PARAMETER,
   get description() { return skillToolT("tabRef"); },
 } as const;
 
@@ -182,7 +183,7 @@ function buildActiveSkillToolSchemas(options: SkillToolOptions) {
   return schemas;
 }
 
-/** Shared author/model parameter contract; legacy selectors normalize without rewriting storage. */
+/** Build host controls around the normalized Skill declaration. */
 export function getSkillToolParameters(tool: Partial<SkillTool> = {}) {
   return withSkillToolControlParameters(tool.parameters || { type: "object", properties: {} }, tool);
 }
@@ -774,9 +775,7 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
       : skillToolT("optionalTimeout"),
     renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
-  const description = parts.join("\n");
-  // Older installed descriptions may still name the legacy selector.
-  return pageTool ? description.replace(/\btabId\b/g, "tabRef") : description;
+  return parts.join("\n");
 }
 
 function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<SkillTool> = {}): ToolSchema {
@@ -810,12 +809,8 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
     next.properties.timeout = { ...SKILL_TOOL_TIMEOUT_SECONDS_PROPERTY };
   }
   if (isSkillPageTool(tool)) {
-    const { tabId: legacyTabId, ...properties } = next.properties;
-    next.properties = {
-      ...properties,
-      tabRef: normalizeSkillToolTabRefProperty(properties.tabRef || legacyTabId),
-    };
-    next.required = uniqueRequired([...(next.required || []).map(field => field === "tabId" ? "tabRef" : field), "tabRef"]);
+    next.properties.tabRef = { ...SKILL_TOOL_TAB_REF_PROPERTY };
+    next.required = uniqueRequired([...(next.required || []), "tabRef"]);
   }
   return next;
 }
@@ -826,13 +821,6 @@ function isSkillScriptTool(tool: Partial<SkillTool> = {}) {
 
 export function isSkillPageTool(tool: Partial<SkillTool> = {}) {
   return tool.needsPage === true || ((tool.runtime || "page") === "page" && tool.needsPage !== false);
-}
-
-function normalizeSkillToolTabRefProperty(property?: ToolParameter): ToolParameter {
-  const input = property && typeof property === "object" && !Array.isArray(property) ? property : {};
-  const currentDescription = String(input.description || "").trim().replace(/\btabId\b/g, "tabRef");
-  const description = [currentDescription, SKILL_TOOL_TAB_REF_PROPERTY.description].filter(Boolean).join(" ");
-  return { ...input, ...SKILL_TOOL_TAB_REF_PROPERTY, description };
 }
 
 function pickSkillToolControlArgs(args: Fields = {}) {

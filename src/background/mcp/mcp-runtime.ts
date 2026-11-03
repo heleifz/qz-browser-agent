@@ -14,7 +14,7 @@ import {
   isDriveToolForbidden,
   parseDriveRequest,
   prepareDriveToolCall,
-  projectNamedDriveResult,
+  projectDriveResult,
   runDriveCalls,
   type DriveToolObservation,
 } from "./external-drive.js";
@@ -501,7 +501,7 @@ export function createMcpRuntime({
   }
 
   async function recordNestedTool(input: DriveToolObservation) {
-    const projected = projectNamedDriveResult(input.name, input.args, input.result, tools.runtime.getModelPolicy?.(input.name));
+    const projected = projectDriveResult(input.result, tools.runtime.getModelPolicy?.(input.name));
     if (!recordDriveTool({ ...input, result: projected.value }, projected.images, input.result)) return;
     if (!input.isError) rememberLoadedSkill(input.sessionId, input.name, input.result);
     await sessions.persistTranscript?.(input.sessionId);
@@ -561,7 +561,7 @@ export function createMcpRuntime({
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectNamedDriveResult(name, prepared.args, result, tools.runtime.getModelPolicy?.(name) ?? null);
+          const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null);
           noteDriveTool(name, prepared.args, projected.value, isToolFailure(projected.value), projected.images, result);
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;

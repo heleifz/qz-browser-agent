@@ -9,6 +9,7 @@ import vm from "node:vm";
 import { getCoreToolMetadata } from "../../src/shared/tools/tool-metadata.js";
 import { resolveFamilyTimelineTarget } from "../../src/sidepanel/tools/timeline-navigation.js";
 import { record } from "../../src/sidepanel/tools/renderer-input.js";
+import { skillResultData, skillResultEnvelope } from "../../src/sidepanel/tools/primitives/skill-result-data.js";
 import { formatLiveElapsedMs } from "../../src/sidepanel/features/sessions/session-format.js";
 import { capabilityUiAssets, discoverCapabilities } from "../../scripts/capability-catalog.mjs";
 import {
@@ -72,6 +73,7 @@ const css = [join(root, "src/sidepanel/sidepanel.css"), ...[...skinAssets.resour
 const visualTest = readFileSync(join(root, "tests/tool-timeline/visual-test.js"), "utf8");
 
 testRunScriptRendererStaysQuiet();
+testSkillBusinessMetadataBoundary();
 testReadImagePreviewKeepsTransparentImagesReadable();
 testStreamingDiffBlocksDoNotStretchSparseRows();
 testToolDetailsStayLazyWhenCollapsed();
@@ -128,6 +130,29 @@ function testRunScriptRendererStaysQuiet() {
   assert.doesNotMatch(body, /appendScriptMeta|buildScriptResultMeta|tool-script-meta/, "run_script should not render low-value meta pills");
   assert.doesNotMatch(toolSources, /function appendScriptMeta|function buildScriptResultMeta/, "obsolete script meta helpers should be removed");
   assert.doesNotMatch(css, /\.tool-script-meta\b/, "obsolete script meta pill styles should be removed");
+}
+
+function testSkillBusinessMetadataBoundary() {
+  const data = { _plugin: { title: "Business title" }, nested: { _plugin: "nested data" }, rows: [{ _plugin: 7 }] };
+  const host = { ok: true, result: data, trace: [{ message: "Finished" }], _plugin: { title: "Host title", runtime: "inner" } };
+  const before = structuredClone(host);
+  for (const original of [host, { result: host }]) {
+    assert.equal(skillResultData(data, original), data, "business data is not traversed or copied");
+    assert.deepEqual(skillResultEnvelope(data, original), { ok: true, result: data, trace: host.trace });
+  }
+  assert.deepEqual(host, before, "presentation reads never mutate the stored transcript");
+  for (const noEnvelope of [{ result: { _plugin: { value: "ordinary business data" } } }, { code: "business", result: 42 },
+    { _plugin: { value: "raw business metadata" }, rows: data.rows }, { engine: "diesel", result: 7 }]) {
+    assert.deepEqual(skillResultData(noEnvelope, noEnvelope), noEnvelope, "ordinary result/code fields do not create a host envelope");
+    assert.deepEqual(skillResultEnvelope(noEnvelope, noEnvelope), noEnvelope);
+  }
+  assert.equal(skillResultData(0, { ok: true, result: 0, _plugin: host._plugin }), 0);
+  const jsonText = '{"_plugin":"business","count":1}';
+  assert.equal(skillResultData(JSON.parse(jsonText), { ok: true, result: jsonText, _plugin: host._plugin }), jsonText,
+    "declarative data preserves the type of the script's returned string");
+  const failure = { code: "SKILL_FAILED", message: "Could not read data", hint: "Try again", details: { line: 2 } };
+  assert.equal(skillResultData(failure, failure), failure, "canonical failures remain failures");
+  assert.equal(skillResultEnvelope(failure, failure), failure);
 }
 
 function testReadImagePreviewKeepsTransparentImagesReadable() {
