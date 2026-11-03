@@ -120,8 +120,8 @@ const messages = defineMessages("media-tools", {
     en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   listImagesSelector: {
-    "zh-CN": "可选容器或图片 target，优先 uid:，css: 或裸 CSS 兜底，省略时扫描整页。",
-    en: "Optional container or image target: prefer uid:, with css: or bare CSS as fallback; scans the page when omitted.",
+    "zh-CN": "可选容器或图片 target，优先 uid:，css: 兜底，省略时扫描整页。",
+    en: "Optional container or image target: prefer uid:, with css: as fallback; scans the page when omitted.",
   },
   listImagesMinWidth: {
     "zh-CN": "最小宽度（按显示宽度与 naturalWidth 较大值判断），默认 1。",

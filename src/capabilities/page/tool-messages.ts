@@ -16,8 +16,8 @@ const messages = defineMessages("page-tools", {
     en: "Content source. Default: auto (tries selection, article, target, then body).",
   },
   readArticleSelector: {
-    "zh-CN": "读取范围（source=target 必填），优先 uid:，css: 或裸 CSS 兜底；auto 指定 target 时只读此范围。",
-    en: "Scope required for source=target: prefer uid:, with css: or bare CSS as fallback; auto reads this scope when target is supplied.",
+    "zh-CN": "读取范围（source=target 必填），优先 uid:，css: 兜底；auto 指定 target 时只读此范围。",
+    en: "Scope required for source=target: prefer uid:, with css: as fallback; auto reads this scope when target is supplied.",
   },
   readArticleOffset: {
     "zh-CN": "起始字符 offset，默认 0；续读传 nextOffset，读章节传 outline 的 offset。",
@@ -40,8 +40,8 @@ const messages = defineMessages("page-tools", {
     en: "Number of lines to read. Default: 200.",
   },
   readDomSelector: {
-    "zh-CN": "读取范围 target，优先 uid:，css: 或裸 CSS 兜底，默认 body。",
-    en: "Target scope: prefer uid:, with css: or bare CSS as fallback; defaults to body.",
+    "zh-CN": "读取范围 target，优先 uid:，css: 兜底，默认 css:body。",
+    en: "Target scope: prefer uid:, with css: as fallback; defaults to css:body.",
   },
   findElementsDescription: {
     "zh-CN": "按范围、语义属性和可选正则查找页面元素候选（优先排序可操作、视口内、匹配更明确的元素）。pattern 是可选过滤条件：不传 pattern 时会列出 target/tags/roles/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 role/name/text/rect/actionable/inViewport/lineRange 等摘要；需原始 HTML 时将 lineRange 传给 read_dom。",
@@ -56,8 +56,8 @@ const messages = defineMessages("page-tools", {
     en: "RegExp flags. Default: i.",
   },
   findElementsSelector: {
-    "zh-CN": "查找范围 target（穿透 open Shadow DOM），优先 uid:，css: 或裸 CSS 兜底，默认 body。",
-    en: "Target search scope: prefer uid:, with css: or bare CSS as fallback; pierces open Shadow DOM and defaults to body.",
+    "zh-CN": "查找范围 target（穿透 open Shadow DOM），优先 uid:，css: 兜底，默认 css:body。",
+    en: "Target search scope: prefer uid:, with css: as fallback; pierces open Shadow DOM and defaults to css:body.",
   },
   findElementsRoles: {
     "zh-CN": "可选 ARIA role 过滤（含显式与隐式 role），如 button/link/textbox/checkbox。",

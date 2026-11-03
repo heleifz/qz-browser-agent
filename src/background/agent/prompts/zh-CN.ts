@@ -43,7 +43,7 @@ export const TEXT_ONLY_CAPABILITY_PROMPT = "你通过工具操作用户的浏览
 export const VISION_READING_RULE = "- 需要分析页面中的某张图片时，先用 list_images 或 get_ax_tree 获取图片元素 target，再用 read_image({target}) 查看。";
 
 export const VISUAL_SCREEN_ACTION_RULE = `页面操作指南：
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
+1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
 2. 有可靠 target 时，使用 act_on_element。
 3. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot({actionable:true})，再把返回图片上的原始像素坐标交给 act_on_screen，范围见 coordinateSpace.width/height。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。
@@ -53,7 +53,7 @@ export const VISUAL_SCREEN_ACTION_RULE = `页面操作指南：
 export const TEXT_ONLY_READING_RULE = "- 当前模型不能看图；确认页面状态优先使用 get_ax_tree、read_article、find_elements、inspect_element 或 Network/Data 工具，仅在需要验证原始 HTML、行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等 DOM 结构时用 read_dom。图片采集只能依据 URL/meta 和页面文本证据，不能声称已筛选视觉质量或看到了图片内容。";
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `页面操作指南：
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
+1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
 2. 有可靠 target 时，使用 act_on_element。
 3. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位；仍无法定位就说明限制，不进行视觉猜测操作。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。`;
@@ -121,7 +121,7 @@ ${TOOL_CALLING_CONTRACT}
 - 将每个 open_tab 放在依赖它的调用之前。每个 tabAlias 在当前任务已打开和待创建的页面中唯一，且不能为纯数字。返回已有页面时复用其别名。页面调用使用 tabRef；已有元素 UID 时可以不传 tabRef，同时提供则必须指向同一页。加载超时保留了标签页时，别名仍然有效。
 
 ### 必须流程
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({root:"root"}) 总览，局部细节把 snapshot 中的 target 作为 root 展开子树，不要反复全页读取；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
+1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef}) 总览，局部细节用 snapshot 中的 target 展开子树，不要反复全页读取；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
 2. 读正文、列表、表格或纯文本/JSON 页面优先用 read_article（显式传 limit，建议 4000–8000，按 hasMore/nextOffset 续读，或按 outline 的 offset/endOffset/charCount 读章节），不要用 read_article 寻找可操作控件。大型接口采样优先用 network_recent + network_body。
 3. 定位控件或核实元素状态用 find_elements 或 inspect_element。
 4. read_dom 只用于验证原始 HTML/DOM 行号片段（如 find_elements 的 lineRange、read_article 的 target）、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
@@ -131,8 +131,8 @@ ${TOOL_CALLING_CONTRACT}
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>（如 uid:t5493.000001.12、css:input[name="q"]）。
 - target 不是自然语言；不要把页面标题、URL、按钮文案或「下一页」当成 target。没有 target 时先用 get_ax_tree、find_elements 或 list_images 获取；页面变化或 target 失效后重新定位。
-- 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({root:"css:..."}) 观察元素及所在区域，读取内容时作为 read_article/read_dom 的 target；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
-- 元素结果只用 target 表示身份：优先复用返回的 uid: 目标，css: 兜底。read_article、read_dom、find_elements、list_images、wait_for_element 的 target 参数也接受原始 CSS。
+- 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。把它作为当前关注范围：优先用 inspect_element({target:"css:..."}) 或 get_ax_tree({target:"css:..."}) 观察元素及所在区域，读取内容时作为 read_article/read_dom 的 target；先理解该区域再回答或操作，不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域。
+- 元素结果只用 target 表示身份：优先复用返回的 uid: 目标，css: 兜底。所有显式 target 参数必须以 uid: 或 css: 开头。
 ${VISUAL_TARGET_TOOL_PROTOCOL}
 
 ${READING_CAPABILITY_PROTOCOL}

@@ -80,7 +80,8 @@ function assertSelectorFieldsAcceptTargetSyntax() {
   for (const name of ["read_article", "read_dom", "find_elements", "list_images", "wait_for_element"]) {
     const definition = resolveToolDefinition(name);
     assert.equal(definition.parameters.properties.selector, undefined);
-    assert.match(definition.parameters.properties.target.description, /uid:.*css:.*CSS/, `${name} target accepts all reference forms`);
+    assert.match(definition.parameters.properties.target.description, /uid:.*css:/, `${name} target documents explicit references`);
+    assert.doesNotMatch(definition.parameters.properties.target.description, /bare CSS|raw CSS|裸 CSS/, `${name} must not document unprefixed CSS`);
     assert.equal(definition.argumentAliases.selector, 'target');
   }
 }
@@ -91,7 +92,7 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /\[css: <css_selector>\] 是用户通过鼠标点选页面元素生成的显式页面区域引用/, "system prompt should recognize user-picked page regions");
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
-  assert.match(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt should use the canonical parameter name");
+  assert.doesNotMatch(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt must not teach unprefixed CSS compatibility");
   assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
@@ -154,7 +155,7 @@ function assertAxTreeCompactContract() {
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
   assert.match(block, /target: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /target="root" 查看整页/, "get_ax_tree should document root=root");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /省略 target 查看整页/, "get_ax_tree should document omission for whole-page reads");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
@@ -190,7 +191,7 @@ function assertAxTreeCompactContract() {
   assert.match(contentScript, /Math\.min\(rect\.width, rect\.height\) < 120 \|\| renderedArea < (?:40000|4e4)/, "pageOverview should ignore canvases that are small at rendered CSS size");
   assert.match(contentScript, /\.slice\(0, 8\)[\s\S]*\.map\(\(\{ renderedArea: _renderedArea, element, \.\.\.canvas \}\)/, "pageOverview should bound canvas summaries and remove raw nodes/ranking data");
   assertOrderedSubstrings(VISUAL_SCREEN_ACTION_RULE, [
-    'get_ax_tree({root:"root"})',
+    'get_ax_tree({tabRef})',
     "act_on_element",
     "screenshot({actionable:true})",
     "act_on_screen",

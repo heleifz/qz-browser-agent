@@ -16,11 +16,11 @@ for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
   ]) assert.equal(toolT(key, { count: 7, capability }), expected);
 
   assert.match(toolT("getAxTreeScope"), en ? /Only viewport or full/ : /只能是 viewport 或 full/);
-  assert.match(toolT("getAxTreeScope"), en ? /target "root" uses viewport, and a uid: or css: root uses full/ : /target 为 "root" 用 viewport，uid: 或 css: 根用 full/);
+  assert.match(toolT("getAxTreeScope"), en ? /omitted target uses viewport, and a uid: or css: target uses full/ : /未传 target 用 viewport，uid: 或 css: 根用 full/);
   assert.doesNotMatch(toolT("getAxTreeScope"), /scope:"page"|整页根|Page roots/i);
   const description = toolT("getAxTreeDescription", { targetGrammar: "uid:/css:" });
   assert.match(description, en ? /scope is only viewport or full/ : /scope 只能是 viewport 或 full/);
-  assert.match(description, en ? /When target is "root", the default is scope:"viewport"/ : /target 为 "root" 时默认 scope:"viewport"/);
+  assert.match(description, en ? /When target is omitted, the default is scope:"viewport"/ : /省略 target 时默认 scope:"viewport"/);
   assert.doesNotMatch(description, /scope:"page"|Whole-page reads default/i);
   assert.match(description, /↑\/↓/);
   assert.match(description, /items=N.*\(truncated, N more\)/);

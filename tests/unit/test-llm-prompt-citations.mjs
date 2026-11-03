@@ -56,7 +56,7 @@ assert.doesNotMatch(
 );
 
 assert.match(READING_CAPABILITY_PROTOCOL, /^### 视觉读取协议\n- 需要分析页面中的某张图片时/m, "visual reading protocol should include its title");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "visual actions should select observation tools by tab ownership");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{tabRef\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "visual actions should select observation tools by tab ownership");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 有可靠 target 时，使用 act_on_element。/, "visual actions should route reliable targets to element actions");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot/, "visual actions should reserve screenshots for the screen-action branch");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /页面结构发生变化或 target 失效时，重新从第 1 步开始/, "visual actions should restart discovery after structural changes");
@@ -71,7 +71,7 @@ assert.match(VISUAL_SCREEN_ACTION_RULE, /只有 true 才产生观察截图；fal
 assert.match(VISUAL_SCREEN_ACTION_RULE, /run_script 会返回内部最后一次 screenshot 或 act_on_screen\(returnScreenshot:true\) 的图片/, "visual batches should return the last explicit observation");
 assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /会滚动、缩放、改尺寸.*主 Agent 逐步执行/, "the prompt should not blanket-ban action kinds whose effects depend on the page");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /^### 文本读取协议\n- 当前模型不能看图/m, "text-only reading protocol should include its title");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{root:"root"\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "text-only actions should select observation tools by tab ownership");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree\(\{tabRef\}\)；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。/, "text-only actions should select observation tools by tab ownership");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 有可靠 target 时，使用 act_on_element。/, "text-only actions should use element actions for reliable targets");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /3\. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位/, "text-only actions should keep locating without visual tools");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /仍无法定位就说明限制，不进行视觉猜测操作/, "text-only actions should fail clearly instead of guessing visually");
