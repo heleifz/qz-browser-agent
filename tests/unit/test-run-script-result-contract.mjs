@@ -32,8 +32,8 @@ assert.doesNotMatch(source, /runScriptWithScriptingBridge/, "run_script should n
 assert.doesNotMatch(source, /cdp_fallback|scripting fallback failed/, "run_script should not expose scripting fallback behavior");
 assert.match(source, /function makePageContextUnavailableResult\(/, "run_script should use an explicit page-context unavailable result");
 assert.match(source, /error:\s*"page_context_unavailable"/, "page-context failure should have a stable agent-readable error");
-assert.match(source, /execution_world:\s*"page"/, "run_script results should state the page execution world");
-assert.match(source, /execution_world:\s*"inner"/, "inner run_script results should state the inner execution world");
+assert.match(source, /execution_world:\s*"page"/, "the private page runner envelope should identify its execution world");
+assert.match(source, /execution_world:\s*"inner"/, "the private Worker envelope should identify its execution world");
 assert.deepEqual(manifestJson.sandbox?.pages, ["runner-sandbox.html"], "manifest should register the inner runner sandbox page");
 assert.match(manifestJson.content_security_policy?.sandbox || "", /unsafe-eval[\s\S]*worker-src blob:/, "manifest should provide a sandboxed eval-capable worker host for inner run_script");
 assert.match(offscreen, /run_script_inner_ping/, "offscreen should expose an inner runner ready ping");
@@ -60,17 +60,18 @@ assert.match(innerWorkerSource, /new Function\("input", "args", "\$plugin", "too
 assert.match(innerWorkerSource, /if \(payload\.fetchBridge === true\) self\.fetch = createBridgedFetch/, "plugin inner scripts should keep the standard fetch call surface");
 assert.match(innerWorkerSource, /signal\?\.addEventListener\?\.\("abort", abort/, "the bridged fetch surface should preserve per-request AbortSignal cancellation");
 assert.match(innerWorkerSource, /type: "fetch_cancel"/, "the inner worker should cancel only its matching Background fetch call");
-assert.match(innerWorkerSource, /import \{ safeValueForMessage, installSecurityGuards \} from "\.\.\/shared\/script-runtime\.js"/, "inner worker should share the serializer and security implementation");
+assert.match(innerWorkerSource, /import \{[^}]*safeValueForMessage[^}]*scriptValue[^}]*scriptToolArguments[^}]*installSecurityGuards[^}]*\} from "\.\.\/shared\/script-runtime\.js"/, "the Worker should share strict public serialization, tool arguments and Skill security guards");
 assert.match(scriptRuntimeSource, /function safeValueForMessage\(/, "shared script runtime should own dynamic value serialization");
-assert.match(innerWorkerSource, /const safeToolArgs = safeValueForMessage\(toolArgs\)/, "inner worker should sanitize tool args before crossing postMessage");
-assert.match(innerWorkerSource, /const safeResult = ok && result !== undefined \? safeValueForMessage\(result\) : null/, "inner worker should sanitize returned script results before crossing postMessage");
+assert.match(innerWorkerSource, /const safeToolArgs = scriptToolArguments\(toolName, toolArgs\)/, "the Worker should serialize callable code only for code-bearing tools before crossing postMessage");
+assert.match(innerWorkerSource, /strictResult \? scriptValue\(result\) : safeValueForMessage\(result\)/, "public scripts require JSON values while existing Skill serialization stays available");
 assert.match(source, /const __qzSafeValueForMessage = value => QZ_SCRIPT_RUNTIME\.safeValueForMessage\(value, "page"\)/, "page runtime should select page serialization semantics from the compiled shared runtime");
 assert.match(source, /QZ_SCRIPT_RUNTIME\.installSecurityGuards\(__qzSecurityGuardrails, "page"\)/, "page runtime should install the shared guard with page semantics");
 assert.match(source, /const safeInput = __qzSafeValueForMessage\(input \|\| \{\}\)/, "page runtime should sanitize tool args before window.postMessage");
-assert.match(source, /const __qzSafeResult = ok && result !== undefined \? __qzSafeValueForMessage\(result\) : null/, "page runtime should sanitize returned script results before CDP serialization");
+assert.match(source, /QZ_SCRIPT_RUNTIME\.scriptValue\(result\)/, "page evaluation should use strict public JSON serialization");
+assert.match(source, /strictResult \? "QZ_SCRIPT_RUNTIME\.scriptValue\(result\)" : "__qzSafeValueForMessage\(result\)"/, "internal Skill page scripts should retain their existing value serializer");
 assert.match(runScriptBridge, /function failureResponse\(/, "run_script tool bridge should have one failure response contract");
 assert.match(runScriptBridge, /const respondFailure[\s\S]*withLanguage\(language, \(\) => failureResponse\(payload, options\)/, "run language scopes must retain the shared failure response contract");
-assert.match(runScriptBridge, /const isError = isToolFailure\(output\)[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
+assert.match(runScriptBridge, /const isError = isToolFailure\(result\)[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
 assert.match(runScriptBridge, /catch \(error\)[\s\S]*return respondFailure\(/, "run_script tool bridge should reject thrown tool errors");
 assert.doesNotMatch(serviceWorker, /ok:\s*true,\s*[\r\n\s]*result:\s*localizeToolFailurePayload\(\{[\s\S]*RUN_SCRIPT_TOOL_CALL_FAILED/, "run_script tool bridge must not wrap failed tool calls as successful responses");
 assert.match(source, /if \(!response\.ok\)[\s\S]*reject\(bridgeError\)/, "page run_script tools should reject failed bridge responses");
@@ -105,6 +106,36 @@ assert.doesNotThrow(() => {
   assert.equal(safe.proxy.__qz_uncloneable, 'object');
   assert.equal(safe.cycle.self.__qz_circular, true);
   assertCloneSafe(envelope, 'inner sanitized envelope');
+}
+
+{
+  const authored = { ok: false, error: 'authored', code: 'BUSINESS_STATUS', message: 'Returned value',
+    _display: { script: { trace: ['authored'] } }, _image: 'ordinary data', text: 'x'.repeat(50_000) };
+  const calls = [];
+  const { result: envelope } = await runInnerWorker(compiledWorker,
+    'return await tools.evaluate({tabRef: "page", code: ({value}) => value, args: {value: 7}});', {
+      strictResult: true,
+      onMessage(message, reply) {
+        if (message.type !== 'tool_call') return;
+        calls.push(message);
+        reply({ type: 'tool_response', callId: message.callId, response: { ok: true, result: authored } });
+      },
+    });
+  assert.equal(envelope.ok, true, 'returned error-shaped business data is successful execution');
+  assert.deepEqual(envelope.result, authored, 'strict public JSON values retain all business keys and long values');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].toolName, 'evaluate');
+  assert.equal(calls[0].args.tabRef, 'page');
+  assert.equal(typeof calls[0].args.code, 'string', 'a callable crosses the Worker boundary as code');
+  assert.deepEqual(calls[0].args.args, { value: 7 });
+  assertCloneSafe(envelope, 'public script envelope');
+}
+
+{
+  const { result: envelope } = await runInnerWorker(compiledWorker, 'return {callback: () => 1};', { strictResult: true });
+  assert.equal(envelope.ok, false, 'unsupported public values must fail instead of becoming placeholder objects');
+  assert.equal(envelope.code, 'SCRIPT_VALUE_NOT_SERIALIZABLE');
+  assert.match(envelope.hint, /plain values/);
 }
 
 assert.ok(

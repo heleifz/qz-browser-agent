@@ -12,6 +12,8 @@ export const QINGZHOU_MCP_METHODS = Object.freeze([
   "list_sessions",
   "create_session",
   "create_drive_session",
+  "list_drive_sessions",
+  "get_drive_session",
   "send_message",
   "follow_up",
   "get_user_input",
@@ -77,6 +79,8 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "list_sessions": return call("sessions.list", { ...params, publicView: true });
       case "create_session": return call("sessions.create", params, signal);
       case "create_drive_session": return call("sessions.createDrive", params, signal);
+      case "list_drive_sessions": return call("sessions.listDrive", params, signal);
+      case "get_drive_session": return call("sessions.getDrive", params, signal);
       case "send_message": return call("sessions.send", params, signal);
       case "follow_up": return call("sessions.followUp", params, signal);
       case "get_user_input": return call("sessions.userInput", params);

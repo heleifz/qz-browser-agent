@@ -136,6 +136,8 @@ console.log = (...args) => {
 };
 
 globalThis.chrome = createChromeMock();
+globalThis.chrome.webNavigation ||= {};
+globalThis.chrome.webNavigation.onCreatedNavigationTarget ||= { addListener() {}, removeListener() {} };
 globalThis.fetch = createFetchMock([
   openAiSse([
     {

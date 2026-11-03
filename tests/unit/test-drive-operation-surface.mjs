@@ -293,6 +293,7 @@ test('nested mode comes from the trusted parent, and a host-rebuilt drive profil
       getSchemas: context => getToolSchemas({ runProfile: context.runProfile }),
       execute: async (name, args, _signal, context) => {
         observed.push({ name, args, context });
+        if (name === 'list_tools') return { tools: getToolSchemas({ runProfile: context.runProfile }).map(schema => schema.function) };
         if (name === 'load_skill') { latestSkillSnapshot = { version: 2 }; return { name: 'newly-loaded' }; }
         return { accepted: true };
       },
@@ -343,7 +344,7 @@ test('trusted drive admission records one failure even if profile rebuilding fai
     canManageSessions: async () => false,
     getRunToolContext: async () => ({ externalDrive: true }),
     buildRunProfile: async () => { throw new Error('Cannot rebuild profile'); },
-    recordDriveTool: async event => { cards.push(event); },
+    recordNestedTool: async event => { if (event.phase === 'end') cards.push(event); },
     toolRuntime: { resolveDefinition: () => ({ behavior: {} }), getSchemas: () => [],
       execute: async () => { executed = true; throw new Error('must not execute'); } },
     collectArtifacts: () => [],

@@ -11,6 +11,7 @@ interface CdpState {
   sessionId: string; runId: string; attached: boolean; releasing: boolean;
   connectionId: number;
   retained: boolean; userDetached: boolean;
+  readOnly: boolean;
   restore: ((send: CdpCommand) => Promise<void>) | null;
   authorizeRestore: (() => Promise<unknown>) | null;
   recoveryPromise: Promise<void> | null;
@@ -36,6 +37,7 @@ interface CdpHost {
   isRunCurrent?: ((access: RunAccess) => boolean) | null;
   /** Ownership only; run liveness is separately enforced before every tool command. */
   authorizeRunTab?: ((access: RunAccess & { tabId: number }) => Promise<unknown>) | null;
+  isReadOnlyAccess?: (tabId: number, context: ToolContext) => boolean;
   /** Asks whether a run may re-attach after the user dismissed the debugging bar; false refuses control. */
   confirmUserReattach?: ((access: RunAccess & { tabId: number; signal?: AbortSignal | null }) => Promise<boolean>) | null;
   debuggerApi?: DebuggerApi;
@@ -47,6 +49,7 @@ export function createCdpRuntime({
   assertTabAllowed: assertTabAllowedBySecurityGuardrails,
   isRunCurrent = null,
   authorizeRunTab = null,
+  isReadOnlyAccess = () => false,
   confirmUserReattach = null,
   debuggerApi = globalThis.chrome?.debugger,
 }: CdpHost) {
@@ -54,6 +57,12 @@ export function createCdpRuntime({
   const reattachPrompts = new Map<string, Promise<boolean>>();
   let temporaryScopeSeq = 0;
   let connectionSeq = 0;
+
+  function unavailableTab(error: unknown, context: ToolContext) {
+    if (!/no tab with id|invalid tab id|tab not found|tab was closed/i.test(String(record(error).message || error))) return;
+    const failure = new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The requested tab is no longer available.", pageErrorDetails(context));
+    return Object.assign(failure, { hint: "Use list_tabs to choose an available tabRef, then retry." });
+  }
 
   debuggerApi?.onDetach?.addListener((source, reason) => {
     const tabId = Number(source?.tabId);
@@ -80,14 +89,17 @@ export function createCdpRuntime({
     const current = tabs.get(id);
     if (current?.recoveryPromise) await current.recoveryPromise;
     assertRunCurrent(owner, id, context);
-    if (current?.ownerKey === owner.key && current.attached && !current.releasing) {
+    if (current?.ownerKey === owner.key && current.attached && !current.releasing
+      && (!current.readOnly || isReadOnlyAccess(id, context))) {
       return current;
     }
     if (typeof authorizeRunTab === "function") {
       await authorizeRunTab({ tabId: id, sessionId: owner.sessionId, runId: owner.runId, context });
       assertRunCurrent(owner, id, context);
     }
-    return ensureForOwner(tabId, owner, context);
+    const shared = tabs.get(id);
+    if (isReadOnlyAccess(id, context) && shared?.attached && !shared.releasing) return shared;
+    return ensureForOwner(tabId, owner, context, isReadOnlyAccess(id, context));
   }
 
   /**
@@ -119,7 +131,7 @@ export function createCdpRuntime({
     for (const entry of tabs.values()) if (entry.ownerKey === ownerKey) entry.userDetached = false;
   }
 
-  async function ensureForOwner(tabId: unknown, owner: CdpOwner, context: ToolContext = {}): Promise<CdpState> {
+  async function ensureForOwner(tabId: unknown, owner: CdpOwner, context: ToolContext = {}, readOnly = false): Promise<CdpState> {
     const id = positiveTabId(tabId, context);
     if (typeof assertTabAllowedBySecurityGuardrails === "function") {
       await assertTabAllowedBySecurityGuardrails(id, { tool: "debugger", source: "cdp" });
@@ -141,7 +153,13 @@ export function createCdpRuntime({
       state = tabs.get(id);
     }
     if (state && state.ownerKey !== owner.key) {
-      if (state.ownerKind === "session" && owner.kind === "run" && state.sessionId === owner.sessionId) {
+      if (state.readOnly) {
+        // A reader must never reserve a page against its next authorized writer.
+        state.ownerKey = owner.key;
+        state.ownerKind = owner.kind;
+        state.sessionId = owner.sessionId;
+        state.runId = owner.runId;
+      } else if (state.ownerKind === "session" && owner.kind === "run" && state.sessionId === owner.sessionId) {
         if (state.runId === owner.runId) throw runReleasedError(context);
         // An idle retained connection may be borrowed only after fresh Session authorization.
         state.ownerKey = owner.key;
@@ -154,6 +172,7 @@ export function createCdpRuntime({
         );
       }
     }
+    if (state && !readOnly) state.readOnly = false;
     if (!state) {
       state = {
         tabId: id,
@@ -165,6 +184,7 @@ export function createCdpRuntime({
         attached: false,
         connectionId: 0,
         retained: false,
+        readOnly,
         userDetached: false,
         restore: null,
         authorizeRestore: null,
@@ -188,6 +208,8 @@ export function createCdpRuntime({
         } catch (err) {
           if (tabs.get(id) === state) tabs.delete(id);
           assertStateActive(state, context);
+          const missing = unavailableTab(err, context);
+          if (missing) throw missing;
           throw new ToolExecutionError("DEBUGGER_ATTACH_FAILED", `Failed to acquire browser control: ${String(record(err).message || err)}`, pageErrorDetails(context));
         } finally {
           state.attachPromise = null;
@@ -199,7 +221,7 @@ export function createCdpRuntime({
     if (tabs.get(id) !== state || !state.attached) {
       if (state.detachPromise) await state.detachPromise;
       assertRunCurrent(owner, id, context);
-      return ensureForOwner(id, owner, context);
+      return ensureForOwner(id, owner, context, readOnly);
     }
     return state;
   }
@@ -210,7 +232,7 @@ export function createCdpRuntime({
     try {
       return await sendForState(state, method, params, check, "", context);
     } catch (err) {
-      if (record(err).code === "CDP_RUN_RELEASED") throw err;
+      if (["CDP_RUN_RELEASED", "SESSION_TAB_UNAVAILABLE"].includes(String(record(err).code))) throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, pageErrorDetails(context));
     }
   }
@@ -296,6 +318,7 @@ export function createCdpRuntime({
       return evalResult;
     } catch (err) {
       if (aborted || ["OPERATION_ABORTED", "CDP_RUN_RELEASED"].includes(String(record(err).code || ""))) throw err;
+      if (record(err).code === "SESSION_TAB_UNAVAILABLE") throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `Runtime.evaluate failed: ${String(record(err).message || err)}`, pageErrorDetails(context));
     } finally {
       if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
@@ -508,9 +531,10 @@ export function createCdpRuntime({
   function commandAccess(state: CdpState, context: ToolContext) {
     const owner = runOwner(state.tabId, context);
     const connectionId = state.connectionId;
+    const ownerKey = isReadOnlyAccess(state.tabId, context) ? state.ownerKey : owner.key;
     return () => {
       assertStateActive(state, context);
-      if (state.ownerKey !== owner.key || !state.attached || state.connectionId !== connectionId) throw runReleasedError(context);
+      if (state.ownerKey !== ownerKey || !state.attached || state.connectionId !== connectionId) throw runReleasedError(context);
       assertRunCurrent(owner, state.tabId, context);
     };
   }
@@ -540,6 +564,8 @@ export function createCdpRuntime({
     } catch (error) {
       assertStateActive(state, context);
       check();
+      const missing = unavailableTab(error, context);
+      if (missing) throw missing;
       throw error;
     } finally {
       finishPhase?.();

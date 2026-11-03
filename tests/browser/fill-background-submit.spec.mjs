@@ -123,7 +123,7 @@ for (const pageName of ['keylog.html', 'form.html']) {
           events: JSON.parse(sessionStorage.qaEvents), url: location.href, visibility: document.visibilityState,
         })));
         console.log('QA_FILL', JSON.stringify({ pageName, foreground, before, result, after, requests }));
-        expect(result).toMatchObject({ filled: true, submitDispatched: true, navigated: true });
+        expect(result).toEqual({ navigated: true, url: after.url });
         expect(after.url).toContain('/fast.html?q=');
         for (const type of ['input', 'keydown', 'keypress', 'submit']) {
           expect(after.events.filter(event => event.type === type)).toEqual([

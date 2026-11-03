@@ -34,7 +34,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       }
       catch (error) { return { code: error.code, message: error.message, ...(error.hint ? { hint: error.hint } : {}), ...(error.details ? { details: error.details } : {}) }; }
     };
-    const script = async code => (await invoke('run_script', { code: `async () => { ${code} }`, timeout: 20, mutatesPage: true })).result;
+    const script = code => invoke('evaluate', { code: `async () => { ${code} }`, timeout: 20 });
     const opened = await callTool(endpoint, 'qingzhou_execute_tool', { sessionId, name: 'open_tab', args: { url: fixture.url, tabAlias: 'page' } });
     expect(opened.result.tabRef).toBe('page');
     const nativeTabId = await environment.context.serviceWorkers()[0].evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url).id, fixture.url);
@@ -52,18 +52,15 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       const target = axTarget(controls, name, 'button');
       expect(target || '', controls.snapshot).toMatch(uidPattern);
       const clicked = await invoke('act_on_element', { target, action: 'click' });
-      expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
-      expect(clicked.clickDispatched || clicked.clicked, JSON.stringify(clicked)).toBe(true);
-      expect(clicked.inputDelivered, JSON.stringify(clicked)).toBe(true);
-      expect(clicked.target).toBe(target);
-      expect(clicked.originalElement?.target).toBe(target);
-      expect(clicked.element.tag, JSON.stringify(clicked)).toBe('label');
-      expect(clicked.element.target).toMatch(/^(?:uid|css):/);
-      expect(clicked.element.target).not.toBe(target);
-      expect(clicked.element.text).toBe(`${name} label`);
-      expect(clicked.originalElement.tag).toBe('input');
-      expect(clicked.originalElement.name).toBe(name);
+      expect(clicked).toEqual({});
       await expect(page.locator(`#${id}`)).toBeChecked();
+      await expect(page.locator(`#${id}`)).toHaveAttribute('data-input-trusted', 'true');
+      expect(await invoke('inspect_element', { target })).toMatchObject({
+        target: expect.stringMatching(uidPattern), tag: 'input', role: 'button', name, checked: true, attrs: { id },
+        rect: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) },
+      });
+      expect(await invoke('act_on_element', { target, action: 'click' })).toEqual({});
+      await expect(page.locator(`#${id}`)).not.toBeChecked();
       await expect(page.locator(`#${id}`)).toHaveAttribute('data-input-trusted', 'true');
     }
     const found = await invoke('find_elements', { target: 'body', tags: ['button', 'img'], limit: 40 });
@@ -76,13 +73,13 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     expect(alpha.target).toMatch(uidPattern);
     expect(shadow.target).toMatch(uidPattern);
     const clicked = await invoke('act_on_element', { target: alpha.target, action: 'click' });
-    expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
-    expect(clicked.target).toBe(alpha.target);
-    expect(clicked.element.target).toBe(alpha.target);
-    expect(JSON.stringify(clicked)).not.toContain('_elementRef');
+    expect(clicked).toEqual({});
+    expect(await invoke('inspect_element', { target: alpha.target })).toMatchObject({
+      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: '', text: 'Alpha', attrs: { id: 'alpha' },
+      rect: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) },
+    });
     const cssClick = await invoke('act_on_element', { target: 'css:#alpha', action: 'click' });
-    expect(cssClick.target, JSON.stringify(cssClick)).toMatch(uidPattern);
-    expect(cssClick.element.target).toMatch(uidPattern);
+    expect(cssClick).toEqual({});
     expect(await script("return document.querySelector('#alpha').dataset.clicked;")).toBe('yes');
     const inspected = await invoke('inspect_element', { target: '#alpha', verbose: true });
     expect(inspected.target).toMatch(uidPattern);
@@ -113,15 +110,15 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     expect(waited.found, JSON.stringify(waited)).toBe(true);
     expect(waited.element.target).toMatch(uidPattern);
     await script("document.querySelector('#alpha').style.display='none';");
-    const hidden = await invoke('wait_for_element', { target: alpha.target, absent: true, timeout: 1 });
-    expect(hidden, JSON.stringify(hidden)).toMatchObject({ found: false, element: null });
+    const hidden = await invoke('wait_for_element', { target: alpha.target, state: 'hidden', timeout: 1 });
+    expect(hidden, JSON.stringify(hidden)).toMatchObject({ state: 'hidden', found: false, element: null });
     expect(hidden.timedOut).toBeUndefined();
     await script("const old=document.querySelector('#alpha'); const fresh=old.cloneNode(true); fresh.style.display=''; old.replaceWith(fresh);");
-    const removed = await invoke('wait_for_element', { target: alpha.target, absent: true, timeout: 1 });
-    expect(removed, JSON.stringify(removed)).toMatchObject({ found: false, element: null });
+    const removed = await invoke('wait_for_element', { target: alpha.target, state: 'detached', timeout: 1 });
+    expect(removed, JSON.stringify(removed)).toMatchObject({ state: 'detached', found: false, element: null });
     expect(removed.timedOut).toBeUndefined();
     expect((await invoke('act_on_element', { target: alpha.target, action: 'click' })).code).toMatch(/STALE_ELEMENT_UID/);
-    expect((await invoke('wait_for_element', { target: 'uid:t0.000000.999', absent: true, timeout: 1 })).code).toMatch(/STALE_ELEMENT_UID/);
+    expect((await invoke('wait_for_element', { target: 'uid:t0.000000.999', state: 'detached', timeout: 1 })).code).toMatch(/STALE_ELEMENT_UID/);
 
     const invalidTarget = await invoke('read_dom', { target: 'css:[' });
     expect(invalidTarget.code, JSON.stringify(invalidTarget)).toBe('INVALID_SELECTOR');
@@ -131,7 +128,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     expect(Object.keys(invalidTarget).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
     expect(JSON.stringify(invalidTarget)).not.toMatch(/"(?:selector|tabId)":/);
 
-    const syntax = await invoke('run_script', { code: 'async () => { const value = ; }', timeout: 20 });
+    const syntax = await invoke('evaluate', { code: 'async () => { const value = ; }', timeout: 20 });
     expect(syntax.code, JSON.stringify(syntax)).toBe('SCRIPT_EVALUATION_FAILED');
     expect(syntax.message).toMatch(/SyntaxError/);
     expect(Object.keys(syntax).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
@@ -180,8 +177,8 @@ test('all element readers share node UIDs, consumers accept target/legacy select
         runProfile: { model: { vision: true }, features: { imageInput: true, toolImages: true }, tools: { disabled: [] } } };
       try {
         let missingReference;
-        try { await runtime.execute('wait_for_navigation', {}, undefined, context); } catch (error) { missingReference = error.code; }
-        await runtime.execute('wait_for_navigation', { tabRef: tab.id }, undefined, context);
+        try { await runtime.execute('wait_for_load', {}, undefined, context); } catch (error) { missingReference = error.code; }
+        await runtime.execute('wait_for_load', { tabRef: tab.id }, undefined, context);
         const definitions = runtime.getSchemas({ runProfile: context.runProfile }).filter(item => ['act_on_screen', 'collect_images'].includes(item.function.name));
         const press = await runtime.execute('act_on_screen', { tabRef: tab.id, action: 'press', key: 'Escape', returnScreenshot: false }, undefined, context);
         const collection = await runtime.execute('collect_images', { tabRef: tab.id, table: 'native-images', targets: ['#photo'] }, undefined, context);

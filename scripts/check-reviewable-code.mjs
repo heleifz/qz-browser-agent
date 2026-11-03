@@ -23,25 +23,24 @@ const REVIEWED = new Map([
     files: /^sidepanel\/(?:chunk-[\w.-]+|features\/chat\/math-runtime)\.js$/u,
     reason: "loadMathRuntime loads only packaged vendor/mathjax/startup.js, with a local test-server fallback.",
   }]),
-  ["dynamic-code:a8389379dd8eaa69a783517fac2e496ceaa4a9353ca8de52c7db8493267e9a9a", {
+  ["dynamic-code:458a0b827e90f88c808c7b35ff181eaf0de589a798183c7e78020d252e17d70a", {
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
-    reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. The trace label is now script.start; compiled source, injected bindings and sandbox permissions are unchanged. Traces stay in the worker and a timeout reads the last five once. See policy risk in the audit guide.",
+    reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Traces stay in the worker; a timeout reads the last five once.",
   }],
   ["dynamic-code:81fe6123d9379eaf3a7984ce93a65fba133bd41bdaa7d964e467da13b55748c4", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
-  ["worker-source:ad4b0258b2b2526a5d813615f09b95cf7ef92c48619d19974c20c8cb464ddc8a", {
+  ["worker-source:5e83acbaad3752eddb422d4987be9965fc3ff593056cbc1f34b18026be3615e0", {
     files: /^runner-sandbox\.js$/u,
-    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. Infrastructure failures use the public script-context code; Worker identity, cancellation and message routing are unchanged. A timeout snapshot is forwarded once and does not terminate the worker. ToolError message/hint/details are data in the embedded worker reply.",
+    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. The host forwards JSON arguments and strict-result mode as data; Worker identity, cancellation and message routing are unchanged. ToolError and explicit image observations are data in replies; trace snapshots do not bypass cancellation.",
   }],
   ...[
-    ["41b62865f6aa87aca8e8c99c210abfd293106c427db8efccb1c65ff7df75b0f3", "background/tools/cdp-runtime", "Run-owned CDP evaluator; errors include only the caller's page reference when provided. Ownership, cancellation and CDP source/target are unchanged. A script timeout reads the last five traces with a fixed Runtime.callFunctionOn on the promise held by CDP, then terminates. Existing page-script capability."],
+    ["2075f8762098a5eb7c464e1bb88fd3b3890a050f999a008af27562a8d5f8e4c8", "background/tools/cdp-runtime", "CDP evaluator with host-authorized per-call access, cancellation and stale-owner rejection. A private read grant permits observation without taking the owner lease; owned evaluation keeps its task authorization. A timeout reads the last five traces with a fixed Runtime.callFunctionOn on the CDP-held promise, then terminates. Source and explicit page selection remain reviewed."],
     ["a36dfc60d9dd63fbe417be448b1ec12a50a982e938a85837212784e1a267bf48", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element; geometry uses the shared Rect contract."],
     ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run/parent-call identity and arguments as JSON data to the same run-owned evaluator. No caller mode or implicit page is injected."],
-    ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["1440eaad6f856c0d1fd396da01eced6173fe7ea6d1ea948a96ebc2457bb020fa", "capabilities/script/tools", "Entire createScriptTools factory; an explicit page reference selects the run-owned page executor, and page-free scripts use the existing sandbox Worker. Nested tools never receive an implicit page. Session/run/parent identity, cancellation and packaged security guards remain intact. Both environments construct the same business DTO. Page traces stay on the CDP-held promise; a timeout reads the last five once. Policy risk remains."],
+    ["4b0193ae98365d4ebec740dfc5fe34e674a2090ba761f28173b5d2a44c5c2495", "capabilities/script/tools", "Entire createScriptTools factory: run_script always runs in the existing sandbox Worker; evaluate requires an owned explicit page and a self-contained function defined outside the host closure. Arguments are JSON data. The private Skill page bridge retains live parent authorization. Success and failure traces use trusted host presentation beside business values; only successful values receive the valueOnly marker. Cancellation and packaged security guards remain enforced. No implicit page selection or evaluation replay."],
     ["60ac3b226baabdc75705c018ae301fdb89773f66bee9b698dd8be223e7829ed0", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant; validates live context identity and the element-reference protocol version. Only public error context changed; probe source and frame selection are unchanged."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
     ["310c1da6f6f300ce376933ce009128593452efba2f7ecb5aceb8afed362de17b", "background/tools/element-runtime", "bindContentElementRefs resolves bounded batches of original-node tokens through the packaged ISOLATED_CONTENT_INVOKE bridge; token arrays are CDP values, not code. It checks the document/frame and limits concurrent node descriptions."],
@@ -58,9 +57,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function; caller context is used only for public failure details.",
   }],
-  ["cdp-execution:4df3b05a2d61826c4452fb35c91e12b7797ae73ead57d6590eca0cd1e50282b6", {
+  ["cdp-execution:a9a24093666360443c02460390e0e6a46bb3f37e3a23a65e617a44a64e484c09", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: an explicit page reference selects the run-owned page executor; page-free scripts use the existing sandbox Worker. Nested tools never receive an implicit page. Session/run/parent identity, cancellation and packaged security guards remain intact. Both environments construct the same business DTO. Page traces stay on the CDP-held promise; a timeout reads the last five once.",
+    reason: "Unbundled createScriptTools: the same reviewed outer Worker, explicit owned-page evaluate function and private Skill bridge as the bundled factory. User function source is evaluated outside host lexical bindings; JSON arguments and trusted success/failure traces stay separate. Only success receives the valueOnly marker. No implicit page or replay fallback.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,

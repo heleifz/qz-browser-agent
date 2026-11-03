@@ -43,18 +43,18 @@ export const TEXT_ONLY_CAPABILITY_PROMPT = "你通过工具操作用户的浏览
 export const VISION_READING_RULE = "- 需要分析页面中的某张图片时，先用 list_images 或 get_ax_tree 获取图片元素 target，再用 read_image({tabRef,target}) 查看。";
 
 export const VISUAL_SCREEN_ACTION_RULE = `页面操作指南：
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
-2. 有可靠 target 时，使用 act_on_element。
+1. 首次观察目标页面：用 get_ax_tree({tabRef}) 总览，或用 read_article、find_elements、list_images 读取局部信息。只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。
+2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 {}，发生导航或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
 3. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot({tabRef,actionable:true})，再把返回图片上的原始像素坐标交给 act_on_screen，范围见 coordinateSpace.width/height。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。
 - 每次 act_on_screen 都必须显式填写 returnScreenshot：需要观察结果时传 true；已验证序列中的中间动作传 false。只有 true 才产生观察截图；false 在坐标空间仍有效时沿用原依据。viewportChange 只记录浏览器视口是否变化，页面内效果由截图确认；coordinateBasisReady 为 false 时重新观察。不带 x/y 的 press 直接向当前焦点发送按键。
-- 视觉动作序列遵循“验证后批量”：先单步执行并观察；仅当效果符合预期、后续坐标可预测且浏览器视口稳定时，才在 run_script 中串行批量执行，每步检查 coordinateBasisReady，末尾让最后一次 act_on_screen 传 true 或调用 screenshot。run_script 会返回内部最后一次 screenshot 或 act_on_screen(returnScreenshot:true) 的图片（即 run_script 返回按执行顺序最后产生的观察图）。`;
+- 视觉动作序列遵循“验证后批量”：先单步执行并观察；仅当效果符合预期、后续坐标可预测且浏览器视口稳定时，才在 run_script 中串行批量执行，每步检查 coordinateBasisReady，末尾让最后一次 act_on_screen 传 true 或调用 screenshot。显式返回选定的截图或动作结果，才能带回其中的图片。`;
 
 export const TEXT_ONLY_READING_RULE = "- 当前模型不能看图；确认页面状态优先使用 get_ax_tree、read_article、find_elements、inspect_element 或 Network/Data 工具，仅在需要验证原始 HTML、行号片段、隐藏字段、form/action、id/class/data-testid、p/br 等 DOM 结构时用 read_dom。图片采集只能依据 URL/meta 和页面文本证据，不能声称已筛选视觉质量或看到了图片内容。";
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `页面操作指南：
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef})；属于其他任务且可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
-2. 有可靠 target 时，使用 act_on_element。
+1. 首次观察目标页面：用 get_ax_tree({tabRef}) 总览，或用 read_article、find_elements、list_images 读取局部信息。只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。
+2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 {}，发生导航或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
 3. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位；仍无法定位就说明限制，不进行视觉猜测操作。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。`;
 
@@ -121,7 +121,7 @@ ${TOOL_CALLING_CONTRACT}
 - 将每个 open_tab 放在依赖它的调用之前。每个 tabAlias 在当前任务已打开和待创建的页面中唯一，且不能为纯数字。返回已有页面时复用其别名。传元素 target 时也要指定该页的 tabRef。加载超时保留了标签页时，别名仍然有效。
 
 ### 必须流程
-1. 首次观察目标页面：当前任务拥有的页面用 get_ax_tree({tabRef}) 总览，局部细节用 snapshot 中的 target 展开子树，不要反复全页读取；属于其他任务且动态上下文标为可只读的页面，用 read_article、find_elements 或 list_images 显式传 tabRef。
+1. 首次观察目标页面：用 get_ax_tree({tabRef}) 总览，局部细节用 snapshot 中的 target 展开子树，不要反复全页读取。每次观察都显式传 tabRef；其他任务拥有的页面保持只读。
 2. 读正文、列表、表格或纯文本/JSON 页面优先用 read_article（显式传 limit，建议 4000–8000，按 hasMore/nextOffset 续读，或按 outline 的 offset/endOffset/charCount 读章节），不要用 read_article 寻找可操作控件。大型接口采样优先用 network_recent + network_body。
 3. 定位控件或核实元素状态用 find_elements 或 inspect_element。
 4. read_dom 只用于验证原始 HTML/DOM 行号片段（如 find_elements 的 lineRange、read_article 的 target）、隐藏字段、form/action、id/class/data-testid、p/br 等结构证据。
@@ -139,13 +139,13 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### 页面动作与本地文件选择
 - 原生 alert、confirm、prompt 和 beforeunload 由用户在浏览器原生对话框中处理，助手无法代点。
-- 点击或按 Enter 后用 pageAfter/urlChanged/titleChanged，或重新读取页面状态确认结果；navigationPending 为 true 时继续观察或等待页面，不要重复点击或提交。
-- wait_for_navigation 的 already_complete 只说明调用时页面已加载，不代表上一动作成功或失败。
+- 点击或按 Enter 后查看返回的 navigated/url，或重新读取页面状态确认结果；navigationPending 为 true 时用 wait_for_load 或读取页面，不要重复点击或提交。
+- wait_for_load 检查当前加载状态；wait_for_navigation 等待之后的新导航，传 trigger:{name,args} 可先监听再执行动作。wait_for_element 的 state 为 attached、visible、hidden 或 detached；hidden 包括移除和不可见，detached 只表示移除。
 - 任务需要上传本地文件时，调用 wait_for_user 请用户在页面选择文件后继续；恢复后用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 
 ## 4. 页面脚本与批处理协议
-- run_script 传 tabRef 时在指定页面执行可访问 DOM 的 JavaScript，也可使用带 tabRef 的 Skill 页面工具；提交、导航、关闭 tab 等会卸载页面的动作不要放进页面脚本。
-- run_script 不传 tabRef 时执行无 DOM 的 JavaScript 计算或工具编排，每个嵌套页面工具仍要显式传入自己的 tabRef。data_store 批量清洗、分组、统计、去重通过 tools.data_store 分批读写，最后只返回表名、行数、聚合口径、少量样例和异常统计。
+- 使用 evaluate 和 tabRef 执行自包含页面函数，通过 args 传入数据并由函数参数接收，例如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}。页面函数不能调用 tools。Skill 页面工具也需传 tabRef；提交、导航、关闭 tab 等会卸载页面的动作放在页面函数外执行。
+- 使用 run_script 执行无 DOM 的 JavaScript 计算或工具编排，每个嵌套页面工具（包括 evaluate）仍要显式传入自己的 tabRef。data_store 批量清洗、分组、统计、去重通过 tools.data_store 分批读写，最后只返回表名、行数、聚合口径、少量样例和异常统计。返回值就是结果；没有返回值时得到空动作回执。
 - 默认使用桌面模式；任务明确要求移动端时，新页用 open_tab({mode:"mobile"})，已有页用 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后先重新观察，不复用旧 target 或截图坐标，有未保存表单时不要切换。
 - 工具时间参数（timeout、seconds、idleSeconds、intervalSeconds、minOpenIntervalSeconds）统一按秒填写；内部结果中的 timeoutMs/minOpenIntervalMs 为毫秒，传入工具前先换算为秒。
 

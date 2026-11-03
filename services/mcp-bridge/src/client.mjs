@@ -65,12 +65,12 @@ export async function localFetch(input, init) {
   });
 }
 
-export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch } = {}) {
+export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch, allowIncompatible = false } = {}) {
   const url = localUrl(endpoint);
   const response = await fetch(`${url.origin}/health`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new QzError("CONNECTION_UNAVAILABLE", `The qz connection health check failed (${response.status}).`);
   const health = await response.json();
-  if (health.service !== SERVICE_NAME || health.protocolVersion !== PROTOCOL_VERSION || !health.instanceId) {
+  if (health.service !== SERVICE_NAME || !health.instanceId || (!allowIncompatible && health.protocolVersion !== PROTOCOL_VERSION)) {
     throw new QzError("INCOMPATIBLE_SERVICE", "The local service is not a compatible qz installation.");
   }
   return health;
@@ -93,25 +93,10 @@ function restoreCallImages(value, blocks) {
     for (const image of owned) used.add(image);
     if (!owned.length) return item;
     owned.sort((left, right) => left.index - right.index);
-    return assignCallImages(item, owned.map(bytes));
+    return { ...item, images: owned.map(bytes) };
   });
   const leftover = tagged.filter(image => !image.id || !used.has(image));
   return { ...value, results, ...(leftover.length ? { images: leftover.map(bytes) } : {}) };
-}
-
-function assignCallImages(item, images) {
-  const itemCount = Array.isArray(item.images) ? item.images.length : 0;
-  const resultCount = item.result && typeof item.result === "object" && Array.isArray(item.result.images)
-    ? item.result.images.length : 0;
-  if (itemCount && resultCount) {
-    return {
-      ...item,
-      images: images.slice(0, itemCount),
-      result: { ...item.result, images: images.slice(itemCount, itemCount + resultCount) },
-    };
-  }
-  if (resultCount && !itemCount) return { ...item, result: { ...item.result, images } };
-  return { ...item, images };
 }
 
 export function resultValue(result) {

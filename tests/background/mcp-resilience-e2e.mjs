@@ -61,14 +61,17 @@ try {
     "the extension must resume polling after its worker is stopped without opening the panel or connection page");
 
   const { runCli } = await import("../../services/mcp-bridge/src/cli.mjs");
-  const cliConnection = await runCli(["connect", "--timeout", "10"], {
-    ensureDaemon: async () => {
-      const health = await readHealth(environment.bridge.endpoint);
-      return { endpoint: environment.bridge.endpoint, instanceId: health.instanceId, health };
-    },
-    openBrowser: () => assert.fail("a live connection must confirm browser readiness without opening a page"),
-  });
-  assert.equal(cliConnection.result.connected, true);
+  const locate = async () => {
+    const health = await readHealth(environment.bridge.endpoint);
+    return { endpoint: environment.bridge.endpoint, instanceId: health.instanceId, health };
+  };
+  const dependencies = { findDaemon: locate, ensureDaemon: locate,
+    openBrowser: () => assert.fail("connect uri must only print the URL"),
+    openConnectionBrowser: () => assert.fail("a live connection must be reused without opening a page") };
+  const cliConnection = await runCli(["connect", "uri", "--json"], dependencies);
+  assert.equal(cliConnection.result.url, `${environment.bridge.endpoint}/qz-connect`);
+  const ready = await runCli(["tasks", "--json", "--timeout", "10"], dependencies);
+  assert.ok(Array.isArray(ready.result.sessions), "a browser command must confirm readiness after idle");
   report.afterIdleCliConnect = true;
 
   const created = await call("qingzhou_create_drive_session", { title: "Resilient browser task" });

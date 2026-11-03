@@ -4,6 +4,7 @@ import { readSessionSnapshot } from "../../src/shared/session/session-recovery.j
 import { createSessionRecord, serializeConversation, transcriptFromConversation, updateTranscriptWithAgentEvent } from "../../src/shared/session/session-codec.js";
 import { createLoopAgent } from "../support/agent-provider-error-recovery-fixture.mjs";
 import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
+import { projectMessage } from "../../src/background/llm/message-projection.js";
 
 const user = (content, clientMessageId = "u1") => ({ role: "user", content, clientMessageId });
 const assistant = content => ({ role: "assistant", content });
@@ -11,6 +12,22 @@ const toolCall = {
   role: "assistant", content: null,
   tool_calls: [{ id: "tool-1", type: "function", function: { name: "lookup", arguments: '{"query":"inspect"}' } }],
 };
+
+test('conversation fallback preserves explicit execution status outside authored result data and provider wire', () => {
+  const business = { error: 'authored', code: 'BUSINESS_ERROR', message: 'Business status', ok: false };
+  for (const isError of [false, true]) {
+    const message = { role: 'tool', tool_call_id: 'tool-1', content: JSON.stringify(business), _toolIsError: isError };
+    const conversation = serializeConversation([toolCall, message]);
+    const stored = conversation.entries.at(-1).message;
+    assert.equal(stored._toolIsError, isError);
+    const recovered = transcriptFromConversation(conversation).find(entry => entry.type === 'tool');
+    assert.equal(recovered.isError, isError);
+    assert.deepEqual(recovered.result, business);
+    assert.deepEqual(projectMessage(stored, false), { role: 'tool', tool_call_id: 'tool-1', content: message.content });
+  }
+  const legacy = transcriptFromConversation([toolCall, { role: 'tool', tool_call_id: 'tool-1', content: JSON.stringify(business) }]);
+  assert.equal(legacy.find(entry => entry.type === 'tool').isError, true, 'legacy records retain their compatibility classification');
+});
 
 test("saved display history is returned unchanged while the current model conversation remains available", () => {
   const old = [user("question"), assistant("saved answer")];

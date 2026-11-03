@@ -9,7 +9,7 @@ class ToolExecutionError extends Error {
   }
 }
 
-function createHarness({ confirmUserReattach = null } = {}) {
+function createHarness({ confirmUserReattach = null, isReadOnlyAccess = () => false } = {}) {
   const detachListeners = [];
   const calls = [];
   const allowedTabs = [];
@@ -30,6 +30,7 @@ function createHarness({ confirmUserReattach = null } = {}) {
   };
   const runtime = createCdpRuntime({
     ToolExecutionError,
+    isReadOnlyAccess,
     debuggerApi,
     isRunCurrent(input) {
       livenessChecks.push(input);
@@ -584,6 +585,55 @@ for (const closeBoth of [false, true]) {
   await gate(f, runA);
   await f.runtime.sendCdp(65, "Runtime.enable", {}, runA);
   assert.equal(f.calls.filter(call => call[0] === "attach" && call[1] === 65).length, 2, "a prompt-less host re-attaches silently");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const grants = new WeakSet();
+  const f = createHarness({ isReadOnlyAccess: (_tabId, context) => grants.has(context) });
+  f.activateRun(runA); f.activateRun(runB);
+  await f.runtime.sendCdp(71, 'Page.enable', {}, runA);
+  const connection = f.runtime.getDebuggerRun(71);
+  await assert.rejects(f.runtime.sendCdp(71, 'Runtime.enable', {}, runB), { code: 'CDP_TAB_LEASE_CONFLICT' });
+  const reader = { ...runB };
+  grants.add(reader);
+  await f.runtime.withDebugger(71, async (_target, send) => {
+    await send('Accessibility.getFullAXTree');
+    assert.deepEqual(f.runtime.getDebuggerRun(71), connection, 'a read grant must not transfer the existing debugger lease');
+  }, reader);
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+  assert.deepEqual(f.runtime.getDebuggerRun(71), connection, 'reader cleanup must not detach the owner');
+  assert.equal(f.calls.filter(call => call[0] === 'attach' && call[1] === 71).length, 1);
+  f.retireRun(runB);
+  await assert.rejects(f.runtime.sendCdp(71, 'Accessibility.getFullAXTree', {}, reader), { code: 'CDP_RUN_RELEASED' });
+  await f.runtime.sendCdp(71, 'Runtime.enable', {}, runA);
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const f = createHarness(); f.activateRun(runA);
+  f.setCommandHandler(async () => { throw new Error('No tab with id: 8222.'); });
+  await assert.rejects(f.runtime.sendCdp(72, 'Page.getFrameTree', {}, { ...runA, requestedTabRef: 'checkout' }), error => {
+    assert.equal(error.code, 'SESSION_TAB_UNAVAILABLE');
+    assert.deepEqual(error.details, { tabRef: 'checkout' });
+    assert.doesNotMatch(error.message, /8222|No tab with id/);
+    assert.match(error.hint, /list_tabs/);
+    return true;
+  });
+}
+
+{
+  const grants = new WeakSet();
+  const f = createHarness({ isReadOnlyAccess: (_tabId, context) => grants.has(context) });
+  f.activateRun(runA); f.activateRun(runB);
+  const reader = { ...runB }; grants.add(reader);
+  await f.runtime.sendCdp(73, 'Accessibility.getFullAXTree', {}, reader);
+  await f.runtime.sendCdp(73, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' }, runA);
+  assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId,
+    'a first reader cannot reserve the connection against the next authorized writer');
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
+  assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId);
+  assert.equal(f.calls.filter(call => call[0] === 'attach' && call[1] === 73).length, 1);
   await f.runtime.releaseRun(runA.sessionId, runA.runId);
 }
 

@@ -8,6 +8,7 @@ import { delimiter, join } from "node:path";
 import { renderError, renderHelp, renderResult, renderInputNotice, sanitizeTerminalText } from "../../services/mcp-bridge/src/terminal.mjs";
 import { defaultShell, optionTerminator, shellArgument, shellQuote } from "../../services/mcp-bridge/src/shell.mjs";
 import { parseCommand } from "../../services/mcp-bridge/src/args.mjs";
+import { COMMANDS, commandOptions } from "../../services/mcp-bridge/src/commands.mjs";
 
 const taskId = "2d02892a-1111-4222-8333-0123456789ab";
 const task = { sessionId: taskId, title: "杭州网页研究与城市景点整理", status: "running", running: true };
@@ -35,7 +36,7 @@ function fits(text, width) {
   assert.ok(!text.endsWith("\n\n"));
 }
 
-test("help recommends direct creation, optional titles, waiting, and contextual commands", () => {
+test("help separates browser scripts from built-in agent commands and keeps their arguments explicit", () => {
   const general = renderHelp();
   assert.match(general, /create "PROMPT"/);
   assert.match(general, /--stream/);
@@ -51,11 +52,19 @@ test("help recommends direct creation, optional titles, waiting, and contextual 
   assert.match(renderHelp("send"), /--steer/);
   assert.match(renderHelp("send"), /next safe boundary/);
   assert.match(renderHelp("send"), /next run/);
-  for (const name of ["", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "stop", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
-    // General help appends the browser guide. Chrome's documented --args flag is
-    // not a qz CLI option; validate removed options only in the command reference.
-    const commandReference = renderHelp(name).split("Do not configure a qz model.")[0];
-    assert.doesNotMatch(commandReference, /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
+  assert.match(renderHelp("script"), /qz script --session ID \[FILE\|-\] \[--args JSON\]/);
+  assert.match(renderHelp("script"), /outside the page/);
+  for (const action of ["create", "list", "show", "cancel"]) assert.match(renderHelp("session"), new RegExp(`qz session ${action}`));
+  for (const name of ["", "session", "script", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
+    const commandReference = name ? renderHelp(name) : Object.values(COMMANDS).flatMap(command => command.help || []).join("\n");
+    assert.doesNotMatch(commandReference, /qz run|qz tasks (create|list|get|stop)|qz exec\b|qz tools\b|Legacy|--prompt|--tab\b|--client-id/);
+    if (name) {
+      assert.equal(commandOptions(name).includes("args"), name === "script", "only scripts accept --args");
+      if (name !== "script") {
+        assert.doesNotMatch(commandReference, /--args\b/);
+        assert.throws(() => parseCommand([name, "--args", "{}", "--help"]), error => error.code === "INVALID_ARGUMENTS");
+      }
+    }
     for (const width of [40, 80]) fits(renderHelp(name, { width }), width);
   }
 });
@@ -252,8 +261,8 @@ test("connection, install, and service results offer concise next steps", () => 
   assert.match(renderResult({ command: "status" }, { running: true, connected: false }), /browser disconnected/);
   const updateAvailable = renderResult({ command: "status" }, { running: true, connected: true, clientCount: 2, updateAvailable: true });
   assert.match(updateAvailable, /Service update available/);
-  assert.match(updateAvailable, /qz stop && qz connect/);
-  assert.match(renderResult({ command: "stop" }, { stopped: false }), /already stopped/);
+  assert.match(updateAvailable, /Compatible connections remain in use/);
+  assert.doesNotMatch(updateAvailable, /qz stop|qz connect(?! uri)/);
   assert.match(renderResult({ command: "install" }, { opened: true, url: "https://example.com" }), /Click Add to Chrome/);
 });
 

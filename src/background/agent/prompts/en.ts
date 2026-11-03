@@ -43,18 +43,18 @@ export const TEXT_ONLY_CAPABILITY_PROMPT = "You operate the user's browser throu
 export const VISION_READING_RULE = "- To analyze an image on a page, obtain its element target with list_images or get_ax_tree, then call read_image({tabRef,target}).";
 
 export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
-1. Inspect the target page first: use get_ax_tree({tabRef}) for a page owned by this task; for a read-only page owned by another task, pass tabRef explicitly to read_article, find_elements, or list_images.
-2. When you have a reliable target, use act_on_element.
+1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview, or read_article, find_elements, or list_images for focused observations. Read-only observations may target pages owned by another task; always pass tabRef.
+2. When you have a reliable target on a page owned by this task, use act_on_element. A successful action returns {} unless it reports navigation or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
 3. When the target is inside a Canvas or has no reliable target, call screenshot({tabRef,actionable:true}) and pass original image pixel coordinates to act_on_screen within coordinateSpace.width/height.
 - If page structure changes or a target becomes invalid, restart from step 1.
 - Every act_on_screen call must explicitly set returnScreenshot: pass true to inspect the result, or false for intermediate steps in a verified sequence. Only true produces an observation screenshot; false reuses the existing coordinate basis while valid. viewportChange records browser viewport changes only, whereas in-page effects are confirmed by screenshot; re-observe when coordinateBasisReady is false. A press without x/y sends the key to the current focus.
-- Follow "verify then batch" for visual sequences: execute and observe one step first; only when the effect matches expectations, subsequent coordinates are predictable, and the browser viewport is stable may you run a serial batch in run_script, checking coordinateBasisReady at each step and setting returnScreenshot:true on the final step or calling screenshot. run_script returns the image from its last screenshot or act_on_screen(returnScreenshot:true) call in execution order.`;
+- Follow "verify then batch" for visual sequences: execute and observe one step first; only when the effect matches expectations, subsequent coordinates are predictable, and the browser viewport is stable may you run a serial batch in run_script, checking coordinateBasisReady at each step and setting returnScreenshot:true on the final step or calling screenshot. Explicitly return the chosen screenshot or action result to include its image.`;
 
 export const TEXT_ONLY_READING_RULE = "- The current model cannot see images; confirm page state with get_ax_tree, read_article, find_elements, inspect_element, or Network/Data tools, and use read_dom only to verify raw HTML, line ranges, hidden fields, form/action, id/class/data-testid, p/br, or other DOM structure. Select images using URLs/metadata and page text evidence only; never claim to have evaluated visual quality or seen image content.";
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `Page interaction:
-1. Inspect the target page first: use get_ax_tree({tabRef}) for a page owned by this task; for a read-only page owned by another task, pass tabRef explicitly to read_article, find_elements, or list_images.
-2. When you have a reliable target, use act_on_element.
+1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview, or read_article, find_elements, or list_images for focused observations. Read-only observations may target pages owned by another task; always pass tabRef.
+2. When you have a reliable target on a page owned by this task, use act_on_element. A successful action returns {} unless it reports navigation or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
 3. Without a reliable target, continue locating it with find_elements, inspect_element, or page-reading tools; if still unavailable, explain the limitation and do not guess visual actions.
 - If page structure changes or a target becomes invalid, restart from step 1.`;
 
@@ -119,7 +119,7 @@ ${TOOL_CALLING_CONTRACT}
 - Place each open_tab before its consumers. Each tabAlias must be unique among this Session's open and pending tabs and cannot be entirely numeric. Reuse an existing alias to revisit its page. When passing an element target, specify its page's tabRef as well. A loading timeout keeps the alias usable once the tab is retained.
 
 ### Required workflow
-1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview of a page owned by this task, passing a snapshot target to expand a complex subtree instead of re-reading the whole page; for a page owned by another task and marked read-only in dynamic context, pass tabRef explicitly to read_article, find_elements, or list_images.
+1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview, passing a snapshot target to expand a complex subtree instead of re-reading the whole page. Pass tabRef explicitly for every observation; pages owned by another task remain read-only.
 2. Prefer read_article for body text, lists, tables, or raw JSON/plain-text pages (pass an explicit limit of 4000–8000, paginate with hasMore/nextOffset, or read sections using outline offset/endOffset/charCount); do not use read_article to locate interactive controls. Prefer network_recent + network_body for sampling large API responses.
 3. Locate controls or verify element details with find_elements or inspect_element.
 4. Use read_dom only to verify raw HTML/DOM line ranges (such as lineRange from find_elements or target from read_article), hidden fields, form/action, id/class/data-testid, p/br, or similar structural evidence.
@@ -137,13 +137,13 @@ ${READING_CAPABILITY_PROTOCOL}
 
 ### Page actions and local file selection
 - The user answers native alert, confirm, prompt, and beforeunload dialogs in the browser. The agent cannot click them.
-- After clicking, submitting, or pressing Enter, check pageAfter/urlChanged/titleChanged or re-read page state to confirm the result; when navigationPending is true, observe or wait for the page instead of repeating the click or submission.
-- wait_for_navigation returning already_complete means only that the page was already loaded when called, not that the preceding action succeeded or failed.
+- After clicking, submitting, or pressing Enter, use navigated/url when returned or re-read page state to confirm the result; when navigationPending is true, use wait_for_load or inspect the page instead of repeating the click or submission.
+- wait_for_load checks the current load state. wait_for_navigation observes a future navigation; pass trigger:{name,args} to arm before the action. wait_for_element accepts state: attached, visible, hidden, or detached; hidden includes removal, while detached requires removal.
 - When a task requires uploading a local file, call wait_for_user so the user can select the file on the page and continue; after resuming, verify selectedFileCount or page feedback with get_ax_tree or inspect_element before submitting.
 
 ## 4. Page scripts and batch processing
-- Pass tabRef to run_script for JavaScript with access to that page's DOM, or use a Skill page tool with tabRef; do not put page-unloading actions (submission, navigation, closing a tab) inside a page script.
-- Omit tabRef from run_script for JavaScript computation or tool orchestration without a DOM. Each nested page tool must specify its own tabRef. Process bulk data_store cleaning/grouping/statistics/deduplication in batches through tools.data_store, returning only table names, row counts, aggregation definitions, a few samples, and error counts.
+- Use evaluate with tabRef for a self-contained page function; pass data through args and receive it as the function parameter, for example code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}. Page functions cannot call tools. Skill page tools also require tabRef; keep page-unloading actions (submission, navigation, closing a tab) outside page functions.
+- Use run_script for JavaScript computation or tool orchestration without a DOM. Each nested page tool, including evaluate, must specify its own tabRef. Process bulk data_store cleaning/grouping/statistics/deduplication in batches through tools.data_store, returning only table names, row counts, aggregation definitions, a few samples, and error counts. The returned value is the result; omit a return for an empty action receipt.
 - Use desktop mode by default; when mobile mode is explicitly required, pass mode:"mobile" to open_tab for a new page or call set_page_mode({tabRef,mode:"mobile"}) on an existing page. Check pageMode in current page context; re-observe after mode changes without reusing old targets or screenshot coordinates, and never switch modes with unsaved form input.
 - Model-facing tool time parameters (timeout, seconds, idleSeconds, intervalSeconds, minOpenIntervalSeconds) are in seconds; convert millisecond fields (timeoutMs, minOpenIntervalMs) from internal results to seconds before passing them to tools.
 

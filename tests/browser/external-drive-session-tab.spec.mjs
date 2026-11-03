@@ -123,8 +123,8 @@ test("the task list hides the external drive tab until a drive session exists", 
   await expect(page.locator(".welcome-subtitle")).toBeHidden();
   await expect(page.locator("#drive-welcome")).toBeVisible();
   await expect(page.locator("#drive-welcome h2")).toHaveText("由外部 agent 直接操作");
-  await expect(page.locator("#drive-welcome-command")).toHaveText("npx qz-browser-agent@latest connect");
+  await expect(page.locator("#drive-welcome-command")).toHaveText("npx qz-browser-agent@latest connect uri");
   await page.locator("#drive-welcome-copy").click();
-  await expect.poll(() => page.evaluate(() => window.__copiedDriveCommand)).toBe("npx qz-browser-agent@latest connect");
+  await expect.poll(() => page.evaluate(() => window.__copiedDriveCommand)).toBe("npx qz-browser-agent@latest connect uri");
   await expect(page.locator("#drive-welcome-copy")).toHaveClass(/is-confirmed/);
 });

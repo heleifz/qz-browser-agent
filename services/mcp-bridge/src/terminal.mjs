@@ -483,16 +483,12 @@ export function renderResult(parsed, result, options = {}) {
       out.line("Service upgrade required for browser pairing.", "waiting");
       out.line(result.hint);
     } else if (result?.updateAvailable) {
-      out.line("Service update available. Restart when your current work is finished:", "waiting");
-      out.command("qz stop && qz connect");
-    } else if (!result?.connected) out.command("qz connect");
+      out.line("Service update available. Compatible connections remain in use.", "waiting");
+    } else if (!result?.connected) out.command("qz connect uri");
   } else if (command === "install") {
     out.line(result?.opened ? "Chrome Web Store opened" : "Install qz from the Chrome Web Store", "accent");
     if (!result?.opened) out.line(result?.url);
-    out.line("Click Add to Chrome, then connect:"); out.command("qz connect");
-  } else if (command === "stop") {
-    out.line(result?.stopped ? "Local service stopped" : "Local service is already stopped", "accent");
-    out.command("qz connect");
+    out.line("Click Add to Chrome, then create a session:"); out.command('qz session create --title "Browser task"');
   } else {
     out.line(JSON.stringify(result ?? null, null, 2));
   }
@@ -507,13 +503,18 @@ export function renderHelp(topic = "", options = {}) {
     for (const detail of details) { out.line(); out.line(detail, detail.startsWith("qz ") ? "accent" : undefined); }
   } else {
     out.line("qz · Your browser, from the terminal", "accent");
-    out.line("Run tasks with the qz browser agent, manage results, and connect via MCP.");
+    out.line("Drive your browser with sessions and scripts, or delegate a task to the built-in agent.");
     out.line();
-    for (const { help, summary: description } of Object.values(COMMANDS)) {
-      if (!help) continue;
-      const name = help[0].replace(/^qz /, "").replace(/ \[.*$/, "");
-      if (out.width >= 64) out.line(`  ${pad(name, 23)} ${description}`);
-      else { out.command(`qz ${name}`); out.line(`    ${description}`, "muted"); }
+    const entries = Object.entries(COMMANDS);
+    for (const direct of [true, false]) {
+      out.line(direct ? "Browser scripts" : "Connection, built-in agent and saved results", "accent");
+      for (const [command, { help, summary: description }] of entries) {
+        if (!help || (["session", "script"].includes(command)) !== direct) continue;
+        const name = help[0].replace(/^qz /, "").replace(/ \[.*$/, "");
+        if (out.width >= 64) out.line(`  ${pad(name, 23)} ${description}`);
+        else { out.command(`qz ${name}`); out.line(`    ${description}`, "muted"); }
+      }
+      out.line();
     }
     out.line(); out.command('qz create "Summarize this page." --stream');
     out.command('qz create "Compare these tabs." --title Research --wait');

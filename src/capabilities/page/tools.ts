@@ -1,7 +1,7 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { isElementReply, createElementObservation, type ElementObservation, type ElementReply } from "#sdk/shared/browser";
+import { isElementReply, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
 import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
@@ -153,11 +153,12 @@ async function observeElementNavigation(tabId: number, pageBefore: PageState, pr
   guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>) {
   const { pageBefore: dispatchPage, pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
   const delta = pageStateDelta(dispatchPage, pageAfter);
+  const navigated = delta.urlChanged || documentChanged === true
+    || (navigationPending || navigationStarted === null ? null : documentChanged ?? (navigationStarted ? null : false));
+  commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId });
   return {
-    pageDelta: { ...delta, navigationPending,
-      navigated: delta.urlChanged || documentChanged === true
-        || (navigationPending || navigationStarted === null ? null : documentChanged ?? (navigationStarted ? null : false)) },
-    observedNavigation: commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId }),
+    ...(navigated === true ? { navigated: true, url: pageAfter.url } : {}),
+    ...(navigationPending ? { navigationPending: true } : {}),
   };
 }
 const keyboard = createCdpKeyboard({ sendCdp, ToolExecutionError });
@@ -311,8 +312,7 @@ registerTool({
     return action === "click" || (action === "fill" && args.submit === true)
       || (action === "press" && ["enter", "return", "space"].includes(key));
   } },
-  effects: (_args, result) => result && typeof result === "object"
-    && (("navigated" in result && result.navigated === true) || ("href" in result && Boolean(result.href)) || ("url" in result && Boolean(result.url)))
+  effects: (_args, result) => result && typeof result === "object" && "navigated" in result && result.navigated === true
     ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("actOnElementDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
@@ -342,27 +342,11 @@ registerTool({
     const ref = await resolveElementReference(tabId, { target, index }, context);
     const selector = ref.selector;
     index = ref.index;
-    let resolvedTarget = ref.target || elementTargetForSelector(selector);
+    const resolvedTarget = ref.target || elementTargetForSelector(selector);
     if (!ref.tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef for the page containing the element.", { target: resolvedTarget });
     tabId = ref.tabId;
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
-    let observedElement: ElementObservation | undefined;
-    const actionElement = (candidate: unknown, original = true): ElementObservation | undefined => {
-      if (!isElementReply(candidate)) return undefined;
-      const handle = original ? resolvedTarget : elementTargetForSelector(candidate.selector);
-      return createElementObservation(candidate, handle);
-    };
-    const originalClickTarget = (reply: ElementReply) => !isElementReply(reply.element)
-      || !isElementReply(reply.originalElement) || reply.element.selector === reply.originalElement.selector;
-    const contentOutcome = (reply: ElementReply) => ({
-      action: normalizedAction, target: resolvedTarget,
-      clicked: reply.clicked, filled: reply.filled,
-      submitted: reply.submitted, checked: reply.checked, selected: reply.selected, pressed: reply.pressed,
-      key: reply.key, href: reply.href, navigated: reply.navigated, scrolledTo: reply.scrolledTo,
-      element: actionElement(reply.element, normalizedAction !== "click" || originalClickTarget(reply)),
-      originalElement: actionElement(reply.originalElement),
-    });
     const fillToken = normalizedAction === "fill" && ref.uid
       ? `${ref.uid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : "";
     if (ref.uid) {
@@ -385,13 +369,17 @@ registerTool({
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction, resolvedTarget);
-    // Bind the observed node before the action can navigate or replace it. Never rebind
-    // an action's old summary against a new document after the side effect.
-    if (!ref.uid && inspected._elementRef) {
-      const described = await addElementTargetsToFindResult(inspected, tabId, context, ref.ref);
-      if (described && typeof described === 'object') observedElement = described as ElementObservation;
-    } else observedElement = createElementObservation(inspected, resolvedTarget);
-    resolvedTarget = observedElement?.target || resolvedTarget;
+    const complete = (navigation: Record<string, unknown> = {}, fill?: unknown) => {
+      const richText = asRecord(asRecord(fill).richText);
+      return bindToolResultPresentation({ ...navigation, ...(richText.warning ? {
+        confirmationRequired: true, hint: "Verify the editor saved the value before continuing.",
+      } : {}) }, {
+        _display: { elementAction: {
+          element: { role: inspected.role, name: inspected.name, text: inspected.text },
+          structure: richText.structure || asRecord(fill).structure,
+        } },
+      });
+    };
 
     if (normalizedAction === "click") {
       const pageBefore = await getTabPageState(tabId);
@@ -426,19 +414,7 @@ registerTool({
           const observation = await beginPageNavigationObservation(tabId, _signal);
           try {
             await chrome.tabs.update(tabId, { url: navigationUrl });
-            const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
-            return {
-              action: "click",
-              target: resolvedTarget,
-              index,
-              clickDispatched: false,
-              method: "href_navigation",
-              href: navigationUrl,
-              ...pageDelta,
-              ...(observedNavigation ? { observedNavigation } : {}),
-              element: actionElement(resolved.element || current, originalClickTarget(resolved)),
-              originalElement: actionElement(inspected),
-            };
+            return complete(await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation));
           } finally { observation.dispose(); }
         }
         if (resolved.resolvedSelector) {
@@ -503,7 +479,7 @@ registerTool({
               viewport: await readPageViewport(send),
             });
             let geometry = await readGeometry();
-            // The pre-scroll inspection stays on originalElement when the page has to move.
+            // Retain the pre-scroll geometry while preparing the frame for dispatch.
             applyFramePageViewport(inspected, geometry.origin, geometry.viewport);
             applyFramePageViewport(current, geometry.origin, geometry.viewport);
             if (framePointMissesPage(current, geometry.origin, geometry.viewport)) {
@@ -565,43 +541,22 @@ registerTool({
         }
         // Default actions can submit or navigate even when an earlier page listener
         // hid every pointer event. Keep the receipt alive through this bounded observation.
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
+        const navigation = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation!);
         const receipt = receiptId ? await readPageInputReceipt(tabId, receiptId) : null;
         receiptId = "";
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
-        if (!pageInputDelivered({ receipt, committed: pageDelta.navigated === true })) {
+        if (!pageInputDelivered({ receipt, committed: navigation.navigated === true })) {
           return inputNotDelivered({ action: "click", target: resolvedTarget, index });
         }
-        return {
-          action: "click",
-          target: resolvedTarget,
-          index,
-          clickDispatched: true,
-          inputDelivered: true,
-          method: pointSelector !== selector ? "cdp_resolved" : "cdp",
-          href: current.href || resolved?.href || undefined,
-          ...pageDelta,
-          ...(observedNavigation ? { observedNavigation } : {}),
-          element: actionElement(current, !resolved || originalClickTarget(resolved)),
-          originalElement: current !== inspected ? actionElement(inspected) : undefined,
-        };
+        return complete(navigation);
       } catch (err) {
         rethrowStaleElement(err);
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
         if (frameId || dispatched || touchInput || isCdpFallbackForbiddenError(err)) throw err;
         observation ??= await beginPageNavigationObservation(tabId, _signal);
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
-      if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
-        const { pageDelta, observedNavigation } = await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation);
-        return {
-          ...contentOutcome(fallback),
-          index,
-          clickDispatched: fallback.error ? false : Boolean(fallback.clicked || fallback.navigated),
-          method: fallback.error ? "content_failed" : "content_fallback",
-          cdpError: err instanceof Error ? err.message : String(err),
-          ...pageDelta,
-          ...(observedNavigation ? { observedNavigation } : {}),
-        };
+        if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
+        return complete(await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation));
       } finally {
         observation?.dispose();
         if (receiptId) await readPageInputReceipt(tabId, receiptId);
@@ -668,10 +623,7 @@ registerTool({
           const navigation = pageBefore && guardrails && observation
             ? await observeElementNavigation(tabId, pageBefore, null, guardrails, observation) : null;
           assertActive();
-          return { ...identity, filled: true, value: actual.value, fill, submitDispatched: submit,
-            method: textInput ? "cdp" : "content", element: actionElement(actual),
-            ...(navigation ? { ...navigation.pageDelta,
-              ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
+          return complete(navigation || {}, fill);
         } finally { observation?.dispose(); }
       }, context);
     }
@@ -682,7 +634,7 @@ registerTool({
       if (inspected.tag !== "input" || !["checkbox", "radio"].includes(String(inspected.type))) {
         return { ...toolError("NOT_CHECKABLE_ELEMENT", t("elementNotCheckable"), { hint: "Use find_elements to choose a checkbox or radio target.", details: identity }) };
       }
-      if (inspected.checked === desired) return { ...identity, checked: desired, changed: false, element: actionElement(inspected) };
+      if (inspected.checked === desired) return complete();
       if (inspected.type === "radio" && !desired) {
         return { ...toolError("ELEMENT_CHECK_STATE_MISMATCH", t("radioCannotBeUnchecked"), { hint: "Select another radio option to change this group.", details: identity }) };
       }
@@ -695,7 +647,7 @@ registerTool({
         if (current.tag !== "input" || current.type !== inspected.type) {
           return { ...toolError("NOT_CHECKABLE_ELEMENT", t("elementNotCheckable"), { hint: "Use find_elements to choose a checkbox or radio target.", details: identity }) };
         }
-        if (current.checked === desired) return { ...identity, checked: desired, changed: false, element: actionElement(current) };
+        if (current.checked === desired) return complete();
         const clickTarget = !current.disabled && isElementReply(current.element) ? current.element : current;
         if (!clickPointReady(clickTarget)) return clickNotReadyResult({ target: resolvedTarget, selector, index,
           inspection: clickTarget, originalInspection: current, resolved: null }) as Record<string, unknown>;
@@ -728,7 +680,7 @@ registerTool({
         if (actual.tag !== "input" || actual.type !== inspected.type || actual.checked !== desired) return { ...toolError("ELEMENT_CHECK_STATE_MISMATCH", t("elementCheckStateMismatch"), {
           hint: "Inspect the target’s checked state before retrying.", details: { ...identity, checked: actual.checked },
         }) };
-        return { ...identity, checked: desired, changed: true, method: "cdp", inputDelivered: true, element: actionElement(actual) };
+        return complete();
       }, context);
     }
 
@@ -746,13 +698,8 @@ registerTool({
         observation ??= await beginPageNavigationObservation(tabId!, _signal);
         assertActive();
       };
-      const finishPress = async (result: Record<string, unknown>) => {
-        const navigation = pageBefore && guardrails && observation
-          ? await observeElementNavigation(tabId!, pageBefore, null, guardrails, observation) : null;
-        return { ...result,
-          ...(navigation ? { ...navigation.pageDelta,
-            ...(navigation.observedNavigation ? { observedNavigation: navigation.observedNavigation } : {}) } : {}) };
-      };
+      const finishPress = async () => complete(pageBefore && guardrails && observation
+        ? await observeElementNavigation(tabId!, pageBefore, null, guardrails, observation) : {});
       let dispatched = false;
       try {
         let delivered = !inspected.clickablePoint;
@@ -783,29 +730,22 @@ registerTool({
           }
         }, context);
         if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, index, key: pressedKey });
-        const result = { action: "press", target: resolvedTarget, index, key: pressedKey, pressed: true, method: "cdp", inputDelivered: true, element: actionElement(inspected) };
-        return observeNavigation ? await finishPress(result) : result;
+        return await finishPress();
       } catch (err) {
         rethrowStaleElement(err);
         assertActive();
         if (dispatched || frameId || isCdpFallbackForbiddenError(err)) throw err;
         if (observeNavigation) await startObservation();
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound, context);
-      if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
-        const result = { ...contentOutcome(fallback), index, method: fallback.error ? "content_failed" : "content_fallback", cdpError: err instanceof Error ? err.message : String(err), element: actionElement(fallback.element || inspected) };
-        return observeNavigation ? await finishPress(result) : result;
+        if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
+        return await finishPress();
       } finally { observation?.dispose(); }
     }
 
     const contentAction = async () => {
       const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
       if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
-      return {
-        ...contentOutcome(fallback),
-        index,
-        method: fallback.error ? "content_failed" : "content",
-        element: actionElement(fallback.element || inspected),
-      };
+      return complete();
     };
     return contentAction();
     }

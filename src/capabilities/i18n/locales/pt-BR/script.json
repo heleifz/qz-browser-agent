@@ -6,6 +6,7 @@
   "script.executeCode": "Executar código",
   "script.executePageScript": "Executar script da página",
   "script.executeScript": "Executar script",
+  "script.listTools": "Listar ferramentas",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "O contexto JavaScript da página não está disponível. run_script só executa no contexto real da página; não usou um ambiente isolado como alternativa.",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "O script clicou, enviou dados, navegou ou fechou a aba atual, o que pode descarregar a página. run_script bloqueia essas ações.",
   "script.theScriptPageWaitOrNestedToolCallTimed": "O script, a espera da página ou uma chamada aninhada de ferramenta excedeu o tempo limite. Verifique esperas sem limite, solicitações pendentes e seletores sem correspondência.",

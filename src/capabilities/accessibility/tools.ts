@@ -780,7 +780,7 @@ registerTool({
     required: ["tabRef"],
   } as const; },
   argumentAliases: { root: "target", selector: "target" },
-  page: "owned",
+  page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
@@ -797,7 +797,7 @@ registerTool({
     let rootRef: Awaited<ReturnType<typeof resolveElementReference>> | null = null;
 
     if (requestedRoot !== "root") {
-      rootRef = await resolveElementReference(tabId, { target: requestedRoot }, context);
+      rootRef = await resolveElementReference(tabId, { target: requestedRoot, readOnly: true }, context);
       targetTabId = rootRef.tabId;
       resolvedRoot = rootRef.target || requestedRoot;
       overviewSelector = rootRef.selector || "";

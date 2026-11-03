@@ -152,7 +152,7 @@ function callsSince(mark) {
 }
 
 describe("element uid routing", { concurrency: 1 }, () => {
-for (const action of ["fill", "click"]) test(`CSS ${action} reuses its registered uid for a deep DOM element summary`, async () => {
+for (const action of ["fill", "click"]) test(`CSS ${action} returns no deep DOM path; observation supplies the registered identity`, async () => {
   const selector = 'input[placeholder="请输入终点"]';
   const summarySelector = `body.body-container > ${Array.from({ length: 25 }, (_, index) => `div.ant-layout:nth-of-type(${index + 1})`).join(" > ")} > input.ant-input`;
   state = { value: "old", checked: false, kind: action === "fill" ? "fill" : "button",
@@ -160,14 +160,15 @@ for (const action of ["fill", "click"]) test(`CSS ${action} reuses its registere
   const result = await tools.get("act_on_element").execute({ tabId: 5, target: `css:${selector}`, action,
     ...(action === "fill" ? { value: "曲院风荷" } : {}) }, undefined, context);
 
-  assert.match(result.target, /^uid:t5\.[a-z0-9]+\.\d+$/);
-  assert.equal(result.element.target, result.target, "the post-action absolute CSS describes the already registered node");
-  assert.equal(action === "fill" ? result.filled : result.clickDispatched, true);
-  if (action === "fill") assert.equal(result.element.value, "曲院风荷");
-  else assert.equal(result.originalElement.target, result.target);
-  const registered = await element.resolveElementReference(5, { target: result.element.target }, context);
+  assert.deepEqual(result, {});
+  if (action === "fill") assert.equal(state.value, "曲院风荷");
+  else assert.equal(state.checked, true, "the dispatched click reaches the fixture node");
+  const observed = await tools.get("inspect_element").execute({ tabId: 5, target: `css:${selector}` }, undefined, context);
+  assert.match(observed.target, /^uid:t5\.[a-z0-9]+\.\d+$/);
+  const registered = await element.resolveElementReference(5, { target: observed.target }, context);
   assert.equal(registered.ref.backendNodeId, 42);
-  assert.equal(registered.ref.selector, selector);
+  assert.equal(registered.ref.selector, summarySelector);
+  assert.equal(Object.hasOwn(observed, "selector"), false, "the deep path remains private to the registered node");
 });
 
 test("selector-only uid click, fill, check, and read use the stored selector", async () => {
@@ -180,22 +181,21 @@ test("selector-only uid click, fill, check, and read use the stored selector", a
   state = { value: "old", checked: false, kind: "button" };
 
   const clicked = await tools.get("act_on_element").execute({ tabId: 5, target: clickTarget, action: "click" }, undefined, context);
-  assert.equal(clicked.clickDispatched, true);
-  assert.equal(clicked.code, undefined);
+  assert.deepEqual(clicked, {});
   assert.equal(callsSince(before).some(call => call.action === "inspectElement" && call.selector === "button.save" && call.index === 1 && call.via === "content"), true);
 
   state.kind = "fill";
   state.value = "old";
   const filled = await tools.get("act_on_element").execute({ tabId: 5, target: fillTarget, action: "fill", value: "next" }, undefined, context);
-  assert.equal(filled.filled, true);
-  assert.equal(filled.value, "next");
+  assert.deepEqual(filled, {});
+  assert.equal(state.value, "next");
   assert.equal(callsSince(before).some(call => call.action === "prepareElementFill" && call.selector === "input.name" && call.index === 2), true);
 
   state.kind = "check";
   state.checked = false;
   const checked = await tools.get("act_on_element").execute({ tabId: 5, target: checkTarget, action: "check" }, undefined, context);
-  assert.equal(checked.checked, true);
-  assert.equal(checked.changed, true);
+  assert.deepEqual(checked, {});
+  assert.equal(state.checked, true);
   assert.equal(callsSince(before).some(call => call.action === "resolveCheckTarget" && call.selector === "input.agree" && call.index === 3), true);
 
   state.kind = "button";
@@ -275,7 +275,8 @@ test("one node binding covers every step of a fill", async () => {
   const beforeNodes = nodeMethods.filter(method => method === "DOM.resolveNode").length;
   const before = contentCalls.length;
   const filled = await tools.get("act_on_element").execute({ tabId: 5, target, action: "fill", value: "kept" }, undefined, context);
-  assert.equal(filled.filled, true);
+  assert.deepEqual(filled, {});
+  assert.equal(state.value, "kept");
   const resolveCount = nodeMethods.filter(method => method === "DOM.resolveNode").length - beforeNodes;
   assert.equal(resolveCount, 1, "the action keeps the node resolved at the start");
   assert.equal(callsSince(before).some(call => call.via === "content"), false);
@@ -290,9 +291,9 @@ test("an action preserves its supplied UID instead of registering its inspection
     summarySelector: "body > main > section > input.destination", inspections: 0 };
   const before = nodeMethods.length;
   const result = await tools.get("act_on_element").execute({ tabId: 5, target, action: "fill", value: "曲院风荷" }, undefined, context);
-  assert.equal(result.filled, true);
-  assert.equal(result.target, target);
-  assert.equal(result.element.target, target);
+  assert.deepEqual(result, {});
+  assert.equal(state.value, "曲院风荷");
+  assert.equal((await element.resolveElementReference(5, { target }, context)).ref.backendNodeId, 77);
   assert.equal(nodeMethods.slice(before).includes("DOM.describeNode"), false,
     "an existing UID already identifies the node and must not be rebound into another snapshot");
 });

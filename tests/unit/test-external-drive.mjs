@@ -12,6 +12,7 @@ import {
   prepareDriveToolCall,
   projectDriveResult,
   runDriveCalls,
+  getDriveToolTraces,
 } from "../../src/background/mcp/external-drive.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
 import { toolT as scriptToolT } from "../../src/capabilities/script/tool-messages.js";
@@ -23,9 +24,11 @@ import { createSessionRepository } from "../../src/background/session/repository
 import { tabReferenceError } from "../../src/background/tools/tab-reference.js";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 import { normalizeRuntimeSessionId, requireExplicitSessionId } from "../../src/background/session/id.js";
+import { markToolValue, toolError } from "../../src/shared/contracts/tool-error.js";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
-globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
-const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
+globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" }, runtime: { getURL: path => path }, storage: { local: createMemoryStorage() } };
+const { getToolSchemas, createToolRuntime } = await import("../../src/background/tools/runtime.js");
 
 test("drive titles and request sentences stay on the existing tool", () => {
   assert.equal(driveGroupTitle("qz-cli"), "轻舟 · CLI");
@@ -82,7 +85,7 @@ test("drive titles and request sentences stay on the existing tool", () => {
   });
 });
 
-test("direct-drive run_script permits explicit pages and no-page orchestration", () => {
+test("direct-drive discovery separates outer orchestration from explicit page evaluation", () => {
   assert.equal(isDriveToolDefault("open_tab"), true);
   assert.equal(isDriveToolDefault("list_skills"), true);
   assert.equal(isDriveToolDefault("use_tab"), false);
@@ -99,19 +102,11 @@ test("direct-drive run_script permits explicit pages and no-page orchestration",
   assert.equal(isDriveToolForbidden("get_working_tab"), true);
   assert.equal(isDriveToolForbidden("wait_for_user"), true);
   assert.equal(isDriveToolForbidden("ask_user"), true);
-  const page = prepareDriveToolCall("run_script", { tabRef: " page ", timeout: 5, code: "async () => 1" });
-  assert.equal(page.ok, true);
-  assert.equal(page.args.tabRef.trim(), "page");
-  assert.equal(Object.hasOwn(page.args, "target"), false);
-  const orchestration = prepareDriveToolCall("run_script", { timeout: 1, code: "async () => 1" });
+  const page = getToolSchemas().find(schema => schema.function.name === "evaluate").function;
+  assert.deepEqual(page.parameters.required, ["tabRef", "code"]);
+  const orchestration = prepareDriveToolCall("run_script", { timeout: 1, code: "return 1;" });
   assert.equal(orchestration.ok, true);
   assert.equal(Object.hasOwn(orchestration.args, "tabRef"), false);
-  for (const legacy of [{ target: "inner" }, { scope: "inner" }]) {
-    const prepared = prepareDriveToolCall("run_script", { ...legacy, tabRef: "page", timeout: 1, code: "async () => 1" });
-    assert.equal(prepared.ok, true);
-    assert.equal(prepared.args.tabRef, "page");
-    assert.equal(prepared.args.tabRef, "page");
-  }
   withLanguage("zh-CN", () => {
     const zh = prepareDriveToolCall("navigate", {});
     assert.equal(zh.ok, false);
@@ -228,7 +223,75 @@ test("projection preserves business fields while separating screenshot bytes", (
   assert.deepEqual(projected.images, [{ mimeType: "image/png", data: "aGk=" }]);
 });
 
-test("drive caps large results without rewriting public business data", () => {
+test("script results preserve large values and authored protocol-like keys", () => {
+  const text = "x".repeat(DRIVE_RESULT_CHAR_LIMIT + 1);
+  for (const result of [text, { code: "AUTHORED", message: text, error: "value", ok: false,
+    _image: "data:image/png;base64,aGk=", _display: { result: "authored" } }, [text]]) {
+    const projected = projectDriveResult(markToolValue(result), { preserveResult: true });
+    assert.equal(projected.value, result);
+    assert.deepEqual(projected.images, []);
+  }
+});
+
+test("drive script projection carries explicit images from a primitive call collector", async () => {
+  const holders = [], settled = [];
+  const result = await runDriveCalls([0, 1].map(index => ({ id: String(index), name: 'run_script', args: { index } })), {
+    signal: new AbortController().signal,
+    context: { resultPresentation: { _display: { parent: true } } },
+    getModelPolicy: () => ({ preserveResult: true }),
+    getBatchTabPolicy: () => null,
+    execute: async (_name, { index }, _signal, context) => {
+      assert.deepEqual(context.resultPresentation, {});
+      holders.push(context.resultPresentation);
+      Object.assign(context.resultPresentation, { _display: { script: { valueOnly: true, trace: [index] } },
+        ...(index === 0 ? { _images: [{ mimeType: 'image/png', data: 'aGk=' }] } : {}) });
+      return index;
+    },
+    onSettled: call => settled.push(call),
+  });
+  assert.equal(new Set(holders).size, 2);
+  assert.deepEqual(result.results.map(call => call.result), [0, 1]);
+  assert.deepEqual(result.results[0].images, [{ mimeType: 'image/png', data: 'aGk=' }]);
+  assert.equal(Object.hasOwn(result.results[1], 'images'), false);
+  assert.deepEqual(settled.map(call => call.resultPresentation._display.script.trace), [[0], [1]]);
+  assert.ok(result.results.every(call => !Object.hasOwn(call, 'resultPresentation')), 'host collectors never become wire fields');
+});
+
+test('batch traces come from each trusted collector, including failures, without interpreting business keys', async () => {
+  const business = markToolValue({ trace: ['authored'], traces: ['authored plural'],
+    _display: { script: { trace: ['forged'] } }, details: { trace: ['also forged'] } });
+  const full = Array.from({ length: 8 }, (_, index) => ({ level: index % 2 ? 'warn' : 'trace', message: `line-${index}` }));
+  const failure = toolError('SCRIPT_EVALUATION_FAILED', 'Failed after logging.', { details: { trace: full.slice(-5) } });
+  const seen = [];
+  const result = await runDriveCalls(['primitive', 'business', 'failure', 'thrown', 'timeout'].map(id => ({ id, name: 'run_script', args: { id } })), {
+    signal: new AbortController().signal, getModelPolicy: () => ({ preserveResult: true }),
+    execute: async (_name, { id }, _signal, context) => {
+      if (id === 'business') return business;
+      if (id === 'timeout') return toolError('TOOL_TIMEOUT', 'The script timed out.', { details: { trace: full.slice(-5) } });
+      context.resultPresentation._display = { script: { valueOnly: id !== 'failure', trace: full } };
+      if (id === 'thrown') throw Object.assign(new Error('Host failed.'), { code: 'HOST_FAILURE' });
+      return id === 'failure' ? failure : 7;
+    },
+    onSettled: event => seen.push(event),
+  });
+  const [primitive, authored, failed, thrown, timeout] = result.results;
+  assert.equal(primitive.result, 7);
+  assert.deepEqual(primitive.traces, full.map(row => row.message));
+  assert.equal(authored.result, business);
+  assert.equal(Object.hasOwn(authored, 'traces'), false);
+  assert.deepEqual(getDriveToolTraces(business), []);
+  assert.equal(failed.isError, true);
+  assert.deepEqual(failed.traces, full.map(row => row.message));
+  assert.deepEqual(failed.result.details.trace, full.slice(-5), 'transport traces do not rewrite the ToolError');
+  assert.equal(thrown.isError, true);
+  assert.deepEqual(thrown.traces, full.map(row => row.message));
+  assert.equal(seen[3].resultPresentation._display.script.valueOnly, undefined, 'a thrown failure cannot acquire a successful value envelope');
+  assert.deepEqual(timeout.traces, full.slice(-5).map(row => row.message), 'hard timeout only has its existing last five entries');
+  const error = bindToolResultPresentation(toolError('TEST_FAILURE', 'failed'), { _display: { script: { trace: ['trusted'] } } });
+  assert.deepEqual(getDriveToolTraces(error, {}, true), ['trusted']);
+});
+
+test("drive caps large tool observations without rewriting public business data", () => {
   const tabs = { tabs: [{ tabRef: "form", title: "Form", url: "https://example.test", active: true }], count: 1, foreign: 0 };
   assert.deepEqual(projectDriveResult(tabs).value, tabs);
   const body = { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) };
@@ -1072,7 +1135,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     assert.ok(!watched.some(tool => ['use_tab', 'get_working_tab'].includes(tool.name)));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
     const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
-    assert.equal(runScript.signature, "run_script({timeout:number, tabRef?:integer|string, args?:object, mutatesPage?:boolean, code:string})");
+    assert.equal(runScript.signature, "run_script({timeout?:number, args?:any, code:string})");
     assert.doesNotMatch(runScript.signature, /\b(?:target|scope)\b/);
     const ax = driveToolSignature(catalog.find(tool => tool.name === "get_ax_tree"));
     assert.match(ax.signature, /scope\?:"viewport"\|"full"/);
@@ -1150,12 +1213,8 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       isTerminalRuntimeForRun: () => false,
       canManageSessions: async () => true,
       buildRunProfile: async () => ({}),
-      getRunToolContext: async (_sessionId, runId) => ({ externalDrive: runId === `opaque-${language}` }),
-      toolRuntime: {
-        resolveDefinition: () => ({ behavior: {} }),
-        getSchemas: () => schemas,
-        execute: async () => ({ ok: true }),
-      },
+      getRunToolContext: async (_sessionId, runId) => ({ language, externalDrive: runId === `opaque-${language}` }),
+      toolRuntime: createToolRuntime(),
       collectArtifacts: () => [],
     });
     const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: `opaque-${language}` });

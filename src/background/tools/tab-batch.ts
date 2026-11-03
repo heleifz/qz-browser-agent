@@ -1,5 +1,5 @@
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
-import type { ToolDependencies } from "./tool-scheduler.js";
+import { independentToolPolicy, type ToolDependencies } from "./tool-scheduler.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { ToolExecutionError } from "./arguments.js";
@@ -53,31 +53,35 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       entry.error = error("conflicting_target", ref);
     }
   }
-  const independent = (entry: Entry) => !entry.error && (entry.policy?.kind === "create"
-    ? entry.policy.parallel === true
-    : entry.policy?.kind === "target" && (entry.policy.observation || entry.policy.parallel === true)
-      && (entry.args.tabRef != null || !entry.policy.implicit));
+  const independent = (entry: Entry) => !entry.error && independentToolPolicy(entry.policy,
+    entry.policy?.kind === "target" ? entry.args.tabRef != null || !entry.policy.implicit
+      : entry.args.tabId != null || Object.hasOwn(entry.args, "tabRef"));
+  const passive = (entry: Entry) => entry.policy?.kind === "observe" || entry.policy?.kind === "create" && entry.policy.passive === true;
   const edges = new Map<T, ToolDependencies<T>>(), lanes = new Map<unknown, T>();
+  const executionLanes = new Map<T, string | number | object | null>();
   let barrier: T | undefined, windowAnchor: T | undefined;
   for (const entry of entries) {
     const producer = parents.get(entry);
     // A uid-targeted policy carries its registered tab; everything else uses the requested tab.
     const policyTab = entry.policy?.kind === "target" ? entry.policy.tabId : undefined;
-    const lane = entry.policy?.kind === "create" ? entry : producer || policyTab || targets.get(entry) || entry.args.tabId;
+    const lane = entry.policy?.kind === "create" && !entry.policy.targeted ? entry : producer || policyTab || targets.get(entry) || entry.args.tabId;
+    executionLanes.set(entry.item, typeof lane === "number" || typeof lane === "string" || lane && typeof lane === "object" ? lane : null);
     const local = independent(entry);
     edges.set(entry.item, {
-      execution: local && lanes.has(lane) ? [lanes.get(lane)!] : [],
+      execution: local && !passive(entry) && lanes.has(lane) ? [lanes.get(lane)!] : [],
       commit: !local ? items.slice(0, entry.index) : [
         ...(barrier === undefined ? [] : [barrier]),
         // An earlier numeric or uid target can select a different window. New sibling aliases share its anchor.
         ...(entry.policy?.kind === "create" && windowAnchor !== undefined ? [windowAnchor] : []),
         // Speculative observations can use a private permit; actions need published ownership.
-        ...(producer && entry.policy?.kind === "target" && !entry.policy.observation ? [producer.item] : []),
+        ...(producer && entry.policy?.kind === "target" && (!entry.policy.observation
+          || producer.policy?.kind === "create" && producer.policy.targeted) ? [producer.item] : []),
       ],
     });
     if (!local) barrier = entry.item;
-    else lanes.set(lane, entry.item);
-    if (entry.policy?.kind === "target" && (policyTab != null || targets.has(entry) || entry.args.tabId != null)) windowAnchor = entry.item;
+    else if (!passive(entry)) lanes.set(lane, entry.item);
+    if ((entry.policy?.kind === "target" || entry.policy?.kind === "create" && entry.policy.targeted)
+      && (policyTab != null || targets.has(entry) || entry.args.tabId != null)) windowAnchor = entry.item;
   }
   const parent = (entry: Entry) => parents.get(entry);
   const validResult = (entry: Entry, result: unknown, isError: boolean) => {
@@ -88,12 +92,17 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   return {
     ordered: items,
     independent: (item: T) => independent(byItem.get(item)!),
+    lane: (item: T) => executed.get(parents.get(byItem.get(item)!)!)?.id ?? executionLanes.get(item) ?? null,
+    passive: (item: T) => passive(byItem.get(item)!),
     observation: (item: T) => {
       const policy = byItem.get(item)!.policy;
       return policy?.kind === "target" && policy.observation;
     },
     dependencies: (item: T) => edges.get(item)!,
-    parallelCreate: (item: T) => byItem.get(item)!.policy?.kind === "create" && independent(byItem.get(item)!),
+    parallelCreate: (item: T) => {
+      const entry = byItem.get(item)!;
+      return entry.policy?.kind === "create" && !entry.policy.targeted && independent(entry);
+    },
     executionParent: (item: T) => executed.get(parent(byItem.get(item)!)!)?.result,
     args(item: T): unknown {
       const entry = byItem.get(item)!;
@@ -105,7 +114,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       if (!tabId) throw error("dependency_failed", entry.args.tabRef);
       if (entry.args.tabId != null && entry.args.tabId !== tabId
         || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== tabId) throw error("conflicting_target", entry.args.tabRef);
-      return entry.policy?.kind === "target" ? { ...entry.args, tabId } : entry.args;
+      return entry.policy?.kind === "target" || entry.policy?.kind === "create" && entry.policy.targeted ? { ...entry.args, tabId } : entry.args;
     },
     complete(item: T, result: unknown, isError: boolean) {
       const entry = byItem.get(item)!, id = validResult(entry, result, isError);

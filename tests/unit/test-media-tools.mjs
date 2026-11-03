@@ -2206,8 +2206,8 @@ fallbackElements.registerElementRef({
 });
 await assert.rejects(
   fallbackDefinitions.get("read_image").execute({ tabId: foreignTabId, target: "uid:t15.00000b.i9" }, undefined, { sessionId: "session-a" }),
-  error => error?.code === "STALE_ELEMENT_UID",
-  "a node-backed uid on a tab this session does not own stays rejected",
+  error => error?.code === "SESSION_TAB_UNOWNED",
+  "a read-only node UID is admitted, but this host without a CDP read grant still refuses browser access",
 );
 liveFallbackImages[1] = { ...liveFallbackImages[1], src: "https://example.test/changed.png", currentSrc: "https://example.test/changed.png" };
 await assert.rejects(

@@ -1,5 +1,5 @@
 import { copyToolResultPresentation } from "../contracts/tool-result-presentation.js";
-import { isToolFailure, toolError } from "../contracts/tool-error.js";
+import { isToolFailure, isToolValue, toolError } from "../contracts/tool-error.js";
 import { getLanguage } from "../i18n/index.js";
 import { t, type BackendMessageKey } from "../i18n/backend.js";
 interface FailureContext { code?: unknown; details?: unknown; toolName?: unknown; isError?: boolean }
@@ -237,6 +237,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SESSION_TAB_TARGET_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
   TAB_REF_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
   SESSION_TAB_UNAVAILABLE: { label: "toolError.SESSION_TAB_UNAVAILABLE.label" },
+  TAB_CLOSED: { label: "toolError.SESSION_TAB_UNAVAILABLE.label" },
   SESSION_TAB_UNOWNED: { label: "toolError.SESSION_TAB_UNOWNED.label" },
   SESSION_TOOL_FORBIDDEN: { label: "toolError.SESSION_TOOL_FORBIDDEN.label", message: "toolError.SESSION_TOOL_FORBIDDEN.message" },
   SKILL_ALREADY_EXISTS: { label: "toolError.SKILL_ALREADY_EXISTS.label" },
@@ -413,6 +414,7 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
 }
 
 export function localizeToolFailurePayload(payload: unknown, context: FailureContext = {}) {
+  if (isToolValue(payload)) return payload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
   const failure = payload as Record<string, unknown>;
   if (typeof failure.code === "string" && typeof failure.message === "string" && !Object.hasOwn(failure, "error")) {

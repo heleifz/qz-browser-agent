@@ -59,13 +59,17 @@ export interface ToolModelPolicy {
 
 /** Derived from a trusted registration for one model response's tab dependency plan. */
 export type ToolBatchTabPolicy =
-  | { kind: "create"; parallel?: boolean }
+  | { kind: "create"; parallel?: boolean; targeted?: boolean; passive?: boolean }
+  /** Passive event observation does not occupy the page's action lane. */
+  | { kind: "observe" }
   /** `tabId` is the resolved lane for uid-targeted calls: the tab the referenced elements belong to. */
   | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number }
   | { kind: "barrier" };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
+  /** A passive event listener may overlap the action whose outcome it observes. */
+  passiveWait?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */
   barrier?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
@@ -85,6 +89,8 @@ export interface ToolBehavior {
   timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
   /** Reject actions that may unload the page hosting a nested script. */
   mayUnloadPage?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Opens child pages while retaining the parent's execution context. */
+  mayOpenPopup?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Promote the tool's image into the enclosing script's latest observation. */
   nestedObservation?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Optional diagnostic channel; the runtime owns timeout fields and cancellation. */

@@ -82,15 +82,15 @@ window for debugging.
 Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and
 `npm test -- unit --match agent-tool-scheduler` for the shared ten-call budget. The fixtures hold
 individual opens and actions, prove that ready readers advance before unrelated openings finish,
-and compare serial/parallel ownership, working tab, effects, ordered final events and model messages. Start/progress tests assert live publication and
+and compare serial/parallel ownership, explicit page references, effects, ordered final events and model messages. Start/progress tests assert live publication and
 per-call isolation while execution is still blocked.
 Failure, duplicate aliases, cancellation, private permit identity and cleanup retries are included.
 The data-flow fixture retains production script declarations while controlling their execution:
-no-tools page scripts overlap across tabs and serialize within a tab; tool-using, inner and hidden
+evaluate functions overlap across tabs and serialize within a tab; outer run_script and hidden
 Skill scripts remain barriers. `npm test -- unit --match tool-behavior` verifies barrier predicate
 precedence, single evaluation, throwing predicates, new capability tool names and plugin barriers.
-`npm test -- unit --match script-tool-access` covers static classification; `--match script-runtime`
-checks actual generated page expressions, input bindings and no-replay errors.
+`npm test -- unit --match run-script-source` checks script wrapping; `--match script-runtime`
+checks shared value serialization, input bindings and no-replay errors.
 `npm test -- playwright tests/browser/script-dataflow.spec.mjs` serves six local pages, compares
 serial budget 1 with data-flow budget 10 for three alternating trials, and attaches timings. It also
 checks same-tab serialization, real nested `tools.read_article` barriers and one-shot failure after
@@ -256,7 +256,7 @@ a full disk. It uses local deterministic
 model responses, writes a redacted report under `tests/results/multi-browser/pairing-edges-<timestamp>/`,
 and removes its Chrome processes, Profiles, registry, and network captures. It is a manual entry.
 
-For a shell-pairing check, obtain a URL with `connect --no-open --json` and open it in the selected
+For a shell-pairing check, obtain a URL with `connect uri` and open it in the selected
 test Profile using the [platform launch command](../docs/cli.md#pair-a-selected-browser-from-the-shell).
 Confirm that `browsers --json` lists that Profile online, and use its UUID for the next browser
 operation. URL creation alone does not establish a connection. `--name` should update only the

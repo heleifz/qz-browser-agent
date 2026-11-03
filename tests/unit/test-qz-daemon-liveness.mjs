@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { daemonPaths, ensureDaemon, findDaemon, stopDaemon } from "../../services/mcp-bridge/src/daemon.mjs";
+import { daemonPaths, ensureDaemon, findDaemon, restartDaemon, stopDaemon } from "../../services/mcp-bridge/src/daemon.mjs";
 
 const fixturePid = 2147483000;
 const procStatus = state => `Name:\tqz-fixture\nState:\t${state}\nPid:\t${fixturePid}\n`;
@@ -142,10 +142,10 @@ test("an unreachable live daemon is neither replaced nor signalled", async t => 
     readHealth: async () => { healthChecks++; throw osError("ECONNREFUSED"); },
     spawnProcess: () => assert.fail("a live but unhealthy daemon must not be replaced"),
   };
-  for (const operation of [ensureDaemon, stopDaemon]) {
-    await assert.rejects(operation(lookup), error => error.code === "CONNECTION_UNAVAILABLE" && error.details.processId === fixturePid);
+  for (const operation of [ensureDaemon, stopDaemon, restartDaemon]) {
+    await assert.rejects(operation({ ...lookup, expected: record }), error => error.code === "CONNECTION_UNAVAILABLE" && error.details.processId === fixturePid);
   }
-  assert.equal(healthChecks, 4, "each operation retries health once without replacing the service");
+  assert.equal(healthChecks, 6, "each operation retries health once without replacing the service");
   assert.ok(os.signals.every(call => call.signal === 0));
   assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), record);
 });
@@ -161,4 +161,115 @@ test("a live lock owner is retained even if its proc status cannot be read", asy
     spawnProcess: () => assert.fail("a live lock owner must not be displaced"),
   }), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
+});
+
+test("cancellation during daemon health checks preserves the live process and startup state", async t => {
+  const { options, paths, record } = await fixture(t);
+  const os = mockProcesses(t, [[fixturePid, { status: procStatus("S (sleeping)") }]]);
+  for (const operation of [ensureDaemon, restartDaemon]) {
+    const controller = new AbortController(), reason = new Error("Cancelled during daemon health check");
+    await assert.rejects(operation({ ...options, expected: record, signal: controller.signal,
+      readHealth: async () => { controller.abort(reason); return record; },
+      spawnProcess: () => assert.fail("cancelled health checks cannot start a replacement"),
+    }), error => error === reason);
+  }
+  assert.ok(os.signals.every(call => call.signal === 0), "the running daemon receives no termination signal");
+  assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), record);
+  assert.deepEqual((await readdir(paths.directory)).filter(name => name.includes(".lock")), []);
+});
+
+test("a cancelled upgrade waiting for the startup lock cannot stop its owner after release", async t => {
+  const { options, paths, record } = await fixture(t);
+  const os = mockProcesses(t, [[fixturePid, { status: procStatus("S (sleeping)") }]]);
+  const owner = { processId: fixturePid, id: randomUUID() };
+  await mkdir(paths.lock);
+  await writeFile(join(paths.lock, `${owner.processId}-${owner.id}.json`), JSON.stringify(owner));
+  const controller = new AbortController(), reason = new Error("Cancelled while waiting for startup lock");
+  const rejected = assert.rejects(restartDaemon({ ...options, expected: record, signal: controller.signal,
+    readHealth: () => assert.fail("cancelled lock wait cannot inspect or restart the daemon"),
+    spawnProcess: () => assert.fail("cancelled lock wait cannot start a service"),
+  }), error => error === reason || error.name === "AbortError");
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if ((await readdir(paths.directory)).some(name => name.endsWith(".pending"))) break;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.ok((await readdir(paths.directory)).some(name => name.endsWith(".pending")), "the upgrade actually queued behind the live owner");
+  controller.abort(reason);
+  await rm(paths.lock, { recursive: true });
+  await rejected;
+  assert.ok(os.signals.every(call => call.signal === 0));
+  assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), record);
+  assert.deepEqual((await readdir(paths.directory)).filter(name => name.includes(".lock")), []);
+});
+
+test("cancellation during the free-port startup probe prevents every child spawn", async t => {
+  const { options, paths, record } = await fixture(t);
+  mockProcesses(t, [[fixturePid, { status: procStatus("Z (zombie)") }]]);
+  const controller = new AbortController(), reason = new Error("Cancelled during startup probe");
+  await assert.rejects(ensureDaemon({ ...options, preferredPort: 18765, signal: controller.signal,
+    readHealth: async () => { controller.abort(reason); throw osError("ECONNREFUSED"); },
+    spawnProcess: () => assert.fail("cancelled startup cannot launch a daemon"),
+  }), error => error === reason);
+  assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), record);
+  assert.deepEqual((await readdir(paths.directory)).filter(name => name.includes(".lock")), []);
+});
+
+
+for (const boundary of ["expected", "health"]) for (const field of ["scopeId", "instanceId", "processId"]) {
+  test(`restart refuses a changed ${boundary} ${field} without signalling any process`, async t => {
+    const { options, paths, record } = await fixture(t);
+    const os = mockProcesses(t, [[fixturePid, { status: procStatus("S (sleeping)") }]]);
+    const changed = { ...record, [field]: field === "processId" ? fixturePid - 1 : `different-${field}` };
+    await assert.rejects(restartDaemon({ ...options, expected: boundary === "expected" ? changed : record,
+      readHealth: async () => boundary === "health" ? changed : record,
+      spawnProcess: () => assert.fail("an identity mismatch must not start a replacement"),
+    }), error => error.code === "CONNECTION_CHANGED");
+    assert.ok(os.signals.every(call => call.signal === 0), "no mismatched process receives a signal");
+    assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), record);
+    await assert.rejects(readFile(paths.lock), error => error.code === "ENOENT");
+  });
+}
+
+test("restart replaces only the expected instance and a repeated recovery cannot kill its replacement", async t => {
+  const { options, paths, record } = await fixture(t);
+  record.protocolVersion = 0;
+  record.buildId = "previous-build";
+  await writeFile(paths.state, JSON.stringify(record));
+  const replacementPid = fixturePid - 1;
+  const os = mockProcesses(t, [
+    [fixturePid, { status: procStatus("S (sleeping)") }],
+    [replacementPid, { status: procStatus("S (sleeping)") }],
+  ], { onSignal(pid, signal, entry) {
+    assert.equal(pid, fixturePid, "recovery may signal only the verified old daemon");
+    assert.equal(signal, "SIGTERM");
+    entry.status = procStatus("Z (zombie)");
+  } });
+  let starts = 0, replacement;
+  const recovery = { ...options, expected: record,
+    readHealth: async (_endpoint, healthOptions) => {
+      if (!replacement) assert.equal(healthOptions.allowIncompatible, true,
+        "old protocol health must be readable before its process identity is trusted");
+      return replacement || record;
+    },
+    spawnProcess: (_executable, args) => {
+      starts++;
+      replacement = { ...record, protocolVersion: 1, scopeId: args[3], buildId: args[5],
+        instanceId: args[6], processId: replacementPid };
+      const child = Object.assign(new EventEmitter(), {
+        pid: replacementPid, exitCode: null, signalCode: null, unref() {},
+        kill() { assert.fail("a successful replacement must not be killed"); },
+      });
+      void writeFile(args[2], JSON.stringify(replacement)).then(() => child.emit("spawn"), error => child.emit("error", error));
+      return child;
+    },
+  };
+  const running = await restartDaemon(recovery);
+  assert.equal(running.instanceId, replacement.instanceId);
+  assert.equal(running.processId, replacementPid);
+  assert.equal(running.health.buildId, options.buildId);
+  await assert.rejects(restartDaemon(recovery), error => error.code === "CONNECTION_CHANGED");
+  assert.equal(starts, 1, "a stale recovery request cannot start another replacement");
+  assert.deepEqual(os.signals.filter(call => call.signal !== 0), [{ pid: fixturePid, signal: "SIGTERM" }]);
+  assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), replacement);
+  await assert.rejects(readFile(paths.lock), error => error.code === "ENOENT");
 });

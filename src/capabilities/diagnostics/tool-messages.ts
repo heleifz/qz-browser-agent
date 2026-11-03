@@ -104,8 +104,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Maximum characters to return. Default: 120000; range: 1000–1000000.",
   },
   waitForResponseDescription: {
-    "zh-CN": "等待 tabRef 指定标签页内匹配 URL/method/status/mimeType 的 Network 响应（已缓冲匹配项则立即返回），可选附带响应体。",
-    en: "Wait for a network response in the tab specified by tabRef matching URL, method, status, or mimeType (returns immediately if already buffered), optionally including the body.",
+    "zh-CN": "等待 tabRef 指定页之后出现的匹配 Network 响应，不使用已缓存响应。可传 trigger:{name,args}，先监听再执行该工具；动作与等待共用超时，动作失败直接报错。可选附带响应体。",
+    en: "Wait for a future matching network response in tabRef; buffered responses do not match. Optionally pass trigger:{name,args} to arm before invoking the tool. The action shares the deadline and its failure propagates. The response body is optional.",
   },
   waitForResponseUrlPattern: {
     "zh-CN": "必填。请求 URL 正则。",

@@ -175,9 +175,10 @@ function startWorkerRun(data: Record<string, unknown>) {
     type: "execute",
     requestId,
     source: String(data.scriptSource || ""),
-    scriptArgs: data.scriptArgs && typeof data.scriptArgs === "object" ? data.scriptArgs : {},
+    scriptArgs: data.scriptArgs,
     securityGuardrails: data.securityGuardrails && typeof data.securityGuardrails === "object" ? data.securityGuardrails : {},
     fetchBridge: data.fetchBridge === true,
+    strictResult: data.strictResult === true,
   });
 }
 

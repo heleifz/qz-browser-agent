@@ -6,6 +6,7 @@
   "script.executeCode": "執行程式碼",
   "script.executePageScript": "執行頁面指令碼",
   "script.executeScript": "執行指令碼",
+  "script.listTools": "列出工具",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "頁面的 JavaScript 執行環境無法使用。run_script 只會在真實頁面環境執行，不會改用 isolated world。",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "指令碼觸發了目前分頁的點擊、提交、導覽或關閉，可能使頁面卸載。run_script 會封鎖這些動作。",
   "script.theScriptPageWaitOrNestedToolCallTimed": "指令碼、頁面等待或巢狀工具呼叫逾時。請檢查是否有無限等待、尚未完成的請求或找不到的選取器。",

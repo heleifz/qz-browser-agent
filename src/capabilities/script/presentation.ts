@@ -6,7 +6,8 @@ import { isToolResultErrorLike, isPageContextToolName } from "#sdk/sidepanel/pre
 
 export const presentations = (host: RendererServices): readonly ToolPresentationDefinition[] => ["run_script", "script"].map(id => ({
   id,
-  resultIsError: ({ result }) => {
+  resultIsError: ({ tool, result }) => {
+    if (typeof tool.isError === "boolean") return tool.isError;
     const envelope = getResultEnvelope(result);
     return envelope?.ok === true && !isToolResultErrorLike(envelope) ? false : undefined;
   },

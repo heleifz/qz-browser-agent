@@ -192,7 +192,7 @@ registerTool({
     },
     required: ["tabRef"],
   } as const; },
-  page: "owned",
+  page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, target = "", index = 0, destination = "", format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE, actionable = false }, signal, context = {}) => {
     const hasElementTarget = !!String(target || "").trim();
@@ -202,7 +202,7 @@ registerTool({
 
     if (hasElementTarget) {
       if (tabId) await waitForParsedDocument(tabId, context);
-      ref = await resolveElementReference(tabId, { target, index }, context);
+      ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
         quality,
@@ -284,7 +284,7 @@ registerTool({
 
 registerTool({
   name: "act_on_screen",
-  behavior: { nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
+  behavior: { mayOpenPopup: true, nestedObservation: args => args.returnScreenshot === true, timeoutTrace: "screen_action_trace",
     timeoutResult: { kind: "action", pending: "screen action outcome confirmation" } },
   requires: { images: true },
   effects: (_args, result) => record(result).urlChanged === true ? [{ type: "context.siteChanged" }] : [],

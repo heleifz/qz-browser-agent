@@ -65,7 +65,7 @@ function fixture() {
   bridge = createRunScriptBridge({
     supervisor, getRuntime: id => runtimes[id], canManageSessions: async () => false, buildRunProfile: async () => ({}),
     getRunToolContext: async id => ({ externalDrive: metadata[id]?.source === 'external-drive' }),
-    toolRuntime, collectArtifacts: () => [], recordDriveTool: input => runtime.recordNestedTool(input),
+    toolRuntime, collectArtifacts: () => [], recordNestedTool: input => runtime.recordNestedTool(input),
   });
   return { runtime, bridge, transcript, transcriptOptions, events };
 }
@@ -127,9 +127,9 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
   assert.equal(projection.uiHistory([...restored, hidden], { sessionId }).length, 15, 'even ordinary hidden entries stay visible in drive');
 });
 
-test('script labels use host page metadata or explicit tabRef independently of run identity', () => {
+test('evaluate labels use host page metadata or explicit tabRef independently of run identity', () => {
   for (const runId of ['opaque-script-run', 'drive-native-identifier']) {
-    const tool = { name: 'run_script', runId };
+    const tool = { name: 'evaluate', runId };
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'a' }, { _pageTitle: 'Actual page', result: { title: 'Other' } }), '(Actual page)');
     assert.match(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'bdb' }, { ok: true, result: { title: 'Not a page', url: 'https://wrong.test/' } }), /bdb/);
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'bdb' }, { _pageUrl: 'https://actual.test/', result: { title: 'Not a page' } }), '(https://actual.test/)');
@@ -137,6 +137,8 @@ test('script labels use host page metadata or explicit tabRef independently of r
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, {}), '');
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { details: { _pageTitle: 'Historical page' } }), '(Historical page)');
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { title: 'User title', url: 'https://user-data.test/' }), '');
+    assert.equal(toolPresentationRegistry.project('argsSummary', { name: 'run_script', runId }, {}, { _pageTitle: 'Nested page' }), undefined,
+      'outer orchestration has no execution page label');
   }
 });
 

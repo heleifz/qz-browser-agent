@@ -9,6 +9,7 @@ export default defineMessages("script", {
   "executeCode": { "zh-CN": "执行代码", en: "Run code" },
   "executePageScript": { "zh-CN": "执行页面脚本", en: "Run page script" },
   "executeScript": { "zh-CN": "执行脚本", en: "Run script" },
+  "listTools": { "zh-CN": "列出工具", en: "List tools" },
   "scriptToolAccessUnavailable": { "zh-CN": "本次调用未启用工具访问，且没有自动重跑。", en: "This invocation has no tool access and was not automatically replayed." },
   "scriptToolAccessRecovery": { "zh-CN": "先检查页面状态。若需调用工具，请在代码中显式写 tools.name(...)，再提交新的调用。", en: "Inspect the page state first. To call tools, write tools.name(...) explicitly in the code and submit a new invocation." },
   "thePageJavascriptContextIsUnavailableRunScriptRuns": { "zh-CN": "页面 JavaScript 上下文不可用；run_script 只在真实页面上下文执行，脚本没有降级到 isolated world。", en: "The page JavaScript context is unavailable. run_script runs only in the real page context; it did not fall back to an isolated world." },
@@ -36,5 +37,5 @@ export default defineMessages("script", {
   "theScriptRanWithoutAReturnValueOrReturned": { "zh-CN": "脚本已执行，但没有 return / 返回 undefined。", en: "The script ran without a return value, or returned undefined." },
   "runCode": { "zh-CN": "运行代码", en: "Run code" },
 }, { historicalLabels: [
-  "executeScript",
+  "executeScript", "executePageScript", "listTools",
 ] });

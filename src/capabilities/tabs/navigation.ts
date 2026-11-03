@@ -27,7 +27,9 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     try { return await wait(chrome.tabs.get(tabId)); }
     catch (error) {
       check();
-      throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"), { cause: String(error) });
+      const failure = new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"));
+      failure.hint = "Use list_tabs to choose an available tabRef, then retry.";
+      throw failure;
     }
   };
   const documentId = async () => {
@@ -62,7 +64,8 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     // Without a baseline, require a load completion observed after navigation starts.
     listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
     if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
-    await wait(chrome.tabs.update(tabId, { url }));
+    try { await wait(chrome.tabs.update(tabId, { url })); }
+    catch (error) { await getTab(); throw error; }
     let missingFrames = 0;
     for (;;) {
       const tab = await getTab();

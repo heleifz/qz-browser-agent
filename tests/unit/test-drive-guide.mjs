@@ -4,67 +4,42 @@ import test from "node:test";
 import { driveGuide, resetDriveGuideCache } from "../../services/mcp-bridge/src/drive-guide.mjs";
 import { BridgeError } from "../../services/mcp-bridge/src/state.mjs";
 import { driveExtensionTimeoutSeconds, executeMcpTool } from "../../services/mcp-bridge/src/tools.mjs";
-import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "../../services/mcp-bridge/src/script-call.mjs";
+import { buildScriptRequest, presentScriptResult, scriptTimeouts } from "../../services/mcp-bridge/src/script-call.mjs";
 
 const CHARS_PER_TOKEN = 23156 / 5700;
 
-test("the packed drive guide is the only discoverable skill, English-only and bounded", () => {
+test("the packaged guide matches the installed Skill and keeps one script vocabulary", () => {
   const source = readFileSync(new URL("../../skills/qz-browser-agent/SKILL.md", import.meta.url), "utf8");
   const mirror = readFileSync(new URL("../../services/mcp-bridge/src/qz-drive-SKILL.md", import.meta.url), "utf8");
   assert.equal(mirror, source);
-  const skillDirs = readdirSync(new URL("../../skills", import.meta.url), { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && entry.name !== "node_modules")
-    .map(entry => entry.name);
-  assert.deepEqual(skillDirs, ["qz-browser-agent"]);
+  assert.deepEqual(readdirSync(new URL("../../skills", import.meta.url), { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name !== "node_modules").map(entry => entry.name), ["qz-browser-agent"]);
   resetDriveGuideCache();
   const guide = driveGuide();
-  for (const options of [
-    { explicit: "en", env: {} }, { explicit: "zh-CN", env: {} },
-    { env: { QZ_GUIDE_LANG: "zh-CN", LANG: "zh_CN.UTF-8" } },
-  ]) assert.equal(driveGuide(options), guide, "the CLI guide is the same English reference for every locale");
-  assert.doesNotMatch(source, /[\u3400-\u9fff]|qz-drive-guide:zh-CN/);
-  assert.match(guide, /Do not (?:configure|start) a qz model/i);
-  assert.match(guide, /https:\/\/example\.com/);
-  assert.match(guide, /get_ax_tree/);
+  assert.equal(driveGuide({ env: { LANG: "zh_CN.UTF-8" } }), guide);
+  assert.doesNotMatch(source, /[\u3400-\u9fff]/);
+  assert.match(source, /qz skill.*installed CLI/);
+  assert.match(guide, /Do not configure a qz model/);
   assert.match(guide, /references\/create-task\.md/);
-  assert.match(guide, /npx skills add alibaba\/qz-browser-agent -g/);
-  assert.match(guide, /The side panel for a drive session is view-only\. Use browser tools for page content; use the shell for local files\./);
-  assert.doesNotMatch(guide, /page\.click|selectOption|npx skills add[^\n]*qz-drive/);
-  assert.doesNotMatch(source, /^name: qz-drive$/m);
-  assert.doesNotMatch(guide, /omit tabRef|a returned id|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/i);
-  assert.match(guide, /Direct-drive results name the page with tabRef/);
-  assert.match(guide, /qz script --session ID` always runs in the page named by required `--tab`/);
-  assert.match(guide, /run_script with tabRef runs in that page; without tabRef it runs JavaScript computation or tool orchestration without document\/window/);
-  assert.doesNotMatch(guide, /target:"page"|target page|The first call creates a session/);
-  assert.match(guide, /qz session create --title/);
-  assert.match(guide, /scope is only viewport or full/);
-  assert.match(guide, /Missing `--session` exits 2 and does not create or reuse a session/);
-  assert.match(guide, /stdout prints `sessionId <id>`/);
-  assert.match(guide, /A missing tabRef is TAB_REF_REQUIRED/);
-  assert.match(guide, /only when an alias was passed/);
-  assert.match(guide, /One task uses one session/);
-  assert.match(guide, /tabAlias` is recommended for readability and is not required/);
-  assert.match(guide, /Page tools always pass `tabRef`/);
-  assert.match(guide, /The CLI does not resume the previous session/);
+  assert.match(guide, /tools\.list_tools/);
+  assert.match(guide, /tools\.evaluate/);
+  assert.doesNotMatch(guide, /qz (?:exec|tools)\b|--tab|qz-browser-agent@latest|page\.click|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/);
+  assert.doesNotMatch(guide, /\bqz stop\b|\bqz connect\b(?! uri)/);
+  for (const command of ["create", "list", "show", "cancel"]) assert.match(guide, new RegExp(`qz session ${command}`));
+  assert.match(guide, /active.*never selects a tool target/);
+  assert.match(guide, /Page tools always pass tabRef/);
+  assert.match(guide, /uid:t<tab>\.<snap>\.<n>/);
+  assert.match(guide, /rect is `\{x,y,width,height\}`/);
+  assert.match(guide, /Ordinary success returns `\{\}`/);
+  assert.match(guide, /trigger/);
+  assert.match(guide, /not transactions/);
+  assert.match(guide, /stdout is JSON `\{traces,result\}`/);
+  assert.match(guide, /trace\/log and console diagnostics are returned as ordered strings in traces/);
+  assert.match(guide, /load_skill.*qingzhou-documents/);
+  assert.match(guide, /timed out|timeout/i);
+  assert.doesNotMatch(guide, /\bMCP\b|\bqingzhou_(?:guide|create_drive_session|execute_tool|list_tools|get_tool|bridge_status|stop_session)\b|keepTabs:true/i);
   const tokens = guide.length / CHARS_PER_TOKEN;
   assert.ok(guide.length > 1000 && tokens <= 5000, `${guide.length} chars is ${tokens} estimated tokens`);
-});
-
-test("the English CLI guide documents sessions, recovery, dependent PDF calls and result layers", () => {
-  const guide = driveGuide();
-  assert.doesNotMatch(guide, /qz (?:script|exec|tools)(?! --session)/);
-  for (const value of ["npx --yes qz-browser-agent@latest", "CREATED=$(qz session create --title \"Inspect example page\" --json)",
-    "DRIVE_SESSION_NOT_FOUND", "already_complete", "timedOut", "mutatesPage:true",
-    "result.result.result", "qz cancel", "limits.timeoutSeconds",
-    "qingzhou_documents__document_fetch", "qingzhou_documents__document_parse", "qingzhou_documents__document_read_chunk"]) {
-    assert.ok(guide.includes(value), value);
-  }
-  assert.doesNotMatch(guide, /\bMCP\b|\bqz mcp\b|\bqingzhou_(?:guide|create_drive_session|execute_tool|list_tools|get_tool|bridge_status|stop_session)\b|keepTabs:true/i,
-    "the direct-drive Skill teaches the CLI interface");
-  assert.match(guide, /load_skill.*qingzhou-documents/);
-  assert.match(guide, /regex/);
-  assert.match(guide, /not a transaction/);
-  assert.doesNotMatch(guide, /waits for the URL to change|When the client disconnects/);
 });
 
 test("MCP server instructions retain their explicit session and page-reference contract", () => {
@@ -82,46 +57,23 @@ test("MCP server instructions retain their explicit session and page-reference c
   assert.match(instructions, /the tabRef returned by open_tab or list_tabs/);
 });
 
-test("qz script runs on the page for one tabRef and prints only the returned value", () => {
-  assert.throws(() => buildScriptRequest({ code: "return 1" }), /requires --tab/);
-  assert.throws(() => buildScriptRequest({ code: "return 1", tabRef: "page" }), /requires --session/);
-  assert.deepEqual(buildScriptRequest({ code: "return 1", sessionId: " s ", tabRef: " page " }), {
-    name: "run_script",
-    args: { target: "page", tabRef: "page", timeout: 120, code: "return 1" },
-    sessionId: "s",
+test("outer scripts pass args separately and present traces with values by transport status", () => {
+  assert.throws(() => buildScriptRequest({ code: "return 1" }), /requires --session/);
+  assert.deepEqual(buildScriptRequest({ code: "return input", sessionId: " s ", args: [1, 2] }), {
+    name: "run_script", sessionId: "s", scriptApiVersion: 1, args: { timeout: 120, code: "return input", args: [1, 2] },
   });
-  const ok = presentScriptResult({
-    sessionId: "s",
-    result: { ok: true, result: { title: "Ada" }, trace: [{ name: "open" }] },
-  });
-  assert.equal(ok.exitCode, 0);
-  assert.equal(ok.text, "{\"title\":\"Ada\"}\n");
-  assert.equal(ok.stderr, "sessionId s\n");
-  const traces = [1, 2, 3, 4, 5, 6].map(step => ({ step }));
-  const bad = presentScriptResult({
-    result: { ok: false, code: "DRIVE_TOOL_FORBIDDEN", error: "blocked", trace: traces },
-  });
+  const business = { ok: false, code: "APP_CODE", message: "business", result: 7, trace: [1] };
+  assert.deepEqual(presentScriptResult({ isError: false, result: business }), { text: JSON.stringify({ traces: [], result: business }) + "\n", exitCode: 0 });
+  const error = { code: "SCRIPT_EVALUATION_FAILED", message: "SyntaxError", hint: "Fix the function.", details: { line: 2, column: 4 } };
+  const bad = presentScriptResult({ isError: true, result: error });
   assert.equal(bad.exitCode, 1);
-  assert.deepEqual(JSON.parse(bad.text), {
-    code: "DRIVE_TOOL_FORBIDDEN",
-    message: "blocked",
-    details: { trace: traces.slice(-5) },
-  });
-  const truncated = { truncated: true, totalChars: 100000, limitChars: 48000, preview: "x".repeat(32) };
-  const capped = presentScriptResult({ sessionId: "s", result: truncated });
-  assert.equal(capped.exitCode, 0);
-  assert.equal(capped.stderr, "sessionId s\n");
-  assert.deepEqual(JSON.parse(capped.text), truncated);
+  assert.deepEqual(JSON.parse(bad.text), { traces: [], result: error });
+  const oldExtension = presentScriptResult({ result: business });
+  assert.equal(oldExtension.exitCode, 1);
+  assert.equal(JSON.parse(oldExtension.text).result.code, "UPGRADE_REQUIRED");
+  assert.match(JSON.parse(oldExtension.text).result.hint, /may have run.*Inspect/);
   assert.deepEqual(scriptTimeouts({}), { scriptSeconds: 120, requestSeconds: 180 });
   assert.deepEqual(scriptTimeouts({ timeoutOption: "5", timeoutSeconds: 5 }), { scriptSeconds: 5, requestSeconds: 65 });
-  assert.deepEqual(catalogExecRoute({ name: "list_tools" }), { tool: "qingzhou_list_tools", args: {} });
-  assert.deepEqual(catalogExecRoute({ name: "get_tool", args: { name: "open_tab" }, sessionId: "s" }), {
-    tool: "qingzhou_get_tool",
-    args: { name: "open_tab", sessionId: "s" },
-  });
-  assert.equal(catalogExecRoute({ name: "capabilities" }).tool, "qingzhou_list_capabilities");
-  assert.equal(catalogExecRoute({ calls: [{ id: "a", name: "list_tools" }] }), null);
-  assert.equal(catalogExecRoute({ name: "open_tab" }), null);
 });
 
 function driveState(callExtension) {

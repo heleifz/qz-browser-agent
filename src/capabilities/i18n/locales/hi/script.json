@@ -6,6 +6,7 @@
   "script.executeCode": "कोड चलाएँ",
   "script.executePageScript": "पेज की स्क्रिप्ट चलाएँ",
   "script.executeScript": "स्क्रिप्ट चलाएँ",
+  "script.listTools": "टूल सूची",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "पेज का JavaScript कॉन्टेक्स्ट उपलब्ध नहीं है। run_script केवल असली पेज कॉन्टेक्स्ट में चलता है; इसे isolated world में नहीं चलाया गया।",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "स्क्रिप्ट ने मौजूदा टैब में क्लिक, सबमिट, नेविगेशन या टैब बंद करने की कार्रवाई की, जिससे पेज अनलोड हो सकता है। run_script इन कार्रवाइयों को रोकता है।",
   "script.theScriptPageWaitOrNestedToolCallTimed": "स्क्रिप्ट, पेज के इंतज़ार या भीतर के टूल कॉल का समय खत्म हो गया। बिना सीमा के इंतज़ार, अधूरे अनुरोध और न मिलने वाले सिलेक्टर जाँचें।",

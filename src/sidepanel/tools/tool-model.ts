@@ -103,7 +103,7 @@ const TOOL_FAILURE_CODE_PATTERN = /(?:ERROR|FAILED|MISSING_REQUIRED|INVALID_|ABO
 
 export function resolveToolState(tool: ToolEvent | null | undefined, ...values: unknown[]) {
   if (isToolAborted(tool, ...values)) return "aborted";
-  if (tool?.isError || [tool?.result, ...values].some(isToolResultErrorLike)) return "error";
+  if (tool?.isError || tool?.isError !== false && [tool?.result, ...values].some(isToolResultErrorLike)) return "error";
   if (tool?.argsIncomplete || tool?.phase === "preparing" || tool?.isRunning) return "running";
   // Timeout metadata belongs to the outer result envelope, not page/script data.
   if (record(record(tool?.result).incomplete).reason === "timeout") return "incomplete";
@@ -119,6 +119,7 @@ export function isToolResultErrorLike(value: unknown) {
 
 function isToolAborted(tool: ToolEvent | null | undefined, ...values: unknown[]) {
   if (tool?.phase === "aborted") return true;
+  if (tool?.isError === false) return false;
   return [tool?.result, ...values].some(value => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const code = String(record(value).code || "").toUpperCase();

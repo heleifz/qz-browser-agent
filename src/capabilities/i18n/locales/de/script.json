@@ -6,6 +6,7 @@
   "script.executeCode": "Code ausführen",
   "script.executePageScript": "Seitenskript ausführen",
   "script.executeScript": "Skript ausführen",
+  "script.listTools": "Werkzeuge auflisten",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "Der JavaScript-Kontext der Seite ist nicht verfügbar. run_script läuft nur im tatsächlichen Seitenkontext und ist nicht auf eine isolierte Umgebung ausgewichen.",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "Das Skript hat im aktuellen Tab geklickt, etwas abgesendet, navigiert oder den Tab geschlossen. Dadurch könnte die Seite entladen werden. run_script blockiert diese Aktionen.",
   "script.theScriptPageWaitOrNestedToolCallTimed": "Zeitüberschreitung beim Skript, beim Warten auf die Seite oder bei einem verschachtelten Tool-Aufruf. Prüfe unbegrenzte Wartezeiten, offene Anfragen und fehlende Selektortreffer.",

@@ -15,7 +15,30 @@ function stream(isTTY = false) {
 }
 function setup({ tty = false, env = {}, ...rest } = {}) {
   const stdout = stream(tty), stderr = stream(tty);
-  return { stdout, stderr, env, findDaemon: async () => running, ...rest };
+  const preparations = [];
+  return { stdout, stderr, env, preparations, findDaemon: async () => running,
+    ensureDaemon: async () => running,
+    restartDaemon: () => assert.fail("the output fixture service is compatible"),
+    openConnectionBrowser: () => assert.fail("the output fixture browser is already responsive"),
+    ...rest,
+    callTool: async (...call) => {
+      const [endpoint, name, args, options] = call;
+      if (name === "qingzhou_call") {
+        assert.equal(endpoint, running.endpoint);
+        assert.equal(args.method, "ping");
+        assert.equal(typeof args.clientId, "string");
+        assert.ok(args.clientId.length);
+        assert.deepEqual(Object.keys(args).sort(), ["clientId", "method", "timeoutSeconds"]);
+        assert.ok(args.timeoutSeconds > 0 && args.timeoutSeconds <= 2);
+        assert.equal(options.timeoutMs, args.timeoutSeconds * 1000);
+        assert.equal(options.signal, rest.signal);
+        preparations.push({ name, args, options });
+        return { pong: true };
+      }
+      assert.equal(typeof rest.callTool, "function", `unexpected business request: ${name}`);
+      return rest.callTool(...call);
+    },
+  };
 }
 
 test("TTY output is formatted; pipes and explicit JSON preserve the machine envelope", async () => {
@@ -90,6 +113,8 @@ test("stdin prompt is validated before discovery and is submitted only once", as
   assert.equal(calls[0][1], "qingzhou_create_session");
   assert.equal(calls[0][2].firstMessage, "  Read this page\n");
   assert.equal(calls[0][2].title, "Research");
+  assert.equal(deps.preparations.length, 1);
+  assert.equal(deps.preparations[0].args.clientId, "fixture");
   await assert.rejects(runCli(["create", "-"], { readStdin: async () => " \n", findDaemon: () => assert.fail("validate stdin first") }),
     error => error.code === "INVALID_ARGUMENTS");
 });
@@ -114,6 +139,7 @@ test("stream receives increments before completion and suppresses duplicate fina
     } });
   assert.equal(await main(["create", "Say hello", "--stream", "--client", "fixture", "--timeout", "5"], deps), 0);
   assert.equal(calls.filter(name => name === "qingzhou_create_session").length, 1);
+  assert.equal(deps.preparations.length, 1);
   assert.equal(deps.stdout.text.match(/Hello world/g)?.length, 1);
   assert.match(deps.stdout.text, /Completed/);
   assert.deepEqual(updates.filter(event => event.type === "text").map(event => event.text), ["Hello", " world"]);
@@ -151,6 +177,7 @@ test("waiting stays bound to the creating browser across connection changes", as
   });
   assert.equal((await runCli(["create", "Work", "--wait"], deps)).result.snapshot.status, "completed");
   assert.equal(methods.length, 2);
+  assert.deepEqual(deps.preparations.map(call => call.args.clientId), ["creator"]);
 });
 
 test("human wait and stream remain connected through repeated questions and resume naturally", async () => {

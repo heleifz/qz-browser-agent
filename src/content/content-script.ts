@@ -2071,7 +2071,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         const point = inspection.clickablePoint;
         if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
         let hit = point && elementAtPoint(candidate, point.x, point.y);
-        if (!hit || (hit !== candidate && !candidate.contains(hit))) continue;
+        if (!hit || (hit !== el && hit !== candidate && !candidate.contains(hit))) continue;
         // Label activation excludes nested links and other independent controls.
         while (hit && hit !== candidate && hit !== el) {
           if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
@@ -3093,7 +3093,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         return element?.isConnected && element.ownerDocument === document ? element : null;
       });
     }
-    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) return elementPresence(node);
+    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) return elementPresence(node, payload.visibleOnly !== false);
     const token = String(payload?.fillToken || "");
     if (payload?.action === "releaseFillRoot") {
       if (token) fillRoots.delete(token);

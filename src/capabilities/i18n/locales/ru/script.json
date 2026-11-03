@@ -6,6 +6,7 @@
   "script.executeCode": "Выполнить код",
   "script.executePageScript": "Выполнить скрипт страницы",
   "script.executeScript": "Выполнить скрипт",
+  "script.listTools": "Список инструментов",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "Контекст JavaScript страницы недоступен. run_script выполняется только в реальном контексте страницы; перехода в изолированную среду не было.",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "Скрипт вызвал клик, отправку, переход или закрытие текущей вкладки, что может выгрузить страницу. run_script блокирует эти действия.",
   "script.theScriptPageWaitOrNestedToolCallTimed": "Истекло время скрипта, ожидания страницы или вложенного вызова инструмента. Проверьте ожидания без ограничения, незавершённые запросы и селекторы без совпадений.",

@@ -36,7 +36,7 @@ interface RecordFilter {
 }
 interface RegexError { error: true; code: string; message: string; pattern: string; flags: string }
 type Filtered<T> = { records: T[]; error?: false } | RegexError;
-import { pageWaitTimeout } from "#sdk/background/tools";
+import { pageWaitTimeout, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger } from "#sdk/background/tools";
 import { getSecurityGuardrails, matchBlockedUrl } from "#sdk/shared/security";
 
 /** Owns per-tab Network/Console monitors and registers diagnostic tools. */
@@ -596,10 +596,12 @@ registerTool({
 
 registerTool({
   name: "wait_for_response",
+  behavior: { parallelTab: true, passiveWait: args => !args.trigger },
   get description() { return toolT("waitForResponseDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
+      trigger: waitTriggerParameter,
       tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       urlPattern: { type: "string", description: toolT("waitForResponseUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
@@ -614,78 +616,57 @@ registerTool({
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
-  execute: async ({ tabId, timeout = 10, timeoutMs, includeBody = false, maxBytes = DEFAULT_BODY_LIMIT, ...filter }, signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const filtered = filterNetworkRecords(monitor, filter);
-    if (filtered.error) {
-      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
-        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+  execute: async ({ tabId, timeout = 10, timeoutMs, includeBody = false, maxBytes = DEFAULT_BODY_LIMIT, trigger, ...filter }, signal, context = {}) => {
+    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 1, 120000, 10000);
+    return runWaitWithTrigger({ tool: "wait_for_response", timeoutMs: timeoutMsValue, signal, context,
+      trigger: trigger as WaitTrigger | undefined,
+      details: context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef },
+    }, async current => {
+      const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      current.throwIfAborted();
+      const filtered = filterNetworkRecords(monitor, filter);
+      if (filtered.error) throw Object.assign(new ToolExecutionError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        pattern: filtered.pattern, flags: filtered.flags,
+      }), { hint: "Fix the pattern or flags and retry the wait." });
+      const previousResponses = new Set([...monitor.records.values()].filter(record => record.status != null));
+      const guardrails = await getSecurityGuardrails();
+      current.throwIfAborted();
+      const bodyLimit = clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT);
+      let rejectResult!: (error: unknown) => void;
+      let disposed = false;
+      const cleanup = () => { disposed = true; current.removeEventListener("abort", onAbort); monitor.waiters.delete(waiter); };
+      const onAbort = () => { cleanup(); rejectResult(current.reason); };
+      let finish!: (record: NetworkRecord) => void;
+      const waiter = { check() {
+        if (disposed) return;
+        const current = filterNetworkRecords(monitor, filter);
+        if (current.error) return;
+        const record = current.records.find(record => !previousResponses.has(record) && record.status != null
+          && (!includeBody || record.finished) && !matchBlockedUrl(record.url, guardrails));
+        if (record) finish(record);
+      } };
+      const result = new Promise((resolve, reject) => {
+        rejectResult = reject;
+        finish = record => {
+          cleanup();
+          const response = networkRecordSummary(record);
+          if (!includeBody) { resolve({ matched: true, response }); return; }
+          getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context).then(
+            body => resolve({ matched: true, response, body }),
+            error => reject(error));
+        };
       });
-    }
-
-    const guardrails = await getSecurityGuardrails();
-    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);
-    const bodyLimit = clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT);
-
-    return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        monitor.waiters.delete(waiter);
-      };
-      const onAbort = () => {
-        cleanup();
-        reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for network response", filter));
-      };
-      const finish = async (record: NetworkRecord) => {
-        cleanup();
-        const summary = networkRecordSummary(record);
-        if (!includeBody) {
-          resolve({ matched: true, response: summary });
-          return;
-        }
-        try {
-          const body = await getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context);
-          resolve({ matched: true, response: summary, body });
-        } catch (err) {
-          resolve({
-            matched: true,
-            response: summary,
-            bodyError: toolError(err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
-              err instanceof Error ? err.message : String(err), {
-                hint: "Use network_recent to choose another captured requestId, then retry network_body.",
-                details: { requestId: record.requestId },
-              }),
-          });
-        }
-      };
-      const waiter = {
-        check: () => {
-          const current = filterNetworkRecords(monitor, filter);
-          if (current.error) return;
-          const record = current.records.find(r => r.status != null && (!includeBody || r.finished) && !matchBlockedUrl(r.url, guardrails));
-          if (record) finish(record);
-        },
-      };
-      timer = setTimeout(() => {
-        cleanup();
-        resolve({
-          matched: false,
-          timedOut: true,
-          timeoutSeconds: timeoutMsValue / 1000,
-          inFlight: monitor.inFlight.size,
-        });
-      }, timeoutMsValue);
-      signal?.addEventListener("abort", onAbort, { once: true });
+      current.addEventListener("abort", onAbort, { once: true });
       monitor.waiters.add(waiter);
       waiter.check();
+      return { result, dispose: cleanup };
     });
   },
 });
 
 registerTool({
   name: "wait_for_network_idle",
+  behavior: { parallelTab: true, passiveWait: true },
   get description() { return toolT("waitForNetworkIdleDescription"); },
   get parameters() { return {
     type: "object",
@@ -702,65 +683,36 @@ registerTool({
   timeout: pageWaitTimeout,
   execute: async (args, signal, context = {}) => {
     const { tabId, idleSeconds = 0.8, idleMs, timeout = 10, timeoutMs, urlPattern, flags = "i" } = args as typeof args & { idleMs?: number };
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
-    if (pattern?.error) {
-      return toolError(pattern.code, `Invalid regular expression: ${pattern.message}`, {
-        hint: "Fix the pattern or flags and retry the call.", details: { pattern: pattern.pattern, flags: pattern.flags },
-      });
-    }
     const idle = clampNumber(idleMs != null ? idleMs : secondsToMs(idleSeconds, 800), 100, 10000, 800);
-    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);
-
-    const relevantInFlight = () => {
-      const ids = [...monitor.inFlight];
-      if (!pattern) return ids;
-      return ids.filter(id => {
-        const record = monitor.records.get(id);
-        pattern.lastIndex = 0;
-        return record && pattern.test(record.url);
-      });
-    };
-
-    return new Promise((resolve, reject) => {
-      let idleTimer: ReturnType<typeof setTimeout> | undefined;
-      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-      const cleanup = () => {
-        clearTimeout(idleTimer);
-        clearTimeout(timeoutTimer);
-        signal?.removeEventListener("abort", onAbort);
-        monitor.waiters.delete(waiter);
-      };
-      const onAbort = () => {
-        cleanup();
-        reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for network idle"));
-      };
-      const complete = () => {
-        cleanup();
-        resolve({ idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
-      };
-      const scheduleIdle = () => {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(complete, idle);
-      };
-      const waiter = {
-        check: () => {
-          if (relevantInFlight().length === 0) scheduleIdle();
-          else clearTimeout(idleTimer);
-        },
-      };
-      timeoutTimer = setTimeout(() => {
-        cleanup();
-        resolve({
-          idle: false,
-          timedOut: true,
-          timeoutSeconds: timeoutMsValue / 1000,
-          inFlight: relevantInFlight(),
+    const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 1, 120000, 10000);
+    return runWaitWithTrigger({ tool: "wait_for_network_idle", timeoutMs: timeoutMsValue, signal, context,
+      details: context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef },
+    }, async current => {
+      const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      current.throwIfAborted();
+      const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
+      if (pattern?.error) throw Object.assign(new ToolExecutionError(pattern.code, `Invalid regular expression: ${pattern.message}`, { pattern: pattern.pattern, flags: pattern.flags }), { hint: "Fix the pattern or flags and retry the wait." });
+      let idleTimer: ReturnType<typeof setTimeout> | undefined, rejectResult!: (error: unknown) => void;
+      const cleanup = () => { clearTimeout(idleTimer); current.removeEventListener("abort", onAbort); monitor.waiters.delete(waiter); };
+      const onAbort = () => { cleanup(); rejectResult(current.reason); };
+      let complete!: () => void;
+      const waiter = { check() {
+        const active = [...monitor.inFlight].some(id => {
+          if (!pattern) return true;
+          pattern.lastIndex = 0;
+          return pattern.test(monitor.records.get(id)?.url || "");
         });
-      }, timeoutMsValue);
-      signal?.addEventListener("abort", onAbort, { once: true });
+        clearTimeout(idleTimer);
+        if (!active) idleTimer = setTimeout(complete, idle);
+      } };
+      const result = new Promise((resolve, reject) => {
+        rejectResult = reject;
+        complete = () => { cleanup(); resolve({ idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size }); };
+      });
+      current.addEventListener("abort", onAbort, { once: true });
       monitor.waiters.add(waiter);
       waiter.check();
+      return { result, dispose: cleanup };
     });
   },
 });

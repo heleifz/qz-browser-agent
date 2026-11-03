@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { issueToolEffects, consumeToolEffects } from '../../src/background/tools/effects.js';
 import { Agent } from '../../src/background/agent/agent.js';
+import { isGoalSnapshotCapsuleMessage } from '../../src/background/agent/context.js';
 import { normalizeLlmFailure } from '../../src/background/llm/provider-errors.js';
 import { createSessionRecord, readSessionRecord, updateTranscriptWithAgentEvent } from '../../src/shared/session/session-codec.js';
 import { createTestAgentOptions, createTestAgentServices } from '../support/agent-services.mjs';
+import { markToolValue } from '../../src/shared/contracts/tool-error.js';
 
 // No Chrome global or replaced Agent private method is needed by these run tests.
 test('Agent freezes a run config, rebuilds Skill prompts, and adopts successful registry mutations', async () => {
@@ -263,6 +265,41 @@ function scriptedAgent(id, steps, overrides) {
   return { agent, requests, events };
 }
 
+test('script calls keep raw values and collect isolated UI traces and explicitly returned images', async () => {
+  const authored = { code: 'BUSINESS', message: 'Returned data', error: 'authored', _image: 'data:image/png;base64,VVNFUg==',
+    _display: { script: { valueOnly: true, trace: ['authored trace'] } }, _images: [{ mimeType: 'image/png', data: 'VVNFUg==' }] };
+  const values = [authored, 'primitive', undefined, null, [authored]];
+  const holders = [];
+  const { agent, events } = scriptedAgent('script-values', values.map((_, index) => ({ name: 'run_script', args: { index } })), {
+    tools: {
+      getSchemas: () => [], getIdentity: () => ({}), getModelPolicy: () => ({ preserveResult: true }),
+      async execute(_name, { index }, _signal, context) {
+        assert.deepEqual(context.resultPresentation, {}, 'each call starts with an empty host collector');
+        holders.push(context.resultPresentation);
+        Object.assign(context.resultPresentation, { _display: { script: { valueOnly: true, trace: [{ index }] } },
+          ...(index === 1 ? { _images: [{ mimeType: 'image/png', data: 'SE9TVA==' }] } : {}) });
+        return markToolValue(values[index]);
+      },
+    },
+  });
+  await agent.prompt('return the authored values', {});
+  assert.equal(new Set(holders).size, values.length);
+  const cards = events.filter(event => event.type === 'tool_execution_end');
+  assert.equal(cards.length, values.length);
+  for (let index = 0; index < values.length; index++) {
+    assert.equal(cards[index].isError, false);
+    assert.deepEqual(cards[index].result.result, values[index]);
+    assert.deepEqual(cards[index].result._display.script, { valueOnly: true, trace: [{ index }] });
+  }
+  assert.deepEqual(authored._display.script.trace, ['authored trace'], 'UI projection never overwrites authored metadata keys');
+  const messages = agent.messages.filter(message => message.role === 'tool');
+  assert.deepEqual(messages.map(message => message.content), values.map(value => typeof value === 'string' ? value : JSON.stringify(value) ?? 'undefined'));
+  assert.ok(messages.every(message => message._toolIsError === false));
+  const images = agent.messages.filter(message => message._origin === 'tool_image');
+  assert.equal(images.length, 1, 'authored image-shaped fields are ordinary data');
+  assert.equal(images[0].content[1].image_url.url, 'data:image/png;base64,SE9TVA==');
+});
+
 test('Agent applies a newly named tool model policy through injected services', async () => {
   const calls = [];
   const snapshots = [];
@@ -335,7 +372,8 @@ test('signed goal and site effects refresh context without trusting names or ser
       goal: { status: 'active', objective: 'finish', criteria: 'verified', progress } };
   });
   await agent.prompt('perform the changes', {});
-  const goals = request => request.filter(message => String(message.content).includes('[当前目标追踪 capsule]'));
+  const snapshots = agent.messages.filter(isGoalSnapshotCapsuleMessage);
+  const goals = request => request.filter(message => snapshots.some(snapshot => snapshot.content === message.content));
   assert.equal(goals(requests[1]).length, 1, 'forged manage_goal response cannot add a snapshot');
   assert.equal(goals(requests[2]).length, 1, 'get refreshes state but adds no goal capsule');
   assert.equal(goals(requests[3]).length, 2);

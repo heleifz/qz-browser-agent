@@ -71,6 +71,10 @@ try {
       let externalReason = "";
       try {
         const url = new URL(resource), owner = new URL(current.url());
+        // Public-site network errors belong to the site. Keep them in the report;
+        // extension pages, worker errors and every tool failure still fail this run.
+        if (/^https?:$/.test(url.protocol) && /^https?:$/.test(owner.protocol)
+          && /^Failed to load resource:/.test(text)) externalReason = "site_resource_failure";
         if (/^https?:$/.test(url.protocol) && url.origin === owner.origin) {
           if (url.pathname === "/favicon.ico" && /^Failed to load resource: the server responded with a status of 404\b/.test(text)) externalReason = "missing_site_icon";
           if (text === "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an invalid sandbox flag.") externalReason = "invalid_site_sandbox_token";

@@ -1,4 +1,5 @@
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
+import { bindToolResultPresentation, getToolResultPresentation, presentToolResult, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
@@ -15,6 +16,8 @@ import {
   parseDriveRequest,
   prepareDriveToolCall,
   projectDriveResult,
+  getDriveToolTraces,
+  driveFailurePresentation,
   runDriveCalls,
   type DriveToolObservation,
 } from "./external-drive.js";
@@ -126,10 +129,11 @@ export function createMcpRuntime({
   function describe() {
     return {
       protocolVersion: 1,
+      scriptApiVersion: 1,
       storageKey: storageKey(),
       methods: [
         "ping", "capabilities", "get_bridge_config", "save_bridge_config", "runtime_message",
-        "list_sessions", "create_session", "create_drive_session", "send_message", "follow_up", "continue_task",
+        "list_sessions", "create_session", "create_drive_session", "list_drive_sessions", "get_drive_session", "send_message", "follow_up", "continue_task",
         "submit_wait_form", "cancel_wait", "get_user_input", "respond_to_user_input", "get_session_state", "get_session_snapshot",
         "get_messages", "get_history", "stop_session", "clear_goal", "list_tools", "get_tool",
         "execute_tool", "list_data_tables", "list_skills", "get_skill", "get_skill_resource",
@@ -488,20 +492,51 @@ export function createMcpRuntime({
     }
   }
 
+  async function listDriveSessions(params: Fields = {}) {
+    const limit = Math.min(200, Math.max(1, Number(params.limit) || 200));
+    const entries = Object.entries(await sessions.listMetadata())
+      .filter(([, metadata]) => metadata.source === "external-drive" && metadata.driveRetentionPending !== true)
+      .sort(([, left], [, right]) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+      .slice(0, limit);
+    return { sessions: entries.map(([id, metadata]) => publicSessionObservation(id, String(metadata.title || ""),
+      String(readRuntime(id).status || "idle"))) };
+  }
+
+  async function getDriveSession(params: Fields = {}) {
+    const id = sessions.requireId(params.sessionId, "get_drive_session");
+    const metadata = (await sessions.listMetadata())[id];
+    if (!metadata || metadata.source !== "external-drive" || metadata.driveRetentionPending === true) {
+      throw Object.assign(new Error(t("drive.sessionNotFound")), { code: "DRIVE_SESSION_NOT_FOUND" });
+    }
+    return publicSessionObservation(id, String(metadata.title || ""), String(readRuntime(id).status || "idle"));
+  }
+
   function recordDriveTool(input: DriveToolObservation, images: { mimeType: string; data: string }[] = [], rawResult: unknown = input.result) {
     const { sessionId, runId, name, args, result, isError } = input;
     if (!sessions.recordToolEvent || !drive.hasActiveLease(sessionId) || !sessions.supervisor.isRunCurrent(sessionId, runId)) return false;
-    // Client call IDs correlate a response within one request, never transcript identity.
-    const toolCallId = crypto.randomUUID();
+    // Only the host supplies transcript identities; client correlation IDs stay separate.
+    const toolCallId = input.toolCallId || crypto.randomUUID();
+    if (input.phase === "start") {
+      sessions.recordToolEvent({ type: "tool_execution_start", sessionId, runId, toolCallId,
+        spanId: `tool:${toolCallId}`, parentSpanId: input.parentSpanId,
+        toolName: name, args, startedExecution: input.startedExecution });
+      return true;
+    }
     sessions.recordToolEvent({
-      type: "tool_execution_end", sessionId, runId, toolCallId, spanId: `tool:${toolCallId}`,
-      toolName: name, args, result: driveTranscriptResult(result, images, tools.runtime.getToolResultPageContext?.(rawResult) || {}), isError,
+      type: "tool_execution_end", sessionId, runId, toolCallId, spanId: `tool:${toolCallId}`, parentSpanId: input.parentSpanId,
+      toolName: name, args, result: driveTranscriptResult(result, images, {
+        ...tools.runtime.getToolResultPageContext?.(rawResult), ...getToolResultPresentation(rawResult), ...input.resultPresentation,
+      }), isError,
     });
     return true;
   }
 
   async function recordNestedTool(input: DriveToolObservation) {
-    const projected = projectDriveResult(input.result, tools.runtime.getModelPolicy?.(input.name));
+    if (input.phase === "start") {
+      if (recordDriveTool(input)) await sessions.persistTranscript?.(input.sessionId);
+      return;
+    }
+    const projected = projectDriveResult(input.result, tools.runtime.getModelPolicy?.(input.name), input.resultPresentation);
     if (!recordDriveTool({ ...input, result: projected.value }, projected.images, input.result)) return;
     if (!input.isError) rememberLoadedSkill(input.sessionId, input.name, input.result);
     await sessions.persistTranscript?.(input.sessionId);
@@ -536,8 +571,8 @@ export function createMcpRuntime({
     let timeoutSignal: AbortSignal | null = null;
     let notedDriveTools = false;
     let runId = "";
-    const noteDriveTool = (name: string, args: unknown, result: unknown, isError: boolean, images: { mimeType: string; data: string }[] = [], rawResult: unknown = result) => {
-      if (recordDriveTool({ sessionId, runId, name, args: plainObject(args), result, isError }, images, rawResult)) notedDriveTools = true;
+    const noteDriveTool = (name: string, args: unknown, result: unknown, isError: boolean, images: { mimeType: string; data: string }[] = [], rawResult: unknown = result, resultPresentation?: ToolResultPresentation, toolCallId?: string) => {
+      if (recordDriveTool({ sessionId, runId, name, args: plainObject(args), result, isError, resultPresentation, toolCallId }, images, rawResult)) notedDriveTools = true;
     };
     try {
       lease = leased ? drive.begin(sessionId, signal) : null;
@@ -554,19 +589,26 @@ export function createMcpRuntime({
       const aliases = tools.runtime.getTabAliases?.(sessionId) || {};
       if (parsed.mode === "single") {
         const name = parsed.name;
+        const toolCallId = crypto.randomUUID();
+        const resultPresentation: ToolResultPresentation = {};
         try {
           const prepared = prepareDriveToolCall(name, params.args);
           if (!prepared.ok) throw prepared.error;
-          const result = await settleDriveCall(tools.runtime.execute(name, prepared.args, callSignal, context), callSignal);
+          const result = await settleDriveCall(tools.runtime.execute(name, prepared.args, callSignal, { ...context, toolCallId, spanId: `tool:${toolCallId}`, resultPresentation }), callSignal);
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null);
-          noteDriveTool(name, prepared.args, projected.value, isToolFailure(projected.value), projected.images, result);
-          const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
-          return projected.images.length ? { ...body, images: projected.images } : body;
+          const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null, resultPresentation);
+          const isError = isToolFailure(result);
+          const presentation = isError ? driveFailurePresentation(result, resultPresentation) : resultPresentation;
+          const traces = getDriveToolTraces(result, presentation, isError);
+          noteDriveTool(name, prepared.args, projected.value, isError, projected.images, result, presentation, toolCallId);
+          const body = { toolName: name, sessionId, runId: runId || null, result: projected.value, isError };
+          return { ...body, ...(projected.images.length ? { images: projected.images } : {}), ...(traces.length ? { traces } : {}) };
         } catch (error) {
-          noteDriveTool(name, params.args, driveToolFailure(error), true, [], error);
+          const presentation = driveFailurePresentation(error, resultPresentation);
+          bindToolResultPresentation(error, presentation);
+          noteDriveTool(name, params.args, driveToolFailure(error), true, [], error, presentation, toolCallId);
           throw error;
         }
       }
@@ -583,7 +625,7 @@ export function createMcpRuntime({
         aliases: tools.runtime.getTabAliases?.(sessionId) || {},
         context,
         refreshContext: refreshDriveContext,
-        onSettled: call => noteDriveTool(call.name, call.args, call.result, call.isError, call.images, call.rawResult),
+        onSettled: call => noteDriveTool(call.name, call.args, call.result, call.isError, call.images, call.rawResult, call.resultPresentation, call.toolCallId),
         signal: callSignal ?? new AbortController().signal,
         maxInFlight: parsed.maxCalls,
       }), callSignal);
@@ -707,6 +749,8 @@ export function createMcpRuntime({
     listTools,
     getTool,
     createDriveSession,
+    listDriveSessions,
+    getDriveSession,
     restoreDriveSessions,
     recordNestedTool,
     executeTool,
@@ -828,13 +872,12 @@ function plainObject(value: unknown, fallback: Fields = {}): Fields {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Fields : fallback;
 }
 
-function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[], metadata: Fields) {
-  const page = { ...metadata };
+function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[], metadata: ToolResultPresentation) {
+  const presented = presentToolResult(result, metadata);
   const image = images[0];
-  if (image?.mimeType && image.data) page._image = `data:${image.mimeType};base64,${image.data}`;
-  if (!Object.keys(page).length) return result ?? null;
-  const body = result && typeof result === "object" && !Array.isArray(result) ? result : { value: result ?? null };
-  return { ...body, ...page };
+  if (!image?.mimeType || !image.data) return presented ?? null;
+  const body = presented && typeof presented === "object" && !Array.isArray(presented) ? presented : { value: presented ?? null };
+  return { ...body, _image: `data:${image.mimeType};base64,${image.data}` };
 }
 
 function driveToolFailure(error: unknown) {

@@ -114,6 +114,7 @@ const storage = {
 };
 
 globalThis.chrome = {
+  i18n: { getUILanguage: () => "zh-CN" },
   storage: {
     local: {
       async get(key) {
@@ -135,6 +136,8 @@ globalThis.chrome = {
     },
   },
 };
+
+await (await import("../../src/shared/i18n/index.js")).initializeLanguage();
 
 const shared = await import("../../src/shared/skills/skill-manifest.js");
 const skills = await import("../../src/background/skills/runtime.js");
@@ -346,7 +349,8 @@ assert.equal(toolModel.getToolDisplayName("mcp_call_tool"), "直调 MCP");
 assert.equal(toolModel.isToolInSet("mcp_call_tool_directly", "mcp"), false);
 assert.equal(toolModel.getToolResultFamily("mcp_call_tool"), "mcp");
 assert.equal(toolModel.getToolTimelineFamilyInfo("mcp_call_tool").id, "mcp");
-assert.equal(toolModel.isPageContextToolName("run_script"), true);
+assert.equal(toolModel.isPageContextToolName("run_script"), false, "outer orchestration has no implicit page context");
+assert.equal(toolModel.isPageContextToolName("evaluate"), true, "page evaluation retains its explicit page presentation");
 assert.equal(toolModel.getToolProfileFamily("list_tabs"), "tabs");
 
 assert.equal(

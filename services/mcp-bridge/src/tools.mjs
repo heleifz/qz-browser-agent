@@ -127,6 +127,16 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
     if (displayName) params.clientName = displayName;
   }
   if (name === "qingzhou_execute_tool") {
+    const scriptApiVersion = params.scriptApiVersion;
+    delete params.scriptApiVersion;
+    if (scriptApiVersion != null) {
+      const capabilities = await state.callExtension("capabilities", {}, options);
+      if (!(Number(capabilities?.scriptApiVersion) >= scriptApiVersion)) {
+        throw Object.assign(new BridgeError("UPGRADE_REQUIRED", "The connected extension does not support this script API. No script was executed."), {
+          hint: "Update the CLI and extension together, then reconnect before running the script.",
+        });
+      }
+    }
     delete params.wait;
     if (!Array.isArray(params.calls)) params.args ||= {};
     const displayName = String(clientName || "").trim();
@@ -207,50 +217,45 @@ function imageBlock(image, meta) {
   };
 }
 
-function peelCallImages(value, callId, startIndex, sink) {
+function peelCallImages(value, callId, sink) {
   const images = imageEntries(value);
-  if (!images.length) return { value, nextIndex: startIndex };
+  if (!images.length) return value;
   const placeholders = images.map((image, offset) => {
-    const meta = { ...(callId ? { id: callId } : {}), index: startIndex + offset };
+    const meta = { ...(callId ? { id: callId } : {}), index: offset };
     sink.push(imageBlock(image, meta));
     return meta;
   });
-  return { value: { ...withoutImages(value), images: placeholders }, nextIndex: startIndex + images.length };
+  return { ...withoutImages(value), images: placeholders };
 }
 
-export function resultToContent(result) {
+export function resultToContent(result, { toolResult = false } = {}) {
   if (result == null) return [];
-  if (Array.isArray(result)) return result.flatMap(resultToContent);
+  if (Array.isArray(result)) return result.flatMap(item => resultToContent(item));
   if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const nested = [];
   let body = result;
-  if (Array.isArray(result.results)) {
+  if (toolResult && Array.isArray(result.results)) {
     body = {
       ...result,
       results: result.results.map(item => {
         if (!item || typeof item !== "object" || Array.isArray(item)) return item;
         const callId = String(item.id || "");
-        const peeled = peelCallImages(item, callId, 0, nested);
-        let next = peeled.value;
-        if (next.result && typeof next.result === "object" && !Array.isArray(next.result)) {
-          next = { ...next, result: peelCallImages(next.result, callId, peeled.nextIndex, nested).value };
-        }
-        return next;
+        return peelCallImages(item, callId, nested);
       }),
     };
   }
-  const top = imageEntries(body);
+  const top = toolResult ? imageEntries(body) : [];
   if (!top.length && !nested.length) {
     return [{ type: "text", text: JSON.stringify(body) }];
   }
   return [
-    { type: "text", text: JSON.stringify(withoutImages(body)) },
+    { type: "text", text: JSON.stringify(top.length ? withoutImages(body) : body) },
     ...top.map(image => imageBlock(image)),
     ...nested,
   ];
 }
 
-const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
+const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_list_drive_sessions", "qingzhou_get_drive_session", "qingzhou_stop_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
   description: "Return the qz CLI direct-drive guide as an optional reference.",
@@ -303,7 +308,7 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
             _meta: { "qz/task-event": event } },
         }).catch(() => {}),
       });
-      return { content: resultToContent(result) };
+      return { content: resultToContent(result, { toolResult: request.params.name === "qingzhou_execute_tool" }) };
     } catch (error) {
       const value = { code: String(error.code || "TOOL_EXECUTION_FAILED").toUpperCase(), message: error.message || String(error),
         ...(error.hint ? { hint: error.hint } : {}),

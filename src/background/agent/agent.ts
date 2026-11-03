@@ -1,5 +1,5 @@
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
-import { copyToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { copyToolResultPresentation, getToolResultPresentation, presentToolResult, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
@@ -2679,12 +2679,12 @@ export class Agent {
         String(err.message || err.error || error),
         { hint: typeof err.hint === "string" ? err.hint : undefined, details },
       ));
-      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true };
+      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true, resultPresentation: {} as ToolResultPresentation };
     };
     const batch = planTabBatch(toolCalls, tc => {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
       let policy = this._toolRuntime.getBatchTabPolicy?.(normalizeToolCallName(tc), args, lookup);
-      if (policy?.kind === "create" && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
+      if (policy?.kind === "create" && !policy.targeted && (!this._toolRuntime.commitToolResult || !this._toolRuntime.discardToolResult)) policy = { ...policy, parallel: false };
       if (!this._toolRuntime.getBatchTabPolicy && this._toolRuntime.getParallelReadTab?.(normalizeToolCallName(tc), args, lookup) != null)
         policy = { kind: "target", implicit: false, observation: true };
       return { args, policy };
@@ -2707,18 +2707,16 @@ export class Agent {
         ledgerIndex++;
         if (!outcome) continue;
         settled.delete(call);
-        const { id, toolName, toolIdentity, args, result, isError } = outcome;
-        const presentation = getToolResultPresentation(result);
+        const { id, toolName, toolIdentity, args, result, isError, resultPresentation } = outcome;
         // Preparation failures and skipped calls still receive a paired ledger entry.
         emitStart(call, toolName, toolIdentity, args, false);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
           ...toolIdentityEventFields(toolIdentity), args,
-          result: Object.keys(presentation).length && result && typeof result === "object" && !Array.isArray(result)
-            ? { ...record(result), ...presentation } : result,
+          result: presentToolResult(result, resultPresentation),
           isError,
         });
-        for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
+        for (const msg of this._buildToolResultMessages(id, result, isError, toolName, resultPresentation)) {
           if (msg?.role === "tool") toolMessages.push(msg);
           else followUpMessages.push(msg);
         }
@@ -2729,6 +2727,8 @@ export class Agent {
       maxInFlight: this._toolRuntime.maxInFlight,
       dependencies: batch.dependencies,
       independent: batch.independent,
+      lane: batch.lane,
+      observer: batch.passive,
       completed: (tc, outcome) => batch.complete(tc, outcome.result, outcome.isError),
       cancelled: tc => failure(tc, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
       tab: tc => {
@@ -2736,12 +2736,13 @@ export class Agent {
         catch { return null; } // Invalid references become per-call errors in execute, not scheduler failures.
       },
       reject: (tc, error) => failure(tc, error),
-      execute: async (tc, callSignal, parallel) => {
+      execute: async (tc, callSignal, parallel, scope) => {
         const { id } = tc;
         const toolName = normalizeToolCallName(tc);
         let args = parseToolCallArguments(getToolCallArgumentsValue(tc));
         let toolIdentity: object = {};
         let executionResult: unknown;
+        const resultPresentation: ToolResultPresentation = {};
         let acceptingUpdates = true;
         const assertActive = () => {
           if (callSignal.aborted) throw Object.assign(new Error(t("agent.toolStopped")), { code: "OPERATION_ABORTED" });
@@ -2756,6 +2757,8 @@ export class Agent {
           assertActive();
           emitStart(tc, toolName, toolIdentity, args, true);
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
+            resultPresentation,
+            nestedToolScope: scope,
             preserveWorkingTab: batch.observation(tc),
             deferToolCommit: parallel,
             deferCreatedTabSelection: batch.parallelCreate(tc),
@@ -2778,7 +2781,7 @@ export class Agent {
           });
           acceptingUpdates = false;
           assertActive();
-          return { call: tc, id, toolName, toolIdentity, args, result,
+          return { call: tc, id, toolName, toolIdentity, args, result, resultPresentation,
             isError: isToolFailure(result) };
         } catch (error) {
           acceptingUpdates = false;
@@ -2814,7 +2817,7 @@ export class Agent {
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
           const normalized = failure(outcome.call, result, undefined, outcome.toolIdentity);
           settled.set(outcome.call, normalized);
-        } else settled.set(outcome.call, { ...outcome, result, isError });
+        } else settled.set(outcome.call, { ...outcome, result, isError, resultPresentation: isError ? {} : outcome.resultPresentation });
         flushLedger();
       },
     }).finally(() => flushLedger(true));
@@ -2901,9 +2904,22 @@ export class Agent {
    * Build one or two tool result messages. OpenAI tool messages require text content;
    * send an image in an additional user message.
    */
-  _buildToolResultMessages(toolCallId: string, result: unknown, isError: boolean, toolName = "") {
+  _buildToolResultMessages(toolCallId: string, result: unknown, isError: boolean, toolName = "", resultPresentation: ToolResultPresentation = {}) {
     const messages = [];
     const policy = this._toolModelPolicy(toolName);
+
+    if (!isError && policy.preserveResult) {
+      messages.push({ role: "tool", tool_call_id: toolCallId, _toolIsError: false,
+        content: typeof result === "string" ? result : JSON.stringify(result) ?? "undefined" });
+      const images = { ...getToolResultPresentation(result), ...resultPresentation }._images || [];
+      if (images.length && this._runProfile?.features?.imageInput !== false) {
+        messages.push({ role: "user", _origin: "tool_image", content: [
+          { type: "text", text: policy.imagePrompt || promptT("toolImage") },
+          ...images.map(image => ({ type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}`, detail: "low" } })),
+        ] });
+      }
+      return messages;
+    }
 
     if (!isError && result && record(result)._image) {
       const imageDataUrl = record(result)._image;
@@ -2919,6 +2935,7 @@ export class Agent {
       messages.push({
         role: "tool",
         tool_call_id: toolCallId,
+        _toolIsError: isError,
         content: allowImages
           ? textPart
           : `${textPart}\n${IMAGE_PLACEHOLDER} ${promptT("imageUnavailable")}`,
@@ -2942,6 +2959,7 @@ export class Agent {
       messages.push({
         role: "tool",
         tool_call_id: toolCallId,
+        _toolIsError: isError,
         content: typeof sanitized === "string" ? sanitized : JSON.stringify(sanitized),
       });
     }

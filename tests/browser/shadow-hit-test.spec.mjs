@@ -195,7 +195,7 @@ test("find_elements binds open shadow hits to inspectable, clickable node UIDs",
     expect(dom.content).toContain('Buy');
     expect(dom.content).not.toContain('Header');
     const clicked = await h.call('act_on_element', { target: buy.target, action: 'click' });
-    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true });
+    expect(clicked, JSON.stringify(clicked)).toEqual({});
     const state = await h.state();
     expect(state.hits).toMatchObject({ buy: 1, header: 0, closed: 0 });
     await testInfo.attach('shadow-find-target', {
@@ -215,7 +215,7 @@ test("find_elements binds open shadow hits to inspectable, clickable node UIDs",
     const scoped = await h.call('find_elements', { selector: target, roles: ['button'] });
     expect(scoped.results[0].target).toMatch(/^uid:/);
     expect((await h.call('inspect_element', { target: scoped.results[0].target })).text).toBe('Nested find');
-    expect(await h.call('act_on_element', { target, action: 'click' })).toMatchObject({ clickDispatched: true });
+    expect(await h.call('act_on_element', { target, action: 'click' })).toEqual({});
     expect((await h.state()).hits.nested).toBe(1);
     await h.page.evaluate(() => {
       const root = document.querySelector('#open-host').shadowRoot.lastElementChild.shadowRoot;
@@ -230,7 +230,7 @@ test("find_elements binds open shadow hits to inspectable, clickable node UIDs",
     await h.page.reload();
     expect(await h.call('inspect_element', { target: buy.target })).toHaveProperty('code', 'STALE_ELEMENT_UID');
     const afterReload = await h.call('find_elements', { roles: ['button'], pattern: '^Buy$' });
-    expect(await h.call('act_on_element', { target: afterReload.results[0].target, action: 'click' })).toMatchObject({ clickDispatched: true });
+    expect(await h.call('act_on_element', { target: afterReload.results[0].target, action: 'click' })).toEqual({});
     expect((await h.state()).hits.buy).toBe(1);
   } finally {
     await h.close();
@@ -252,7 +252,7 @@ test.describe("shadow hit testing", () => {
     expect(buy, snapshot).toBeTruthy();
     const clicked = await h.call("act_on_element", { target: buy, action: "click" });
     expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
-    expect(clicked.clickDispatched).toBe(true);
+    expect(clicked).toEqual({});
     const hits = (await h.state()).hits;
     expect(hits.buy).toBe(1);
     expect(hits.header).toBe(0);
@@ -263,7 +263,7 @@ test.describe("shadow hit testing", () => {
     expect(closed, snapshot).toBeTruthy();
     const clicked = await h.call("act_on_element", { target: closed, action: "click" });
     expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
-    expect(clicked.clickDispatched).toBe(true);
+    expect(clicked).toEqual({});
     expect((await h.state()).hits.closed).toBe(1);
   });
 
@@ -291,7 +291,7 @@ test.describe("shadow hit testing", () => {
     expect(shadow, snapshot).toBeTruthy();
     expect(linked, snapshot).toBeTruthy();
     const checked = await h.call("act_on_element", { target: shadow, action: "check" });
-    expect(checked, JSON.stringify(checked)).toMatchObject({ checked: true, changed: true });
+    expect(checked, JSON.stringify(checked)).toEqual({});
     const rejected = await h.call("act_on_element", { target: linked, action: "check" });
     expect(rejected, JSON.stringify(rejected)).toHaveProperty("code");
     const page = await h.state();

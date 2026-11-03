@@ -445,21 +445,17 @@ The runtime evaluates it once per call during planning; true or a thrown predica
 Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
 and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 
-`run_script` declares `parallelTab: true` with a barrier predicate for inner mode or potential tool
-API use. An omitted target means page. The capability's [classifier](../src/capabilities/script/tool-access.ts)
-uses the pinned JavaScript parser to distinguish comments, quoted strings and ordinary member
-properties from tool references, template expressions and dynamic access. Parse failures, tool
-references and dynamic constructs remain barriers. This is conservative scheduling analysis, not a
-JavaScript sandbox or proof that arbitrary page functions have no external side effects.
+`run_script` runs orchestration outside pages and remains a barrier at the Agent call level.
+Its tools proxy invokes the current catalog through the same Session authority and scheduler.
+`evaluate` declares tab-local parallel execution: independent pages can advance together while
+calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
+state effects rather than selecting a page or execution environment.
 
-No-tools page scripts use tab lanes regardless of `mutatesPage`, which continues to control effects.
-Input/args bindings are injected without a bridge. A tab-local execution cannot install the tool
-bridge, even if a later classification disagrees. Missing tool access returns
-`RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE`, with inspection/recovery guidance and no automatic replay.
-Only a native return-shape syntax error without an execution stack can use the existing no-bridge
-shape recovery; runtime error envelopes never trigger it. Tool-using page scripts retain their existing nested-tool scope and are barriers.
-`run_skill_script`, inner execution, and all Skill/plugin tools remain barriers; plugin resolution
-overrides host predicates with literal true. Permission, ownership, deadlines and run checks still apply.
+Page functions passed to `evaluate` receive data through args and return their business value.
+They have document/window access, while the outer script uses tools for browser operations.
+Navigation can interrupt a page evaluation without destroying the outer script. Context loss,
+runtime errors and cancellation never replay code. `run_skill_script` and installed Skill/plugin
+execution retain their permission, ownership, deadline and run checks.
 Tool start and progress events publish during execution, including flow-control waits. A separate
 cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
 messages in the original call order. Completed execution frees a slot immediately, even while its

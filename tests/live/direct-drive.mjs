@@ -52,7 +52,7 @@ const children = new Set(), sessions = new Set();
 const targets = { find_elements: new Set(), list_images: new Set() };
 const clicked = { find_elements: false, list_images: false };
 const aliases = new Set();
-let environment, sidebar, expectedCalls = 0, canceled = false, scriptBusiness;
+let environment, sidebar, expectedCalls = 0, canceled = false, scriptBusiness, worker;
 const heartbeat = setInterval(() => log("heartbeat", { turns: report.turns.length, cliCalls: report.cli.length, secondsLeft: Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) }), 15_000);
 
 async function snapshot() {
@@ -88,7 +88,7 @@ async function checkUi() {
   assert.equal(new Set(ids).size, ids.length, "no duplicate tool cards");
   assert.equal(new Set(entry.tools.map(tool => tool.toolCallId)).size, entry.tools.length, "no duplicate persisted calls");
   report.uiChecks.push({ afterCli: report.cli.length, sessionId: entry.id, title: entry.title,
-    actualCalls: entry.tools.length, expectedTopLevelCalls: expectedCalls, failedCalls: report.failedCards.length,
+    actualCalls: entry.tools.length, observedCalls: expectedCalls, failedCalls: report.failedCards.length,
     cards: ids.length, uniqueCards: new Set(ids).size });
   assert.equal(entry.tools.length, expectedCalls, "each actual drive call, including a failed one, has exactly one persisted card");
 }
@@ -113,40 +113,33 @@ function observe(name, args, result) {
   if (name === "open_tab" && args.tabAlias) {
     assert.equal(result.tabRef, args.tabAlias, "open_tab echoes the caller alias"); aliases.add(args.tabAlias);
   }
-  if (name === "open_tab") assert.deepEqual(Object.keys(result).sort(), ["active", "tabRef", "title", "url"]);
+  // These are UI events with host page metadata; exact public Tab keys are covered
+  // by the deterministic CLI acceptance, which reads the returned business value.
+  if (name === "open_tab") for (const key of ["active", "tabRef", "title", "url"]) assert.ok(Object.hasOwn(result, key));
   if (name === "list_tabs") for (const tab of result.tabs || []) assert.deepEqual(Object.keys(tab).sort(), ["active", "tabRef", "title", "url"]);
   if (name === "find_elements") for (const item of result.results || []) if (item.target) targets.find_elements.add(item.target);
   if (name === "list_images") for (const item of result.images || []) if (item.target) targets.list_images.add(item.target);
-  if (name === 'act_on_element' && ['click', 'fill'].includes(args.action) && result.target?.startsWith('uid:')) {
-    if (args.target.startsWith('uid:')) assert.equal(result.target, args.target, 'an existing UID keeps its identity');
-    if (result.element) {
-      if (args.action === 'fill' || Object.values(targets).some(items => items.has(args.target))) {
-        assert.equal(result.element.target, result.target, 'the operated node keeps its UID in the nested observation');
-      } else if (result.element.target !== result.target) {
-        assert.equal(result.originalElement?.target, result.target, 'a redirected click retains the requested node separately');
-      }
-    }
-    (report.elementIdentities ||= []).push({ action: args.action, requested: args.target, target: result.target, nested: result.element?.target });
+  if (name === 'act_on_element' && ['click', 'fill'].includes(args.action)) {
+    (report.elementIdentities ||= []).push({ action: args.action, requested: args.target });
   }
   if (name === 'act_on_element' && args.action === 'fill' && args.target?.startsWith('css:') && args.value === 'Hangzhou') {
-    assert.equal(result.filled, true); assert.match(result.target, /^uid:/); report.cssFill = true;
+    report.cssFill = true;
   }
   if (name === "act_on_element" && args.action === "click") {
     for (const kind of Object.keys(targets)) if (targets[kind].has(args.target)) clicked[kind] = true;
   }
 }
-function decodeExec(parsed, stdin) {
-  if (parsed?.command !== "exec") return null;
-  try { return JSON.parse(parsed.options.payload == null || parsed.options.payload === "-" ? stdin : parsed.options.payload); }
-  catch { return null; }
-}
+const liveEvents = () => sidebar.evaluate(() => globalThis.__qzLiveToolEvents || []);
+const bridgeCalls = () => worker.evaluate(() => globalThis.__qzLiveBridgeCalls || []);
 async function qz({ argv, stdin = "" }) {
   assert.ok(Array.isArray(argv) && argv.length && argv.every(value => typeof value === "string"), "qz.argv must be CLI argument strings");
   assert.equal(typeof stdin, "string");
   let parsed; try { parsed = parseCommand(argv); } catch { /* Let the real CLI produce the argument error. */ }
-  const stopsTask = parsed?.command === "tasks" && parsed.action === "stop";
+  const stopsTask = (parsed?.command === "tasks" && parsed.action === "stop")
+    || (parsed?.command === "session" && parsed.action === "cancel");
   if (stopsTask && sessions.size) { await checkUi(); await captureEvidence("before-cancel"); }
   const before = sessions.size ? (await snapshot())[0]?.tools.length || 0 : 0;
+  const beforeEvents = (await liveEvents()).length, beforeBridge = (await bridgeCalls()).length;
   const entry = { argv, stdin, startedAt: new Date().toISOString(), exitCode: null, stdout: "", stderr: "" };
   report.cli.push(entry); log("qz", { argv: argv.slice(0, 5), index: report.cli.length }); await persist();
   const child = spawn(process.execPath, ["--input-type=module", "--eval", `
@@ -168,40 +161,51 @@ async function qz({ argv, stdin = "" }) {
   } finally { clearTimeout(timer); children.delete(child); }
   let value; try { value = JSON.parse(entry.stdout); } catch { /* Plain CLI help is useful model input too. */ }
   if (entry.exitCode !== 0) report.codedErrors.push({ argv, exitCode: entry.exitCode, stdout: entry.stdout, stderr: entry.stderr });
+  if (parsed?.command === 'script') {
+    assert.deepEqual(Object.keys(value).sort(), ['result', 'traces']);
+    assert.ok(Array.isArray(value.traces) && value.traces.every(trace => typeof trace === 'string'), 'CLI traces are plain strings');
+    entry.traces = value.traces;
+    for (const trace of value.traces.filter(trace => trace.trim())) {
+      assert.equal(entry.stderr.split(/\r?\n/).includes(trace), false, 'script traces are in stdout, not stderr');
+    }
+    value = value.result;
+  }
   if (parsed?.command === "session" && parsed.action === "create" && entry.exitCode === 0) {
     const id = value?.result?.sessionId || entry.stdout.match(/^sessionId\s+(\S+)/m)?.[1];
     assert.ok(id); sessions.add(id); assert.equal(sessions.size, 1, "the model should create exactly one task Session");
     report.sessionId = id; report.title = value?.result?.title || parsed.options.title?.trim();
   }
-  const payload = decodeExec(parsed, stdin);
-  const isExecution = payload && !["list_tools", "get_tool", "capabilities"].includes(payload.name);
-  const calls = isExecution ? payload.calls || [{ name: payload.name || payload.toolName, args: payload.args || {} }]
-    : parsed?.command === "script" ? [{ name: "run_script", args: { tabRef: parsed.options.tab } }] : [];
-  const body = value?.ok === true ? value.result : null;
-  const receipts = isExecution && Array.isArray(body?.results) ? body.results
-    : isExecution && body?.toolName && body?.sessionId ? [{ result: body.result, isError: entry.exitCode !== 0 }] : null;
+  if (parsed?.command === 'script' && entry.exitCode === 0) {
+    await expect.poll(async () => (await liveEvents()).slice(beforeEvents)
+      .some(event => event.toolName === 'run_script' && sessions.has(event.sessionId)), { timeout: 10_000 }).toBe(true);
+  }
   const after = sessions.size ? (await snapshot())[0]?.tools || [] : [];
   const delta = after.slice(before);
-  if (receipts) {
-    assert.equal(receipts.length, calls.length, "every admitted CLI call has one receipt, including failures");
-    expectedCalls += receipts.length; entry.admittedCalls = receipts.length; entry.admissionEvidence = "CLI execution receipt";
-    for (let index = 0; index < calls.length; index++) {
-      const receipt = receipts[index], call = calls[index];
-      if (receipt.isError) report.observations.push({ name: call.name, args: call.args || {}, result: receipt.result, isError: true });
-      else observe(call.name, call.args || {}, receipt.result);
-    }
-  } else if (parsed?.command === "script" && entry.exitCode === 0) {
-    expectedCalls++; entry.admittedCalls = 1; entry.admissionEvidence = "CLI script success"; scriptBusiness = value;
-    observe("run_script", { tabRef: parsed.options.tab }, value);
-  } else if (entry.exitCode !== 0 && calls.length) {
-    // Thrown/preflight errors and failed `qz script` return bare ToolError, not an exec receipt.
-    // Their actual admitted failed calls are identified by new checkpoint rows for this command.
-    assert.ok(delta.every(row => calls.some(call => call.name === row.name)), "failure evidence belongs to the submitted command");
-    expectedCalls += delta.length; entry.admittedCalls = delta.length; entry.admissionEvidence = "failed-call checkpoint";
+  const events = (await liveEvents()).slice(beforeEvents).filter(event => sessions.has(event.sessionId));
+  const nested = (await bridgeCalls()).slice(beforeBridge).filter(call => sessions.has(call.sessionId) && call.name !== '__list_tools__');
+  const eventIds = events.map(event => event.toolCallId);
+  assert.equal(new Set(eventIds).size, eventIds.length, 'each actual completed invocation publishes one unique end event');
+  assert.deepEqual(new Set(delta.map(row => row.toolCallId)), new Set(eventIds), 'all published tool calls persist once');
+  // The passive message observer independently sees calls from the external script Worker.
+  // Trigger descriptors execute in the host and are checked through their own end events.
+  const unmatched = [...events];
+  for (const call of nested) {
+    const index = unmatched.findIndex(event => event.toolName === call.name && JSON.stringify(event.args) === JSON.stringify(call.args));
+    assert.ok(index >= 0, `the nested ${call.name} invocation has its own completed tool event`); unmatched.splice(index, 1);
+  }
+  expectedCalls += events.length; entry.admittedCalls = events.length; entry.bridgeCalls = nested.length;
+  entry.admissionEvidence = 'public tool end events, checked against passive script-bridge messages';
+  for (const event of events) {
+    if (event.isError) report.observations.push({ name: event.toolName, args: event.args || {}, result: event.result, isError: true });
+    else observe(event.toolName, event.args || {}, event.result);
+  }
+  if (parsed?.command === 'script') {
+    assert.ok(events.some(event => event.toolName === 'run_script'), 'an admitted outer script has one completed call');
+    if (entry.exitCode === 0 && value && typeof value === 'object' && typeof value.title === 'string'
+      && typeof value.url === 'string' && Object.hasOwn(value, 'searchValue')) scriptBusiness = value;
   }
   if (entry.exitCode !== 0) {
-    const failure = receipts?.find(receipt => receipt.isError)?.result || value;
-    entry.error = { code: failure?.code, message: failure?.message };
+    entry.error = { code: value?.code, message: value?.message };
   }
   // Save the real failure and its transcript before any UI assertion can fail.
   if (sessions.size) report.transcript = after;
@@ -216,9 +220,6 @@ async function qz({ argv, stdin = "" }) {
       await save(`call-${report.cli.length}-failure.json`, { cli: entry, tools: delta });
       await sidebar.screenshot({ path: join(output, `call-${report.cli.length}-failure-sidebar.png`), fullPage: true });
     }
-    if (receipts || parsed?.command === 'script' && entry.exitCode === 0) {
-      for (const call of calls) assert.ok(delta.some(row => row.name === call.name), "no admitted CLI operation is missing from the transcript");
-    }
   }
   await persist();
   return { exitCode: entry.exitCode, stdout: entry.stdout, stderr: entry.stderr };
@@ -228,7 +229,7 @@ try {
   log("launch", { model });
   environment = await withoutSecretEnvironment(() => launchIsolatedExtensionMcp({ profilePrefix: "qz-live-direct-", requestTimeoutSeconds: 150 }));
   environment.context.on("request", request => { if (new URL(request.url()).hostname === "api.deepseek.com") report.browserModelRequests.push(request.url()); });
-  const worker = environment.context.serviceWorkers()[0];
+  worker = environment.context.serviceWorkers()[0];
   const newControl = environment.context.waitForEvent("page");
   report.clearing = await worker.evaluate(async url => {
     const tabs = await chrome.tabs.query({}); await chrome.tabs.remove(tabs.map(tab => tab.id));
@@ -241,10 +242,29 @@ try {
   sidebar.on("console", message => { if (message.type() === "error") report.productDiagnostics.push(message.text()); });
   await sidebar.waitForLoadState("domcontentloaded");
   await sidebar.waitForFunction(() => !document.querySelector('#app')?.hasAttribute('data-workspace-booting'));
-  const tools = [{ type: "function", function: { name: "qz", description: "Run the real qz CLI in the already connected isolated browser. argv excludes the qz executable. stdin supports exec JSON or script JavaScript. Use --json for structured receipts. This is the current unpublished source, not npx.",
+  await sidebar.evaluate(async () => {
+    const { createPortTransport } = await import('/shared/transport/port-transport.js');
+    const port = chrome.runtime.connect({ name: 'sidepanel' });
+    globalThis.__qzLiveToolEvents = [];
+    const transport = createPortTransport({ postMessage: message => port.postMessage(message),
+      onMessage: event => { if (event.type === 'tool_execution_end') globalThis.__qzLiveToolEvents.push(event); },
+    });
+    port.onMessage.addListener(message => transport.receive(message));
+    globalThis.__qzLiveObserver = { port, transport };
+  });
+  await worker.evaluate(() => {
+    globalThis.__qzLiveBridgeCalls = [];
+    chrome.runtime.onMessage.addListener(message => {
+      if (message.type === 'run_script_tool_call') globalThis.__qzLiveBridgeCalls.push({
+        sessionId: message.sessionId, name: message.toolName, args: message.args,
+      });
+      return false;
+    });
+  });
+  const tools = [{ type: "function", function: { name: "qz", description: "Run the real qz CLI in the already connected isolated browser. argv excludes the qz executable. stdin supplies script JavaScript. Script stdout contains traces and the returned result; use --json for other structured receipts. This is the current unpublished source, not npx.",
     parameters: { type: "object", properties: { argv: { type: "array", items: { type: "string" } }, stdin: { type: "string" } }, required: ["argv"], additionalProperties: false } } }];
-  const messages = [{ role: "system", content: `${skill}\n\nThis browser is already installed, connected and consented. Use only the qz tool to drive it. Do not install/configure anything or start a built-in qz model. The tool executes CLI arguments directly, so no shell expansion, pipes or file-writing are available; pass JavaScript/JSON through stdin. Work within 30 model turns and ten minutes. Every qz command starts a new process. Read the CLI receipts and finish the task before your final response.` },
-    { role: "user", content: "On public English Wikipedia (https://en.wikipedia.org/wiki/Main_Page), verify the site's navigation without signing in. Create exactly one readable titled session for this task and give the page a readable alias. Find the encyclopedia Contents link with find_elements and click that exact returned target. From the Contents page, list the site's logo image with list_images and click that exact returned target to return to Main Page. After returning to Main Page, fill CSS target css:input[name=\"search\"] with Hangzhou without submitting. Use qz script to return a small business object containing the verified document title, URL, and searchValue read from that search input. Keep the same session and alias throughout; then cancel the task to finish. Report what you verified and the source URL. Choose your own calls and inspect each response; never invent an element target." }];
+  const messages = [{ role: "system", content: `${skill}\n\nThis browser is already installed, connected and consented. Use only the qz tool to drive it. Use qz session create for the titled task, qz script --session for every browser operation, and qz session cancel to finish. Do not install/configure anything or start a built-in qz model. The tool executes CLI arguments directly, so no shell expansion, pipes or file-writing are available; pass JavaScript through stdin. Work within 30 model turns and ten minutes. Every qz command starts a new process. Read the CLI receipts and finish the task before your final response.` },
+    { role: "user", content: "On public English Wikipedia (https://en.wikipedia.org/wiki/Main_Page), verify the site's navigation without signing in. Create exactly one readable titled session for this task and give the page a readable alias. Find the encyclopedia Contents link with find_elements and click that exact returned target. From the Contents page, list the site's logo image with list_images and click that exact returned target to return to Main Page. After returning to Main Page, fill CSS target css:input[name=\"search\"] with Hangzhou without submitting. Use qz script to log one concise verified page observation and return a small business object containing the verified document title, URL, and searchValue read from that search input. Keep the same session and alias throughout; then cancel the task to finish. Report what you verified and the source URL. Choose your own calls and inspect each response; never invent an element target." }];
   for (let turn = 0; turn < 30; turn++) {
     log("model", { turn: turn + 1 });
     const response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -267,9 +287,23 @@ try {
     }
   }
   assert.ok(report.final, "the external agent must return a final response within 30 turns");
+  const modelReceipts = messages.filter(message => message.role === 'tool').flatMap((message, index) => {
+    if (parseCommand(report.cli[index].argv).command !== 'script') return [];
+    const response = JSON.parse(message.content);
+    const receipt = JSON.parse(response.stdout);
+    return [{ toolCallId: message.tool_call_id, traces: receipt.traces }];
+  });
+  assert.deepEqual(modelReceipts.map(receipt => receipt.traces), report.cli.filter(entry => parseCommand(entry.argv).command === 'script').map(entry => entry.traces),
+    'the model receives every CLI trace unchanged through the complete stdout');
+  const modelTraces = modelReceipts.flatMap(receipt => receipt.traces).filter(trace => trace.trim());
+  report.modelVisibleTraces = { receipts: modelReceipts.length, nonEmpty: modelTraces.length,
+    samples: modelTraces.slice(0, 5), transport: 'complete CLI stdout in model tool responses' };
+  assert.ok(modelTraces.length > 0, 'real external model requests include non-empty CLI traces');
   assert.equal(report.codedErrors.length, 0, `Unexpected CLI/ToolError failures: ${JSON.stringify(report.cli.filter(entry => entry.exitCode !== 0).map(entry => entry.error || { exitCode: entry.exitCode }))}`);
   assert.equal(report.failedCards?.length || 0, 0, "no failed call may be hidden from the final acceptance result");
   assert.equal(sessions.size, 1); assert.ok(canceled, "the external agent must cancel its task");
+  assert.ok(report.cli.some(entry => parseCommand(entry.argv).command === 'script'));
+  assert.equal(report.cli.some(entry => parseCommand(entry.argv).command === 'exec'), false, 'browser operations use the outer-script CLI');
   assert.ok(clicked.find_elements, "a find_elements target must be passed directly to click");
   assert.ok(clicked.list_images, "a list_images target must be passed directly to click");
   assert.ok(aliases.size > 0, "open_tab must echo a supplied alias");

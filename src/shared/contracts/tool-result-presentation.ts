@@ -1,3 +1,5 @@
+import { isToolValue, markToolValue } from './tool-error.js';
+
 /** Host-owned presentation travels beside a tool's business result. */
 export interface ToolResultPresentation {
   _pageTitle?: string;
@@ -5,6 +7,7 @@ export interface ToolResultPresentation {
   _pageContext?: Readonly<Record<string, string | number | boolean>>;
   _display?: unknown;
   _plugin?: unknown;
+  _images?: readonly { mimeType: string; data: string }[];
 }
 
 const presentations = new WeakMap<object, ToolResultPresentation>();
@@ -21,5 +24,34 @@ export function bindToolResultPresentation<T>(result: T, presentation: ToolResul
 }
 
 export function copyToolResultPresentation<T>(source: unknown, target: T): T {
+  if (isToolValue(source)) markToolValue(target);
   return bindToolResultPresentation(target, getToolResultPresentation(source));
+}
+
+/** Preserve execution order and action meaning without exposing UI trace levels. */
+export function traceMessages(rows: unknown): readonly string[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap(row => {
+    if (typeof row === "string") return [row];
+    if (!row || typeof row !== "object" || typeof row.message !== "string") return [];
+    if (row.level === "script.start") return ["Script started."];
+    const action = row.level === "tool.start" ? "started" : row.level === "tool.end" ? "completed" : row.level === "tool.error" ? "failed" : "";
+    const match = action && /^(\S+)(?:\s+([\s\S]*))?$/.exec(row.message);
+    return [match ? `${match[1]} ${action}${match[2] ? `: ${match[2]}` : ""}` : row.message];
+  });
+}
+
+/** Read only host-owned metadata; authored result fields never become execution traces. */
+export function getToolResultTraces(result: unknown, collected: ToolResultPresentation = {}): readonly string[] {
+  const display = { ...getToolResultPresentation(result), ...collected }._display as { script?: { trace?: unknown } } | undefined;
+  return traceMessages(display?.script?.trace);
+}
+
+/** Build a UI event from trusted host metadata without changing the model value. */
+export function presentToolResult(result: unknown, collected: ToolResultPresentation = {}): unknown {
+  const presentation = { ...getToolResultPresentation(result), ...collected };
+  const display = presentation._display as { script?: { valueOnly?: boolean } } | undefined;
+  if (display?.script?.valueOnly === true) return { result, ...presentation };
+  return Object.keys(presentation).length && result && typeof result === "object" && !Array.isArray(result)
+    ? { ...result, ...presentation } : result;
 }
