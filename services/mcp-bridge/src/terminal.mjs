@@ -538,8 +538,9 @@ export function renderHelp(topic = "", options = {}) {
 
 export function renderError(payload, options = {}) {
   const out = output(options);
-  const error = payload?.error || payload || {};
-  const waiting = error.code === "connection_pending";
+  const value = payload?.error || payload || {};
+  const error = { ...value.details, ...value };
+  const waiting = error.code === "CONNECTION_PENDING";
   out.line(waiting ? "Waiting for Chrome" : "qz error", waiting ? "waiting" : "error");
   out.line(error.message || "The command could not be completed.");
   if (error.url) { out.line(); out.line(error.url, "accent"); }

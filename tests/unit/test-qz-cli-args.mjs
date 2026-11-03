@@ -6,7 +6,7 @@ import { resourceRequest } from "../../services/mcp-bridge/src/cli-resources.mjs
 import { TOOL_CATALOG, validateMcpToolInput } from "../../services/mcp-bridge/src/tools.mjs";
 
 function rejects(argv, message) {
-  assert.throws(() => parseCommand(argv), error => error.code === "invalid_arguments" && (!message || message.test(error.message)), argv.join(" "));
+  assert.throws(() => parseCommand(argv), error => error.code === "INVALID_ARGUMENTS" && (!message || message.test(error.message)), argv.join(" "));
 }
 
 test("resource commands select explicit operations, exact names, and export formats", () => {
@@ -53,8 +53,10 @@ test("MCP only prints a URL; automation commands remain explicit", () => {
   assert.equal(parseCommand(["mcp"]).action, undefined);
   assert.equal(parseCommand(["tools", "--session", "drive"]).command, "tools");
   assert.equal(parseCommand(["tools", "--session", "drive", "open_tab"]).id, "open_tab");
-  assert.equal(parseCommand(["session", "create"]).action, "create");
+  assert.equal(parseCommand(["session", "create", "--title", "Inspect page"]).action, "create");
   rejects(["tools"], /requires --session/);
+  rejects(["session", "create"], /requires --title/);
+  rejects(["session", "create", "--title", "  "], /requires --title/);
   rejects(["session"], /qz session create/);
   rejects(["session", "list"], /qz session create/);
   for (const args of [["mcp", "tools"], ["mcp", "call", "anything"], ["mcp", "--client", "browser"],
@@ -259,7 +261,7 @@ test("every declared CLI resource route maps to an advertised MCP schema", () =>
       export: ["export", "research", "--filename", "research.zip"] },
     settings: { get: ["get", "model"], set: ["set", "vision", "true"] },
     automations: { list: ["--limit", "5"], run: ["run", "daily"] },
-    session: { create: ["create"] },
+    session: { create: ["create", "--title", "Inspect page"] },
   };
   const advertised = new Set(TOOL_CATALOG.map(tool => tool.name));
   for (const [command, definition] of Object.entries(COMMANDS)) {

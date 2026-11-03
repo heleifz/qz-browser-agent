@@ -52,7 +52,7 @@ function assertTargetInfrastructure() {
   assert.match(tools, /const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> \| "css:" <css_selector>'/, "target grammar should be centralized");
   assert.match(tools, /function parseElementTarget\(target = ""\)/, "target parser should exist");
   assert.match(tools, /function resolveSelectorTarget\(tabId, selector = "", index = 0, context = \{\}\)/, "selector target compatibility helper should exist");
-  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw \};/, "raw CSS selectors should remain valid selector arguments");
+  assert.match(tools, /if \(!isElementTarget\(raw\)\) return \{ tabId, selector: raw, target: elementTargetForSelector\(raw\) \};/, "raw CSS selectors should remain valid selector arguments");
   assert.match(tools, /const ref = await resolveElementReference\(tabId, \{ target: raw, index \}, context\);/, "uid: selector arguments should resolve through the target resolver");
   assert.doesNotMatch(tools, /async function resolveElementReference\(tabId, \{[^}]*uid[^}]*selector/, "element resolver should not keep the old uid/selector argument pair");
 }
@@ -91,24 +91,15 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /\[css: <css_selector>\] 是用户通过鼠标点选页面元素生成的显式页面区域引用/, "system prompt should recognize user-picked page regions");
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
-  assert.match(prompt, /wait_for_element 的 target 参数接受 uid:\.\.\.、css:\.\.\. 或原始 CSS/, "system prompt should use the canonical parameter name");
+  assert.match(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt should use the canonical parameter name");
   assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
   registerAccessibilityTools({ registerTool: registry.defineTool, elementTargetGrammar: "target" });
-  const result = {
-    snapshotId: "snapshot-1", nodes: [{ uid: "private-node" }],
-    _display: { title: "UI-only tree" }, _debug: "internal", _rawCdp: { nodes: [] },
-    actions: [{ target: "uid:button-1", uid: "button-1", role: "button", name: "Continue", text: "Continue" }],
-  };
+  const result = { snapshot: 'target=uid:t5.000001.1 button "Continue"', canvases: [] };
   const original = structuredClone(result);
-  const projected = registry.get("get_ax_tree").model.projectResult(result);
-  assert.equal(projected.actions[0].target, "uid:button-1", "registered AX projection preserves actionable target");
-  assert.equal(Object.hasOwn(projected.actions[0], "uid"), false, "model actions do not expose bare uid");
-  assert.equal(Object.hasOwn(projected, "nodes"), false, "the full AX tree stays outside model results");
-  assert.equal(projected.snapshotId, undefined, 'snapshot identity stays inside the target handle');
-  assert.deepEqual(result, original, "model projection must preserve the UI's complete result");
+  assert.equal(registry.get("get_ax_tree").model?.projectResult, undefined, 'AX constructs public results at the source');
   const requests = [];
   const agent = new Agent("ax-model-projection", createTestAgentOptions({
     tools: { getSchemas: () => [], getIdentity: () => ({}),
@@ -125,8 +116,7 @@ async function assertPromptAndUiUseTarget() {
   }));
   await agent.prompt("Inspect available actions", {});
   const modelResult = JSON.parse(requests[1].find(message => message.role === "tool").content);
-  assert.deepEqual(modelResult, { actions: [{ target: "uid:button-1", role: "button", name: "Continue", text: "Continue" }] },
-    "Agent applies the registered projection and strips chat-only display and diagnostic fields");
+  assert.deepEqual(modelResult, result, "Agent forwards the native public AX result");
   assert.deepEqual(result, original, "Agent sanitization must not modify the UI result");
   assert.match(browserOperationsRenderer, /data\.target \|\| args\.target/, "tool renderer should display target first");
   assert.match(localization, /缺少元素引用：请提供 target/, "localized errors should tell users to provide target");
@@ -163,8 +153,8 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
-  assert.match(block, /root: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /root="root" 查看整页/, "get_ax_tree should document root=root");
+  assert.match(block, /target: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /target="root" 查看整页/, "get_ax_tree should document root=root");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
   assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");

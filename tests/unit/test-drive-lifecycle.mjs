@@ -42,7 +42,7 @@ test('sessionless metadata reads do not create or touch sessions; explicit unkno
 test('cancel during asynchronous setup prevents execution, and cancelled IDs cannot be recreated', async () => {
   let release;
   const f = fixture({ ready: new Promise(resolve => { release = resolve; }) });
-  const { sessionId } = await f.runtime.createDriveSession();
+  const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   const pending = f.runtime.executeTool({ sessionId, name: 'list_tabs' });
   await new Promise(resolve => setImmediate(resolve));
   f.runtime.drive.noteStopped(sessionId);
@@ -51,7 +51,7 @@ test('cancel during asynchronous setup prevents execution, and cancelled IDs can
   assert.deepEqual(f.calls, []);
   await assert.rejects(f.runtime.executeTool({ sessionId, calls: [{ id: 'close', name: 'close_tab', args: { tabRef: 'old' } }] }),
     { code: 'DRIVE_SESSION_ENDED' });
-  await assert.rejects(f.runtime.createDriveSession({ sessionId }), { code: 'DRIVE_SESSION_ENDED' });
+  await assert.rejects(f.runtime.createDriveSession({ title: "Inspect example page", sessionId }), { code: 'DRIVE_SESSION_ENDED' });
 });
 
 test('restart restores remaining idle time, expires yesterday, and preserves explicit keep on stopped cleanup', async () => {
@@ -76,7 +76,7 @@ test('restart restores remaining idle time, expires yesterday, and preserves exp
 test('retention cannot retire a drive call during asynchronous tool admission', async () => {
   let release;
   const f = fixture({ ready: new Promise(resolve => { release = resolve; }) });
-  const { sessionId } = await f.runtime.createDriveSession();
+  const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   const pending = f.runtime.executeTool({ sessionId, name: 'list_tabs' });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.runtime.drive.retireForRetention(sessionId), false);
@@ -88,7 +88,7 @@ test('pending retention cleanup cannot be reopened or executed after a restart',
   const f = fixture();
   f.metadata.retired = { id: 'retired', source: 'external-drive', driveRetentionPending: true };
   await assert.rejects(f.runtime.executeTool({ sessionId: 'retired', name: 'list_tabs' }), { code: 'DRIVE_SESSION_ENDED' });
-  await assert.rejects(f.runtime.createDriveSession({ sessionId: 'retired' }), { code: 'DRIVE_SESSION_ENDED' });
+  await assert.rejects(f.runtime.createDriveSession({ title: "Inspect example page", sessionId: 'retired' }), { code: 'DRIVE_SESSION_ENDED' });
   await f.runtime.restoreDriveSessions();
   assert.equal(f.stored.retired, undefined);
   assert.deepEqual(f.calls, []);

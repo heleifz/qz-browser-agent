@@ -34,6 +34,7 @@ export function safeValueForMessage(value: unknown, world: ScriptWorld = "inner"
       stack: value.stack || "",
     };
     const details: ScriptFailure = value;
+    if (details.hint != null) out.hint = details.hint;
     if (details.code != null) out.code = safeValueForMessage(details.code, world, seen, depth + 1);
     if (details.details != null) out.details = safeValueForMessage(details.details, world, seen, depth + 1);
     if (details.diagnostic != null) out.diagnostic = safeValueForMessage(details.diagnostic, world, seen, depth + 1);

@@ -102,7 +102,7 @@ async function assertToolNotesAreCompact() {
   };
   try {
     const result = await definitions.get("use_tab").execute({ tabId: 42 });
-    assert.equal(result.tabId, 42);
+    assert.equal(result.tabId, undefined);
     assert.equal(result.active, false);
     assert.equal(result.visibleChanged, false);
     assert.equal(result.focusedWindow, false);

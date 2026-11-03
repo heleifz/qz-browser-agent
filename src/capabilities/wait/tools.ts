@@ -424,7 +424,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("waitForNavigationTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("waitForNavigationTabId") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       screenshot: { type: "boolean", description: toolT("waitForNavigationScreenshot") },
       fromUrl: { type: "string", description: toolT("waitForNavigationFromUrl") },
@@ -531,7 +531,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("waitForElementTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("waitForElementTabId") },
       target: { type: "string", description: toolT("waitForElementSelector") },
       absent: { type: "boolean", description: toolT("waitForElementAbsent") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },

@@ -15,7 +15,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { publishTimeoutTrace, scriptTimeout } from "#sdk/background/tools";
+import { publishTimeoutTrace, scriptTimeout, toolError } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -314,7 +314,7 @@ registerTool({
     properties: {
       timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
       target: { type: "string", enum: ["page", "inner"], description: toolT("runSkillScriptTarget") },
-      tabId: { type: "number", description: toolT("runSkillScriptTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("runSkillScriptTabId") },
       skill: { type: "string", description: toolT("runSkillScriptSkill") },
       script: { type: "string", description: toolT("runSkillScriptScript") },
       args: { type: "object", description: toolT("runSkillScriptArgs") },
@@ -357,8 +357,7 @@ registerTool({
     type: "object",
     properties: {
       timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
-      target: { type: "string", enum: ["page", "inner"], description: toolT("runScriptTarget") },
-      tabId: { type: "number", description: toolT("runSkillScriptTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("runSkillScriptTabId") },
       args: { type: "object", description: toolT("runScriptArgs") },
       mutatesPage: { type: "boolean", description: toolT("runSkillScriptMutatesPage") },
       code: { type: "string", description: toolT("runScriptCode") },
@@ -369,7 +368,7 @@ registerTool({
   timeout: scriptTimeout,
   validateArgs: args => { scriptTimeout(args, "run_script"); },
   execute: async (input, signal, context = {}) => {
-    const { target, tabId, code, args = {}, mutatesPage } = input;
+    const { target, tabId, code, args = {}, mutatesPage } = input as typeof input & { target?: unknown };
     const { skill, script } = input as typeof input & { skill?: unknown; script?: unknown };
     const executionTarget = normalizeRunScriptTarget(target);
     const hasInlineCode = String(code || "").trim().length > 0;
@@ -435,13 +434,19 @@ function describePageScriptExecution(execution: Fields) {
   const image = normalizeRunScriptObservation(execution);
   if (execution.ok !== false) return { ok: true, result: execution.result, ...(image || {}) };
   const details = record(execution.details);
-  return {
-    ok: false, code: String(execution.code || 'SCRIPT_EVALUATION_FAILED'), error: String(execution.error || execution.message || ''),
-    details: { lineNumber: details.lineNumber, columnNumber: details.columnNumber, stack: details.stack },
-    diagnostic: { category: 'page_script', suggestedNextStep: toolT('pageScriptRecovery') },
-    trace: Array.isArray(execution.trace) ? execution.trace.slice(-5) : [],
-    ...(image || {}),
-  };
+  const trace = Array.isArray(execution.trace) ? execution.trace.slice(-5) : [];
+  return { ...toolError(String(execution.code || 'SCRIPT_EVALUATION_FAILED'),
+    String(details.originalError || execution.message || execution.error || 'Script failed.'), {
+      hint: String(execution.hint || record(execution.diagnostic).suggestedNextStep || toolT('pageScriptRecovery')),
+      details: {
+        ...(details.tabRef != null ? { tabRef: details.tabRef } : {}),
+        ...(details.target != null ? { target: details.target } : {}),
+        ...(details.lineNumber != null ? { line: details.lineNumber } : {}),
+        ...(details.columnNumber != null ? { column: details.columnNumber } : {}),
+        ...(details.stack ? { stack: details.stack } : {}),
+        ...(trace.length ? { trace } : {}),
+      },
+    }), ...(image || {}) };
 }
 
 function isToolApiReferenceError(error: unknown) {
@@ -464,8 +469,7 @@ const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
 function makeRunScriptAbortedError(tabId: number, phase = "run") {
   return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
-    tabId,
-    engine: "cdp",
+    tabRef: String(tabId),
     phase,
   });
 }
@@ -854,10 +858,10 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
           return;
         }
         if (!response.ok) {
-          __qzPushTrace("tool.error", [toolName, response.error || "bridge failed"]);
-          const bridgeError = new Error(response.error || ("tools." + toolName + " bridge failed"));
+          __qzPushTrace("tool.error", [toolName, response.message || response.error || "bridge failed"]);
+          const bridgeError = new Error(response.message || response.error || ("tools." + toolName + " bridge failed"));
           if (response.code) bridgeError.code = response.code;
-          if (response.diagnostic) bridgeError.diagnostic = response.diagnostic;
+          if (response.hint) bridgeError.hint = response.hint;
           if (response.details) bridgeError.details = response.details;
           reject(bridgeError);
           return;
@@ -974,6 +978,7 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
     if (!ok) {
       out.error = error?.stack || error?.message || String(error || "Script evaluation failed");
       out.code = error?.code || "SCRIPT_EVALUATION_FAILED";
+      if (error?.hint) out.hint = String(error.hint);
       out.details = __qzSafeValueForMessage({
         reason: ${JSON.stringify(reason || "cdp")},
         ...(error?.details && typeof error.details === "object" ? error.details : {}),

@@ -42,6 +42,16 @@ async function fixture(mode) {
 }
 
 for (const mode of ['development', 'production']) {
+  test(`${mode}: unavailable page scripts expose the recovery explanation, not a private marker`, async () => {
+    const f = await fixture(mode);
+    f.context.chrome.scripting.executeScript = async () => { throw new Error('bridge unavailable'); };
+    const result = await f.run('async () => tools.$list()', {}, { runId: 'drive-unavailable' });
+    assert.equal(result.code, 'PAGE_CONTEXT_UNAVAILABLE');
+    assert.equal(result.message, 'Page JavaScript context is unavailable; script was not executed.');
+    assert.ok(result.hint);
+    assert.deepEqual(Object.keys(result).sort(), ['code', 'hint', 'message']);
+  });
+
   test(`${mode}: input-only scripts use the no-bridge path and missing tools never replay side effects`, async () => {
     const f = await fixture(mode);
     const result = await f.run('async () => input.value + args.extra', { args: { value: 4, extra: 8 } });

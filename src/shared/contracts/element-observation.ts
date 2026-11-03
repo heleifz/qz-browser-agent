@@ -1,3 +1,12 @@
+export interface Rect { x: number; y: number; width: number; height: number }
+
+/** Canonical page geometry, including legacy Content w/h boxes. */
+export function toRect(input: unknown, fallback = 0): Rect {
+  const box = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const number = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+  return { x: number(box.x), y: number(box.y), width: number(box.width ?? box.w), height: number(box.height ?? box.h) };
+}
+
 /** Public page-element observation. The only element identity is target. */
 export interface ElementObservation {
   target?: `uid:${string}` | `css:${string}`;
@@ -5,7 +14,7 @@ export interface ElementObservation {
   placeholder?: string; href?: string; visible?: boolean; disabled?: boolean; editable?: boolean;
   checked?: boolean; selected?: boolean; readOnly?: boolean; focused?: boolean; actionable?: boolean;
   inViewport?: boolean; clickablePointInViewport?: boolean; obscuredAtCenter?: boolean;
-  rect?: { x: number; y: number; width: number; height: number };
+  rect?: Rect;
   clickablePoint?: { x: number; y: number } | null;
   attrs?: Record<string, string>; state?: Record<string, unknown>;
   form?: ElementObservation | null; parent?: ElementObservation | null; nearbyText?: string;
@@ -40,9 +49,6 @@ export function createElementObservation(source: Omit<Partial<ElementObservation
     'selectedFileCount', 'line', 'lineRange', 'index', 'matched', 'match', 'matchKind', 'score', 'action', 'method',
   ] as const satisfies readonly (keyof ElementObservation)[];
   for (const key of business) if (source[key] !== undefined) Object.assign(result, { [key]: source[key] });
-  if (source.rect && typeof source.rect === 'object') {
-    const box = source.rect as Record<string, unknown>;
-    result.rect = { x: Number(box.x), y: Number(box.y), width: Number(box.width ?? box.w), height: Number(box.height ?? box.h) };
-  }
+  if (source.rect && typeof source.rect === 'object') result.rect = toRect(source.rect);
   return result;
 }

@@ -124,7 +124,7 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
       const state = states.get(tabId);
       if (state?.sessionId !== context.sessionId || readPageMode(tabId, states) === "mobile") return;
       if ((context.source === "run_script" || context.runScriptToolDepth != null) && Number(context.senderTabId) === tabId) {
-        throw new host.ToolExecutionError("PAGE_MODE_REOBSERVE_REQUIRED", t("modeResumeRequired"), { tabId });
+        throw new host.ToolExecutionError("PAGE_MODE_REOBSERVE_REQUIRED", t("modeResumeRequired"));
       }
       await change(tabId, "mobile", signal, context, toolName !== "navigate");
     },

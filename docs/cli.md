@@ -418,20 +418,20 @@ inspect the base catalog without a session. To inspect loaded Skill tools by nam
 `sessionId` to `qingzhou_get_tool`.
 Tool execution requires a created session: omitting `sessionId` returns `DRIVE_SESSION_REQUIRED`;
 an unknown ID returns `DRIVE_SESSION_NOT_FOUND`. Neither case creates a session. Check the browser selection and ID,
-or create a new task session with `qz session create` / `qingzhou_create_drive_session`.
+or create a new task session with `qz session create --title "Task title"` / `qingzhou_create_drive_session({title:"Task title"})`.
 
-`qz session create` creates a fresh direct-drive session and prints `sessionId <id>` on stdout;
-with `--json`, read `result.sessionId`. `qz` abbreviates `npx --yes qz-browser-agent@latest` when
+`qz session create --title "Task title"` requires a readable title, creates a fresh direct-drive session,
+and prints `sessionId <id>` on stdout. With `--json`, read `result.sessionId`. `qz` abbreviates `npx --yes qz-browser-agent@latest` when
 it is not installed globally. See the [copyable drive workflow](../skills/qz-browser-agent/SKILL.md)
 for creation, tab aliases, dependent batches, PDF reading, and response examples.
 Finish with `qz cancel ID`; it ends the session and cleans up created tabs, so do not call
-`close_tab` afterward. Further execution returns `DRIVE_SESSION_ENDED`. Claimed/user tabs stay
+`close_tab` afterward. Further execution returns `DRIVE_SESSION_ENDED`. User tabs stay
 open; full MCP `qingzhou_stop_session({sessionId,keepTabs:true})` explicitly keeps created tabs too.
 
 `qz script --session ID --tab TABREF [FILE|-]` runs an async function on that tab. `--session` is
 required. `--tab` takes an alias or a tabRef returned by open_tab/list_tabs. stdout is the returned
-value. Script failures print `{code,error,trace?}` with at most five traces. Thrown/transport failures
-use `{ok:false,error:{code,message}}` with `--json`, or stderr on an interactive terminal.
+value. Failures print `{code,message,hint?,details?}`; `details` holds script line/column and at most
+five trace entries. Thrown/transport failures use the same shape with `--json`, or stderr on an interactive terminal.
 `--timeout` defaults to 120 seconds, accepts >0 and <=3600, and the request waits 60 seconds longer.
 To modify a page, use `qz exec --session ID` with run_script and `args.mutatesPage:true`; the script
 command has no mutation flag. `qz tools --session ID` lists compact signatures for the default
@@ -443,7 +443,7 @@ tools or start a model. Pass one JSON object with `name` and `args`, or with `ca
 safely by piping stdin: `qz exec --session ID <<'JSON'`. stdout is JSON. Exit 0 when the tool
 succeeds, 2 when the arguments are invalid, and 1 when the tool fails. Screenshot bytes are
 written to temporary files and the JSON lists those paths. `--session` is required. A missing
-flag exits 2 and names `qz session create`. These commands do not create a session and do not
+flag exits 2 and names `qz session create --title "Task title"`. These commands do not create a session and do not
 reuse the previous one. Each parallel task creates its own `sessionId`. Run `qz connect` first.
 
 A single tool's data is at `result.result` in exec JSON; a successful script value is at

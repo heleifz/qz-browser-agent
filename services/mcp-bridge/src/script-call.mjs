@@ -54,7 +54,7 @@ function truncatedValue(value) {
   return value && typeof value === "object" && !Array.isArray(value) && value.truncated === true ? value : null;
 }
 
-/** Success stdout is only the returned value. Failure stdout is the code and the last five traces. */
+/** Success stdout is only the returned value. Failures follow ToolError. */
 export function presentScriptResult(payload) {
   const sessionId = payload && typeof payload === "object" ? String(payload.sessionId || "").trim() : "";
   const stderr = sessionId ? `sessionId ${sessionId}\n` : "";
@@ -65,10 +65,12 @@ export function presentScriptResult(payload) {
     return { text: `${JSON.stringify(body.result)}\n`, stderr, exitCode: 0 };
   }
   const trace = Array.isArray(body?.trace) ? body.trace.slice(-5) : [];
+  const details = { ...body?.details, ...(trace.length ? { trace } : {}),
+    ...(body?.line !== undefined ? { line: body.line } : {}), ...(body?.column !== undefined ? { column: body.column } : {}) };
   const failure = {
-    code: String(body?.code || "TOOL_EXECUTION_FAILED"),
-    error: typeof body?.error === "string" ? body.error : "script failed",
-    ...(trace.length ? { trace } : {}),
+    code: String(body?.code || "TOOL_EXECUTION_FAILED").toUpperCase(),
+    message: typeof body?.message === "string" ? body.message : typeof body?.error === "string" ? body.error : "script failed",
+    ...(body?.hint ? { hint: body.hint } : {}), ...(Object.keys(details).length ? { details } : {}),
   };
   return { text: `${JSON.stringify(failure)}\n`, stderr, exitCode: 1 };
 }

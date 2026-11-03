@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { bindCreatedTabResult } from '../../src/shared/contracts/page-observation.js';
 import { createSessionTabs } from '../../src/background/session/tabs.js';
 import { normalizeSessionRuntime } from '../../src/background/session/runtime-reducer.js';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
@@ -43,16 +44,16 @@ function fixture({ metadataReady = async () => {}, skillToolRegistrySnapshot } =
       else await sessions.updateWorkingTab({ sessionId:context.sessionId,runId:context.runId,signal,tab,claim:true });
       if (gate) await gate;
       if (fail) throw new Error('opening failed');
-      return { id:tab.id, ...(partial ? {incomplete:{reason:'timeout'}} : {}) };
+      return bindCreatedTabResult({ tabRef:args.tabAlias || tab.id, ...(partial ? {incomplete:{reason:'timeout'}} : {}) },tab.id);
     } });
   register({ name:'read_ref', description:'read', page:'tab', behavior:{parallelRead:true},
-    parameters:{type:'object',properties:{tabId:{type:'number'},target:{type:'string'}},required:['tabId']},
+    parameters:{type:'object',properties:{tabRef:{type:['integer','string']},target:{type:'string'}},required:['tabRef']},
     execute(args){ executed.push({name:'read',...args}); return {tabId:args.tabId}; } });
   register({ name:'no_page', description:'metadata',
     parameters:{type:'object',properties:{}},
     execute(args){ executed.push({name:'no_page',...args}); return {ok:true}; } });
   register({ name:'close_ref', description:'close', page:'tab',behavior:{parallelTab:true},
-    parameters:{type:'object',properties:{tabId:{type:'number'}},required:['tabId']},
+    parameters:{type:'object',properties:{tabRef:{type:['integer','string']}},required:['tabRef']},
     async execute(args){await tabsApi.remove(args.tabId);return {closed:true};} });
   if (skillToolRegistrySnapshot) register({ ...resolveToolDefinition('run_skill_script'),
     execute(args) {
@@ -246,7 +247,8 @@ test('an idle metadata-only Session opens its first alias and reuses it across d
   const f=fixture(); delete f.states.one;
   const context={...f.context(),runId:'',source:'mcp_bridge'};
   const opened=await f.runtime.execute('open_tab',{tabAlias:'first'},f.abort.signal,context);
-  assert.equal(opened.tabAlias,'first');
+  assert.equal(opened.tabRef,'first');
+  assert.equal(opened.tabAlias,undefined);
   assert.deepEqual(f.sessions.getTabAliases('one'),{first:101});
   assert.equal((await f.runtime.execute('read_ref',{tabRef:'first'},f.abort.signal,context)).tabId,101);
   await assert.rejects(f.runtime.execute('open_tab',{tabAlias:'first'},f.abort.signal,context),e=>e.details.reason==='duplicate_alias');
@@ -296,7 +298,8 @@ test('failed or cancelled deferred opens publish no alias and release the name',
 test('loading partials retain aliases and allow dependent and later reads',async()=>{
   const f=fixture();f.setPartial(true);await f.run([open('loading'),read('loading')]);
   assert.deepEqual(f.sessions.getTabAliases('one'),{loading:101});
-  assert.equal(f.events.filter(e=>e.type==='tool_execution_end').at(-1).isError,false);
+  const end=f.events.filter(e=>e.type==='tool_execution_end').at(-1);
+  assert.equal(end.isError,false,JSON.stringify(end.result));
   assert.equal((await f.execute('read_ref',{tabRef:'loading'})).tabId,101);
 });
 
@@ -319,7 +322,7 @@ test('same alias in distinct Sessions is independent, foreign aliases never reso
   const f=fixture();await f.run([open('local')]);
   await assert.rejects(f.runtime.execute('read_ref',{tabRef:'local'},f.abort.signal,{...f.context(),sessionId:'two'}),e=>e.details.reason==='no_alias');
   const result=await f.runtime.execute('open_tab',{tabAlias:'local'},f.abort.signal,{...f.context(),sessionId:'two'});
-  assert.equal(result.id,102);assert.deepEqual(f.sessions.getTabAliases('two'),{local:102});
+  assert.equal(result.tabRef,'local');assert.deepEqual(f.sessions.getTabAliases('two'),{local:102});
 });
 
 for(const alias of ['123','１２３','with spaces','']) test(`invalid alias ${JSON.stringify(alias)} creates no tabs`,async()=>{

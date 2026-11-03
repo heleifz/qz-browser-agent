@@ -1,3 +1,4 @@
+import { isToolFailure } from "../../shared/contracts/tool-error.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
@@ -2786,7 +2787,7 @@ export class Agent {
           acceptingUpdates = false;
           assertActive();
           return { call: tc, id, toolName, toolIdentity, args, result,
-            isError: Boolean(record(result).error || record(result).ok === false || record(result).isError === true) };
+            isError: isToolFailure(result) };
         } catch (error) {
           acceptingUpdates = false;
           await this._toolRuntime.discardToolResult?.(executionResult, identity);
@@ -2819,7 +2820,7 @@ export class Agent {
         // Only this cursor publishes state, effects, bindings, final events and model messages.
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
-          const normalized = failure(outcome.call, { ...record(result), message: record(result).error }, undefined, outcome.toolIdentity);
+          const normalized = failure(outcome.call, { ...record(result), message: record(result).message || record(result).error }, undefined, outcome.toolIdentity);
           settled.set(outcome.call, normalized);
         } else settled.set(outcome.call, { ...outcome, result, isError });
         flushLedger();

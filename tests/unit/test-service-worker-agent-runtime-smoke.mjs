@@ -691,10 +691,9 @@ try {
     type: "get_state",
     sessionId,
   }, msg => msg.type === "state" && msg.sessionId === sessionId);
-  assert.equal(runtimeState.runtime?.workingTabId, 3, "service worker runtime should record the working tab");
-  assert.equal(runtimeState.runtime?.workingUrl, "https://smoke.example/page");
-  assert.equal(runtimeState.runtime?.workingTitle, "Smoke Page");
-  assert.equal(runtimeState.runtime?.ownedTabIds?.includes(3), true, "use_tab should claim the tab for the session");
+  assert.equal(runtimeState.runtime?.status, "completed", "the public runtime should report task progress");
+  assert.doesNotMatch(JSON.stringify(runtimeState.runtime), /workingTab|workingUrl|workingTitle|ownedTabIds|sessionTabIds/,
+    "the public runtime observation excludes private page ownership");
 
   const stoppedState = await sendPortMessage(port, {
     type: "stop_session", sessionId, requestId: "stop-runtime-route",

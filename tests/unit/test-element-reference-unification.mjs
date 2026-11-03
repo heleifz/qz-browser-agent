@@ -98,3 +98,41 @@ test('UID waits retain opaque host authority, distinguish removal from unknown r
   await assert.rejects(polling, error => error.code === 'OPERATION_ABORTED' || error.name === 'AbortError');
   const settledCalls = calls; await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(calls, settledCalls);
 });
+
+test('shared rect contract canonicalizes legacy boxes across element observations', async () => {
+  const { toRect, createElementObservation } = await import('../../src/shared/contracts/element-observation.js');
+  const expected = { x: 1, y: 2, width: 30, height: 40 };
+  assert.deepEqual(toRect({ x: '1', y: 2, w: 30, h: 40 }), expected);
+  assert.deepEqual(createElementObservation({ rect: { x: 1, y: 2, w: 30, h: 40 } }, 'uid:t5.000001.1').rect, expected);
+  assert.deepEqual(toRect({ x: Infinity, y: 'invalid', w: 30, h: 40 }), { ...expected, x: 0, y: 0 });
+  assert.ok(Number.isNaN(toRect({}, NaN).width), 'screenshot validation retains invalid geometry');
+});
+
+test('native click readiness failure contains only public error fields', async () => {
+  const inspect = { selector: '#disabled', disabled: true, visible: true,
+    rect: { x: 1, y: 2, w: 30, h: 40 }, _elementRef: undefined };
+  chrome.tabs.sendMessage = async (_id, params) => params.action === 'ping' ? { ok: true, contentType: 'text/html', elementRefs: 1 } : inspect;
+  try {
+    const result = await resolveToolDefinition('act_on_element').execute({ tabId: 5, target: 'css:#disabled', action: 'click' }, undefined, {});
+    assert.deepEqual(Object.keys(result).sort(), ['code', 'details', 'hint', 'message']);
+    assert.equal(result.code, 'ELEMENT_DISABLED');
+    assert.deepEqual(result.details, { target: 'css:#disabled' });
+    assert.match(result.hint, /find_elements/);
+    assert.doesNotMatch(JSON.stringify(result), /selector|tabId|originalElement|"w"|"h"/);
+    const thrown = new ToolExecutionError('element_disabled', result.message, result.details);
+    thrown.hint = result.hint;
+    assert.deepEqual(JSON.parse(JSON.stringify(thrown)), result);
+  } finally { delete chrome.tabs.sendMessage; }
+});
+
+test('the element binding converts Content query failures at its owned boundary', async () => {
+  const f = runtimeFixture();
+  const failure = await f.runtime.element.addElementTargetsToFindResult({
+    code: 'INVALID_ELEMENT_TARGET', error: 'Invalid target syntax',
+    details: { target: 'css:[', selector: '[', tabId: 5 }, element: { selector: '[' },
+  }, 5, f.context);
+  assert.deepEqual(Object.keys(failure).sort(), ['code', 'details', 'hint', 'message']);
+  assert.deepEqual(failure.details, { target: 'css:[' });
+  assert.match(failure.hint, /target/);
+  assert.doesNotMatch(JSON.stringify(failure), /selector|tabId/);
+});

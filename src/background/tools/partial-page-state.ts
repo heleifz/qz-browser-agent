@@ -6,7 +6,7 @@ type Fields = Record<string, unknown>;
 export async function readPartialPageState(tabId: number, previous: Fields = {}, context: ToolContext = {}) {
   let tab: chrome.tabs.Tab;
   try { tab = await chrome.tabs.get(tabId); }
-  catch { throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The target tab is unavailable", { tabId }); }
+  catch { throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The target tab is unavailable", { tabRef: tabId }); }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let observation: Fields = {};
   const finishPhase = context.measurePhase?.("measurement");

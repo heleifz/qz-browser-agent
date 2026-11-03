@@ -22,7 +22,7 @@ function fixture() {
     isRunCurrent: () => true,
     resolveTargetTab: async input => { targets.push(input.tabId); return { ok: true, tabId: input.tabId, ownedByCurrentTask: true }; },
   } });
-  const context = { sessionId: 'drive', runId: 'run', workingTabId: 999 };
+  const context = { sessionId: 'drive', runId: 'drive-run', workingTabId: 999 };
   return { runtime, aliases, targets, context };
 }
 

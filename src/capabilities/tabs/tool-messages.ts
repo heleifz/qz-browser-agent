@@ -14,9 +14,10 @@ const messages = defineMessages("tabs-tools", {
   modeContextTitle: { "zh-CN": "页面模式", en: "Page mode" },
   modeResume: { "zh-CN": "下一次任务内页面操作会恢复移动模式并刷新。请先重新观察页面，再操作。", en: "The next owned-page tool restores mobile mode and reloads. Observe the page again before interacting." },
   modeChanging: { "zh-CN": "页面模式正在切换，请等待完成后重新观察。", en: "Page mode is changing. Wait, then observe the page again." },
+  listTabsScope: { "zh-CN": "owned（默认）只列出当前任务的页面；all 列出所有网页。", en: "owned (default) lists this task’s pages; all lists every web tab." },
   listTabsDescription: {
-    "zh-CN": "列出所有打开的网页标签页及其页面角色和可用性；pageMode 为当前实际 desktop/mobile 模式。active=true 表示用户可见标签页，isWorkingTab=true 表示当前任务工作标签页，ownedByCurrentTask=true 表示当前任务拥有该标签页；claimRequired=true 表示 use_tab 会将该无人认领标签页归属当前任务，readOnlyUsable=true 表示只读页面工具可显式传 tabId 查看。忽略 chrome://、chrome-extension://、devtools://、新标签页等非网页 tab。命中安全策略的标签页仍返回标题、URL、tabId 等元信息，并标记 contentAccess=blocked。",
-    en: "List all open web tabs with their roles and availability; pageMode reports the current desktop/mobile mode. active=true marks the tab visible to the user; isWorkingTab=true marks the current task’s working tab; ownedByCurrentTask=true means the current task owns the tab. claimRequired=true means use_tab will assign the unclaimed tab to the current task. readOnlyUsable=true means read-only page tools may inspect it by passing tabId explicitly. Excludes non-web tabs such as chrome://, chrome-extension://, devtools://, and new-tab pages. Tabs blocked by a security policy still return metadata such as title, URL, and tabId, with contentAccess=blocked.",
+    "zh-CN": "列出网页标签页，返回 tabRef、URL、标题和 active；active=true 表示用户正在看的标签页。忽略 chrome://、chrome-extension://、devtools://、新标签页等非网页标签页。",
+    en: "List web tabs with tabRef, URL, title, and active; active=true marks the tab visible to the user. Excludes non-web tabs such as chrome://, chrome-extension://, devtools://, and new-tab pages.",
   },
   getWorkingTabDescription: {
     "zh-CN": "读取当前任务已存在的工作标签页。没有工作标签页时返回 hasWorkingTab=false；存在时返回 hasWorkingTab=true、pageMode（当前实际 desktop/mobile 模式）及页面元信息。若命中安全策略，仍返回标题、URL、tabId，并标记 contentAccess=blocked；后续不要读取页面内容。",
@@ -51,24 +52,24 @@ const messages = defineMessages("tabs-tools", {
     en: "Close a tab.",
   },
   closeTabTabId: {
-    "zh-CN": "标签页 ID",
-    en: "Tab ID.",
+    "zh-CN": "标签页 tabRef",
+    en: "TabRef.",
   },
   useTabDescription: {
     "zh-CN": "将指定网页标签页设为当前任务工作标签页，用户可见标签页保持不变。适用于当前任务已拥有或无人认领的网页标签页；归属其他任务的标签页可由只读页面工具显式传 tabId 查看。",
     en: "Set the specified web tab as the current task’s working tab, without changing the tab visible to the user. Accepts tabs already owned by the current task or unclaimed tabs. To inspect a tab owned by another task, pass tabId explicitly to a read-only page tool.",
   },
   navigateDescription: {
-    "zh-CN": "在当前任务的工作标签页或当前任务拥有的指定标签页中导航到新 URL，等待本次导航提交后返回，避免后续读取旧页面；不等待所有资源或动态内容加载完成。若需要捕获这次跳转的首屏、重定向或加载期接口，传 watchNetwork:true；工具会先在原 tab 上开启 Network 监听，再执行导航，之后可直接用 network_recent 查看本次导航请求。监听当前页面中点击、搜索、提交等后续交互的请求时，使用 network_watch。",
-    en: "Navigate to a new URL in the current task’s working tab or a specified tab it owns. Waits for this navigation to commit so subsequent tools do not read the old page; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool starts network monitoring on the existing tab before navigating; use network_recent afterward to inspect this navigation’s requests. Use network_watch to capture requests from later interactions on the current page, such as clicking, searching, or submitting.",
+    "zh-CN": "在 tabRef 指定的当前任务拥有标签页中导航到新 URL，等待本次导航提交后返回，避免后续读取旧页面；不等待所有资源或动态内容加载完成。若需要捕获这次跳转的首屏、重定向或加载期接口，传 watchNetwork:true；工具会先在原 tab 上开启 Network 监听，再执行导航，之后可直接用 network_recent 查看本次导航请求。监听当前页面中点击、搜索、提交等后续交互的请求时，使用 network_watch。",
+    en: "Navigate to a new URL in the task-owned tab specified by tabRef. Waits for this navigation to commit so subsequent tools do not read the old page; resources and dynamic content may still be loading. To capture requests made during the initial page load or redirects, including API calls, pass watchNetwork:true. The tool starts network monitoring on the existing tab before navigating; use network_recent afterward to inspect this navigation’s requests. Use network_watch to capture requests from later interactions on the current page, such as clicking, searching, or submitting.",
   },
   navigateUrl: {
     "zh-CN": "目标 HTTP/HTTPS 或已获文件网址访问权限的 file:// URL",
     en: "Destination HTTP/HTTPS URL or a file:// URL permitted by Chrome file access.",
   },
   navigateTabId: {
-    "zh-CN": "本次调用的目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID for this call. Defaults to the current task’s working tab.",
+    "zh-CN": "本次调用的目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef for this call: an alias or the id returned by open_tab/list_tabs.",
   },
   navigateWatchNetwork: {
     "zh-CN": "本次导航前是否开启 Network 监听；用于抓跳转首屏、重定向、加载期请求。页面已加载后的交互监听请用 network_watch。",

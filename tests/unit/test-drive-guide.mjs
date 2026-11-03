@@ -66,7 +66,7 @@ test("the packed drive guide is the only discoverable skill, localized and bound
   assert.match(instructions, /open_tab \/ list_tabs 返回的 tabRef/);
   assert.match(instructions, /the tabRef returned by open_tab or list_tabs/);
   assert.match(zh, /一个任务一个会话/);
-  assert.match(zh, /先 `qz session create`，stdout 打出 `sessionId <id>`/);
+  assert.match(zh, /先 `qz session create --title "查看示例页"`，标题必填；stdout 打出 `sessionId <id>`/);
   assert.doesNotMatch(zh, /第一次调用创建会话/);
   assert.match(zh, /缺失时返回 DRIVE_TAB_REF_REQUIRED/);
   assert.match(zh, /no_alias 仅在已经传入别名/);
@@ -91,7 +91,7 @@ test("drive guide documents executable sessions, recovery, dependent PDF calls a
   assert.doesNotMatch(source, /qz (?:script|exec|tools)(?! --session)/);
   for (const lang of ["zh-CN", "en"]) {
     const guide = driveGuide({ explicit: lang, env: {} });
-    for (const value of ["npx --yes qz-browser-agent@latest", "CREATED=$(qz session create --json)",
+    for (const value of ["npx --yes qz-browser-agent@latest", "CREATED=$(qz session create --title \"Inspect example page\" --json)",
       "DRIVE_SESSION_NOT_FOUND", "qingzhou_create_drive_session", "already_complete", "timedOut", "mutatesPage:true",
       "result.result.result", "keepTabs:true", "qingzhou_stop_session", "limits.timeoutSeconds",
       "qingzhou_documents__document_fetch", "qingzhou_documents__document_parse", "qingzhou_documents__document_read_chunk"]) {
@@ -126,8 +126,8 @@ test("qz script runs on the page for one tabRef and prints only the returned val
   assert.equal(bad.exitCode, 1);
   assert.deepEqual(JSON.parse(bad.text), {
     code: "DRIVE_TOOL_FORBIDDEN",
-    error: "blocked",
-    trace: traces.slice(-5),
+    message: "blocked",
+    details: { trace: traces.slice(-5) },
   });
   const truncated = { truncated: true, totalChars: 100000, limitChars: 48000, preview: "x".repeat(32) };
   const capped = presentScriptResult({ sessionId: "s", result: truncated });

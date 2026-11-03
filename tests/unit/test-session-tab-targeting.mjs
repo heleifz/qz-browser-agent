@@ -289,7 +289,7 @@ assert.deepEqual(state.sendMessages, [], "missing target must not touch content 
 resetCalls();
 const foreignArticle = await tools.executeTool("read_article", { tabId: 2, limit: 4000 }, null, sessionA());
 assert.equal(foreignArticle.text, "article:2");
-assert.equal(foreignArticle._tabId, 2);
+assert.equal(foreignArticle._tabId, undefined, "page observations do not expose private browser IDs");
 assert.deepEqual(
   state.sendMessages.map(item => [item.tabId, item.message.action]),
   [[2, "ping"], [2, "readArticle"]],
@@ -366,7 +366,7 @@ assert.equal(tabOwners.has(3), false);
 
 resetCalls();
 const listedBeforeClaim = await tools.executeTool("list_tabs", {}, null, sessionA());
-assert.deepEqual(listedBeforeClaim.map(tab => tab.id), [1, 2, 3]);
+assert.deepEqual(listedBeforeClaim.map(tab => tab.tabRef), [1, 2, 3]);
 assert.deepEqual(listedBeforeClaim.map(tab => tab.usable), [true, false, true]);
 assert.deepEqual(listedBeforeClaim.map(tab => tab.readOnlyUsable), [true, true, true]);
 assert.deepEqual(listedBeforeClaim.map(tab => tab.ownedByCurrentTask), [true, false, false]);
@@ -385,7 +385,7 @@ assert.deepEqual(state.workingTabUpdates, [], "list_tabs must not change the ses
 resetCalls();
 const article = await tools.executeTool("read_article", { limit: 4000 }, null, sessionA());
 assert.equal(article.text, "article:1");
-assert.equal(article._tabId, 1);
+assert.equal(article._tabId, undefined);
 assert.deepEqual(
   state.sendMessages.map(item => [item.tabId, item.message.action]),
   [[1, "ping"], [1, "readArticle"]],
@@ -397,7 +397,7 @@ assert.deepEqual(state.queryCalls, [], "owned working tab path should not query 
 resetCalls();
 const current = await tools.executeTool("get_working_tab", {}, null, sessionA());
 assert.equal(current.hasWorkingTab, true);
-assert.equal(current.id, 1);
+assert.equal(current.tabRef, 1);
 assert.equal(current.title, "Owned");
 assert.deepEqual(state.queryCalls, [], "get_working_tab means session working tab, not browser active tab");
 
@@ -428,7 +428,7 @@ assert.deepEqual(state.workingTabUpdates, [], "use_tab must not transfer a tab o
 
 resetCalls();
 const switched = await tools.executeTool("use_tab", { tabId: 3 }, null, sessionA());
-assert.equal(switched.tabId, 3);
+assert.equal(switched.tabId, undefined);
 assert.equal(switched.active, false);
 assert.equal(switched.visibleChanged, false);
 assert.deepEqual(
@@ -450,7 +450,7 @@ const openedWithWatch = await tools.executeTool("open_tab", {
 }, null, sessionA());
 assert.equal(openedWithWatch.url, "https://fresh.example/start");
 assert.equal(openedWithWatch._pageUrl, "https://fresh.example/start");
-assert.notEqual(openedWithWatch._pageTitle, "about:blank");
+assert.equal(openedWithWatch._pageTitle, openedWithWatch.title, "sidebar metadata uses the observed tab title");
 assert.equal(openedWithWatch.networkWatch?.startedBeforeNavigation, true);
 assert.equal(openedWithWatch.networkWatch?.maxRecords, 50);
 assert.equal(
@@ -491,7 +491,7 @@ assert.deepEqual(
 
 resetCalls();
 const nav = await tools.executeTool("navigate", { url: "https://owned.example/b" }, null, sessionA());
-assert.equal(nav.tabId, 1);
+assert.equal(nav.tabId, undefined);
 assert.equal(state.tabs.find(tab => tab.id === 1).url, "https://owned.example/b");
 assert.deepEqual(state.tabUpdates, [{ tabId: 1, patch: { url: "https://owned.example/b" } }]);
 assert.equal(state.workingTabUpdates[0]?.sessionId, "session-a");
@@ -504,7 +504,7 @@ const watchedNav = await tools.executeTool("navigate", {
   resetNetwork: true,
   networkMaxRecords: 60,
 }, null, sessionA());
-assert.equal(watchedNav.tabId, 1);
+assert.equal(watchedNav.tabId, undefined);
 assert.equal(watchedNav.url, "https://owned.example/c");
 assert.equal(watchedNav.networkWatch?.startedBeforeNavigation, true);
 assert.equal(watchedNav.networkWatch?.maxRecords, 60);
@@ -591,7 +591,7 @@ for (const mode of ['desktop', 'mobile']) for (const watchNetwork of [false, tru
   const result = await runtime.execute('open_tab', { url: 'https://first.example/article', mode, watchNetwork }, controller.signal, context);
   assert.deepEqual(runtimeState.ownedTabIds, [], 'CDP setup must not publish provisional ownership');
   assert.equal(runtimeState.workingTabId, null);
-  assert.equal(state.tabs.find(tab => tab.id === result.id)?.url, 'https://first.example/article');
+  assert.equal(state.tabs.find(tab => tab.id === result.tabRef)?.url, 'https://first.example/article');
   if (watchNetwork || mode === 'mobile') {
     assert.equal(cdpChecks.length, 1, 'first CDP attachment uses the real Session authorization gate');
     assert.equal(cdpChecks[0].runId, context.runId);
@@ -607,8 +607,8 @@ for (const mode of ['desktop', 'mobile']) for (const watchNetwork of [false, tru
     assert.ok(index >= 0 && index < navigationIndex, `${command} must run before navigation`);
   }
   await runtime.commitToolResult(result, controller.signal, context);
-  assert.deepEqual(runtimeState.ownedTabIds, [result.id]);
-  assert.equal(runtimeState.workingTabId, result.id);
+  assert.deepEqual(runtimeState.ownedTabIds, [result.tabRef]);
+  assert.equal(runtimeState.workingTabId, result.tabRef);
 
   // Cancellation while the asynchronous tab gate is entered must prevent attach,
   // navigation and ownership publication, even before the run ID is retired.
@@ -618,8 +618,8 @@ for (const mode of ['desktop', 'mobile']) for (const watchNetwork of [false, tru
   await assertRejectsWithCode(runtime.execute('open_tab', { url: 'https://first.example/cancel', watchNetwork: true }, controller.signal, context), 'OPERATION_ABORTED');
   assert.deepEqual(state.tabs.map(tab => tab.id), tabsBefore, 'cancelled provisional tab is removed');
   assert.equal(state.events.some(event => event.type === 'debugger.attach' || event.type === 'tabs.update'), false);
-  assert.deepEqual(runtimeState.ownedTabIds, [result.id]);
-  assert.equal(runtimeState.workingTabId, result.id);
+  assert.deepEqual(runtimeState.ownedTabIds, [result.tabRef]);
+  assert.equal(runtimeState.workingTabId, result.tabRef);
 }
 
 console.log("session tab targeting behavior tests passed");

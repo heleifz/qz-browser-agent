@@ -1,3 +1,4 @@
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
@@ -8,7 +9,6 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
   createExternalDriveCoordinator,
   driveGroupTitle,
-  driveNoAliasText,
   driveToolSignature,
   isDriveToolDefault,
   isDriveToolForbidden,
@@ -64,6 +64,7 @@ interface McpToolsPort {
     getModelPolicy?(name: string): { projectResult?(result: unknown): unknown } | null | undefined;
     getBatchTabPolicy?(name: string, args: unknown): ToolBatchTabPolicy | null;
     getTabAliases?(sessionId: string): Record<string, number>;
+    getToolResultPageContext?(result: unknown): Fields;
     commitToolResult?(result: unknown, signal: AbortSignal, context: ToolContext): Promise<unknown>;
     discardToolResult?(result: unknown, context: ToolContext): Promise<unknown>;
   };
@@ -416,7 +417,7 @@ export function createMcpRuntime({
     tools.recordLoadedSkillNames(sessionId, [value.name, value.displayName]);
   }
 
-  async function ensureDriveSession(sessionId: string, clientName: unknown) {
+  async function ensureDriveSession(sessionId: string, title: string, clientName: unknown) {
     if (!sessionId) return "";
     const metadata = await sessions.listMetadata();
     const existing = metadata[sessionId];
@@ -429,21 +430,10 @@ export function createMcpRuntime({
       return "external-drive";
     }
     if (!sessions.createMetadata) return "";
-    const title = driveGroupTitle(clientName);
-    try {
-      await sessions.createMetadata({
-        id: sessionId,
-        title,
-        titleSource: "fixed",
-        source: "external-drive",
-        driveGroupTitle: title,
-        firstMessage: "",
-      });
-    } catch (error) {
-      const code = error && typeof error === "object" ? String((error as { code?: unknown }).code || "") : "";
-      if (code === "DRIVE_SESSION_OCCUPIED") throw error;
-      throw error;
-    }
+    await sessions.createMetadata({
+      id: sessionId, title, titleSource: "fixed", source: "external-drive",
+      driveGroupTitle: driveGroupTitle(clientName), firstMessage: "",
+    });
     const created = await sessions.listMetadata();
     if (String(created[sessionId]?.source || "") !== "external-drive") {
       throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
@@ -468,17 +458,22 @@ export function createMcpRuntime({
   }
 
   async function createDriveSession(params: Fields = {}) {
+    const title = typeof params.title === "string" ? params.title.replace(/\s+/gu, " ").trim() : "";
+    if (!title) throw Object.assign(new Error(t("session.titleRequired")), {
+      code: "SESSION_TITLE_REQUIRED", hint: 'Run qz session create --title "Task title".',
+    });
     const requested = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
     const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
     const release = drive.protect(sessionId);
     try {
-      const source = await ensureDriveSession(sessionId, params.clientName);
+      const source = await ensureDriveSession(sessionId, title, params.clientName);
       if (source !== "external-drive") {
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
       sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
       drive.restore(sessionId, Date.now());
-      return { sessionId };
+      const created = (await sessions.listMetadata())[sessionId];
+      return { sessionId, title: String(created?.title || title), status: String(readRuntime(sessionId).status || "idle") };
     } finally { release(); void onDriveSettled(); }
   }
 
@@ -498,15 +493,13 @@ export function createMcpRuntime({
     const toolCallId = crypto.randomUUID();
     sessions.recordToolEvent({
       type: "tool_execution_end", sessionId, runId, toolCallId, spanId: `tool:${toolCallId}`,
-      toolName: name, args, result: driveTranscriptResult(result, images, rawResult), isError,
+      toolName: name, args, result: driveTranscriptResult(result, images, tools.runtime.getToolResultPageContext?.(rawResult) || {}), isError,
     });
     return true;
   }
 
   async function recordNestedTool(input: DriveToolObservation) {
-    const projected = projectNamedDriveResult(input.name, input.args, input.result, tools.runtime.getModelPolicy?.(input.name), {
-      aliases: tools.runtime.getTabAliases?.(input.sessionId),
-    });
+    const projected = projectNamedDriveResult(input.name, input.args, input.result, tools.runtime.getModelPolicy?.(input.name));
     if (!recordDriveTool({ ...input, result: projected.value }, projected.images, input.result)) return;
     if (!input.isError) rememberLoadedSkill(input.sessionId, input.name, input.result);
     await sessions.persistTranscript?.(input.sessionId);
@@ -548,7 +541,7 @@ export function createMcpRuntime({
       lease = leased ? drive.begin(sessionId, signal) : null;
       const runtime = readRuntime(sessionId);
       runId = leased ? String(lease?.driveRunId || "") : "";
-      const context = toolContext(sessionId, runId, runProfile, params, runtime);
+      const context = { ...toolContext(sessionId, runId, runProfile, params, runtime), language };
       timeoutSignal = parsed.timeoutSeconds
         ? AbortSignal.timeout(parsed.timeoutSeconds * 1000)
         : null;
@@ -566,15 +559,11 @@ export function createMcpRuntime({
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectNamedDriveResult(name, prepared.args, result, tools.runtime.getModelPolicy?.(name) ?? null, { aliases });
-          noteDriveTool(name, prepared.args, projected.value, Boolean(plainObject(projected.value).error || plainObject(projected.value).ok === false || plainObject(projected.value).isError === true), projected.images, result);
+          const projected = projectNamedDriveResult(name, prepared.args, result, tools.runtime.getModelPolicy?.(name) ?? null);
+          noteDriveTool(name, prepared.args, projected.value, isToolFailure(projected.value), projected.images, result);
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
-          if (error instanceof Error) {
-            const next = withLanguage(language, () => driveNoAliasText(error, error.message));
-            if (next !== error.message) error.message = next;
-          }
           noteDriveTool(name, params.args, driveToolFailure(error), true, [], plainObject(error).details);
           throw error;
         }
@@ -837,9 +826,8 @@ function plainObject(value: unknown, fallback: Fields = {}): Fields {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Fields : fallback;
 }
 
-function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[], rawResult: unknown) {
-  const source = { ...plainObject(plainObject(rawResult).details), ...plainObject(rawResult) };
-  const page = Object.fromEntries(["_pageTitle", "_pageUrl", "_pageContext"].flatMap(key => source[key] == null ? [] : [[key, source[key]]]));
+function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[], metadata: Fields) {
+  const page = { ...metadata };
   const image = images[0];
   if (image?.mimeType && image.data) page._image = `data:${image.mimeType};base64,${image.data}`;
   if (!Object.keys(page).length) return result ?? null;
@@ -852,10 +840,10 @@ function driveToolFailure(error: unknown) {
   const name = error instanceof Error ? error.name : "";
   const aborted = name === "AbortError" || name === "TimeoutError";
   const message = error instanceof Error && error.message ? error.message : String(error ?? "");
-  return {
-    error: message,
-    code: aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
-  };
+  return toolError(aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"), message, {
+    hint: typeof err.hint === "string" ? err.hint : undefined,
+    details: plainObject(err.details),
+  });
 }
 
 function describeSessionRuntime(state: Fields): SessionRuntimeObservation {

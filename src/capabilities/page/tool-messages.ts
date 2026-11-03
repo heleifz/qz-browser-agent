@@ -8,8 +8,8 @@ const messages = defineMessages("page-tools", {
     en: "Read cleaned main content from the target page as Markdown (preserving headings, lists, links, code, and tables; also works on plain-text or raw JSON pages). Prefer this tool for reading body text, not for finding interactive controls. Returns the offset/limit text segment plus totalChars/hasMore/nextOffset/target/linkCount; pass nextOffset to continue reading. outline lists sections with offset/endOffset/charCount; pass target to read_dom when raw DOM evidence is needed. limit is required (recommended 4000–8000, range 1000–20000).",
   },
   readArticleTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   readArticleSource: {
     "zh-CN": "读取来源，默认 auto（依次尝试 selection、article、target、body）。",

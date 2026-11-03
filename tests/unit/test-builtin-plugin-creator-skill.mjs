@@ -1,3 +1,4 @@
+import "../support/default-locale.mjs";
 import assert from "node:assert/strict";
 import { getBuiltinSkillWorkbenchDisplayName, BUILTIN_SKILL_WORKBENCH_NAME } from "../../src/capabilities/skills/workbench.js";
 import { getBuiltinSiteSkillAuthorDisplayName, BUILTIN_SITE_SKILL_AUTHOR_SKILL_NAME } from "../../src/capabilities/skills/site-author.js";

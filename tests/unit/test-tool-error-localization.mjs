@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isToolFailure } from "../../src/shared/contracts/tool-error.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { t as skillT } from "../../src/capabilities/skills/i18n.js";
 import { readFileSync, readdirSync } from "node:fs";
@@ -11,6 +12,7 @@ import {
   localizeToolFailureText,
 } from "../../src/shared/tools/tool-error-localization.js";
 
+withLanguage("zh-CN", () => {
 const SOURCE_FILES = [
   "src/background/agent/agent.ts",
   "src/background/skills/skill-tool-runtime.ts",
@@ -242,14 +244,14 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
   assert.equal(new Set(Object.values(messages)).size, 9, "every reference reason owns its message");
   assert.equal(new Set(Object.values(labels)).size, 9, "every reference reason owns its label");
   assert.equal(messages.unknown_reference, "当前任务没有已打开或本批待创建的别名「a」。请检查名称，或在 tabRef 中使用已返回的浏览器数字 ID。");
-  assert.equal(messages.no_alias, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。");
-  assert.doesNotMatch(messages.no_alias, /省略 tabRef|--session/);
+  assert.equal(messages.no_alias, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+  assert.doesNotMatch(messages.no_alias, /省略 tabRef/);
   const englishNoAlias = withLanguage("en", () => localizeToolFailurePayload({
     error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { reason: "no_alias", tabRef: "a" },
   }).error);
-  assert.equal(englishNoAlias, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs.");
-  assert.doesNotMatch(englishNoAlias, /omit tabRef|--session/i);
-  assert.equal(messages.outside_batch, "tabRef「a」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。");
+  assert.equal(englishNoAlias, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+  assert.doesNotMatch(englishNoAlias, /omit tabRef/i);
+  assert.equal(messages.outside_batch, "tabRef「a」尚未关联到本会话的页面。请使用 open_tab 或 list_tabs 返回的 tabRef。");
   assert.equal(labels.duplicate_alias, "tabAlias 重复");
   const generic = localizeToolFailurePayload({ error: "x", code: "BATCH_TAB_REFERENCE_ERROR", details: { tabRef: "a" } });
   assert.equal(generic.codeLabel, "标签页引用无法解析");
@@ -264,3 +266,14 @@ assert.equal(localizeToolFailureText("custom", { code: "DOCUMENT_TABLE_NOT_FOUND
   assert.equal(localized.codeLabel, "open_tab 顺序错误");
   assert.equal(localized.message, "tabAlias「b」的 open_tab 必须排在引用它的页面调用之前。请调整本批中的调用顺序。");
 }
+
+// Native ToolError values retain their public shape through localization.
+assert.deepEqual(localizeToolFailurePayload({ code: "CUSTOM_FAILURE", message: "Try again", hint: "Open the page first", details: { tabRef: "page" } }), {
+  code: "CUSTOM_FAILURE", message: "Try again", hint: "Open the page first", details: { tabRef: "page" },
+});
+
+assert.equal(isToolFailure({ code: "BUSINESS_CONFLICT", message: "Retry" }), true);
+assert.equal(isToolFailure({ ok: true, result: { code: "BUSINESS_CONFLICT", message: "User data" } }), false);
+assert.equal(isToolFailure({ code: "SUCCESS", message: "done" }), false);
+
+});

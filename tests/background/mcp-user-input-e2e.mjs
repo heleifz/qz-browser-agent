@@ -657,17 +657,17 @@ async function timeoutRecovery() {
   const watching = startCliProcess(["watch", sessionId, "--client", clientId, "--json"], { timeout: 2 });
   const timedOut = await watching.envelope();
   assert.equal(watching.code, 1);
-  assert.equal(timedOut.ok, false);
-  assert.equal(timedOut.error.code, "timeout");
-  assert.equal(timedOut.error.sessionId, sessionId);
-  assert.equal(timedOut.error.clientId, clientId);
-  assert.equal(timedOut.error.command, `qz watch ${sessionId} --client ${clientId} --stream`);
+  assert.deepEqual(Object.keys(timedOut).sort(), ["code", "details", "hint", "message"]);
+  assert.equal(timedOut.code, "TIMEOUT");
+  assert.equal(timedOut.details.sessionId, sessionId);
+  assert.equal(timedOut.details.clientId, clientId);
+  assert.equal(timedOut.details.command, `qz watch ${sessionId} --client ${clientId} --stream`);
   const running = await command(["show", sessionId]);
   assert.equal(running.status, "running", "ending observation leaves the browser task running");
   const accepted = await command(["send", sessionId, followup]);
   assert.equal(accepted.accepted, true);
   // Execute the returned command, including its original task and browser UUID.
-  const recovering = startCliProcess([...timedOut.error.command.split(" ").slice(1), "--json"]);
+  const recovering = startCliProcess([...timedOut.details.command.split(" ").slice(1), "--json"]);
   await waitForObservedRun(recovering, running.runId);
   fixture.release(marker);
   await waitUntil(() => fixture.count(followup) === 1, "Recovery did not reach the queued follow-up");
@@ -687,7 +687,7 @@ async function timeoutRecovery() {
   assert.equal(recovering.updates.filter(event => event.type === "text").map(event => event.text).join(""),
     `${marker}: answers received.${followup}: answers received.`);
   report.cases.push({ name: "timeout-execute-returned-watch-command-through-followup", ok: true, sessionId, clientId,
-    command: timedOut.error.command, runIds: [running.runId, nextRunId] });
+    command: timedOut.details.command, runIds: [running.runId, nextRunId] });
 }
 
 async function locationConsent() {

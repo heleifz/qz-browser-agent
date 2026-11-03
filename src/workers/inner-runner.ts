@@ -38,9 +38,9 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       return;
     }
     if (!response.ok) {
-      const error: ScriptFailure = new Error(response.error || ("tools." + call.toolName + " bridge failed"));
+      const error: ScriptFailure = new Error(response.message || response.error || ("tools." + call.toolName + " bridge failed"));
       if (response.code) error.code = response.code;
-      if (response.diagnostic) error.diagnostic = response.diagnostic;
+      if (response.hint) error.hint = response.hint;
       if (response.details) error.details = response.details;
       call.reject(error);
       return;

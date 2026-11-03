@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
+import { bindCreatedTabResult } from '../../src/shared/contracts/page-observation.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = {};
 const { getParallelReadTab, getBatchTabPolicy, createToolRuntime } = await import('../../src/background/tools/runtime.js');
@@ -20,7 +21,11 @@ function fixture(execute = null) {
     async execute(name, args, signal, context) {
       calls.push({ name, args, signal, context });
       if (execute) return execute(name, args, signal, context);
-      return name === 'open_tab' ? { id: ++nextTab } : { tabId: args.tabId, text: `page ${args.tabId}` };
+      if (name === 'open_tab') {
+        const id = ++nextTab;
+        return bindCreatedTabResult({ tabRef: args.tabAlias || id }, id);
+      }
+      return { text: `page ${args.tabId}` };
     },
   } }));
   agent._emit = event => events.push(event);
@@ -43,7 +48,7 @@ test('direct runtime calls reject unresolved references and publish the unified 
     assert.doesNotMatch(read.parameters.properties.tabRef.description, /\btabId\b/);
     const close = schemas.find(schema => schema.function.name === 'close_tab').function;
     assert.equal(close.parameters.required.includes('tabId'), false);
-    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true);
+    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabRef'), true);
   }
   assert.equal(getBatchTabPolicy('plugin_open', { tabAlias: 'a' }), null);
 });
@@ -53,7 +58,7 @@ test('resolved targets, final events and messages retain original call order', a
   const messages = await f.run(input);
   assert.deepEqual(f.calls.map(c => c.context.toolCallId), input.map(c => c.id));
   assert.deepEqual(f.calls.slice(2).map(c => c.args.tabId), [101, 102]);
-  assert.ok(f.calls.slice(2).every(c => !('tabRef' in c.args)));
+  assert.deepEqual(f.calls.slice(2).map(c => c.args.tabRef), ['a', 'b']);
   assert.deepEqual(messages.map(m => m.tool_call_id), input.map(c => c.id));
   assert.deepEqual(f.ends().map(e => e.toolCallId), input.map(c => c.id));
   for (const call of input) assert.deepEqual(f.events.filter(e => e.toolCallId === call.id).map(e => e.type),

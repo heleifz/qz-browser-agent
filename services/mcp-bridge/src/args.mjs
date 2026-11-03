@@ -4,7 +4,7 @@ import { browserName } from "./browser-registry.mjs";
 import { COMMANDS, DRIVE_SESSION_REQUIRED, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
-  throw new QzError("invalid_arguments", message);
+  throw new QzError("INVALID_ARGUMENTS", message);
 }
 
 function requireDriveSession(command, options) {
@@ -163,7 +163,8 @@ export function parseCommand(argv) {
     id = words[0];
   } else if (command === "session") {
     action = words[0] || "";
-    if (action !== "create" || words.length !== 1) invalid("Use qz session create.");
+    if (action !== "create" || words.length !== 1) invalid("Use qz session create --title TITLE.");
+    if (!String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
   } else if (command === "skill") {
     if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {

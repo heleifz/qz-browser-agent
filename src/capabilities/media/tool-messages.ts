@@ -8,8 +8,8 @@ const messages = defineMessages("media-tools", {
     en: "Omit target to capture the viewport; pass a uid: or css: target for an element. Always returns an image. Pass actionable=true (cannot be combined with target) when you will act by coordinates with act_on_screen; the returned coordinateSpace gives the original pixel width and height. Pass destination to also save the capture as an image asset in that gallery table; pass target to capture a specific element. {targetGrammar}.",
   },
   screenshotTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页（target 为 uid:... 时也可省略）。",
-    en: "Target tab ID. Defaults to the current task's working tab (optional when target is uid:...).",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   screenshotTarget: {
     "zh-CN": "仅用于元素截图；截视口不传 target，不填 viewport。不可与 actionable=true 同用。{targetDescription}",
@@ -116,8 +116,8 @@ const messages = defineMessages("media-tools", {
     en: "Discover image candidates on the target page, returning alt, title, context (accessible name/description, caption, nearby heading and text, link text and URL), dimensions, position, source summary, and a target bound to the current session, tab, page, and image URL. Evaluate candidates in the current page context and pass selected targets unchanged to read_image or collect_images; index/rank are for reading the list only.",
   },
   listImagesTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   listImagesSelector: {
     "zh-CN": "可选容器或图片 target，优先 uid:，css: 或裸 CSS 兜底，省略时扫描整页。",
@@ -208,8 +208,8 @@ const messages = defineMessages("media-tools", {
     en: "Read an individual image and return it to the model as an image message. Provide either url or target: pass target to inspect a loaded page img/container (if selected for collection, pass the same target to collect_images before switching pages), or pass url to read an http/https/data:image resource. {targetGrammar}.",
   },
   readImageUrl: {
-    "zh-CN": "图片 URL（支持 http/https/data:image）；传 url 时无需 tabId/target。",
-    en: "Image URL (supports http/https/data:image); tabId and target are not needed when url is provided.",
+    "zh-CN": "图片 URL（支持 http/https/data:image）；传 url 时无需 tabRef/target。",
+    en: "Image URL (supports http/https/data:image); tabRef and target are not needed when url is provided.",
   },
   readImageTarget: {
     "zh-CN": "页面 img 或图片容器的 target。{targetDescription}",

@@ -32,7 +32,7 @@ test("version flags return package metadata without service, browser, or stdin a
 test("version is a standalone flag and cannot turn a task command into a metadata query", () => {
   for (const argv of [["version"], ["help", "version"], ["--version", "connect"], ["create", "hello", "-v"],
     ["--version", "--client", "browser"], ["--version", "--timeout", "1"], ["--version", "--json", "--plain"]]) {
-    assert.throws(() => parseCommand(argv), error => error.code === "invalid_arguments", argv.join(" "));
+    assert.throws(() => parseCommand(argv), error => error.code === "INVALID_ARGUMENTS", argv.join(" "));
   }
   assert.equal(parseCommand(["--json", "-v"]).command, "version");
   assert.equal(parseCommand(["create", "--", "--version"]).options.prompt, "--version");

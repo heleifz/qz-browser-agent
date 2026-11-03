@@ -51,8 +51,8 @@ test("invalid exec JSON exits 2 before connecting", async () => {
   const deps = setup({ findDaemon: async () => { throw new Error("connected too early"); } });
   assert.equal(await main(["exec", "--session", "s", "{"], deps), 2);
   const body = JSON.parse(deps.stdout.text);
-  assert.equal(body.error.code, "invalid_arguments");
-  assert.equal(body.error.message, EXEC_JSON_MESSAGE);
+  assert.equal(body.code, "INVALID_ARGUMENTS");
+  assert.equal(body.message, EXEC_JSON_MESSAGE);
 });
 
 test("a TTY with no JSON does not read stdin", async () => {
@@ -62,13 +62,13 @@ test("a TTY with no JSON does not read stdin", async () => {
     findDaemon: async () => { throw new Error("connected too early"); },
   });
   assert.equal(await main(["exec", "--session", "s"], deps), 2);
-  assert.equal(JSON.parse(deps.stdout.text).error.message, EXEC_JSON_MESSAGE);
+  assert.equal(JSON.parse(deps.stdout.text).message, EXEC_JSON_MESSAGE);
 });
 
 test("tool failure exits 1 and screenshot bytes become file paths", async () => {
-  const failed = setup({ callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "tool_error" }); } });
+  const failed = setup({ callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "TOOL_ERROR" }); } });
   assert.equal(await main(["exec", "--session", "s", "{\"name\":\"open_tab\",\"args\":{\"url\":\"https://example.com\"}}"], failed), 1);
-  assert.equal(JSON.parse(failed.stdout.text).error.message, "Page failed");
+  assert.equal(JSON.parse(failed.stdout.text).message, "Page failed");
 
   const png = Buffer.from("hi").toString("base64");
   const deps = setup({
@@ -265,12 +265,12 @@ test("CLI presents unknown sessions and script failure envelopes without implici
     } });
     assert.equal(await main(argv, deps), 1);
     const output = JSON.parse(deps.stdout.text);
-    assert.equal(output.error.code, "DRIVE_SESSION_NOT_FOUND");
-    assert.match(output.error.message, /qz session create/);
+    assert.equal(output.code, "DRIVE_SESSION_NOT_FOUND");
+    assert.match(output.message, /qz session create/);
     assert.equal(calls.length, 1);
     assert.ok(!calls.includes("qingzhou_create_drive_session"));
   }
-  const failure = { ok: false, code: "SCRIPT_SYNTAX_ERROR", error: "SyntaxError: Unexpected token (2:4)" };
+  const failure = { code: "SCRIPT_SYNTAX_ERROR", message: "SyntaxError: Unexpected token (2:4)" };
   for (const command of ["script", "exec"]) {
     const deps = setup({ readStdin: async () => "async () => 7", callTool: async () => ({
       toolName: "run_script", sessionId: "created", result: failure,
@@ -279,7 +279,7 @@ test("CLI presents unknown sessions and script failure envelopes without implici
       : ["exec", "--session", "created", '{"name":"run_script","args":{"tabRef":"page","timeout":30,"code":"async () => 7"}}'];
     assert.equal(await main(argv, deps), 1);
     const output = JSON.parse(deps.stdout.text);
-    if (command === "script") assert.deepEqual(output, { code: failure.code, error: failure.error });
+    if (command === "script") assert.deepEqual(output, { code: failure.code, message: failure.message });
     else { assert.equal(output.ok, true); assert.deepEqual(output.result.result, failure); }
   }
 });
@@ -303,11 +303,11 @@ test("drive commands require --session and session create prints the id", async 
       return { sessionId: "drive-1" };
     },
   });
-  assert.equal(await main(["session", "create"], created), 0);
+  assert.equal(await main(["session", "create", "--title", "Inspect page"], created), 0);
   assert.equal(created.stdout.text, "sessionId drive-1\n");
   const json = setup({
     callTool: async () => ({ sessionId: "drive-2" }),
   });
-  assert.equal(await main(["session", "create", "--json"], json), 0);
+  assert.equal(await main(["session", "create", "--title", "Inspect page", "--json"], json), 0);
   assert.equal(JSON.parse(json.stdout.text).result.sessionId, "drive-2");
 });

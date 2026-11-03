@@ -52,7 +52,7 @@ test('one drive session retains one task entry across exec, batches, scripts and
     },
     skills: {}, artifacts: {}, trace: {}, userInputPermissions: {}, async dispatchSidepanel() {},
   });
-  const { sessionId } = await runtime.createDriveSession({ clientName: 'qz-cli' });
+  const { sessionId } = await runtime.createDriveSession({ title: "Inspect example page", clientName: 'qz-cli' });
   const before = await repository.getMetadata(sessionId);
   const read = id => runtime.executeTool({ sessionId: id, name: 'read_article', args: { tabRef: 'page', limit: 100 } });
   for (let i = 0; i < 10; i++) {
@@ -72,7 +72,7 @@ test('one drive session retains one task entry across exec, batches, scripts and
     await assert.rejects(runtime.executeTool(input), error => ['DRIVE_SESSION_REQUIRED', 'DRIVE_SESSION_NOT_FOUND'].includes(error.code));
   }
   assert.deepEqual(creates, [sessionId], 'missing and unknown IDs must not create entries');
-  const additional = await Promise.all(Array.from({ length: 9 }, () => runtime.createDriveSession({ clientName: 'qz-cli' })));
+  const additional = await Promise.all(Array.from({ length: 9 }, () => runtime.createDriveSession({ title: "Inspect example page", clientName: 'qz-cli' })));
   const ids = [sessionId, ...additional.map(item => item.sessionId)];
   await Promise.all(ids.map(read));
   const records = await repository.listMetadata();

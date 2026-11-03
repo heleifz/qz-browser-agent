@@ -12,6 +12,8 @@ import { toolPresentationRegistry } from '../../src/sidepanel/tools/tool-present
 
 function fixture() {
   const metadata = {}, runtimes = {}, stored = {}, aliases = {}, pages = new Map(), events = [];
+  const pageContexts = new WeakMap();
+  const observed = (result, tabId) => { pageContexts.set(result, pages.get(tabId) || {}); return result; };
   let nextTab = 0, runtime, bridge;
   const supervisor = {
     peekEntry: () => null, getRuntime: id => runtimes[id], getAbortSignal: () => null, hasAgent: () => false,
@@ -25,6 +27,7 @@ function fixture() {
   };
   const transcript = createSessionTranscript(transcriptOptions);
   const toolRuntime = {
+    getToolResultPageContext: result => pageContexts.get(result) || {},
     getSchemas: () => [], getTabAliases: () => aliases, resolveDefinition: () => ({ behavior: {} }),
     getBatchTabPolicy: name => name === 'open_tab' ? { kind: 'create' }
       : ['read_article', 'run_script'].includes(name) ? { kind: 'target', implicit: false } : null,
@@ -33,7 +36,7 @@ function fixture() {
         const tabId = ++nextTab;
         aliases[args.tabAlias] = tabId;
         pages.set(tabId, { _pageTitle: `Page ${args.tabAlias}`, _pageUrl: args.url });
-        return { id: tabId, ...pages.get(tabId) };
+        return observed({ tabRef: args.tabAlias || tabId, title: `Page ${args.tabAlias}`, url: args.url, active: false }, tabId);
       }
       if (name === 'wait') return { waited: true };
       const tabId = args.tabId || aliases[args.tabRef];
@@ -42,10 +45,10 @@ function fixture() {
           await bridge.handleToolCall({ sessionId: context.sessionId, runId: context.runId,
             parentCallId: parent.toolExecutionId, toolName, args: nestedArgs });
         }
-        return { __runScriptEnvelope: true, ok: true, result: { title: 'user data, not page title' }, ...pages.get(tabId) };
+        return observed({ ok: true, result: { title: 'user data, not page title' } }, tabId);
       });
       if (args.fail) throw Object.assign(new Error('synthetic failure'), { code: 'TEST_FAILURE' });
-      return { text: 'Article', ...pages.get(tabId) };
+      return observed({ text: 'Article' }, tabId);
     },
   };
   runtime = createMcpRuntime({
@@ -68,7 +71,7 @@ function fixture() {
 
 test('single-call preflight failures each produce one persistent failed card', async () => {
   const f = fixture();
-  const { sessionId } = await f.runtime.createDriveSession();
+  const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   for (const [name, args] of [['act_on_screen', { action: 'press', key: 'Escape', returnScreenshot: false }], ['collect_images', { table: 'test', targets: ['css:img'] }]]) {
     await assert.rejects(f.runtime.executeTool({ sessionId, name, args }), { code: 'DRIVE_TAB_REF_REQUIRED' });
   }
@@ -81,7 +84,7 @@ test('single-call preflight failures each produce one persistent failed card', a
 
 test('drive cards preserve every call across batches, duplicate correlation IDs, nested calls and reload', async () => {
   const f = fixture();
-  const { sessionId } = await f.runtime.createDriveSession();
+  const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   for (const alias of ['a', 'b', 'c']) {
     const result = await f.runtime.executeTool({ sessionId, calls: [
       { id: 'open', name: 'open_tab', args: { url: `https://example.test/${alias}`, tabAlias: alias } },
@@ -162,7 +165,7 @@ test('restoring a drive session hydrates its source before chrome and transcript
 
 test('settled script parents and stopped drive sessions cannot publish late nested cards', async () => {
   const f = fixture();
-  const { sessionId } = await f.runtime.createDriveSession();
+  const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   let parentCallId;
   await withToolCallLifecycle({ sessionId, runId: 'drive-stable' }, parent => { parentCallId = parent.toolExecutionId; });
   const stale = await f.bridge.handleToolCall({ sessionId, runId: 'drive-stable', parentCallId, toolName: 'wait', args: { seconds: 0 } });

@@ -223,7 +223,7 @@ overviewActions = [{ selector: "#parent", role: "button", text: "Parent", rect: 
 scopedActions = [{ selector: "#parent", role: "button", text: "Child-only" }];
 boundIds = [77];
 ancestorNodes = {};
-const scoped = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const scoped = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(bindings.at(-1).scope?.frameId, "oopif");
 assert.equal(bindings.at(-1).scope?.loaderId, "oopif-loader");
 synthetic = await element.resolveElementReference(8, { target: targetFor(scoped.snapshot, 'button "Child-only"') }, context);
@@ -234,10 +234,10 @@ assert.equal(synthetic.ref.pageUrl, "https://example.com/forms/post", "child ref
 assert.doesNotMatch(scoped.snapshot, /Parent|Inside|Child frame|Cross frame/);
 
 boundIds = [0];
-const unbound = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const unbound = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(targetFor(unbound.snapshot, 'button "Child-only"'), "", "an unresolved child selector cannot fall back to the parent document");
 const removedRoot = oopifNodes.pop();
-const missing = await definition.execute({ tabId: 8, root: crossTarget, limit: 80 }, null, context);
+const missing = await definition.execute({ tabId: 8, target: crossTarget, limit: 80 }, null, context);
 assert.equal(missing.rootFound, false);
 assert.equal(missing.snapshot, "", "a removed root cannot publish synthetic controls from an earlier overview");
 oopifNodes.push(removedRoot);

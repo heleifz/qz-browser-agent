@@ -9,7 +9,7 @@ type AnalysisSkillsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampNumber" | "getToolRuntimeDependencies"
   | "publishSkillRegistryChange" | "summarizeToolArgsForTrace" | "models" | "skills">;
 type ManageSkillInput = Omit<Partial<ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.update> & ToolArguments<typeof SKILL_AUTHOR_TOOL_PARAMETERS.create>>, "scope"> & { action?: string; operation?: string; scope?: string; contentEdits?: ToolArguments<typeof SKILL_CONTENT_EDIT_SCHEMA>[]; resourceEdits?: ToolArguments<typeof SKILL_RESOURCE_EDIT_SCHEMA>[] };
-import { requireToolFields } from "#sdk/background/tools";
+import { requireToolFields, toolError } from "#sdk/background/tools";
 import { isBuiltinSkillName } from "#sdk/shared/skills";
 import { SKILL_AUTHOR_TOOL_PARAMETERS, SKILL_CONTENT_EDIT_SCHEMA, SKILL_RESOURCE_EDIT_SCHEMA } from "./workbench.js";
 import { getSkillDisplayName, isBase64SkillResource, isSkillDocumentResource, skillResourceByteSize } from "#sdk/shared/skills";
@@ -107,12 +107,9 @@ registerTool({
     const skill = await loadSkill(name, context.language);
     if (!skill) {
       const all = await listSkills(context.language);
-      return {
-        error: t("skillNotFound", { name: String(name) }),
-        code: "SKILL_NOT_FOUND",
-        details: { name },
-        available: all.map(s => s.name),
-      };
+      return toolError("SKILL_NOT_FOUND", t("skillNotFound", { name: String(name) }), {
+        hint: "Use list_skills to choose an available name, then retry.", details: { name, available: all.map(s => s.name) },
+      });
     }
     return {
       name: skill.name,
@@ -152,21 +149,16 @@ registerTool({
     const loaded = await loadSkillResource(name, path, context.language);
     if (!loaded) {
       const all = await listSkills(context.language);
-      return {
-        error: t("skillNotFound", { name: String(name) }),
-        code: "SKILL_NOT_FOUND",
-        details: { name },
-        available: all.map(s => s.name),
-      };
+      return toolError("SKILL_NOT_FOUND", t("skillNotFound", { name: String(name) }), {
+        hint: "Use list_skills to choose an available name, then retry.", details: { name, available: all.map(s => s.name) },
+      });
     }
     const { skill, resource, path: cleanPath } = loaded;
     if (!resource) {
-      return {
-        error: t("resourceNotFound", { path: cleanPath }),
-        code: "SKILL_RESOURCE_NOT_FOUND",
-        details: { name: skill.name, path: cleanPath },
-        resources: summarizeSkillResources(skill.resources, { includeContent: false }),
-      };
+      return toolError("SKILL_RESOURCE_NOT_FOUND", t("resourceNotFound", { path: cleanPath }), {
+        hint: "Use load_skill with includeResources to choose a resource path, then retry.",
+        details: { name: skill.name, path: cleanPath, resources: summarizeSkillResources(skill.resources, { includeContent: false }) },
+      });
     }
     if (isSkillDocumentResource(resource) || isBase64SkillResource(resource)) {
       const loadDocumentResource = getToolRuntimeDependencies(context)?.skills?.loadDocumentResource;
@@ -515,10 +507,10 @@ registerTool({
     type: "object",
     properties: {
       url: { type: "string", description: modelT("skillZipUrl") },
-      tabId: { type: "number", description: modelT("skillPageTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillPageTabId") },
       overwrite: { type: "boolean", description: modelT("skillZipOverwrite") },
     },
-    required: ["url", "tabId"],
+    required: ["url", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",
@@ -539,10 +531,10 @@ registerTool({
     type: "object",
     properties: {
       repositoryUrl: { type: "string", description: modelT("skillRepositoryUrl") },
-      tabId: { type: "number", description: modelT("skillRepositoryTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillRepositoryTabId") },
       overwrite: { type: "boolean", description: modelT("skillGitOverwrite") },
     },
-    required: ["repositoryUrl", "tabId"],
+    required: ["repositoryUrl", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",
@@ -563,10 +555,10 @@ registerTool({
     type: "object",
     properties: {
       name: { type: "string", description: modelT("skillInstallName") },
-      tabId: { type: "number", description: modelT("skillInstallTabId") },
+      tabRef: { type: ["integer", "string"], description: modelT("skillInstallTabId") },
       commitMessage: { type: "string", description: modelT("skillCommitMessage") },
     },
-    required: ["name", "tabId"],
+    required: ["name", "tabRef"],
   } as const; },
   hidden: true,
   page: "owned",

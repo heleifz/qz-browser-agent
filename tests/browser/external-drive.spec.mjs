@@ -24,7 +24,7 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
   const createDrive = async () => {
     stdout.text = "";
     stderr.text = "";
-    expect(await main(["session", "create", "--json"], dependencies), stderr.text).toBe(0);
+    expect(await main(["session", "create", "--title", "Drive browser regression", "--json"], dependencies), stderr.text).toBe(0);
     const id = JSON.parse(stdout.text).result.sessionId;
     expect(id).toMatch(/^[0-9a-f]{32}$/);
     expect(createdIds.has(id)).toBe(false);
@@ -69,8 +69,8 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
     expect(opened.code, opened.text || stderr.text).toBe(0);
     expect(opened.body.result.toolName).toBe("open_tab");
     expect(opened.body.result.runId).toMatch(/^drive-/);
-    const tabId = opened.body.result.result.tabRef;
-    expect(typeof tabId).toBe("number");
+    expect(opened.body.result.result.tabRef).toBe("page");
+    const tabId = await tabIdForUrl(environment.page, `${fixture}/drive`);
     openedTabs.push(tabId);
     const firstRunId = opened.body.result.runId;
     expect(await environment.page.evaluate(async (id) => (await chrome.tabs.get(id)).active, tabId)).toBe(false);
@@ -150,11 +150,11 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
     expect(smoke.body.result.results).toHaveLength(2);
     expect(smoke.body.result.sessionId).toBe(smokeId);
     expect(smoke.body.result.results.every((item) => item.isError !== true)).toBe(true);
-    openedTabs.push(smoke.body.result.results[0].result.tabRef);
+    openedTabs.push(await tabIdForUrl(environment.page, `${fixture}/smoke`));
     await callTool(environment.bridge.endpoint, "qingzhou_stop_session", {
       sessionId: smoke.body.result.sessionId, timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
-    const batchTab = batch.body.result.results[0].result.tabRef;
+    const batchTab = await tabIdForUrl(environment.page, `${fixture}/batch`);
     openedTabs.push(batchTab);
     expect(String(batch.body.result.results[1].result?.snapshot || "")).not.toBe("");
     expect(batch.text).not.toMatch(/CDP_RUN_CONTEXT_REQUIRED/);
@@ -235,7 +235,7 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
     const pdf = await exec(dependencies, stdout, stderr, { sessionId: pdfSession, name: "open_tab",
       args: { url: `${fixture}/document`, tabAlias: "pdf" } }, "90");
     expect(pdf.code, pdf.text || stderr.text).toBe(0);
-    openedTabs.push(pdf.body.result.result.tabRef);
+    openedTabs.push(await tabIdForUrl(environment.page, `${fixture}/document`));
     const pdfRead = await exec(dependencies, stdout, stderr, { sessionId: pdfSession, name: "read_article",
       args: { tabRef: "pdf", limit: 1200 } });
     expect(pdfRead.code, pdfRead.text || stderr.text).toBe(1);
@@ -271,7 +271,7 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
   const stderr = { text: "", write(value) { this.text += value; } };
   const dependencies = { stdout, stderr, findDaemon: async () => ({ endpoint: bridge.endpoint, health: await readHealth(bridge.endpoint) }) };
   try {
-    const { sessionId } = await callTool(bridge.endpoint, "qingzhou_create_drive_session", {});
+    const { sessionId } = await callTool(bridge.endpoint, "qingzhou_create_drive_session", { title: "Drive timeline regression" });
     const cards = page.locator("#messages .msg-tool");
     for (const [index, alias] of ["first", "second", "third"].entries()) {
       const result = await exec(dependencies, stdout, stderr, { sessionId, calls: [
@@ -286,7 +286,7 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
         await page.locator(`.session-card[data-id="${sessionId}"]`).click();
         await expect(page.locator("#app")).toHaveAttribute("data-external-drive", "true");
         expect(await page.evaluate(async id => (await chrome.tabs.get(id)).active,
-          result.body.result.results[0].result.tabRef)).toBe(false);
+          await tabIdForUrl(page, `${fixture}/${alias}`))).toBe(false);
       }
       await expect(cards).toHaveCount((index + 1) * 2);
     }
@@ -340,17 +340,19 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
     const extraIds = [];
     for (let i = 0; i < 2; i++) {
       stdout.text = stderr.text = '';
-      expect(await main(['session', 'create', '--json'], dependencies), stdout.text || stderr.text).toBe(0);
+      expect(await main(['session', 'create', '--title', 'Drive timeline regression', '--json'], dependencies), stdout.text || stderr.text).toBe(0);
       extraIds.push(JSON.parse(stdout.text).result.sessionId);
       await expect(taskEntries).toHaveCount(i + 2);
     }
     expect(new Set(await taskEntries.evaluateAll(nodes => nodes.map(node => node.dataset.id))))
       .toEqual(new Set([sessionId, ...extraIds]));
-    expect(new Set(await taskEntries.locator('.session-card-title').allTextContents()).size).toBe(1);
+    expect(await taskEntries.locator('.session-card-title').allTextContents()).toEqual(Array(3).fill("Drive timeline regression"));
     await expect(page.locator('#sessions-list .session-card')).toHaveCount(3);
+    const createdTabs = await Promise.all(saved.filter(row => row.name === "open_tab").map(row => tabIdForUrl(page, row.result.url)));
+    expect(createdTabs).toHaveLength(3);
+    expect(createdTabs.every(id => Number.isInteger(id) && id > 0)).toBe(true);
     for (const id of extraIds) await callTool(bridge.endpoint, 'qingzhou_stop_session', { sessionId: id });
     await callTool(bridge.endpoint, "qingzhou_stop_session", { sessionId });
-    const createdTabs = saved.filter(row => row.name === "open_tab").map(row => row.result.tabRef);
     await expect.poll(async () => (await Promise.all(createdTabs.map(id => tabExists(page, id)))).some(Boolean)).toBe(false);
   } finally { await environment.close(); await fixture.close(); }
 });
@@ -363,6 +365,10 @@ async function exec(dependencies, stdout, stderr, payload, timeout = "60") {
   let body = null;
   try { body = JSON.parse(stdout.text); } catch { body = null; }
   return { code, text: stdout.text, body };
+}
+
+async function tabIdForUrl(page, url) {
+  return page.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, url);
 }
 
 function tabExists(page, tabId) {

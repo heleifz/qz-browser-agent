@@ -81,7 +81,8 @@ test("loaded extension creates and imports a Skill whose ID is another Skill's d
     const seeded = await extensionRequest(page, "save_workspace_skill", { name: "rt6", skill: seed, expected: null }, "skill_workspace_saved");
     expect(seeded.registryReady).toBe(true);
     const rt6 = seeded.skill;
-    const execute = (name, args) => callTool(environment.bridge.endpoint, "qingzhou_execute_tool", { name, args, timeoutSeconds: 30 });
+    const { sessionId } = await callTool(environment.bridge.endpoint, "qingzhou_create_drive_session", { title: "Skill identity regression" });
+    const execute = (name, args) => callTool(environment.bridge.endpoint, "qingzhou_execute_tool", { sessionId, name, args, timeoutSeconds: 30 });
     const loaded = await execute("load_skill", { name: "skill-workbench" });
     expect(loaded.result.name).toBe("skill-workbench");
     const created = await extensionRequest(page, "save_workspace_skill", {

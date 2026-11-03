@@ -341,9 +341,9 @@ async function completedTabs(round) {
 }
 async function cancellation(round) {
   const invalid = await mcp("qingzhou_create_session", { firstMesage: "must not create a task" }, { expectedError: true });
-  assert.equal(invalid.code, "invalid_arguments");
+  assert.equal(invalid.code, "INVALID_ARGUMENTS");
   const invalidCli = await cli(["send", "missing-session", "test", "--steeer"], { expectedError: true });
-  assert.equal(invalidCli.code, "invalid_arguments");
+  assert.equal(invalidCli.code, "INVALID_ARGUMENTS");
   const tag = marker(round, "CANCEL");
   const id = remember(await mcp("qingzhou_create_session", { title: tag, firstMessage: `Wait for my choice. [${tag}]` }));
   const form = await input(id, "form");

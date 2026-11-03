@@ -1,3 +1,5 @@
+import { createdTabResultId } from "../../shared/contracts/page-observation.js";
+import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
 import { resolveTabReference, tabReferenceError } from "./tab-reference.js";
 import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
@@ -94,7 +96,7 @@ async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: numb
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([operation, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out", { tabId })), ms);
+      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out", { tabRef: tabId })), ms);
     })]);
   } finally { clearTimeout(timer); }
 }
@@ -141,7 +143,7 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
     signal?.throwIfAborted();
     const response = record(await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), signal));
     if (response?.ok !== true) {
-      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabRef: tabId });
     }
     return response;
   } finally {
@@ -153,7 +155,7 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
 // This wait runs inside the caller's deadline and signal.
 async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
   while (true) {
-    if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabId });
+    if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabRef: tabId });
     const tab = await chrome.tabs.get(tabId);
     // Chrome can drop pendingUrl when the initial blank commits while the target
     // request is still in flight. Its loading status still warrants a bounded wait.
@@ -165,7 +167,7 @@ async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
 
 export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}, context: ToolContext = {}): Promise<unknown> {
   if (!tabId) {
-    throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
+    throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require an explicit tabRef", { action });
   }
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
   assertHtmlPage((await chrome.tabs.get(tabId)).url);
@@ -187,7 +189,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,
-        tabId,
+        tabRef: tabId,
       });
     }
     return response;
@@ -195,7 +197,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     if (err instanceof ToolExecutionError) throw err;
     throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script ${action} failed: ${errorMessage(err)}`, {
       action,
-      tabId,
+      tabRef: tabId,
     });
   } finally {
     finishPhase?.();
@@ -239,7 +241,7 @@ export function handleRunScriptInnerRuntimeMessage(message: Fields = {}) {
 
 export async function captureTabScreenshot(tabId: number, options: ScreenshotOptions = {}, context: ToolContext = {}) {
   if (!capabilityBridges.captureTabScreenshot) {
-    throw new ToolExecutionError("MEDIA_RUNTIME_NOT_READY", "Media runtime is not initialized", { tabId });
+    throw new ToolExecutionError("MEDIA_RUNTIME_NOT_READY", "Media runtime is not initialized", { tabRef: tabId });
   }
   return await capabilityBridges.captureTabScreenshot(tabId, options, context);
 }
@@ -255,6 +257,12 @@ interface DeferredToolState {
   discard(): Promise<void>;
 }
 const deferredToolStates = new WeakMap<object, DeferredToolState>();
+const toolPageContexts = new WeakMap<object, Fields>();
+/** Sidebar metadata travels separately from the model's business result. */
+export function getToolResultPageContext(result: unknown): Fields {
+  return result && typeof result === "object" ? toolPageContexts.get(result) || {} : {};
+}
+
 function deferredState(result: unknown, context: ToolContext) {
   const ticket = isRecord(result) ? deferredToolStates.get(result) : undefined;
   return ticket && ticket.context.sessionId === context.sessionId && ticket.context.runId === context.runId
@@ -306,6 +314,7 @@ export function createToolRuntime({
     snapshot: coreToolDefinitions.snapshot,
     getSchemas: getToolSchemas,
     getIdentity: getToolIdentity,
+    getToolResultPageContext,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
     hasUidElementTargets,
     element: elementRuntime,
@@ -546,7 +555,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
   const timing = createToolPhaseTiming(name, context);
   context = withToolRuntimeContext({ ...context, measurePhase: timing.start }, getToolRuntimeDependencies(context));
   const language = isCoreToolSnapshot(context.toolRegistrySnapshot) ? context.toolRegistrySnapshot.language : context.language || getLanguage();
-  let effectiveArgs = args;
+  let effectiveArgs = record(args);
   let definition: RuntimeTool | null = null;
   let parameters: ToolSchema = { type: "object", properties: {} };
   const traceTool = shouldTraceDiagnosticTool(name);
@@ -570,10 +579,13 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     if (isRecord(args)) args = canonicalToolArgs(definition, args);
+    if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+    const requestedTabRef = args.tabRef;
     parameters = resolvedPageParameters(definition);
     if (Object.hasOwn(record(args), "tabRef")) {
       const { tabRef, ...input } = record(args);
-      const tabId = resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
+      const tabId = parent?.reservation && parent.tabId === input.tabId && record(context.createdTabResult).tabRef === tabRef
+        ? parent.tabId : resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
       if (input.tabId != null && input.tabId !== tabId) throw tabReferenceError("conflicting_target", tabRef, language);
       // A reference is valid independently of whether this call uses a page.
       args = resolvePageAccess(definition, input) ? { ...input, tabId } : input;
@@ -589,11 +601,13 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     if (record(args).tabAlias != null && (definition.workingTab !== "created" || !isTabAlias(record(args).tabAlias))) {
       throw tabReferenceError("invalid_alias", record(args).tabAlias, language);
     }
-    effectiveArgs = withWorkingTabDefault(definition, args, parameters, context);
-    effectiveArgs = withTimeoutAliases(effectiveArgs, definition);
-    validateToolArgs(name, effectiveArgs, parameters, definition.defaultableFields);
+    effectiveArgs = record(withWorkingTabDefault(definition, args, parameters, context));
+    effectiveArgs = record(withTimeoutAliases(effectiveArgs, definition));
+    const validationArgs = definition.parameters.properties.tabRef && effectiveArgs.tabId != null
+      ? { ...effectiveArgs, tabRef: requestedTabRef ?? effectiveArgs.tabId } : effectiveArgs;
+    validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
     if (typeof definition.validateArgs === "function") definition.validateArgs(effectiveArgs);
-    validateToolSchema(name, effectiveArgs, parameters);
+    validateToolSchema(name, validationArgs, definition.parameters);
     await assertToolAllowedForSession(definition, context);
     const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
       needsCommittedPage(definition, effectiveArgs));
@@ -670,8 +684,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         async (partial, timeoutError) => {
           try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context, inferWorkingTabId(selectedDefinition, executionArgs) || undefined); }
           catch (error) {
-            if (selectedDefinition.workingTab === "created" && Number(partial.result.tabRef ?? partial.result.tabId) > 0) {
-              try { await chrome.tabs.remove(Number(partial.result.tabRef ?? partial.result.tabId)); } catch { /* Already closed. */ }
+            if (selectedDefinition.workingTab === "created" && Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId) > 0) {
+              try { await chrome.tabs.remove(Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId)); } catch { /* Already closed. */ }
             }
             throw error;
           }
@@ -680,7 +694,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         definition.behavior?.timeoutTrace,
       );
     } catch (err) {
-      await attachPageContextToToolError(definition, executionArgs, err);
+      if (String(context.runId || "").startsWith("drive-")) await rememberToolPageContext(definition, executionArgs, err);
+      else await attachPageContextToToolError(definition, executionArgs, err);
       throw err;
     }
     if (definition.selectionRenderer) {
@@ -690,10 +705,10 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     const finishPostprocess = context.measurePhase?.("postprocess");
     try {
-      const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
+      const enrichedResult = String(context.runId || "").startsWith("drive-") ? result : await attachPageContextToToolResult(definition, executionArgs, result);
       const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
-      if (aliasReservation && isRecord(localizedResult)) localizedResult.tabAlias = executionArgs.tabAlias;
-      if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
+      if (String(context.runId || "").startsWith("drive-")) await rememberToolPageContext(definition, executionArgs, localizedResult);
+      if (!signal?.aborted && !isToolFailure(localizedResult)) {
         issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
         if (context.deferToolCommit && definition.source === "core" && isRecord(localizedResult)) {
           const selected = definition;
@@ -706,23 +721,23 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
                 if (!committed?.ok) throw makeSessionTabTargetError(committed?.code || "SESSION_TAB_UNAVAILABLE", { toolName: name, tabId: pending.tabId });
               } else await recordWorkingTabFromTool(selected, executionArgs, localizedResult,
                 withToolRuntimeContext({ ...context, preserveWorkingTab: false }, authority), commitSignal);
-              commitAlias(Number(record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), commitSignal);
+              commitAlias(Number(createdTabResultId(localizedResult) ?? record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), commitSignal);
             },
           });
           transferred = true;
         } else {
           await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
-          commitAlias(Number(record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), signal);
+          commitAlias(Number(createdTabResultId(localizedResult) ?? record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), signal);
         }
       }
       if (traceTool) {
-        const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
+        const ok = !isToolFailure(localizedResult);
         toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
       }
       return localizedResult;
     } finally { finishPostprocess?.(); }
   } catch (err) {
-    attachToolRetryContext(err, parameters, effectiveArgs);
+    if (!String(context.runId || "").startsWith("drive-")) attachToolRetryContext(err, definition?.parameters || parameters, effectiveArgs);
     const localized = withLanguage(language, () => localizeToolFailureError(err, { toolName: name }));
     if (traceTool) {
       toolTrace(`[tool] error name=${name} code=${record(localized).code || record(err).code || ""} label=${record(localized).codeLabel || ""} message=${record(localized).message || record(err).message || err} durationMs=${Date.now() - startedAtMs} details=${summarizeToolArgsForTrace(record(localized).details || record(err).details || {})}`);
@@ -922,7 +937,7 @@ async function assertTabAllowedBySecurityGuardrails(tabId: number, details: Fiel
   }
   const url = getEffectiveTabUrl(tab);
   if (isLocalFileUrl(url)) await assertPageUrlAccessible(url);
-  return assertUrlAllowedBySecurityGuardrails(url, rules, { ...details, tabId: Number(tabId) });
+  return assertUrlAllowedBySecurityGuardrails(url, rules, { ...details, tabRef: Number(tabId) });
 }
 
 function assertUrlAllowedBySecurityGuardrails(url: string, guardrails: unknown, details: Fields = {}) {
@@ -965,7 +980,7 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
   let result = partial.result;
   let pending = partial.pending;
   const kind = definition.behavior?.timeoutResult?.kind;
-  const tabId = Number(selectedTabId || result.tabRef || result.tabId || result.id);
+  const tabId = Number(selectedTabId || createdTabResultId(result) || result.tabRef || result.tabId || result.id);
   if (tabId > 0) {
     await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
     const before = record(result.pageState);
@@ -982,15 +997,17 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
     if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
-  if (kind === "action") result = { ...result, error: timeoutError.message, code: timeoutError.code, details: timeoutError.details,
-    status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
-    note: withLanguage(language, () => toolT("actionTimeout")) };
+  if (kind === "action") result = { ...toolError(timeoutError.code, timeoutError.message, {
+    hint: withLanguage(language, () => toolT("actionTimeout")),
+    details: { ...timeoutError.details, ...(Array.isArray(result.trace) ? { trace: result.trace } : {}),
+      status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false },
+  }) };
   // Only a fully validated successful screenshot can grant coordinates.
   if (result._image) {
     const { screenshotId: _id, coordinateSpace: _coordinates, ...observation } = result;
     result = { ...observation, actionable: false };
   }
-  return { ...result, incomplete: { reason: "timeout", pending } };
+  return copyToolEffects(partial.result, kind === "action" ? result : { ...result, incomplete: { reason: "timeout", pending } });
 }
 
 function resolveToolTimeoutMs(definition: RuntimeTool, args: Fields = {}) {
@@ -1111,8 +1128,8 @@ function makeSessionTabTargetError(code: string, details: Fields = {}, context: 
     ? (code === 'SESSION_TAB_FOREIGN' || code === 'SESSION_TAB_UNOWNED' ? t('browser.tabUnowned') : t('drive.tabRefRequired'))
     : details.message || (code === 'SESSION_TAB_FOREIGN' ? t('browser.foreignTab') : code === 'SESSION_TAB_UNOWNED' ? t('browser.tabUnowned') : t('browser.noUsableWorkingTab'));
   return new ToolExecutionError(publicCode, `${toolName}: ${message}`, {
-    toolName, sessionId: details.sessionId, target: details.target,
-    ...(!direct ? { ownerSessionId: details.ownerSessionId, reason: details.reason } : {}),
+    ...(details.target ? { target: details.target } : {}),
+    ...(details.tabRef != null || details.tabId != null ? { tabRef: details.tabRef ?? details.tabId } : {}),
   });
 }
 
@@ -1190,7 +1207,7 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
 
 function inferWorkingTabId(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {
   if (result && typeof result === "object") {
-    const resultTabId = Number(record(result).tabRef ?? record(result).tabId);
+    const resultTabId = Number(createdTabResultId(result) ?? record(result).tabRef ?? record(result).tabId);
     if (Number.isFinite(resultTabId) && resultTabId > 0) return resultTabId;
     if (definition.workingTab === "created") {
       const openedId = Number(record(result).id);
@@ -1201,6 +1218,13 @@ function inferWorkingTabId(definition: RuntimeTool, args: Fields = {}, result: u
   const argTabId = Number(args?.tabId);
   if (Number.isFinite(argTabId) && argTabId > 0) return argTabId;
   return elementRuntime.elementUidTabId(elementTargetsOf(definition, args).filter(isUidElementTarget));
+}
+
+async function rememberToolPageContext(definition: RuntimeTool, args: Fields, result: unknown) {
+  if (!result || typeof result !== "object") return;
+  const page = await resolveToolPageContext(definition, args, record(result));
+  if (page) toolPageContexts.set(result, { _pageTitle: page.title, _pageUrl: page.url,
+    ...(capabilityBridges.describePage ? { _pageContext: capabilityBridges.describePage(page.tabId) } : {}) });
 }
 
 async function attachPageContextToToolResult(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {
@@ -1298,7 +1322,7 @@ async function prepareKnownPageNavigation({
   const targetUrl = normalizePageNavigationUrl(url, baseUrl || pageBefore?.url || "");
   if (!targetUrl || !isMeaningfulKnownNavigationTarget(pageBefore?.url || "", targetUrl)) return null;
   await assertPageUrlAccessible(targetUrl);
-  assertUrlAllowedBySecurityGuardrails(targetUrl, guardrails, { tool: toolName, source, tabId });
+  assertUrlAllowedBySecurityGuardrails(targetUrl, guardrails, { tool: toolName, source, tabRef: tabId });
   const rateLimitMatch = resolveUrlNavigationOpenRateLimit(targetUrl, guardrails);
   const rateLimit = await enforceSiteOpenRateLimitForUrl({
     url: targetUrl,
@@ -1324,15 +1348,14 @@ function commitObservedPageNavigation({
 }: { pageBefore?: PageState; pageAfter?: PageState; prepared?: PreparedNavigation | null; guardrails?: Partial<SecurityGuardrails>; toolName?: string; tabId?: unknown } = {}) {
   const afterUrl = normalizePageNavigationUrl(pageAfter?.url || "");
   if (!afterUrl || !isMeaningfulNavigationChange(pageBefore?.url || "", afterUrl)) return null;
-  assertUrlAllowedBySecurityGuardrails(afterUrl, guardrails, { tool: toolName, source: "page_after", tabId });
+  assertUrlAllowedBySecurityGuardrails(afterUrl, guardrails, { tool: toolName, source: "page_after", tabRef: tabId });
   const afterMatch = resolveUrlNavigationOpenRateLimit(afterUrl, guardrails);
   if (!afterMatch || sameRateLimitMatch(prepared?.rateLimitMatch, afterMatch)) {
-    return { url: afterUrl, rateLimitRecorded: false };
+    return { url: afterUrl };
   }
   const recorded = recordSiteOpenRateLimitForUrl({ url: afterUrl, guardrails });
   return {
     url: afterUrl,
-    rateLimitRecorded: Boolean(recorded),
     rateLimit: recorded
       ? {
           host: recorded.host,
@@ -1368,7 +1391,7 @@ function clickPointReady(inspection: ElementReply = {}): inspection is ElementRe
   return true;
 }
 
-function clickNotReadyResult({ target, selector, index, inspection, originalInspection, resolved }: { target: string; selector: string; index: number; inspection: ElementReply; originalInspection: ElementReply; resolved: ElementReply | null }) {
+function clickNotReadyResult({ target, inspection }: { target: string; selector: string; index: number; inspection: ElementReply; originalInspection: ElementReply; resolved: ElementReply | null }) {
   const state = inspection?.state || {};
   const code = inspection?.disabled
     ? "ELEMENT_DISABLED"
@@ -1377,23 +1400,10 @@ function clickNotReadyResult({ target, selector, index, inspection, originalInsp
       : state.obscuredAtCenter
         ? "ELEMENT_OBSCURED"
         : "CLICK_POINT_OUT_OF_VIEWPORT";
-  return {
-    error: `Element is not ready for click: ${selector}[${index}]`,
-    code,
-    details: {
-      target,
-      selector,
-      index,
-      rect: inspection?.rect,
-      state,
-      resolved,
-      originalRect: originalInspection?.rect,
-      originalState: originalInspection?.state,
-    },
-    element: inspection,
-    originalElement: originalInspection && originalInspection !== inspection ? originalInspection : undefined,
+  return toolError(code, `Element is not ready for click: ${target}`, {
+    details: { target },
     hint: "Refresh candidates with find_elements or inspect_element. If the element is offscreen, retry after scroll or use a visible link/button target.",
-  };
+  });
 }
 
 async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}, result: Fields = {}) {
@@ -1405,7 +1415,7 @@ async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}
     const formattedTab = formatTab(tab, { titleLimit: 120 });
     return {
       tabId,
-      title: String(formattedTab.title || result?.title || ""),
+      title: String(result?.title ?? formattedTab.title ?? ""),
       url: isPageTab(tab) ? formattedTab.url : (resultUrl || formattedTab.url),
     };
   } catch (_err) {
@@ -1419,55 +1429,16 @@ async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}
 }
 
 function validateToolArgs(name: string, args: unknown, parameters: ToolSchema, defaultableFields: readonly string[] = []): asserts args is Fields {
-  if (!isRecord(args)) {
-    throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`, {
-      name,
-      ...compactToolArgShape(args),
-    });
+  if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+  const details = { ...(args.tabRef != null ? { tabRef: args.tabRef } : {}), ...(args.target ? { target: args.target } : {}) };
+  const missing = (parameters.required || []).filter(key => isMissingRequiredValue(args[key]) && !defaultableFields.includes(key));
+  if (missing.length) throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
+    ...details, missing, expected: Object.fromEntries(missing.filter(key => parameters.properties[key]).map(key => [key, parameters.properties[key]])),
+  });
+  const alternatives = requiredAnyOfGroups(parameters.anyOf);
+  if (alternatives.length && !alternatives.some(group => group.every(key => !isMissingRequiredValue(args[key])))) {
+    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: expected one of required field groups: ${alternatives.map(group => group.join(" + ")).join(" or ")}`, details);
   }
-
-  const missing = (parameters.required || []).filter((key) => (
-    isMissingRequiredValue(args[key]) && !defaultableFields.includes(key)
-  ));
-  if (missing.length > 0) {
-    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
-      name,
-      missing,
-      expected: compactMissingToolArgSchemas(parameters, missing),
-      ...compactToolArgShape(args),
-    });
-  }
-
-  const requiredAlternatives = requiredAnyOfGroups(parameters.anyOf);
-  if (requiredAlternatives.length && !requiredAlternatives.some(group => group.every(key => !isMissingRequiredValue(args[key])))) {
-    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: expected one of required field groups: ${requiredAlternatives.map(group => group.join(" + ")).join(" or ")}`, {
-      name,
-      missingAnyOf: requiredAlternatives,
-      ...compactToolArgShape(args),
-    });
-  }
-}
-
-function compactMissingToolArgSchemas(parameters: ToolParameter = {}, missing: readonly string[] = []) {
-  const properties = parameters?.properties && typeof parameters.properties === "object"
-    ? parameters.properties
-    : {};
-  return Object.fromEntries(missing
-    .filter(key => properties[key] && typeof properties[key] === "object")
-    .map(key => [key, compactToolArgSchema(properties[key])]));
-}
-
-function compactToolArgSchema(schema: ToolParameter = {}): Fields {
-  const out: Fields = {};
-  for (const key of ["type", "enum", "description", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
-    if (schema[key] === undefined) continue;
-    out[key] = key === "description" ? String(schema[key]).slice(0, 500) : schema[key];
-  }
-  if (Array.isArray(schema.required)) out.required = schema.required.slice(0, 30);
-  if (schema.items && typeof schema.items === "object") {
-    out.items = compactToolArgSchema(schema.items);
-  }
-  return out;
 }
 
 function attachToolRetryContext(input: unknown, parameters: ToolParameter = {}, args: unknown = {}) {
@@ -1513,23 +1484,6 @@ function isRetrySafeToolArg(value: unknown, schema: ToolParameter = {}) {
   return true;
 }
 
-function compactToolArgShape(args: unknown) {
-  if (isRecord(args)) {
-    return {
-      providedKeys: Object.keys(args).slice(0, 50),
-      argSummary: summarizeToolArgsForTrace(args),
-    };
-  }
-  if (typeof args === "string") {
-    return {
-      argType: "string",
-      argChars: args.length,
-      argPreview: args.length > 200 ? `${args.slice(0, 200)}…` : args,
-    };
-  }
-  if (Array.isArray(args)) return { argType: "array", itemCount: args.length };
-  return { argType: args == null ? String(args) : typeof args };
-}
 
 function requiredAnyOfGroups(anyOf: unknown = []): string[][] {
   return (Array.isArray(anyOf) ? anyOf : [])

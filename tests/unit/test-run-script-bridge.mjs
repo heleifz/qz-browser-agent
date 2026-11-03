@@ -340,7 +340,7 @@ const driveBridge = createRunScriptBridge({
       { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
     ],
     getTabAliases: () => ({ page: 7 }),
-    async execute(name) {
+    async execute(name, args, _signal, context) {
       if (name === "get_ax_tree") {
         const error = new Error("built-in alias");
         error.code = "BATCH_TAB_REFERENCE_ERROR";
@@ -349,9 +349,12 @@ const driveBridge = createRunScriptBridge({
       }
       driveExecutions.push(name);
       if (name === "list_tabs") {
+        if (String(context.runId).startsWith("drive-") && args.scope !== "all") return {
+          tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }], count: 1, foreign: 1,
+        };
         return [
-          { id: 7, title: "Owned", url: "https://httpbin.org/html", ownedByCurrentTask: true, width: 800 },
-          { id: 8, title: "Other", url: "https://httpbin.org/robots.txt", ownedByCurrentTask: false, width: 640 },
+          { tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false },
+          { tabRef: 8, title: "Other", url: "https://httpbin.org/robots.txt", active: false },
         ];
       }
       return { ok: true };
@@ -396,7 +399,7 @@ const driveTabs = await driveBridge.handleToolCall({
   runId: "drive-1",
 });
 assert.deepEqual(driveTabs.result, {
-  tabs: [{ tabRef: 7, alias: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
+  tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
   count: 1,
   foreign: 1,
 });
@@ -409,7 +412,7 @@ const allTabs = await driveBridge.handleToolCall({
 });
 assert.equal(Array.isArray(allTabs.result), true);
 assert.equal(allTabs.result.length, 2);
-assert.equal(allTabs.result[0].width, 800);
+assert.equal(allTabs.result[0].tabRef, "page");
 const plainTabs = await driveBridge.handleToolCall({
   toolName: "list_tabs",
   args: {},
@@ -417,7 +420,7 @@ const plainTabs = await driveBridge.handleToolCall({
   runId: "run-current",
 });
 assert.equal(Array.isArray(plainTabs.result), true);
-assert.equal(plainTabs.result[1].ownedByCurrentTask, false);
+assert.equal(plainTabs.result[1].tabRef, 8);
 const driveAlias = await driveBridge.handleToolCall({
   toolName: "get_ax_tree",
   args: { tabRef: "page" },
@@ -426,9 +429,9 @@ const driveAlias = await driveBridge.handleToolCall({
 });
 assert.equal(driveAlias.ok, false);
 assert.equal(driveAlias.code, "BATCH_TAB_REFERENCE_ERROR");
-assert.match(driveAlias.error, /--session/);
-assert.match(driveAlias.error, /list_tabs/);
-assert.doesNotMatch(driveAlias.error, /省略 tabRef|omit tabRef/i);
+assert.match(driveAlias.message, /list_tabs/);
+assert.match(driveAlias.message, /list_tabs/);
+assert.doesNotMatch(driveAlias.message, /省略 tabRef|omit tabRef/i);
 const builtInAlias = await driveBridge.handleToolCall({
   toolName: "get_ax_tree",
   args: { tabRef: "page" },
@@ -436,7 +439,7 @@ const builtInAlias = await driveBridge.handleToolCall({
   runId: "run-current",
 });
 assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
-assert.doesNotMatch(builtInAlias.error, /--session|省略 tabRef|omit tabRef/i);
-assert.match(builtInAlias.error, /no page alias yet|还没有页面别名/);
+assert.doesNotMatch(builtInAlias.message, /省略 tabRef|omit tabRef/i);
+assert.match(builtInAlias.message, /no page alias yet|还没有页面别名/);
 
 console.log("run_script bridge tests passed");

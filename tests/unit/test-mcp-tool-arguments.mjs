@@ -12,7 +12,7 @@ test("advertised MCP schemas reject unknown top-level arguments before dispatch"
     ["qingzhou_update_settings", { config: { debugMode: true }, apikey: "synthetic-secret" }],
   ]) {
     await assert.rejects(executeMcpTool(state, name, input), error => {
-      assert.equal(error.code, "invalid_arguments");
+      assert.equal(error.code, "INVALID_ARGUMENTS");
       assert.match(error.message, /additional propert/i);
       assert.doesNotMatch(error.message, /synthetic-secret/);
       return true;

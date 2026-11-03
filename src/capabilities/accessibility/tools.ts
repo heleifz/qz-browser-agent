@@ -1,10 +1,11 @@
+import { toolError } from "#sdk/background/tools";
 import { mapConcurrent } from "./concurrent.js";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
-import { isPageOverview, createElementObservation, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
+import { isPageOverview, createElementObservation, toRect, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
   | "sendToContent" | "withDebugger"> & Pick<ToolExtensionAPI["element"],
@@ -551,14 +552,7 @@ function compactAxCanvasesForModel(canvases: Canvas[]) {
   return (Array.isArray(canvases) ? canvases : [])
     .slice(0, 8)
     .map((canvas) => {
-      const rect = canvas?.rect && typeof canvas.rect === "object"
-        ? {
-            x: Number(canvas.rect.x),
-            y: Number(canvas.rect.y),
-            width: Number(canvas.rect.w),
-            height: Number(canvas.rect.h),
-          }
-        : null;
+      const rect = toRect(canvas?.rect);
       if (!rect || !Object.values(rect).every(Number.isFinite) || rect.width <= 0 || rect.height <= 0) return null;
       const bitmapWidth = Number(canvas?.bitmapSize?.width);
       const bitmapHeight = Number(canvas?.bitmapSize?.height);
@@ -776,23 +770,24 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("getAxTreeTabId") },
-      root: { type: "string", description: toolT("getAxTreeRoot") },
+      tabRef: { type: ["integer", "string"], description: toolT("getAxTreeTabId") },
+      target: { type: "string", description: toolT("getAxTreeRoot") },
       scope: { type: "string", enum: ["viewport", "full"], description: toolT("getAxTreeScope") },
       depth: { type: "number", description: toolT("getAxTreeDepth") },
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
     },
   } as const; },
+  argumentAliases: { root: "target", selector: "target" },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, root = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
+  execute: async ({ tabId, target = "root", scope, depth = 16, limit = 120, actionsLimit = 40 }, _signal, context = {}) => {
     const axDepth = Number.isFinite(Number(depth)) ? clampLimit(depth, 1, 40) : 16;
     const snapshotLimit = Number.isFinite(Number(limit)) ? clampLimit(limit, 20, 300) : 120;
     const actionMax = Number.isFinite(Number(actionsLimit)) ? clampLimit(actionsLimit, 5, 80) : 40;
     let snapshotId = "";
     const sessionId = String(context.sessionId || "").trim();
-    const requestedRoot = String(root || "root").trim() || "root";
+    const requestedRoot = String(target || "root").trim() || "root";
     const snapshotScope = scope || (requestedRoot === "root" ? "viewport" : "full");
     let targetTabId = tabId;
     let resolvedRoot = requestedRoot;
@@ -811,9 +806,7 @@ registerTool({
       }
       if (!rootBackendNodeId) {
         throw new ToolExecutionError("AX_ROOT_UNRESOLVED", t("cannotResolveAxRoot", { selector: String(requestedRoot) }), {
-          root: requestedRoot,
           target: resolvedRoot,
-          selector: overviewSelector || undefined,
         });
       }
     }
@@ -822,7 +815,7 @@ registerTool({
       toolName: "get_ax_tree",
       sessionId: context?.sessionId || "",
       depth,
-      root: requestedRoot,
+      target: requestedRoot,
     });
 
     snapshotId = makeSnapshotId(targetTabId, context);
@@ -849,7 +842,7 @@ registerTool({
       title: overview?.title,
       url: overview?.url,
       viewport: overview?.viewport,
-      root: resolvedRoot,
+      ...(resolvedRoot === "root" ? {} : { target: resolvedRoot }),
       scope,
       viewportOmitted: ax.viewportOmitted,
       rootFound: ax.rootFound,
@@ -860,7 +853,9 @@ registerTool({
       outlineTruncated: ax.outlineTruncated,
       snapshot: ax.snapshot,
       canvases: compactAxCanvasesForModel(canvasResults),
-      pageOverviewError: overview?.error ? { error: overview.error, code: overview.code } : undefined,
+      pageOverviewError: overview?.error ? toolError(overview.code || "PAGE_OVERVIEW_FAILED", overview.error, {
+        hint: "Retry get_ax_tree with a refreshed target, or use find_elements to inspect the page.",
+      }) : undefined,
     });
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];
@@ -868,7 +863,7 @@ registerTool({
       const frame = rootFrameId ? await openChildFrame(send, rootFrameId) : null;
       const loaderId = frame?.loaderId || String(record(record(record(await send("Page.getFrameTree")).frameTree).frame).loaderId || "");
       if (rootFrameId && (!frame || rootRef?.ref?.loaderId && frame.loaderId !== rootRef.ref.loaderId)) {
-        throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { root: requestedRoot });
+        throw new ToolExecutionError("STALE_ELEMENT_UID", t("cannotResolveAxRoot", { selector: requestedRoot }), { target: requestedRoot });
       }
       const canvases = overview.canvases || [];
       const bound = await bindElementReferences(targetTabId, [...actionList, ...canvases].map(item => ({ ...item })), context, {

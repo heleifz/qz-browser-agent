@@ -12,8 +12,8 @@ const messages = defineMessages("wait-tools", {
     en: "Instructions shown to the user explaining what to do on the page.",
   },
   waitForUserTabId: {
-    "zh-CN": "恢复后观测的标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Tab ID to observe after resuming. Defaults to the current task's working tab.",
+    "zh-CN": "恢复后观测的标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "TabRef to observe after resuming: an alias or the id returned by open_tab/list_tabs.",
   },
   askUserDescription: {
     "zh-CN": "向用户展示结构化表单并返回提交的 answers。用于澄清需求、提供选项、收集字段，或在向外部系统执行发送/提交/发布/创建/修改/删除动作前请求确认。",
@@ -96,8 +96,8 @@ const messages = defineMessages("wait-tools", {
     en: "Wait for a tab to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. Pass screenshot:true only for visual checks such as dialogs or CAPTCHAs.",
   },
   waitForNavigationTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   waitForNavigationTimeout: {
     "zh-CN": "超时秒数，默认 10。",
@@ -120,8 +120,8 @@ const messages = defineMessages("wait-tools", {
     en: "Wait for a matching element to appear on the page (or disappear when absent:true).",
   },
   waitForElementTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   waitForElementSelector: {
     "zh-CN": "元素 target，优先 uid:，css: 或裸 CSS 兜底；uid 的 absent 表示原节点已移除或不可见。",

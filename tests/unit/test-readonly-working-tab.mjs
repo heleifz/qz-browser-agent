@@ -89,7 +89,8 @@ test("read_image on an unclaimed tab leaves the working tab in place", async () 
   const target = 'uid:t8.000001.1';
   const read = await f.runtime.execute("read_image", { target }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(read.code, undefined, JSON.stringify({ code: read.code, error: read.error, message: read.message }));
-  assert.equal(read.tabId, tabB.id);
+  assert.equal(read.tabRef, undefined);
+  assert.equal(read.tabId, undefined);
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabA.id, "a read-only uid on unclaimed tab B must leave the working tab on A");
 
   const current = f.supervisor.getRuntime("s");

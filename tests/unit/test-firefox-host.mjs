@@ -1314,6 +1314,23 @@ test("product text stays on the Chrome sentence outside a Firefox extension page
   }
 });
 
+test("Firefox evaluation retains the native SyntaxError without losing its page context", async () => {
+  const document = { nodeType: 9, nodeName: "#document", title: "Syntax", documentElement: {}, defaultView: {} };
+  await withPage(document, async () => {
+    const browser = debuggerBrowser();
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 8 }, "1.3");
+    const failed = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+      expression: "(async () => { const value = ; })()", awaitPromise: true, returnByValue: true,
+    });
+    assert.match(failed.exceptionDetails.exception.description, /^SyntaxError:/);
+    assert.match(failed.exceptionDetails.text, /SyntaxError:/);
+    assert.equal(failed.result, undefined);
+    const valid = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", { expression: "1+2", returnByValue: true });
+    assert.equal(valid.result.value, 3, "invalid syntax leaves the page context usable");
+  });
+});
+
 test("isolated content calls run without compiling a function", async () => {
   const nativeFunction = globalThis.Function;
   let compiled = 0;

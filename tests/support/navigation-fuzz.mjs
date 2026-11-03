@@ -1,3 +1,4 @@
+import { isToolFailure } from "../../src/shared/contracts/tool-error.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { cp, readFile, writeFile } from "node:fs/promises";
@@ -70,7 +71,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
   }, `call ${callId}`)).result;
   const call = async (name, args, sessionId) => settle(await start(name, args, sessionId));
   const readers = [
-    ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", { selector: "button" }],
+    ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", { target: "button" }],
     ["inspect_element", { target: "css:article" }], ["list_images", {}],
     ["read_image", { target: "css:#sample" }], ["get_ax_tree", {}], ["screenshot", { format: "png", maxWidth: 2048, maxHeight: 2048 }],
   ];
@@ -89,7 +90,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
   const success = async (calls, label) => {
     for (const item of calls) {
       const result = await settle(item.callId);
-      assert.ok(!result.error && !result.incomplete, `${item.name}: ${JSON.stringify(result)}`);
+      assert.ok(!isToolFailure(result) && !result.incomplete, `${item.name}: ${JSON.stringify(result)}`);
       if (item.name === "screenshot") {
         assert.ok(result.imageBytes > 0, item.name);
         const expected = pageColor(label);
@@ -117,7 +118,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
   const failures = async (calls, code) => {
     for (const item of calls) {
       const result = await settle(item.callId);
-      assert.ok(result.error || (!code && result.incomplete), `${item.name}: ${JSON.stringify(result)}`);
+      assert.ok(isToolFailure(result) || (!code && result.incomplete), `${item.name}: ${JSON.stringify(result)}`);
       if (code) assert.equal(result.code, code, `${item.name}: ${JSON.stringify(result)}`);
       assert.equal(result.imageBytes, undefined); assert.equal(result.text, undefined); assert.equal(result.snapshot, undefined);
       report.reads++;
@@ -125,8 +126,12 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
   };
   const open = async (url, sessionId = "fuzz-a", timeout = 1) => {
     const result = await call("open_tab", { url, tabAlias: "page", watchNetwork, timeout }, sessionId);
-    assert.ok(!result.error, JSON.stringify(result));
-    return result.tabId || result.id;
+    assert.ok(!isToolFailure(result), JSON.stringify(result));
+    assert.equal(result.tabRef, "page", "open returns the requested public alias");
+    const state = await api({ op: "state", sessionId });
+    const id = state.tabAliases.page;
+    assert.ok(Number.isInteger(id) && id > 0, "the test host retains numeric browser identity privately");
+    return id;
   };
   try {
     await api({ op: "reset" });
@@ -191,7 +196,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
             release(replacement); release(target);
             const reopened = await open(page(label + "-reopened")); assert.notEqual(reopened, tabId);
             await success(await read("page"), label + "-reopened");
-            assert.ok((await call("read_article", { tabRef: tabId, limit: 1200 })).error, "old numeric ID cannot follow a reused alias");
+            assert.ok(isToolFailure(await call("read_article", { tabRef: tabId, limit: 1200 })), "old numeric ID cannot follow a reused alias");
           } else if (scenario === "combo-same-url-replace") {
             await api({ op: "update", tabId, url: target });
             await wait(() => route(target).count >= 3, "second same-URL request");
@@ -225,7 +230,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
             await pause(750 + choose(400)); release(target); await pause(choose(30)); await api({ op: "close", tabId });
             for (const item of calls) {
               const result = await settle(item.callId);
-              if (result.error || result.incomplete) await failures([item]); else await success([item], label);
+              if (isToolFailure(result) || result.incomplete) await failures([item]); else await success([item], label);
             }
             const snapshot = await Promise.all(calls.map(item => api({ op: "poll", callId: item.callId })));
             await pause(80);
@@ -235,15 +240,15 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
             await wait(() => route(empty).count, "204 redirect");
             for (const item of calls) {
               const result = await settle(item.callId);
-              if (result.error || result.incomplete) await failures([item]);
+              if (isToolFailure(result) || result.incomplete) await failures([item]);
               else await success([item], `OLD-${seed}-${scenario}`);
             }
-            assert.ok(!(await call("navigate", { tabId, url: page(label + "-recovered"), timeout: 3 })).error);
+            assert.ok(!isToolFailure(await call("navigate", { tabId, url: page(label + "-recovered"), timeout: 3 })));
             await success(await read("page"), label + "-recovered");
           } else if (scenario === "combo-stale-uid") {
             release(target); await success(calls, label);
             const stale = await call("inspect_element", { tabId, target: staleTarget });
-            assert.ok(stale.error && /STALE|NOT_FOUND|UNAVAILABLE/.test(stale.code), JSON.stringify(stale));
+            assert.ok(isToolFailure(stale) && /STALE|NOT_FOUND|UNAVAILABLE/.test(stale.code), JSON.stringify(stale));
             await success(await read(tabId, undefined, 5, [["inspect_element", { target: "css:article" }]]), label);
           }
         } else if (["old-pending", "reload"].includes(scenario)) {
@@ -264,7 +269,7 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
           const target = page(label, scenario === "subresources" ? { image: resource, frame: resource } : {});
           const tabId = await open(target);
           if (scenario === "subresources") await wait(() => route(resource).pending.length, "held subresource request");
-          if (scenario === "fragment") assert.ok(!(await call("navigate", { tabId, url: target + "#part", timeout: 2 })).error);
+          if (scenario === "fragment") assert.ok(!isToolFailure(await call("navigate", { tabId, url: target + "#part", timeout: 2 })));
           const calls = await read(tabId, undefined, 3, readers.filter(([name]) => !["read_image", "list_images"].includes(name)));
           await success(calls, label);
           if (scenario === "subresources") {

@@ -97,7 +97,7 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   replaces?: `${string}/${string}`;
   description: string;
   parameters: S;
-  execute(args: ToolArguments<S> & { timeoutMs?: number }, signal: Signal | undefined, context: Context): Result | Promise<Result>;
+  execute(args: ToolArguments<S> & { timeoutMs?: number } & ("tabRef" extends RequiredKeys<S> ? { tabId: number } : { tabId?: number }), signal: Signal | undefined, context: Context): Result | Promise<Result>;
   model?: Readonly<ToolModelPolicy>;
   behavior?: Readonly<ToolBehavior>;
   requires?: { browserPermission?: ToolBrowserPermission; images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[] };

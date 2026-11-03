@@ -74,9 +74,9 @@ test("human errors use stderr, JSON errors use stdout, argument errors exit 2", 
     const text = json ? deps.stdout.text : deps.stderr.text;
     assert.match(text, /prompt/i);
     assert.doesNotMatch(text, /qz install/);
-    if (json) assert.equal(JSON.parse(text).error.code, "invalid_arguments");
+    if (json) assert.equal(JSON.parse(text).code, "INVALID_ARGUMENTS");
   }
-  const tool = setup({ tty: true, callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "tool_error" }); } });
+  const tool = setup({ tty: true, callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "TOOL_ERROR" }); } });
   assert.equal(await main(["send", "task-1", "Read the article"], tool), 1);
   assert.match(tool.stderr.text, /Page failed/);
   assert.doesNotMatch(tool.stderr.text, /qz install/);
@@ -91,7 +91,7 @@ test("stdin prompt is validated before discovery and is submitted only once", as
   assert.equal(calls[0][2].firstMessage, "  Read this page\n");
   assert.equal(calls[0][2].title, "Research");
   await assert.rejects(runCli(["create", "-"], { readStdin: async () => " \n", findDaemon: () => assert.fail("validate stdin first") }),
-    error => error.code === "invalid_arguments");
+    error => error.code === "INVALID_ARGUMENTS");
 });
 
 test("stream receives increments before completion and suppresses duplicate final output", async () => {
@@ -274,21 +274,21 @@ test("an explicit wait deadline reports observation timeout with same-task recov
     return snapshot("waiting_user", "", { runtime: { status: "waiting_user", waitId: "wait-1" }, input: pendingInput });
   } });
   assert.equal(await withMockPollingTimers(t, () => main(["watch", "task-1", "--client", "fixture", "--timeout", "5"], deps)), 1);
-  const error = JSON.parse(deps.stdout.text).error;
-  assert.equal(error.code, "timeout");
-  assert.equal(error.sessionId, "task-1");
+  const error = JSON.parse(deps.stdout.text);
+  assert.equal(error.code, "TIMEOUT");
+  assert.equal(error.details.sessionId, "task-1");
   assert.match(error.message, /Stopped watching.*--timeout/i);
-  assert.equal(error.clientId, "fixture");
-  assert.match(error.command, /qz watch task-1.*--client fixture/);
-  assert.doesNotMatch(error.command, /qz (create|cancel)/);
+  assert.equal(error.details.clientId, "fixture");
+  assert.match(error.details.command, /qz watch task-1.*--client fixture/);
+  assert.doesNotMatch(error.details.command, /qz (create|cancel)/);
   assert.deepEqual(methods, ["qingzhou_get_session_snapshot"]);
 });
 
 for (const scenario of [
-  { name: "equal deadlines", timeout: 5, elapsedMs: 0, expiresMs: 5000, code: "timeout" },
-  { name: "less total time after sending", timeout: 5, elapsedMs: 2000, expiresMs: 3000, code: "timeout" },
-  { name: "request timeout without a total deadline", elapsedMs: 0, expiresMs: 180000, code: "request_timeout" },
-  { name: "caller cancellation", timeout: 5, elapsedMs: 2000, code: "interrupted" },
+  { name: "equal deadlines", timeout: 5, elapsedMs: 0, expiresMs: 5000, code: "TIMEOUT" },
+  { name: "less total time after sending", timeout: 5, elapsedMs: 2000, expiresMs: 3000, code: "TIMEOUT" },
+  { name: "request timeout without a total deadline", elapsedMs: 0, expiresMs: 180000, code: "REQUEST_TIMEOUT" },
+  { name: "caller cancellation", timeout: 5, elapsedMs: 2000, code: "INTERRUPTED" },
 ]) test(`CLI observation preserves request budgets and causes: ${scenario.name}`, async t => {
   mockObservationTimers(t, { apis: ["setTimeout", "Date"], now: 1_000_000 });
   const controller = new AbortController();
@@ -310,17 +310,17 @@ for (const scenario of [
   const requestSeconds = scenario.timeout ?? 180;
   assert.equal(read.args.timeoutSeconds, requestSeconds);
   assert.equal(read.options.timeoutMs, requestSeconds * 1000);
-  if (scenario.code === "interrupted") controller.abort(reason);
+  if (scenario.code === "INTERRUPTED") controller.abort(reason);
   else t.mock.timers.tick(scenario.expiresMs);
-  assert.equal(await pending, scenario.code === "interrupted" ? 130 : 1);
-  const error = JSON.parse(deps.stdout.text).error;
+  assert.equal(await pending, scenario.code === "INTERRUPTED" ? 130 : 1);
+  const error = JSON.parse(deps.stdout.text);
   assert.equal(error.code, scenario.code);
-  assert.equal(error.sessionId, "task-1");
-  assert.match(error.command, /qz watch task-1.*--client fixture/);
+  assert.equal(error.details.sessionId, "task-1");
+  assert.match(error.details.command, /qz watch task-1.*--client fixture/);
   assert.equal(read.options.signal.aborted, true);
-  if (scenario.code === "interrupted") assert.equal(read.options.signal.reason, reason);
-  else if (scenario.code === "timeout") assert.equal(read.options.signal.reason.name, "TimeoutError");
-  else assert.equal(read.options.signal.reason.code, "request_timeout");
+  if (scenario.code === "INTERRUPTED") assert.equal(read.options.signal.reason, reason);
+  else if (scenario.code === "TIMEOUT") assert.equal(read.options.signal.reason.name, "TimeoutError");
+  else assert.equal(read.options.signal.reason.code, "REQUEST_TIMEOUT");
   assert.deepEqual(calls.map(call => call.name), ["qingzhou_send_message", "qingzhou_get_session_snapshot"],
     "ending observation must neither stop the browser task nor replay its accepted message");
 });
@@ -329,7 +329,7 @@ test("a timed-out snapshot request is distinguished from the total wait deadline
   for (const failure of [new DOMException("The RPC exceeded its deadline.", "TimeoutError"),
     Object.assign(new Error("MCP request timed out"), { code: -32001 }),
     Object.assign(new Error("Extension did not respond"), { code: "BRIDGE_REQUEST_TIMEOUT" }),
-    Object.assign(new Error("BRIDGE_REQUEST_TIMEOUT: Extension did not respond"), { code: "tool_error" })]) {
+    Object.assign(new Error("BRIDGE_REQUEST_TIMEOUT: Extension did not respond"), { code: "TOOL_ERROR" })]) {
     const methods = [];
     const deps = setup({ callTool: async (_endpoint, name, args, options) => {
       methods.push(name);
@@ -338,13 +338,13 @@ test("a timed-out snapshot request is distinguished from the total wait deadline
       throw failure;
     } });
     assert.equal(await main(["watch", "task-1", "--client", "fixture"], deps), 1);
-    const error = JSON.parse(deps.stdout.text).error;
-    assert.equal(error.code, "request_timeout");
-    assert.equal(error.sessionId, "task-1");
+    const error = JSON.parse(deps.stdout.text);
+    assert.equal(error.code, "REQUEST_TIMEOUT");
+    assert.equal(error.details.sessionId, "task-1");
     assert.match(error.message, /(?:request|task status).*timed out/i);
-    assert.equal(error.clientId, "fixture");
-    assert.match(error.command, /qz watch task-1.*--client fixture/);
-    assert.doesNotMatch(error.command, /qz (create|cancel)/);
+    assert.equal(error.details.clientId, "fixture");
+    assert.match(error.details.command, /qz watch task-1.*--client fixture/);
+    assert.doesNotMatch(error.details.command, /qz (create|cancel)/);
     assert.deepEqual(methods, ["qingzhou_get_session_snapshot"]);
   }
 });
@@ -394,12 +394,12 @@ test("explicit wait IDs cannot silently rebind to a newer question; rejected inp
 test("form stdin is validated before discovery; missing input never sends a mutation", async () => {
   for (const source of ["[]", "null", "not json", ""]) {
     await assert.rejects(runCli(["submit", "task-1", "-"], { readStdin: async () => source, findDaemon: () => assert.fail("validate answers first") }),
-      error => error.code === "invalid_arguments");
+      error => error.code === "INVALID_ARGUMENTS");
   }
   const methods = [];
   await assert.rejects(runCli(["approve", "task-1"], setup({ callTool: async (_endpoint, name) => {
     methods.push(name); return { sessionId: "task-1", waiting: false };
-  } })), error => error.code === "not_waiting");
+  } })), error => error.code === "NOT_WAITING");
   assert.deepEqual(methods, ["qingzhou_get_user_input"]);
   const deps = setup({ readStdin: async () => '{"city":"hangzhou"}', callTool: async (_endpoint, _name, args) => {
     assert.deepEqual(args.answers, { city: "hangzhou" }); return { accepted: true };
@@ -523,7 +523,7 @@ test("a missing consent version or an interrupted notice cannot grant location a
     const methods = [];
     await assert.rejects(runCli(["approve", "task-1"], setup({ callTool: async (_endpoint, name) => {
       methods.push(name); return { ...pendingInput, kind: "location_consent", consentVersion: version };
-    } })), error => error.code === "invalid_response");
+    } })), error => error.code === "INVALID_RESPONSE");
     assert.deepEqual(methods, ["qingzhou_get_user_input"]);
   }
   const controller = new AbortController();
@@ -553,7 +553,7 @@ test("a failed response transport never retries approval or selects another wait
   const deps = setup({ callTool: async (_endpoint, name) => {
     if (name === "qingzhou_get_user_input") return pendingInput;
     mutations++;
-    throw Object.assign(new Error("Connection lost"), { code: "connection_error" });
+    throw Object.assign(new Error("Connection lost"), { code: "CONNECTION_ERROR" });
   } });
   assert.equal(await main(["submit", "task-1", "{}", "--wait"], deps), 1);
   assert.equal(mutations, 1);
@@ -573,9 +573,9 @@ test("timeout or interruption after an accepted answer preserves the task and ne
       return snapshot("running");
     } });
     assert.equal(await main(["submit", "task-1", '{"city":"hangzhou"}', "--wait", "--timeout", "0.05"], deps), interrupted ? 130 : 1);
-    const error = JSON.parse(deps.stdout.text).error;
-    assert.equal(error.sessionId, "task-1");
-    assert.equal(error.code, interrupted ? "interrupted" : "timeout");
+    const error = JSON.parse(deps.stdout.text);
+    assert.equal(error.details.sessionId, "task-1");
+    assert.equal(error.code, interrupted ? "INTERRUPTED" : "TIMEOUT");
     assert.equal(methods.filter(name => name === "qingzhou_respond_to_user_input").length, 1);
     assert.equal(methods.includes("qingzhou_stop_session"), false);
   }
@@ -590,12 +590,12 @@ test("timeout and interruption preserve the task ID and never resubmit or cancel
       callTool: async (_endpoint, name) => { methods.push(name); return name === "qingzhou_create_session" ? created : snapshot("running"); },
     });
     assert.equal(await main(["create", "Keep working", "--wait", "--timeout", "0.1"], deps), cancel ? 130 : 1);
-    const error = JSON.parse(deps.stdout.text).error;
-    assert.equal(error.code, cancel ? "interrupted" : "timeout");
-    assert.equal(error.sessionId, "task-1");
-    assert.equal(error.clientId, "fixture");
-    assert.match(error.command, /qz watch task-1.*--client fixture/);
-    assert.doesNotMatch(error.command, /qz (create|cancel)/);
+    const error = JSON.parse(deps.stdout.text);
+    assert.equal(error.code, cancel ? "INTERRUPTED" : "TIMEOUT");
+    assert.equal(error.details.sessionId, "task-1");
+    assert.equal(error.details.clientId, "fixture");
+    assert.match(error.details.command, /qz watch task-1.*--client fixture/);
+    assert.doesNotMatch(error.details.command, /qz (create|cancel)/);
     assert.equal(methods.filter(method => method === "qingzhou_create_session").length, 1);
     assert.equal(methods.includes("qingzhou_stop_session"), false);
   }
@@ -650,7 +650,7 @@ test("Ctrl-C stops stdin reading without EOF for both prompts and JSON arguments
         child.once("exit", (code, signal) => resolve({ code, signal }));
       });
       assert.deepEqual(result, { code: 130, signal: null }, errors);
-      assert.equal(JSON.parse(output.slice("ready\n".length)).error.code, "interrupted");
+      assert.equal(JSON.parse(output.slice("ready\n".length)).code, "INTERRUPTED");
     } finally { clearTimeout(deadline); child.stdin.destroy(); }
   }
 });

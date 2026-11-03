@@ -97,14 +97,14 @@ test('stop revokes progress immediately and preserves a paired ledger for skippe
 
 test('trusted registrations select only explicit cross-tab observations', () => {
   for (const [name, field] of [
-    ['read_article', 'selector'], ['find_elements', 'selector'], ['get_ax_tree', 'root'], ['screenshot', 'target'],
+    ['read_article', 'target'], ['find_elements', 'target'], ['get_ax_tree', 'target'], ['screenshot', 'target'],
   ]) {
     assert.equal(getParallelReadTab(name, { tabId: 12 }), 12);
     assert.equal(getParallelReadTab(name, {}), null);
     assert.equal(getParallelReadTab(name, { tabId: 12, [field]: 'uid:t12.abcdef.1' }), null);
   }
-  assert.equal(getParallelReadTab('screenshot', { tabId: 12, selector: 'uid:t99.abcdef.1' }), 12,
-    'an undeclared selector cannot change screenshot targeting or bypass its page preflight');
+  assert.equal(getParallelReadTab('screenshot', { tabId: 12, selector: 'uid:t99.abcdef.1' }), null,
+    'the hidden legacy selector alias keeps UID targets on their registered tab lane');
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, actionable: true }), null);
   assert.equal(getParallelReadTab('screenshot', { tabId: 12, destination: 'saved-images' }), null);
   assert.equal(getParallelReadTab('spoofed', { tabId: 12 }, { toolRegistrySnapshot: {

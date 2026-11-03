@@ -88,7 +88,7 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
     const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
     await expect.poll(() => worker.evaluate(() => Boolean(globalThis.scriptTest))).toBe(true);
     const tabs = [];
-    for (let i = 0; i < 6; i++) tabs.push((await worker.evaluate(url => scriptTest.open(url), `${origin}/page-${i}`)).id);
+    for (let i = 0; i < 6; i++) tabs.push((await worker.evaluate(url => scriptTest.open(url), `${origin}/page-${i}`)).tabRef);
     const tc = (id, args) => ({ id, function: { name: 'run_script', arguments: JSON.stringify({ timeout: 10, ...args }) } });
     const code = `async () => {
       await new Promise(resolve => setTimeout(resolve, 400));

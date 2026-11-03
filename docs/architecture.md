@@ -512,12 +512,13 @@ Content supplies short-lived references to the observed nodes. Background resolv
 node identities with document and Session scope. AX nodes use the same registration helper. Firefox
 keeps separate remote-object handles per object group and uses weak node indexing.
 
-[Element result projection](../src/shared/tools/element-result-projection.ts) removes auxiliary selectors,
-bare UIDs and private node IDs at model boundaries. Tools opt in through `model.projectResult`; Agent,
-direct-drive and nested script tool results apply that policy. Runtime bindings and renderer inputs stay
-intact. Arbitrary script return values, page content and user-owned Data rows are not rewritten.
-The five scoped readers expose `target`; retired `selector` arguments and the old `read_article.source`
-value normalize before validation. New image-collection rows store `target` and `tabRef`.
+[Element observations](../src/shared/contracts/element-observation.ts) are constructed by the binding
+owner from business fields and registered targets. AX, images and screenshots share the Rect contract;
+[ToolError](../src/shared/contracts/tool-error.ts) carries code, message, optional hint and public details.
+Page presentation metadata and numeric creation receipts stay in private maps. Arbitrary script return
+values, page content and user-owned Data rows remain intact. Element and range parameters expose
+`target`; retired argument names and the old `read_article.source` value normalize before validation.
+New image-collection rows store `target` and `tabRef`.
 
 Direct-drive catalogs omit implicit task-page selection tools. Every page operation requires an explicit
 `tabRef`; `list_tabs.active` still identifies the tab visible to the user and never selects a tool target.

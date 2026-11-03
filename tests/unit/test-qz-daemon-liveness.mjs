@@ -143,7 +143,7 @@ test("an unreachable live daemon is neither replaced nor signalled", async t => 
     spawnProcess: () => assert.fail("a live but unhealthy daemon must not be replaced"),
   };
   for (const operation of [ensureDaemon, stopDaemon]) {
-    await assert.rejects(operation(lookup), error => error.code === "connection_unavailable" && error.details.processId === fixturePid);
+    await assert.rejects(operation(lookup), error => error.code === "CONNECTION_UNAVAILABLE" && error.details.processId === fixturePid);
   }
   assert.equal(healthChecks, 4, "each operation retries health once without replacing the service");
   assert.ok(os.signals.every(call => call.signal === 0));
@@ -159,6 +159,6 @@ test("a live lock owner is retained even if its proc status cannot be read", asy
   await writeFile(ownerFile, JSON.stringify(owner));
   await assert.rejects(ensureDaemon({ ...options, timeoutMs: 1,
     spawnProcess: () => assert.fail("a live lock owner must not be displaced"),
-  }), error => error.code === "connection_busy");
+  }), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
 });

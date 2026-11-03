@@ -337,6 +337,7 @@ function testToolStatusUsesSharedSemanticState() {
   assert.equal(resolveToolState({ result: { ok: true, code: "OK" } }), "success");
   assert.equal(isToolResultErrorLike({ code: "SUCCESS", message: "done" }), false);
   assert.equal(isToolResultErrorLike({ code: "INVALID_ARGUMENTS", message: "bad input" }), true);
+  assert.equal(resolveToolState({ result: { code: "BUSINESS_CONFLICT", message: "Retry with fresh data" } }), "error");
 
   assert.match(
     renderer,

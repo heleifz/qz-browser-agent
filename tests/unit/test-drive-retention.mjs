@@ -135,7 +135,7 @@ test('concurrent explicit creation automatically converges to the cap after admi
     },
   });
   t.after(() => retention.dispose());
-  await Promise.all(Array.from({ length: 205 }, () => runtime.createDriveSession()));
+  await Promise.all(Array.from({ length: 205 }, () => runtime.createDriveSession({ title: "Inspect example page" })));
   await retention.request();
   assert.equal(Object.keys(await repository.listMetadata()).length, 200);
 });

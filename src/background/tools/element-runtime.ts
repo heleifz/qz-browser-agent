@@ -1,3 +1,4 @@
+import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
@@ -267,7 +268,12 @@ function parseElementTarget(target = "") {
 }
 
 async function addElementTargetsToFindResult(result: unknown, tabId?: number, context: ToolContext = {}, scope?: ElementReference) {
-  if (!isRecord(result) || result.error || !tabId) return result;
+  if (!isRecord(result)) return result;
+  if (isToolFailure(result)) return toolError(String(result.code || "ELEMENT_QUERY_FAILED"), String(result.message || result.error), {
+    hint: typeof result.hint === "string" ? result.hint : "Pass a valid target. Use get_ax_tree or find_elements to refresh element references before retrying.",
+    ...(typeof record(result.details).target === "string" ? { details: { target: record(result.details).target } } : {}),
+  });
+  if (!tabId) return result;
   const items = Array.isArray(result.results) ? result.results : Array.isArray(result.elements) ? result.elements : [result];
   const candidates = items.filter(isRecord).flatMap(item => [item, ...[item.parent, item.form].filter(isRecord)]);
   const bindings = await bindElementReferences(tabId, candidates, context, scope);
@@ -368,9 +374,9 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
 async function resolveSelectorTarget(tabId: number | undefined, selector = "", index = 0, context: ToolContext = {}) {
   const raw = String(selector || "").trim();
   if (!raw) return { tabId, selector: "" };
-  if (!isElementTarget(raw)) return { tabId, selector: raw };
+  if (!isElementTarget(raw)) return { tabId, selector: raw, target: elementTargetForSelector(raw) };
   const parsed = parseElementTarget(raw);
-  if (parsed.selector) return { tabId, selector: parsed.selector };
+  if (parsed.selector) return { tabId, selector: parsed.selector, target: elementTargetForSelector(parsed.selector) };
   const ref = await resolveElementReference(tabId, { target: raw, index }, context);
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
 }
@@ -446,7 +452,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   }
   const resolvedTabId = Number(ref.tabId);
   if (!Number.isFinite(resolvedTabId) || resolvedTabId <= 0) {
-    throw new ToolExecutionError("MISSING_TAB_ID", `Element target has no usable page reference: uid:${requestedUid}`, {
+    throw new ToolExecutionError("MISSING_TAB_REF", `Element target has no usable page reference: uid:${requestedUid}`, {
       target: elementTargetForUid(requestedUid),
       expectedTabRef: ref.tabId,
     });
@@ -467,7 +473,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
         toolName: "element",
         sessionId: currentSessionId,
-        tabId: resolvedTabId,
+        tabRef: resolvedTabId,
         ownerSessionId: resolved?.ownerSessionId || "",
         reason: resolved?.reason || "",
         message: resolved?.error || "",
@@ -475,7 +481,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     }
     if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
       throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", {
-        toolName: "element", sessionId: currentSessionId, tabId: resolvedTabId,
+        toolName: "element", sessionId: currentSessionId, tabRef: resolvedTabId,
       }, context);
     }
   }
@@ -660,7 +666,7 @@ async function readMainDocumentId(tabId: number) {
 
 async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpCommand, call: ElementCaller) => Promise<T>) {
   const id = Number(binding.tabId || tabId);
-  if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable page reference", { target: binding.target || "" });
+  if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_REF", "Element target has no usable page reference", { target: binding.target || "" });
   const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
     const requestedFrameId = String(binding.ref?.frameId || "");

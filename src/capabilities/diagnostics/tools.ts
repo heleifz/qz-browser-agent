@@ -1,3 +1,4 @@
+import { toolError } from "#sdk/background/tools";
 import { toolT } from "./tool-messages.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
@@ -133,7 +134,7 @@ async function enableConsoleMonitor(tabId: number | undefined, { reset = false, 
   await sendCdp(tabId, "Runtime.enable", {}, context);
   const monitor = getConsoleMonitor(tabId);
   if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
-    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection", { tabId });
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection");
   }
   if (reset) monitor.records = [];
   monitor.maxRecords = clampNumber(maxRecords, 20, 1000, monitor.maxRecords);
@@ -464,7 +465,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       reset: { type: "boolean", description: toolT("readConsoleMessagesReset") },
       limit: { type: "number", description: toolT("readConsoleMessagesLimit") },
       maxRecords: { type: "number", description: toolT("readConsoleMessagesMaxRecords") },
@@ -481,11 +482,9 @@ registerTool({
     const monitor = await enableConsoleMonitor(tabId, { reset, maxRecords }, context);
     const filtered = filterConsoleRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -507,7 +506,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       reset: { type: "boolean", description: toolT("networkWatchReset") },
       maxRecords: { type: "number", description: toolT("networkWatchMaxRecords") },
     },
@@ -531,7 +530,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       limit: { type: "number", description: toolT("networkRecentLimit") },
       urlPattern: { type: "string", description: toolT("networkRecentUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
@@ -548,11 +547,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -574,7 +571,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       requestId: { type: "string", description: toolT("networkBodyRequestId") },
       maxBytes: { type: "number", description: toolT("networkBodyMaxBytes") },
     },
@@ -585,13 +582,9 @@ registerTool({
   execute: async ({ tabId, requestId, maxBytes = DEFAULT_BODY_LIMIT }, _signal, context = {}) => {
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const record = monitor.records.get(requestId);
-    if (!record) {
-      return {
-        error: `Network request not found: ${requestId}`,
-        code: "NETWORK_REQUEST_NOT_FOUND",
-        details: { requestId },
-      };
-    }
+    if (!record) return toolError("NETWORK_REQUEST_NOT_FOUND", `Network request not found: ${requestId}`, {
+      hint: "Use network_recent to choose a captured requestId, then retry network_body.", details: { requestId },
+    });
     assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url" });
     const body = await getNetworkBody(monitor.tabId, requestId, clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT), context);
     return { ...networkRecordSummary(record), ...body };
@@ -604,7 +597,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       urlPattern: { type: "string", description: toolT("waitForResponseUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
       method: { type: "string", description: toolT("networkRecentMethod") },
@@ -622,11 +615,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
 
     const guardrails = await getSecurityGuardrails();
@@ -658,11 +649,11 @@ registerTool({
           resolve({
             matched: true,
             response: summary,
-            bodyError: {
-              error: err instanceof Error ? err.message : String(err),
-              code: err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
-              details: err instanceof ToolExecutionError ? err.details : {},
-            },
+            bodyError: toolError(err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
+              err instanceof Error ? err.message : String(err), {
+                hint: "Use network_recent to choose another captured requestId, then retry network_body.",
+                details: { requestId: record.requestId },
+              }),
           });
         }
       };
@@ -696,7 +687,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       idleSeconds: { type: "number", description: toolT("waitForNetworkIdleIdleSeconds") },
       timeout: { type: "number", description: toolT("waitForNetworkIdleTimeout") },
       urlPattern: { type: "string", description: toolT("waitForNetworkIdleUrlPattern") },
@@ -710,11 +701,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
     if (pattern?.error) {
-      return {
-        error: `Invalid regular expression: ${pattern.message}`,
-        code: pattern.code,
-        details: { pattern: pattern.pattern, flags: pattern.flags },
-      };
+      return toolError(pattern.code, `Invalid regular expression: ${pattern.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: pattern.pattern, flags: pattern.flags },
+      });
     }
     const idle = clampNumber(idleMs != null ? idleMs : secondsToMs(idleSeconds, 800), 100, 10000, 800);
     const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);

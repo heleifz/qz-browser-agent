@@ -252,11 +252,11 @@ assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not
   assert.ok(commands.some(command => command.method === 'DOM.describeNode' && command.params.objectId === 'found-shadow-node'));
   assert.ok(commands.some(command => command.method === 'Runtime.releaseObjectGroup' && command.params.objectGroup.startsWith('qz-uid-find-')));
   const removed = await runtime.addElementTargetsToFindResult({ results: [{ selector: '', actionable: true, _elementRef: 'removed' }] }, 5, context);
-  assert.deepEqual(removed, { results: [{ selector: '', actionable: false }] });
+  assert.deepEqual(removed, { results: [{ actionable: false }] });
   try {
     findBindingError = new Error('Debugger unavailable');
     const failed = await runtime.addElementTargetsToFindResult(input, 5, context);
-    assert.deepEqual(failed.results[1], { selector: '', text: 'Shadow', actionable: false });
+    assert.deepEqual(failed.results[1], { text: 'Shadow', actionable: false });
     assert.equal(failed.results[0].target, 'css:#only');
     assert.equal(failed.results[0].uid, undefined);
     findBindingError = new ToolExecutionError('OPERATION_ABORTED', 'cancelled');
@@ -267,7 +267,7 @@ assert.deepEqual(bound.ids, [0, 44], "a selector that matches two nodes must not
 {
   const before = commands.length;
   const result = await runtime.addElementTargetsToFindResult({ results: Array.from({ length: 100 }, (_, index) => ({ selector: `.item-${index}`, _elementRef: `batch-${index}` })) }, 5, context);
-  assert.equal(new Set(result.results.map(item => item.uid)).size, 100);
+  assert.equal(new Set(result.results.map(item => item.target)).size, 100);
   const issued = commands.slice(before);
   assert.equal(issued.filter(item => item.method === 'Runtime.callFunctionOn').length, 1);
   assert.equal(issued.filter(item => item.method === 'Runtime.getProperties').length, 1);

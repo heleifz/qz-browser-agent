@@ -58,7 +58,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     catch { return { type: "object", description: String(value) }; }
   };
   const failed = (error: unknown) => {
-    const text = error instanceof Error ? error.message : String(error);
+    const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     return { exceptionDetails: { text, exception: { type: "object", subtype: "error", description: text } } };
   };
   const invoke = async (declaration: string, target: unknown, args: unknown[], awaitPromise: boolean) => {

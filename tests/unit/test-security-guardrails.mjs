@@ -952,13 +952,13 @@ test("tool metadata APIs keep blocked tabs visible but annotated", async () => {
   const runtime = session.createRuntime();
   const active = await runtime.execute("get_working_tab", {}, null, { ...session.context, workingTabId: 1 });
   assert.equal(active.hasWorkingTab, true);
-  assert.equal(active.id, 1);
+  assert.equal(active.tabRef, 1);
   assert.equal(active.url, "https://example.com/private");
   assert.equal(active.securityGuardrailBlocked, true);
   assert.equal(active.contentAccess, "blocked");
 
   const listed = await runtime.execute("list_tabs", {});
-  assert.deepEqual(listed.map(tab => tab.id), [1, 2]);
+  assert.deepEqual(listed.map(tab => tab.tabRef), [1, 2]);
   assert.equal(listed[0].securityGuardrailBlocked, true);
   assert.equal(listed[1].securityGuardrailBlocked, undefined);
 
@@ -1254,7 +1254,7 @@ test("act_on_element records unknown post-click URL changes for later rate limit
       spanId: "span_js_click",
       toolCallId: "call_js_click",
     });
-    assert.equal(clicked.observedNavigation?.rateLimitRecorded, true);
+    assert.equal(clicked.observedNavigation?.rateLimit?.host, "js-click.example");
 
     const openRuntime = installSessionTabResolver(tools, { sessionId: "js-click-open-session" })
       .createRuntime({ emit: event => toolEvents.push(event) });

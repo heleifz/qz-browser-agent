@@ -8,8 +8,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Read recent console messages and JavaScript exceptions from the target tab (newest first) to diagnose frontend errors and post-action exceptions.",
   },
   readConsoleMessagesTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
+    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
   },
   readConsoleMessagesReset: {
     "zh-CN": "是否清空已有 console 记录并重新监听，默认 false。",

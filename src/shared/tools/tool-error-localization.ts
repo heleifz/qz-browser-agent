@@ -1,3 +1,4 @@
+import { isToolFailure, toolError } from "../contracts/tool-error.js";
 import { getLanguage } from "../i18n/index.js";
 import { t, type BackendMessageKey } from "../i18n/backend.js";
 interface FailureContext { code?: unknown; details?: unknown; toolName?: unknown; isError?: boolean }
@@ -83,6 +84,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   DOCUMENT_TABULAR_SOURCE_CONFLICT: { label: "toolError.DOCUMENT_TABULAR_SOURCE_CONFLICT.label", message: "toolError.DOCUMENT_TABULAR_SOURCE_CONFLICT.message" },
   DOCUMENT_TABLE_NOT_FOUND: { label: "toolError.DOCUMENT_TABLE_NOT_FOUND.label", message: "toolError.DOCUMENT_TABLE_NOT_FOUND.message" },
   ELEMENT_HAS_NO_RENDERED_BOX: { label: "toolError.ELEMENT_HAS_NO_RENDERED_BOX.label", message: "toolError.ELEMENT_HAS_NO_RENDERED_BOX.message" },
+  ELEMENT_QUERY_FAILED: { label: "toolError.ELEMENT_QUERY_FAILED.label", message: "toolError.ELEMENT_QUERY_FAILED.message" },
   ELEMENT_RESOLVE_FAILED: { label: "toolError.ELEMENT_RESOLVE_FAILED.label", message: "toolError.ELEMENT_RESOLVE_FAILED.message" },
   ELEMENT_SCREENSHOT_EMPTY: { label: "toolError.ELEMENT_SCREENSHOT_EMPTY.label", message: "toolError.ELEMENT_SCREENSHOT_EMPTY.message" },
   ELEMENT_SCREENSHOT_BOUNDS_FAILED: { label: "toolError.ELEMENT_SCREENSHOT_BOUNDS_FAILED.label", message: "toolError.ELEMENT_SCREENSHOT_BOUNDS_FAILED.message" },
@@ -165,6 +167,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   MISSING_SESSION_IDS: { label: "toolError.MISSING_SESSION_IDS.label", message: "toolError.MISSING_SESSION_IDS.message" },
   MISSING_SELECTOR: { label: "toolError.MISSING_SELECTOR.label" },
   MISSING_TAB_ID: { label: "toolError.MISSING_TAB_ID.label", message: "toolError.MISSING_TAB_ID.message" },
+  MISSING_TAB_REF: { label: "toolError.MISSING_TAB_ID.label", message: "toolError.MISSING_TAB_ID.message" },
   MISSING_TOOL_NAME: { label: "toolError.MISSING_TOOL_NAME.label", message: "toolError.MISSING_TOOL_NAME.message" },
   MCP_SDK_ERROR: { label: "toolError.MCP_SDK_ERROR.label" },
   MCP_SERVER_AMBIGUOUS: { label: "toolError.MCP_SERVER_AMBIGUOUS.label" },
@@ -374,6 +377,9 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
     return new Error(localizeToolFailureText(String(value || t("toolFailure.toolFailed")), context));
   }
   const err = value as Record<string, unknown>;
+  if (!(value instanceof Error) && typeof err.code === "string" && typeof err.message === "string" && !Object.hasOwn(err, "error")) {
+    return toolError(err.code, err.message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: objectValue(err.details) });
+  }
   const original = String(err.message || err.error || "");
   const originalCode = String(err.code || context.code || "").trim();
   const localized = localizeToolFailureText(original, {
@@ -403,6 +409,10 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
 
 export function localizeToolFailurePayload(payload: unknown, context: FailureContext = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  const failure = payload as Record<string, unknown>;
+  if (typeof failure.code === "string" && typeof failure.message === "string" && !Object.hasOwn(failure, "error")) {
+    return toolError(failure.code, failure.message, { hint: typeof failure.hint === "string" ? failure.hint : undefined, details: objectValue(failure.details) });
+  }
   const hasFailureSignal = isFailurePayload(payload as Record<string, unknown>, context);
   if (!hasFailureSignal) return payload;
   const out = { ...payload } as Record<string, unknown>;
@@ -476,7 +486,7 @@ export function localizeToolDiagnostic(diagnostic: unknown = {}) {
 }
 
 function isFailurePayload(payload: Record<string, unknown>, context: FailureContext = {}) {
-  if (payload.ok === false || payload.isError === true || payload.error != null) return true;
+  if (isToolFailure(payload)) return true;
   if (context.isError === true) return true;
   return hasLocalizedToolFailureCode(payload.code || context.code || "");
 }

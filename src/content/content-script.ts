@@ -795,7 +795,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
-        error: toolError("MISSING_SELECTOR", "selector is required", { selector }),
+        error: toolError("MISSING_SELECTOR", "target is required", { target: selector }),
         elements: [],
       };
     }
@@ -807,10 +807,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return { elements: [...document.querySelectorAll(selector)] };
     } catch (err) {
       return {
-        error: toolError("INVALID_SELECTOR", `Invalid CSS selector or locator: ${selector}`, {
-          selector,
-          message: errorMessage(err),
-          supportedLocators: ["CSS selector", "text='可见文字'"],
+        error: toolError("INVALID_SELECTOR", `Invalid CSS target or locator: ${selector}`, {
+          target: selector,
+          supportedLocators: ["CSS target", "text='可见文字'"],
         }),
         elements: [],
       };
@@ -823,8 +822,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
-        ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-          selector,
+        ...toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+          target: selector,
           index,
           matched: query.elements.length,
         }),
@@ -917,7 +916,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const element = result.elements[0] || null;
     if (!element) {
       return {
-        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { selector }),
+        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { target: selector }),
         element: null,
       };
     }
@@ -950,16 +949,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const requested: unknown = selector;
     const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
-      return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-        selector,
+      return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+        target: selector,
         index,
         matched: query.elements.length,
       });
     }
     const img = pickImageElement(matched);
     if (!img) {
-      return toolError("NO_IMAGE_ELEMENT", "Selector did not resolve to an img element or an element containing img", {
-        selector,
+      return toolError("NO_IMAGE_ELEMENT", "Target did not resolve to an img element or an element containing img", {
+        target: selector,
         index,
         tag: matched.tagName?.toLowerCase() || "",
       });
@@ -1819,8 +1818,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const normalizedIndex = Math.max(0, Math.floor(Number(index) || 0));
       const el = query.elements[normalizedIndex];
       if (!el) {
-        return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${normalizedIndex}]`, {
-          selector,
+        return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${normalizedIndex}]`, {
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
         });
@@ -1828,7 +1827,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return toolError("ELEMENT_HAS_NO_RENDERED_BOX", "Element has no rendered box to screenshot", {
-          selector,
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
           rect: {

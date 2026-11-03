@@ -107,7 +107,7 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     const mobile = await opening;
     expect(mobile, JSON.stringify(mobile)).not.toHaveProperty("error");
     expect(mobile.pageMode).toBe("mobile");
-    const tabId = mobile.id;
+    const tabId = mobile.tabRef;
     const [images, article] = await Promise.all([
       call("list_images", { tabId, minWidth: 1, minHeight: 1 }),
       call("read_article", { tabId, limit: 1200 }),
@@ -126,7 +126,7 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(await call("set_page_mode", { mode: "mobile" })).toMatchObject({ changed: false, reloaded: false });
     expect(requestCount()).toBe(before);
     expect((await call("get_working_tab")).pageMode).toBe("mobile");
-    expect((await call("list_tabs")).find(tab => tab.id === tabId).pageMode).toBe("mobile");
+    expect((await call("list_tabs")).find(tab => tab.tabRef === tabId).pageMode).toBe("mobile");
 
     const inputEvents = () => worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, world:"MAIN", func:()=>window.inputEvents}))[0].result, tabId);
     expect(await call("act_on_element", {target:"css:#target", action:"click"})).toMatchObject({clickDispatched:true});

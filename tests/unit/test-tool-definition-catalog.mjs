@@ -325,8 +325,8 @@ function assertPageRoleTerminologyContract() {
   const pluginRuntime = getSkillToolParameters({ script: "scripts/example.js", runtime: "page" }).properties.tabRef.description;
   assert.match(
     tabTools,
-    /active=true 表示用户可见标签页，isWorkingTab=true 表示当前任务工作标签页/,
-    "list_tabs should expose page roles as result facts",
+    /返回 tabRef、URL、标题和 active；active=true 表示用户正在看的标签页/,
+    "list_tabs should describe public page identity and user visibility",
   );
   assert.match(
     tabTools,

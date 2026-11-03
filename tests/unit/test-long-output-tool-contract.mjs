@@ -12,6 +12,7 @@ const { default: documentMessages } = await import("../../src/capabilities/docum
 const { QINGZHOU_DOCUMENT_TOOL_SPECS } = await import("../../src/capabilities/documents/skill-contract.js");
 
 globalThis.chrome ||= {};
+globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
 const { resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
 const { SKILL_AUTHOR_TOOL_PARAMETERS } = await import("../../src/capabilities/skills/workbench.js");
 const saveFile = resolveToolDefinition("save_file");
@@ -33,12 +34,12 @@ for (const key of ["downloadRegisteredAsAFileArtifactForThisTask", "downloadStar
 
 const runScript = resolveToolDefinition("run_script");
 assert.deepEqual(runScript.parameters.required, ["timeout", "code"], "run_script should require timeout and code in simple schema");
-assertPropertyOrder(runScript.parameters, ["timeout", "target", "tabId", "args", "mutatesPage", "code"], "run_script should put timeout/target first and long code last");
+assertPropertyOrder(runScript.parameters, ["timeout", "tabRef", "args", "mutatesPage", "code"], "run_script should put timeout/tabRef first and long code last");
 assert.match(runScript.parameters.properties.code.description, /最后填写 code/, "run_script code description should tell the model to fill code last");
 
 const readArticle = resolveToolDefinition("read_article");
 assert.deepEqual(readArticle.parameters.required, ["limit"], "read_article should require an explicit context budget limit");
-assertPropertyOrder(readArticle.parameters, ["tabId", "source", "target", "offset", "limit"], "read_article should keep a small flat parameter surface");
+assertPropertyOrder(readArticle.parameters, ["tabRef", "source", "target", "offset", "limit"], "read_article should keep a small flat parameter surface");
 assert.doesNotMatch(Object.keys(readArticle.parameters.properties).join(" "), /includeHtml|includeLinks/, "read_article should not expose HTML or link-list toggles");
 assert.match(readArticle.description, /target\/linkCount/, "read_article should return one target and link count for follow-up tools");
 assert.match(readArticle.description, /outline.*offset\/endOffset\/charCount/, "read_article outline should expose chapter ranges through the existing offset model");
@@ -68,7 +69,7 @@ assert.deepEqual(
 
 const validateToolArgs = extractFunctionBody(toolsSource, "validateToolArgs");
 assert.doesNotMatch(validateToolArgs, /\bargs,\s*(?:\n|\})/, "missing-argument errors should not echo full tool args");
-assert.match(toolsSource, /function compactToolArgShape\(/, "missing-argument errors should include compact arg shape only");
+assert.doesNotMatch(validateToolArgs, /compactToolArgShape/, "missing-argument errors expose public recovery fields only");
 
 const createSchema = SKILL_AUTHOR_TOOL_PARAMETERS.create;
 assertPropertyOrder(createSchema, ["name", "displayName", "description", "scope", "domains", "urlPatterns", "excludePatterns", "content"], "create_skill should put long content after metadata");

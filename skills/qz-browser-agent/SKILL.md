@@ -47,7 +47,7 @@ open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ
 
 ## 一个任务一个会话
 
-先 `qz session create`，stdout 打出 `sessionId <id>`；`--json` 则取 result.sessionId。MCP 调 qingzhou_create_drive_session，取返回的 sessionId。每次 create 都创建新会话，不启动模型。
+先 `qz session create --title "查看示例页"`，标题必填；stdout 打出 `sessionId <id>`；`--json` 则取 result.sessionId。MCP 调 qingzhou_create_drive_session，取返回的 sessionId。每次 create 都创建新会话，不启动模型。
 
 后续每次 `qz script --session ID`、`qz exec --session ID`、`qz tools --session ID` 都带同一 ID；MCP 执行工具时显式传同一个 sessionId；qingzhou_list_tools / qingzhou_get_tool 可不带会话查询基础目录；按名查询已加载 Skill 的工具时，qingzhou_get_tool 带 sessionId。漏掉 `--session` 退出码 2，不会新建，也不会沿用上次会话。不存在的 ID 返回 DRIVE_SESSION_NOT_FOUND；检查 ID 和浏览器选择，不要自造 ID。换新任务再 create，并行的独立任务各自创建会话。
 
@@ -56,7 +56,7 @@ open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ
 先完成连接及上面的 qz 函数定义。多浏览器时给函数内的 npx 调用追加 `--client CLIENT_UUID`。以下每步失败就停：
 
 ```sh
-CREATED=$(qz session create --json) || exit 1
+CREATED=$(qz session create --title "Inspect example page" --json) || exit 1
 SID=$(printf '%s' "$CREATED" | node -e 'const x=JSON.parse(require("fs").readFileSync(0,"utf8")); if(!x.ok || !x.result.sessionId) process.exit(1); console.log(x.result.sessionId)') || exit 1
 qz exec --session "$SID" <<'JSON'
 {"calls":[
@@ -78,7 +78,7 @@ JS
 
 页面工具（包括 act_on_screen）始终传 `tabRef`。一批中每项都传自己的页面引用；缺失时返回 DRIVE_TAB_REF_REQUIRED。open_tab、list_tabs、list_skills、load_skill、wait、wait_until 不需要页面引用；read_image 传 url、collect_images 仅传 urls 时也不需要。非页面调用若带 tabRef，验证后忽略，不改变工具含义；wait 仍只等待指定时长，等页面加载用 wait_for_navigation。
 
-同一标签只归一个会话，后来者失败，不中断先占用者。查看其他网页用 list_tabs({scope:"all"})，只读操作显式传 tabRef；修改页面需使用本会话拥有的页面。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,alias,title,url,active}],count,foreign}`。active 表示用户正在看的标签，不会替页面工具选择目标。
+同一标签只归一个会话，后来者失败，不中断先占用者。查看其他网页用 list_tabs({scope:"all"})，只读操作显式传 tabRef；修改页面需使用本会话拥有的页面。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,title,url,active}],count,foreign}`。active 表示用户正在看的标签，不会替页面工具选择目标。
 
 ## 发现工具与常用参数
 
@@ -90,7 +90,7 @@ open_tab、navigate、list_tabs、close_tab、get_ax_tree、find_elements、read
 
 - open_tab({url,tabAlias?})、navigate({tabRef,url})：url 用 http/https。
 - read_article({tabRef,target?,limit:6000})：读正文；跟随 nextOffset 分段续读，不用树代替全文。
-- get_ax_tree({tabRef,root?,scope?,depth?,limit?})：取 snapshot 中的 uid。scope 只能是 viewport 或 full。省略时 root="root" 用 viewport，uid:/css: 根用 full；缩小 root/limit，勿把截断 preview 当完整树。
+- get_ax_tree({tabRef,target?,scope?,depth?,limit?})：取 snapshot 中的 uid。scope 只能是 viewport 或 full。省略 target 时用 viewport，uid:/css: 范围用 full；缩小 target/limit，勿把截断 preview 当完整树。
 - find_elements({tabRef,pattern?,target?,limit?})：pattern 是正则，默认忽略大小写，不是字面文本。字面 `a.b` 要用 JSON 字符串 `"a\\.b"`；其它正则元字符也需转义。返回 target 原样交给元素工具。
 - act_on_element({tabRef,target,action,value?,key?})：target 用 uid: 或 css:；action 仅 click、fill、press、select、check、uncheck、scroll。fill/select 需要 value，press 需要 key，一次一个动作。
 - wait_for_element({tabRef,target,timeout?,absent?})：优先用 uid:，css: 或裸 CSS 兜底。普通等待检查 found；absent:true 表示原节点已移除或不可见，成功时 found 也是 false，必须检查 timedOut 是否为 true，不能把超时当成功消失。
@@ -98,7 +98,7 @@ open_tab、navigate、list_tabs、close_tab、get_ax_tree、find_elements、read
 
 导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。优先复用返回的 uid；没有 uid 时用可靠 CSS，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。截视口不传 target；截元素传 uid: 或 css: 目标。默认超过约 48000 字符的结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取。
 
-元素身份只有 target，值优先为 uid:…，无法绑定时为 css:…；AX、find_elements、list_images、inspect_element、wait_for_element 返回的 target 可直接用于 act_on_element、inspect_element、screenshot。list_images({tabRef,target?,limit?}) 的图片以 uid 为主，绑定失败回落 css:。read_article/read_dom/find_elements/list_images/wait_for_element 的元素或范围参数统一叫 target；get_ax_tree 的范围参数保留 root。
+元素身份只有 target，值优先为 uid:…，无法绑定时为 css:…；AX、find_elements、list_images、inspect_element、wait_for_element 返回的 target 可直接用于 act_on_element、inspect_element、screenshot。list_images({tabRef,target?,limit?}) 的图片以 uid 为主，绑定失败回落 css:。read_article/read_dom/find_elements/list_images/wait_for_element 的元素或范围参数统一叫 target；get_ax_tree 的范围参数也叫 target。
 
 ## calls 是批次，不是事务
 
@@ -163,11 +163,11 @@ qz exec --session "$SID" '{"name":"qingzhou_documents__document_read_chunk","arg
 
 | 入口 | 成功：脚本 return 7 | 工具失败（脚本语法错误） | 抛出/传输失败 |
 | --- | --- | --- | --- |
-| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_SYNTAX_ERROR","error":"SyntaxError: Unexpected token (2:4)"}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
-| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":false,"code":"SCRIPT_SYNTAX_ERROR","error":"…"}}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
-| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"ok":false,"code":"SCRIPT_SYNTAX_ERROR","error":"…"}}` | MCP isError:true，text 为 `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`；连接未建立时可能没有工具响应 |
+| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_SYNTAX_ERROR","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
+| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_SYNTAX_ERROR","message":"…"}}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
+| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_SYNTAX_ERROR","message":"…"}}` | MCP isError:true，text 为 `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`；连接未建立时可能没有工具响应 |
 
-script stdout 直接是返回值；exec 的脚本值在 result.result.result，MCP 在 result.result。普通工具如 open_tab 的数据分别在 exec 的 result.result、MCP 的 result；批次分别看 result.results、results。exec 外层 ok:true 仅表示传输成功，仍要检查工具结果与每项 isError。CLI exit 0 成功、1 工具/传输失败、2 参数非法。script 已投影失败最多带 5 条 trace；抛出型失败在交互终端未加 --json 时写 stderr。错误有行列号/堆栈摘要时保留它们，不要盖成笼统失败。超过字符上限时直接处理截断包，不再按普通返回值解包。
+script stdout 直接是返回值；exec 的脚本值在 result.result.result，MCP 在 result.result。普通工具如 open_tab 的数据分别在 exec 的 result.result、MCP 的 result；批次分别看 result.results、results。exec 外层 ok:true 仅表示传输成功，仍要检查工具结果与每项 isError。CLI exit 0 成功、1 工具/传输失败、2 参数非法。错误统一为 `{code,message,hint?,details?}`，行列号和最多 5 条 trace 放在 details；抛出型失败在交互终端未加 --json 时写 stderr。错误有行列号/堆栈摘要时保留它们，不要盖成笼统失败。超过字符上限时直接处理截断包，不再按普通返回值解包。
 
 ## 收尾、隔天与出错恢复
 
@@ -240,7 +240,7 @@ qz skill and MCP qingzhou_guide return this guide. Read once on a new connection
 
 ## One task uses one session
 
-Run `qz session create` first: stdout prints `sessionId <id>`. With --json, read result.sessionId. On MCP call qingzhou_create_drive_session and read sessionId. Each create makes a new session without starting a model.
+Run `qz session create --title "Inspect example page"` first; a readable title is required. stdout prints `sessionId <id>`. With --json, read result.sessionId. On MCP call qingzhou_create_drive_session and read sessionId. Each create makes a new session without starting a model.
 
 Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID; MCP tool execution passes the same sessionId. qingzhou_list_tools / qingzhou_get_tool may omit it for the base catalog. To inspect a loaded Skill tool by name, pass sessionId to qingzhou_get_tool. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
 
@@ -249,7 +249,7 @@ Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --se
 Connect and define qz as above. With several browsers, add --client CLIENT_UUID to the npx invocation inside that function. Stop after any failed step:
 
 ```sh
-CREATED=$(qz session create --json) || exit 1
+CREATED=$(qz session create --title "Inspect example page" --json) || exit 1
 SID=$(printf '%s' "$CREATED" | node -e 'const x=JSON.parse(require("fs").readFileSync(0,"utf8")); if(!x.ok || !x.result.sessionId) process.exit(1); console.log(x.result.sessionId)') || exit 1
 qz exec --session "$SID" <<'JSON'
 {"calls":[
@@ -271,7 +271,7 @@ A successful open_tab returns tabRef, not id. `tabAlias` is recommended for read
 
 Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. Page-independent calls validate a supplied tabRef, then ignore it. wait still waits only for a duration; use wait_for_navigation for page loading.
 
-One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,alias,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
+One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
 
 ## Discover tools and use their parameters
 
@@ -283,7 +283,7 @@ Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`
 
 - open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
 - read_article({tabRef,target?,limit:6000}): read body text; continue with nextOffset. Do not substitute an accessibility tree for document text.
-- get_ax_tree({tabRef,root?,scope?,depth?,limit?}): read snapshot for uids. scope is only viewport or full. Omitted scope uses viewport for root="root", full for a uid:/css: root. Narrow root/limit; a truncated preview is not the full tree.
+- get_ax_tree({tabRef,target?,scope?,depth?,limit?}): read snapshot for uids. scope is only viewport or full. Omitted scope uses viewport without a target, full for a uid:/css: target. Narrow target/limit; a truncated preview is not the full tree.
 - find_elements({tabRef,pattern?,target?,limit?}): pattern is a regex, case-insensitive by default, not literal text. For literal `a.b`, use the JSON string `"a\\.b"`; escape other regex metacharacters too. Pass returned target unchanged to element tools.
 - act_on_element({tabRef,target,action,value?,key?}): target is uid: or css:. action is click, fill, press, select, check, uncheck, or scroll. fill/select need value; press needs key. One action per call.
 - wait_for_element({tabRef,target,timeout?,absent?}): prefer uid:, with css: or bare CSS as fallback. Check found for ordinary waits. absent:true means the original node was removed or is invisible; found:false also occurs on success, so inspect timedOut to distinguish timeout from disappearance.
@@ -291,7 +291,7 @@ Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`
 
 Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Reuse returned uids first; use reliable CSS when no uid is available. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read.
 
-An element has one identity field: target, preferably uid:…, falling back to css:… when binding fails. AX, find_elements, list_images, inspect_element and wait_for_element return targets to pass directly to act_on_element, inspect_element or screenshot. list_images({tabRef,target?,limit?}) prefers uids for images, falling back to css: when binding fails. Element/range arguments for read_article/read_dom/find_elements/list_images/wait_for_element are named target; get_ax_tree keeps root for its range.
+An element has one identity field: target, preferably uid:…, falling back to css:… when binding fails. AX, find_elements, list_images, inspect_element and wait_for_element return targets to pass directly to act_on_element, inspect_element or screenshot. list_images({tabRef,target?,limit?}) prefers uids for images, falling back to css: when binding fails. Element/range arguments for read_article/read_dom/find_elements/list_images/wait_for_element are named target; get_ax_tree also uses target for its range.
 
 ## calls is a batch, not a transaction
 
@@ -356,11 +356,11 @@ Examples omit metadata such as clientId/runId. MCP means the decoded JSON from a
 
 | Interface | Success: script returns 7 | Tool failure (script syntax) | Thrown/transport failure |
 | --- | --- | --- | --- |
-| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_SYNTAX_ERROR","error":"SyntaxError: Unexpected token (2:4)"}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
-| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":false,"code":"SCRIPT_SYNTAX_ERROR","error":"…"}}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
-| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"ok":false,"code":"SCRIPT_SYNTAX_ERROR","error":"…"}}` | MCP isError:true, text `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`; connection failures may have no tool response |
+| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_SYNTAX_ERROR","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
+| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_SYNTAX_ERROR","message":"…"}}}` | `{"ok":false,"error":{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}}` |
+| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_SYNTAX_ERROR","message":"…"}}` | MCP isError:true, text `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`; connection failures may have no tool response |
 
-script stdout is the returned value. exec script values are at result.result.result; MCP at result.result. Ordinary tool data, such as open_tab, is at exec result.result or MCP result. Batches are at result.results or results respectively. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Projected script failures include at most five trace rows. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
+script stdout is the returned value. exec script values are at result.result.result; MCP at result.result. Ordinary tool data, such as open_tab, is at exec result.result or MCP result. Batches are at result.results or results respectively. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and at most five trace rows. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
 
 ## Finish, reconnect and recover
 

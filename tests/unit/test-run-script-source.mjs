@@ -382,12 +382,13 @@ const toolsSource = [
   readSource("../../src/capabilities/script/tools.js"),
 ].join("\n");
 globalThis.chrome ||= {};
+globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
 const { resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
 const runScriptDefinition = resolveToolDefinition("run_script");
 const runSkillScriptDefinition = resolveToolDefinition("run_skill_script");
 const { default: workbench } = await import("../../src/capabilities/skills/workbench.js");
 const runScriptStart = toolsSource.indexOf('registerTool({\n  name: "run_script"');
-const runScriptEnd = toolsSource.indexOf("\n});\n\nfunction isToolApiReferenceError", runScriptStart);
+const runScriptEnd = toolsSource.indexOf("\n});\n\n/** Build the page-only operation result here;", runScriptStart);
 assert.ok(runScriptStart >= 0 && runScriptEnd > runScriptStart, "should find run_script tool block");
 const runScriptToolBlock = toolsSource.slice(runScriptStart, runScriptEnd);
 const runSkillScriptStart = toolsSource.indexOf('registerTool({\n  name: "run_skill_script"');
@@ -405,15 +406,12 @@ assert.match(
   "run_script recommended skeleton should show the opening purpose comment",
 );
 assert.match(
-  runScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
-  "run_script tabId schema should document strict target policy",
+  runScriptDefinition.parameters.properties.tabRef.description,
+  /tabRef/,
+  "run_script tabRef schema should document explicit page identity",
 );
-assert.match(
-  runScriptToolBlock,
-  /target:\s*\{\s*type:\s*"string",\s*enum:\s*\["page",\s*"inner"\]/,
-  "run_script should expose an explicit page/inner execution target",
-);
+assert.equal(Object.hasOwn(runScriptDefinition.parameters.properties, "target"), false,
+  "run_script is page-only and has no public execution target");
 assert.match(
   runScriptToolBlock,
   /executionTarget === "inner"[\s\S]*runScriptWithOffscreenInnerRunner/,
@@ -440,20 +438,12 @@ assert.match(
   "run_skill_script should require timeout so plugin tools use one timeout source",
 );
 assert.match(
-  runSkillScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
-  "run_skill_script tabId schema should document its working-tab default",
+  runSkillScriptDefinition.parameters.properties.tabRef.description,
+  /tabRef/,
+  "run_skill_script tabRef schema should document page identity",
 );
-assert.match(
-  runScriptDefinition.description,
-  /target:"inner" 表示轻舟内部 offscreen 运行环境/,
-  "run_script description should document explicit inner mode",
-);
-assert.match(
-  runScriptDefinition.description,
-  /target 不填或 target:"page" 表示页面模式，使用显式的当前任务拥有 tabId，或当前任务 workingTabId/,
-  "run_script description should keep page tasks on page targets",
-);
+assert.doesNotMatch(runScriptDefinition.description, /target:|workingTab|\binner\b/,
+  "public run_script guidance teaches page execution only");
 assert.match(
   runScriptDefinition.description,
   /不能用 getEventListeners、\$0、copy、monitorEvents/,

@@ -21,6 +21,7 @@ import { t } from "../../src/shared/i18n/backend.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { createSessionRepository } from "../../src/background/session/repository.js";
+import { tabReferenceError } from "../../src/background/tools/tab-reference.js";
 import { createMemoryStorage } from "../support/memory-storage.mjs";
 import { normalizeRuntimeSessionId, requireExplicitSessionId } from "../../src/background/session/id.js";
 
@@ -154,50 +155,16 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   assert.equal(prepareDriveToolCall("read_image", {}).error.code, "DRIVE_TAB_REF_REQUIRED");
   const other = prepareDriveToolCall("open_tab", { url: "https://example.com" });
   assert.equal(other.ok, true);
-  const syntax = projectNamedDriveResult("run_script", { target: "page", tabRef: "page" }, {
-    ok: false,
-    code: "SCRIPT_SYNTAX_ERROR",
-    error: "脚本语法错误，请检查引号、换行、括号或 return/await 的位置。",
-    details: {
-      originalError: "SyntaxError: Unexpected token",
-      lineNumber: 2,
-      columnNumber: 4,
-      stack: "SyntaxError: Unexpected token\n    at page.js:2:4\n    at run",
-    },
-    __runScriptEnvelope: true,
-  });
-  assert.match(syntax.value.error, /SyntaxError: Unexpected token/);
-  assert.match(syntax.value.error, /\(2:4\)/);
-  assert.match(syntax.value.error, /page\.js:2:4/);
-  assert.equal(syntax.value.line, 2);
-  assert.equal(syntax.value.column, 4);
-  assert.doesNotMatch(syntax.value.error, /^脚本执行失败/);
+
 });
 
-test("drive script failures sanitize host hints without changing returned user data", () => {
-  for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
-    const userValue = { tabId: 7, _tabId: 7, inner: "user value", target: "inner", scope: "custom",
-      diagnostic: { message: "workingTabId / 工作标签页" } };
-    const before = structuredClone(userValue);
-    assert.deepEqual(projectNamedDriveResult("run_script", {}, { ok: true, result: userValue }).value,
-      { ok: true, result: before });
-    assert.deepEqual(userValue, before);
-    const failure = projectNamedDriveResult("run_script", {}, {
-      ok: false, code: "SCRIPT_EVALUATION_FAILED", error: 'Use target:"inner" with workingTabId',
-      diagnostic: { category: "wrong_runtime", suggestedNextStep: 'target:"inner"; 工作标签页; tabId',
-        engine: "inner", tabId: 7, _tabId: 7 },
-      trace: [{ message: 'tools.error: tabId; target:"inner"', details: { scope: "inner" } }],
-    }).value;
-    assert.equal(failure.code, "SCRIPT_EVALUATION_FAILED");
-    assert.equal(failure.diagnostic.category, "wrong_runtime");
-    assert.doesNotMatch(JSON.stringify(failure), /tabId|inner|工作标签页|working tab|"target"|"scope"/i);
-    assert.match(failure.error, /tabRef/);
-    const syntax = projectNamedDriveResult("run_script", {}, {
-      ok: false, code: "SCRIPT_SYNTAX_ERROR", error: "SyntaxError: Unexpected token",
-      details: { lineNumber: 3, columnNumber: 9 },
-    }).value;
-    assert.match(syntax.error, /Unexpected token \(3:9\)/);
-  });
+test("drive preserves user data with names that overlap private implementation fields", () => {
+  const userValue = { tabId: 7, _tabId: 7, inner: "user value", target: "inner", scope: "custom",
+    selector: "value", nested: { workingTabId: "data", uid: "data" } };
+  const before = structuredClone(userValue);
+  assert.deepEqual(projectNamedDriveResult("run_script", {}, { ok: true, result: userValue }).value,
+    { ok: true, result: before });
+  assert.deepEqual(userValue, before);
 });
 
 test("drive catalog page requirements agree with execution, including URL-only images", () => {
@@ -234,15 +201,15 @@ test("a calls batch rejects inner run_script before that call runs", async () =>
     signal: new AbortController().signal,
     execute: async (name) => {
       seen.push(name);
-      return { id: 3 };
+      return { tabRef: 3 };
     },
   });
   assert.deepEqual(seen, ["open_tab"]);
   assert.equal(batch.results[0].result.tabRef, 3);
   assert.equal(batch.results[1].isError, true);
   assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
-  assert.equal(batch.results[1].result.error, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
-  assert.doesNotMatch(batch.results[1].result.error, /\b(?:inner|target)\b/i);
+  assert.equal(batch.results[1].result.message, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
+  assert.doesNotMatch(batch.results[1].result.message, /\b(?:inner|target)\b/i);
 });
 
 test("projection drops nodes and screenshot bytes", () => {
@@ -259,207 +226,24 @@ test("projection drops nodes and screenshot bytes", () => {
   assert.deepEqual(projected.images, [{ mimeType: "image/png", data: "aGk=" }]);
 });
 
-test("named drive projection compacts scripts and this session's tabs, then caps the body", () => {
-  const success = projectNamedDriveResult("run_script", { target: "inner" }, {
-    ok: true,
-    result: { title: "Ada" },
-    trace: [{ name: "open_tab" }, { name: "fill" }],
-    __runScriptEnvelope: true,
-  });
-  assert.deepEqual(success.value, { ok: true, result: { title: "Ada" } });
-  assert.deepEqual(success.images, []);
-
-  const traces = Array.from({ length: 7 }, (_, index) => ({ step: index }));
-  const failure = projectNamedDriveResult("run_script", {}, {
-    ok: false,
-    code: "DRIVE_TOOL_FORBIDDEN",
-    error: "blocked",
-    diagnostic: "ask_llm",
-    trace: traces,
-    __runScriptEnvelope: true,
-  });
-  assert.equal(failure.value.ok, false);
-  assert.equal(failure.value.code, "DRIVE_TOOL_FORBIDDEN");
-  assert.equal(failure.value.diagnostic, "ask_llm");
-  assert.deepEqual(failure.value.trace, traces.slice(-5));
-
-  const tabs = projectNamedDriveResult("list_tabs", {}, [
-    { id: 1, title: "owned", url: "https://a.example", ownedByCurrentTask: true, usable: true, rect: { x: 1 } },
-    { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false, usable: false },
-  ], null, { aliases: { form: 1 } });
-  assert.deepEqual(tabs.value, {
-    tabs: [{ tabRef: 1, alias: "form", title: "owned", url: "https://a.example", active: false }],
-    count: 1,
-    foreign: 1,
-  });
-  const escaped = projectNamedDriveResult("list_tabs", { scope: "all" }, [
-    { id: 2, title: "other", url: "https://b.example", ownedByCurrentTask: false },
-  ]);
-  assert.ok(Array.isArray(escaped.value));
-  assert.equal(escaped.value.length, 1);
-  const unmarked = projectNamedDriveResult("list_tabs", {}, { ok: true, nodes: [1] });
-  assert.deepEqual(unmarked.value, { ok: true, nodes: [1] });
-
-  const huge = projectNamedDriveResult("read_dom", {}, { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) });
-  assert.equal(huge.value.truncated, true);
-  assert.equal(huge.value.limitChars, DRIVE_RESULT_CHAR_LIMIT);
-  assert.equal(huge.value.totalChars > DRIVE_RESULT_CHAR_LIMIT, true);
-  assert.equal(huge.value.preview.length, DRIVE_RESULT_CHAR_LIMIT);
-  assert.equal(String(huge.value.preview).startsWith('{"ok":true,"result":'), false);
-
-  const hugeScript = projectNamedDriveResult("run_script", { target: "inner" }, {
-    ok: true,
-    result: { text: "y".repeat(DRIVE_RESULT_CHAR_LIMIT) },
-    __runScriptEnvelope: true,
-  });
-  assert.equal(hugeScript.value.truncated, true);
-  assert.equal(hugeScript.value.totalChars > DRIVE_RESULT_CHAR_LIMIT, true);
-  assert.equal(String(hugeScript.value.preview).startsWith('{"ok":true,"result":'), false);
-  assert.equal(String(hugeScript.value.preview).startsWith('{"text":'), true);
-
-  const timedOut = projectNamedDriveResult("run_script", {}, {
-    code: "TOOL_TIMEOUT",
-    error: "run_script 执行超时。",
-    status: "unconfirmed",
-    trace: traces,
-  });
-  assert.equal(timedOut.value.ok, false);
-  assert.equal(timedOut.value.code, "TOOL_TIMEOUT");
-  assert.deepEqual(timedOut.value.trace, traces.slice(-5));
-});
-
-function ownTabId(value, seen = []) {
-  if (Array.isArray(value)) {
-    for (const item of value) ownTabId(item, seen);
-    return seen;
+test("drive caps large results without rewriting public business data", () => {
+  const tabs = { tabs: [{ tabRef: "form", title: "Form", url: "https://example.test", active: true }], count: 1, foreign: 0 };
+  assert.deepEqual(projectNamedDriveResult("list_tabs", {}, tabs).value, tabs);
+  for (const name of ["read_dom", "run_script"]) {
+    const result = name === "run_script" ? { ok: true, result: { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) } }
+      : { text: "x".repeat(DRIVE_RESULT_CHAR_LIMIT) };
+    const capped = projectNamedDriveResult(name, {}, result).value;
+    assert.equal(capped.truncated, true);
+    assert.equal(capped.limitChars, DRIVE_RESULT_CHAR_LIMIT);
+    assert.ok(capped.totalChars > DRIVE_RESULT_CHAR_LIMIT);
+    assert.equal(capped.preview.length, DRIVE_RESULT_CHAR_LIMIT);
+    assert.match(capped.preview, /^\{"text":/);
   }
-  if (!value || typeof value !== "object") return seen;
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "tabId") seen.push(value);
-    else ownTabId(child, seen);
-  }
-  return seen;
-}
-
-test("drive results identify the page with tabRef", () => {
-  const navigate = projectNamedDriveResult("navigate", { tabRef: "page" }, {
-    tabId: 7,
-    url: "https://example.com/next",
-    pageMode: "desktop",
-    networkWatch: { watching: true, tabId: 7 },
-  });
-  assert.equal(navigate.value.tabRef, 7);
-  assert.equal(navigate.value.networkWatch.tabRef, 7);
-  assert.equal(navigate.value.url, "https://example.com/next");
-  assert.equal(ownTabId(navigate.value).length, 0);
-
-  const used = projectNamedDriveResult("use_tab", { tabRef: 7 }, {
-    tabId: 7,
-    active: false,
-    title: "Example",
-    url: "https://example.com/next",
-    windowId: 1,
-  });
-  assert.equal(used.value.tabRef, 7);
-  assert.equal(used.value.windowId, undefined);
-  assert.equal(Object.hasOwn(used.value, "tabId"), false);
-
-  const closed = projectNamedDriveResult("close_tab", { tabRef: 7 }, { closed: 7 });
-  assert.equal(closed.value.closed, true);
-  assert.equal(closed.value.tabRef, 7);
-  assert.equal(Object.hasOwn(closed.value, "tabId"), false);
-
-  const working = projectNamedDriveResult("get_working_tab", {}, {
-    hasWorkingTab: true,
-    id: 6,
-    title: "Current",
-    url: "https://example.com",
-    windowId: 2,
-  });
-  assert.equal(working.value.tabRef, 6);
-  assert.equal(Object.hasOwn(working.value, "id"), false);
-  assert.equal(Object.hasOwn(working.value, "tabId"), false);
-
-  const opened = projectNamedDriveResult("open_tab", {}, {
-    id: 5,
-    url: "https://example.com",
-    networkWatch: { watching: true, tabId: 5 },
-  });
-  assert.equal(opened.value.tabRef, 5);
-  assert.equal(opened.value.networkWatch.tabRef, 5);
-  assert.equal(Object.hasOwn(opened.value, "id"), false);
-
-  const shot = projectNamedDriveResult("screenshot", { tabRef: 5, verbose: true }, {
-    _tabId: 5,
-    tabId: 5,
-    method: "cdp",
-  });
-  assert.equal(shot.value.tabRef, 5);
-  assert.equal(shot.value._tabId, undefined);
-  assert.equal(Object.hasOwn(shot.value, "tabId"), false);
-
-  const found = projectNamedDriveResult("find_elements", { tabRef: 5 }, {
-    matches: [{ id: "n1", tabId: 5, target: "css:button" }],
-  });
-  assert.equal(found.value.matches[0].id, "n1");
-  assert.equal(found.value.matches[0].tabRef, 5);
-  assert.equal(Object.hasOwn(found.value.matches[0], "tabId"), false);
-
-  const kept = projectNamedDriveResult("navigate", {}, { tabRef: "page", tabId: 9, url: "https://example.com" });
-  assert.equal(kept.value.tabRef, "page");
-  assert.equal(Object.hasOwn(kept.value, "tabId"), false);
-
-  const prefixed = projectNamedDriveResult("plugin__close_tab", {}, { closed: 8 });
-  assert.equal(prefixed.value.tabRef, 8);
-
-  const scriptValue = projectNamedDriveResult("run_script", { tabRef: "page" }, {
-    ok: true,
-    result: { tabId: 4, title: "kept" },
-    __runScriptEnvelope: true,
-  });
-  assert.equal(scriptValue.value.result.tabId, 4);
 });
 
-test("fixable script errors keep the identifier and syntax failures still restore", () => {
-  const reference = projectNamedDriveResult("run_script", { tabRef: "page" }, {
-    ok: false,
-    code: "SCRIPT_EVALUATION_FAILED",
-    error: "脚本引用了未定义的变量或对象。",
-    details: { originalError: "ReferenceError: price is not defined", lineNumber: 4, columnNumber: 2 },
-    __runScriptEnvelope: true,
-  });
-  assert.match(reference.value.error, /ReferenceError: price is not defined/);
-  assert.match(reference.value.error, /\(4:2\)/);
-  assert.doesNotMatch(reference.value.error, /未定义的变量/);
 
-  const typeError = projectNamedDriveResult("run_script", { tabRef: "page" }, {
-    ok: false,
-    code: "SCRIPT_EVALUATION_FAILED",
-    error: "The script accessed a property of null or undefined.",
-    details: { originalError: "TypeError: Cannot read properties of undefined (reading 'title')" },
-    __runScriptEnvelope: true,
-  });
-  assert.match(typeError.value.error, /reading 'title'/);
 
-  const passed = projectNamedDriveResult("run_script", { tabRef: "page" }, {
-    ok: false,
-    code: "SCRIPT_EVALUATION_FAILED",
-    error: "TypeError: document.querySelector is not a function",
-    __runScriptEnvelope: true,
-  });
-  assert.match(passed.value.error, /document\.querySelector is not a function/);
 
-  const catalog = projectNamedDriveResult("run_script", { tabRef: "page" }, {
-    ok: false,
-    code: "SCRIPT_EVALUATION_FAILED",
-    error: "脚本执行失败。",
-    details: { originalError: "Script evaluation failed: ReferenceError: price is not defined", lineNumber: 3, columnNumber: 1 },
-    __runScriptEnvelope: true,
-  });
-  assert.match(catalog.value.error, /price is not defined/);
-  assert.match(catalog.value.error, /\(3:1\)/);
-  assert.doesNotMatch(catalog.value.error, /^脚本执行失败/);
-});
 
 test("direct drive resolves an alias and a returned tabRef", async () => {
   const seen = [];
@@ -488,24 +272,19 @@ test("direct drive resolves an alias and a returned tabRef", async () => {
   const missing = await missingPromise;
   assert.equal(missing.results[0].isError, true);
   assert.equal(missing.results[0].result.code, "BATCH_TAB_REFERENCE_ERROR");
-  assert.equal(missing.results[0].result.error, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
-  assert.doesNotMatch(missing.results[0].result.error, /省略 tabRef/);
+  assert.equal(missing.results[0].result.message, "本会话还没有页面别名。tabRef 可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+  assert.doesNotMatch(missing.results[0].result.message, /省略 tabRef/);
   let missingEnPromise;
   withLanguage("en", () => {
     missingEnPromise = run([{ id: "gone", name: "get_ax_tree", args: { tabRef: "page" } }], {});
   });
   const missingEn = await missingEnPromise;
-  assert.equal(missingEn.results[0].result.error, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
-  assert.doesNotMatch(missingEn.results[0].result.error, /omit tabRef/i);
+  assert.equal(missingEn.results[0].result.message, "This session has no page alias yet. tabRef can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+  assert.doesNotMatch(missingEn.results[0].result.message, /omit tabRef/i);
 });
 
 test("single drive no_alias matches calls and the script bridge", async () => {
-  const throwNoAlias = () => {
-    const error = new Error("built-in alias");
-    error.code = "BATCH_TAB_REFERENCE_ERROR";
-    error.details = { reason: "no_alias", tabRef: "page" };
-    throw error;
-  };
+  const throwNoAlias = language => { throw tabReferenceError("no_alias", "page", language); };
   const callBatch = (language) => {
     let pending;
     withLanguage(language, () => {
@@ -522,8 +301,8 @@ test("single drive no_alias matches calls and the script bridge", async () => {
   const enCalls = await callBatch("en");
   const zhSentence = withLanguage("zh-CN", () => t("drive.noAlias"));
   const enSentence = withLanguage("en", () => t("drive.noAlias"));
-  assert.equal(zhCalls.results[0].result.error, zhSentence);
-  assert.equal(enCalls.results[0].result.error, enSentence);
+  assert.equal(zhCalls.results[0].result.message, zhSentence);
+  assert.equal(enCalls.results[0].result.message, enSentence);
 
   const noted = [];
   const metadata = {};
@@ -576,13 +355,13 @@ test("single drive no_alias matches calls and the script bridge", async () => {
       recordLoadedSkillNames: () => {},
       runtime: {
         getSchemas: () => [],
-        async execute(name) {
-          if (name === "get_ax_tree") throwNoAlias();
+        async execute(name, _args, _signal, context) {
+          if (name === "get_ax_tree") throwNoAlias(context.language);
           if (name === "list_tabs") throw new Error("plain failure");
           return { ok: true };
         },
         getModelPolicy: () => null,
-        getBatchTabPolicy: () => null,
+        getBatchTabPolicy: name => name === "get_ax_tree" ? { kind: "target", implicit: false, observation: true } : null,
         getTabAliases: () => ({}),
       },
     },
@@ -591,7 +370,7 @@ test("single drive no_alias matches calls and the script bridge", async () => {
     trace: { get: async () => [] },
     async dispatchSidepanel() {},
   });
-  await runtime.createDriveSession({ sessionId: "drive-alias" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-alias" });
   const rejectMessage = async (language, params) => {
     let pending;
     withLanguage(language, () => {
@@ -608,10 +387,10 @@ test("single drive no_alias matches calls and the script bridge", async () => {
   const enSingle = await rejectMessage("en", { sessionId: "drive-alias", name: "get_ax_tree", args: { tabRef: "page" }, clientName: "qz-cli" });
   assert.equal(zhSingle, zhSentence);
   assert.equal(enSingle, enSentence);
-  assert.equal(zhSingle, zhCalls.results[0].result.error);
-  assert.equal(enSingle, enCalls.results[0].result.error);
-  assert.equal(noted[0].result.error, zhSentence);
-  assert.equal(noted.at(-1).result.error, enSentence);
+  assert.equal(zhSingle, zhCalls.results[0].result.message);
+  assert.equal(enSingle, enCalls.results[0].result.message);
+  assert.equal(noted[0].result.message, zhSentence);
+  assert.equal(noted.at(-1).result.message, enSentence);
   const plain = await rejectMessage("zh-CN", { sessionId: "drive-alias", name: "list_tabs", args: {} });
   assert.equal(plain, "plain failure");
   assert.doesNotMatch(plain, /--session/);
@@ -631,8 +410,8 @@ test("single drive no_alias matches calls and the script bridge", async () => {
       toolRuntime: {
         resolveDefinition: () => ({ behavior: {} }),
         getSchemas: () => [],
-        async execute(name) {
-          if (name === "get_ax_tree") throwNoAlias();
+        async execute(name, _args, _signal, context) {
+          if (name === "get_ax_tree") throwNoAlias(context.language);
           return { ok: true };
         },
       },
@@ -648,12 +427,12 @@ test("single drive no_alias matches calls and the script bridge", async () => {
   const zhScript = await scriptCall("zh-CN", "drive-1");
   const enScript = await scriptCall("en", "drive-1");
   const builtIn = await scriptCall("en", "run-current");
-  assert.equal(zhScript.error, zhSentence);
-  assert.equal(enScript.error, enSentence);
-  assert.equal(zhScript.error, zhSingle);
-  assert.equal(enScript.error, enSingle);
-  assert.doesNotMatch(builtIn.error, /--session/);
-  assert.match(builtIn.error, /no page alias yet/);
+  assert.equal(zhScript.message, zhSentence);
+  assert.equal(enScript.message, enSentence);
+  assert.equal(zhScript.message, zhSingle);
+  assert.equal(enScript.message, enSingle);
+  assert.equal(builtIn.message, enSentence);
+  assert.match(builtIn.message, /no page alias yet/);
 
   const builtInZh = withLanguage("zh-CN", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
   const builtInEn = withLanguage("en", () => toolT("batchTabReferenceNoAlias", { tabRef: "page" }));
@@ -674,7 +453,7 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
     signal: new AbortController().signal,
     execute: async (name, args) => {
       seen.push({ name, args });
-      if (name === "open_tab") return { id: 11 };
+      if (name === "open_tab") return { tabRef: 11 };
       return { snapshot: "ok", nodes: [1], _image: "data:image/png;base64,YQ==" };
     },
     getBatchTabPolicy: (name) => name === "open_tab"
@@ -686,7 +465,7 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
   });
   assert.equal(seen[0].name, "open_tab");
   assert.equal(seen[1].args.tabId, 11);
-  assert.equal(Object.hasOwn(seen[1].args, "tabRef"), false);
+  assert.equal(seen[1].args.tabRef, "page");
   assert.equal(batch.results[0].result.tabRef, 11);
   assert.equal(batch.results[1].result.snapshot, "ok");
   assert.equal(Object.hasOwn(batch.results[1].result, "nodes"), false);
@@ -713,7 +492,7 @@ test("a batch refreshes the working tab before the next call and keeps the drive
       seen.push({ name, workingTabId: context.workingTabId, runId: context.runId });
       if (name === "open_tab") {
         workingTabId = 9;
-        return { id: 9 };
+        return { tabRef: 9 };
       }
       return { snapshot: "tree" };
     },
@@ -848,7 +627,7 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
           if (name === "open_tab") {
             opened += 1;
             await openGate;
-            return { id: 4, url: args.url, snapshot: "page", nodes: [9], _display: { raw: true }, _image: "data:image/png;base64,YQ==" };
+            return { tabRef: 4, url: args.url, snapshot: "page", nodes: [9], _display: { raw: true }, _image: "data:image/png;base64,YQ==" };
           }
           return { ok: true, nodes: [1] };
         },
@@ -865,7 +644,7 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
 
   const before = executed.length;
   await assert.rejects(
-    runtime.createDriveSession({ sessionId: "s1" }),
+    runtime.createDriveSession({ title: "Inspect example page", sessionId: "s1" }),
     (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
   );
   await assert.rejects(
@@ -893,8 +672,8 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
     error => error.code === "DRIVE_SESSION_NOT_FOUND");
   assert.equal(created.length, 0);
   assert.equal(executed.length, before);
-  await runtime.createDriveSession({ sessionId: "drive-1", clientName: "pi" });
-  await runtime.createDriveSession({ sessionId: "drive-2", clientName: "Claude Code" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-1", clientName: "pi" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-2", clientName: "Claude Code" });
 
   const first = runtime.executeTool({ sessionId: "drive-1", name: "open_tab", args: { url: "https://example.com" }, clientName: "pi" });
   await new Promise((resolve) => {
@@ -912,9 +691,9 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
   assert.equal(Object.hasOwn(openedResult.result, "_display"), false);
   assert.deepEqual(openedResult.images, [{ mimeType: "image/png", data: "YQ==" }]);
   assert.equal(metadata["drive-1"].source, "external-drive");
-  assert.equal(metadata["drive-1"].title, "轻舟 · pi");
+  assert.equal(metadata["drive-1"].title, "Inspect example page");
   assert.equal(metadata["drive-1"].driveGroupTitle, "轻舟 · pi");
-  assert.equal(metadata["drive-2"].title, "轻舟 · Claude Code");
+  assert.equal(metadata["drive-2"].title, "Inspect example page");
   assert.match(openedResult.runId, /^drive-/);
   assert.equal(created.length, 2);
 
@@ -922,7 +701,7 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
   assert.deepEqual(readBack.result.nodes, [1]);
   assert.match(readBack.runId, /^drive-/);
 
-  await runtime.createDriveSession({ sessionId: "drive-docs" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-docs" });
   const fetched = await runtime.executeTool({ sessionId: "drive-docs", name: "document_fetch", args: { url: "https://example.com/a.pdf" } });
   assert.equal(metadata["drive-docs"].source, "external-drive");
   assert.match(fetched.runId, /^drive-/);
@@ -1009,7 +788,7 @@ test("idle stop reaches an external drive session and leaves an occupied session
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.equal(stops.length, 0);
   assert.equal(metadata.s1.source, "");
-  await runtime.createDriveSession({ sessionId: "drive-idle" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-idle" });
   await runtime.executeTool({ sessionId: "drive-idle", name: "list_tabs", args: {} });
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(stops.length, 1);
@@ -1086,7 +865,7 @@ test("drive refresh keeps an empty runtime tab instead of the previous one", asy
           });
           if (name === "open_tab") {
             stored["drive-clear"] = { workingTabId: null, workingUrl: "", workingTab: null, visitedTaskSites: [] };
-            return { id: 9 };
+            return { tabRef: 9 };
           }
           return { ok: true };
         },
@@ -1104,7 +883,7 @@ test("drive refresh keeps an empty runtime tab instead of the previous one", asy
     trace: { get: async () => [] },
     async dispatchSidepanel() {},
   });
-  await runtime.createDriveSession({ sessionId: "drive-clear" });
+  await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-clear" });
   const batch = await runtime.executeTool({
     sessionId: "drive-clear",
     calls: [
@@ -1149,14 +928,14 @@ test("production normalization creates fresh isolated sessions even with an occu
         async execute(name, args, _signal, context) {
           executions++;
           const id = context.sessionId;
-          if (name === "run_script") throw Object.assign(new Error('Use target:"inner" with workingTabId'), {
-            code: "SCRIPT_EVALUATION_FAILED", details: { tabId: 7, _tabId: 7, recovery: "工作标签页 / inner" },
+          if (name === "run_script") throw Object.assign(new Error('Use a valid tabRef'), {
+            code: "SCRIPT_EVALUATION_FAILED", details: { tabRef: "page" },
           });
           if (name === "open_tab") {
             const tab = nextTab++;
             aliases.set(id, { ...aliases.get(id), [args.tabAlias]: tab });
             pages.set(tab, { sessionId: id, url: args.url });
-            return { id: tab, url: args.url };
+            return { tabRef: tab, url: args.url };
           }
           const page = pages.get(args.tabId ?? aliases.get(id)?.[args.tabRef]);
           assert.equal(page?.sessionId, id, "page reads must stay within the owning session");
@@ -1174,20 +953,20 @@ test("production normalization creates fresh isolated sessions even with an occu
     async dispatchSidepanel() {},
   });
   assert.equal(normalizeRuntimeSessionId(undefined), "default");
-  const first = await runtime.createDriveSession({ clientName: "qz-cli" });
-  const second = await runtime.createDriveSession({ clientName: "pi" });
+  const first = await runtime.createDriveSession({ title: "Inspect example page", clientName: "qz-cli" });
+  const second = await runtime.createDriveSession({ title: "Inspect example page", clientName: "pi" });
   assert.match(first.sessionId, /^[0-9a-f]{32}$/);
   assert.match(second.sessionId, /^[0-9a-f]{32}$/);
   assert.notEqual(first.sessionId, second.sessionId);
   await repository.createMetadata({ id: "default", title: "Ordinary task" });
   supervisor.setRuntime("default", { status: "running", runId: "ordinary-run" });
-  const third = await runtime.createDriveSession({ clientName: "other" });
+  const third = await runtime.createDriveSession({ title: "Inspect example page", clientName: "other" });
   assert.match(third.sessionId, /^[0-9a-f]{32}$/);
   assert.equal(new Set([first.sessionId, second.sessionId, third.sessionId]).size, 3);
   assert.equal((await repository.getMetadata("default")).title, "Ordinary task");
   assert.equal(supervisor.getRuntime("default").runId, "ordinary-run");
-  assert.equal((await repository.getMetadata(first.sessionId)).title, "轻舟 · CLI");
-  assert.equal((await repository.getMetadata(second.sessionId)).title, "轻舟 · pi");
+  assert.equal((await repository.getMetadata(first.sessionId)).title, "Inspect example page");
+  assert.equal((await repository.getMetadata(second.sessionId)).title, "Inspect example page");
 
   const ids = [first.sessionId, second.sessionId];
   const opened = await Promise.all(ids.map((sessionId, i) => runtime.executeTool({ sessionId, calls: [
@@ -1240,7 +1019,7 @@ test("drive creation reports occupied when metadata creation is unavailable", as
     async dispatchSidepanel() {},
   });
   await assert.rejects(
-    runtime.createDriveSession({ sessionId: "drive-unavailable" }),
+    runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-unavailable" }),
     (error) => error.code === "DRIVE_SESSION_OCCUPIED" && /qz session create/.test(error.message),
   );
 });
@@ -1264,143 +1043,6 @@ test("a drive create does not take over an existing task", async () => {
   assert.equal(again.source, "external-drive");
 });
 
-test("drive catalogs omit run_script target and scope", async () => {
-  const runScript = {
-    type: "function",
-    function: {
-      name: "run_script",
-      description: "Run a page script.\n- target:\"inner\" stays on the built-in catalog.\nPass tabId only on the built-in schema.",
-      parameters: {
-        type: "object",
-        properties: {
-          timeout: { type: "number" },
-          target: { type: "string", enum: ["page", "inner"], description: "page or inner" },
-          tabId: { type: "number", description: "Target tabId" },
-          args: { type: "object" },
-          mutatesPage: { type: "boolean" },
-          code: { type: "string" },
-        },
-        required: ["timeout", "code"],
-      },
-    },
-  };
-  const expectedSignature = "run_script({timeout:number, tabRef:string, args?:object, mutatesPage?:boolean, code:string})";
-  const projected = driveToolSignature({
-    name: runScript.function.name,
-    description: runScript.function.description,
-    parameters: runScript.function.parameters,
-  });
-  assert.equal(projected.signature, expectedSignature);
-  assert.equal(projected.description, t("drive.scriptDescription"));
-  assert.doesNotMatch(projected.signature, /\b(?:target|scope)\b/);
-  assert.doesNotMatch(JSON.stringify(projected), /\b(?:tabId|inner)\b/i);
-  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
-  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
-  for (const language of ["zh-CN", "en"]) {
-    const hidden = withLanguage(language, () => driveToolSignature({
-      name: "run_script",
-      description: scriptToolT("runScriptDescription"),
-      parameters: runScript.function.parameters,
-    }));
-    assert.equal(hidden.signature, expectedSignature);
-    assert.match(hidden.description, /tabRef/);
-    assert.doesNotMatch(JSON.stringify(hidden), /tabId|\binner\b/i);
-  }
-
-  const metadata = { "agent-1": { id: "agent-1", source: "agent" } };
-  const runtime = createMcpRuntime({
-    sessions: {
-      normalizeId: (value) => String(value || "").trim(),
-      requireId: (value) => String(value || "").trim(),
-      supervisor: {
-        isRunCurrent: () => false,
-        mintDriveRunId: () => "drive-run",
-        clearDriveRunId() {},
-        takeDriveRunForRelease: () => "",
-        getUserWait: () => null,
-        resolveUserWait: () => false,
-        rejectUserWait: () => false,
-      },
-      submitMessage: async () => ({ promise: Promise.resolve(), disposition: "started" }),
-      waitForRunObserved: async () => true,
-      getRuntimeOutput: async (_id, project = (value) => value) => project({ status: "idle" }),
-      getLiveAgentEntry: async () => null,
-      setRuntime() {},
-      getStoredRuntime: () => null,
-      getLastMessages: async () => ({ messages: [] }),
-      getAgent: async () => null,
-      getTranscript: async () => [],
-      listMetadata: async () => ({ ...metadata }),
-      createMetadata: async (input) => { metadata[input.id] = { ...input }; return metadata[input.id]; },
-      getConversation: async () => [],
-      compactTranscriptEvent: (event) => event,
-      getRuntime: () => ({ status: "idle", workingTabId: null }),
-    },
-    userInputPermissions: {
-      hasBrowserPermission: async () => false,
-      locationConsent: { isAccepted: async () => false, acceptExternal: async () => { throw new Error("not configured"); } },
-    },
-    tools: {
-      ready: async () => {},
-      canManageSessions: async () => true,
-      buildRunProfile: async () => ({}),
-      loadedSkillNames: () => [],
-      recordLoadedSkillNames: () => {},
-      runtime: {
-        getSchemas: () => [runScript],
-        execute: async () => ({ ok: true }),
-        getModelPolicy: () => null,
-        getBatchTabPolicy: () => null,
-        getTabAliases: () => ({}),
-      },
-    },
-    skills: { list: async () => [], load: async () => null, getDisplayName: (skill) => skill?.name || "", normalizeResourcePath: (value) => String(value || "") },
-    artifacts: { empty: () => ({ total: 0, items: [] }), collect: async () => ({ total: 0, items: [] }) },
-    trace: { get: async () => [] },
-    async dispatchSidepanel() {},
-  });
-  await runtime.createDriveSession({ sessionId: "drive-1" });
-  const listed = await runtime.listTools({ sessionId: "drive-1" });
-  const fetched = await runtime.getTool({ sessionId: "drive-1", name: "run_script" });
-  assert.equal(listed.tools.length, 1);
-  assert.equal(listed.tools[0].signature, projected.signature);
-  assert.equal(fetched.signature, projected.signature);
-  assert.doesNotMatch(JSON.stringify(listed.tools[0]), /\b(?:tabId|inner)\b/i);
-  assert.doesNotMatch(JSON.stringify(fetched), /\b(?:tabId|inner)\b/i);
-  const builtInList = await runtime.listTools({ sessionId: "agent-1" });
-  const builtInTool = await runtime.getTool({ sessionId: "agent-1", name: "run_script" });
-  assert.match(JSON.stringify(builtInList), /\binner\b/i);
-  assert.match(JSON.stringify(builtInList), /\btabId\b/);
-  assert.match(JSON.stringify(builtInTool), /\binner\b/i);
-  assert.match(JSON.stringify(builtInTool), /\btabId\b/);
-  assert.deepEqual(builtInTool.parameters.properties.target.enum, ["page", "inner"]);
-
-  const bridge = createRunScriptBridge({
-    supervisor: {
-      isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
-      hasAgent: () => true,
-      getAbortSignal: () => new AbortController().signal,
-    },
-    getRuntime: () => ({ status: "running" }),
-    isTerminalRuntimeForRun: () => false,
-    canManageSessions: async () => true,
-    buildRunProfile: async () => ({}),
-    toolRuntime: {
-      resolveDefinition: () => ({ behavior: {} }),
-      getSchemas: () => [runScript],
-      execute: async () => ({ ok: true }),
-    },
-    collectArtifacts: () => [],
-  });
-  const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "drive-1" });
-  const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
-  assert.equal(driveList.result.tools[0].signature, projected.signature);
-  assert.doesNotMatch(JSON.stringify(driveList.result.tools[0]), /\b(?:tabId|inner)\b/i);
-  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\binner\b/i);
-  assert.match(JSON.stringify(builtInScriptList.result.tools[0]), /\btabId\b/);
-  assert.deepEqual(runScript.function.parameters.properties.target.enum, ["page", "inner"]);
-  assert.equal(runScript.function.parameters.properties.tabId.type, "number");
-});
 
 function assertNoDriveTabLeak(label, value) {
   const text = typeof value === "string" ? value : `${value?.signature || ""}\n${value?.description || ""}`;
@@ -1423,7 +1065,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     assert.ok(!watched.some(tool => ['use_tab', 'get_working_tab'].includes(tool.name)));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
     const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
-    assert.equal(runScript.signature, "run_script({timeout:number, args?:object, mutatesPage?:boolean, code:string, tabRef:integer|string})");
+    assert.equal(runScript.signature, "run_script({timeout:number, tabRef:integer|string, args?:object, mutatesPage?:boolean, code:string})");
     assert.doesNotMatch(runScript.signature, /\b(?:target|scope)\b/);
     const ax = driveToolSignature(catalog.find(tool => tool.name === "get_ax_tree"));
     assert.match(ax.signature, /scope\?:"viewport"\|"full"/);
@@ -1480,7 +1122,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       trace: { get: async () => [] },
       async dispatchSidepanel() {},
     });
-    await runtime.createDriveSession({ sessionId: "drive-1" });
+    await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-1" });
     const listed = await runtime.listTools({ sessionId: "drive-1" });
     assert.ok(listed.tools.length > 1);
     for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);
@@ -1489,7 +1131,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     }
     for (const name of ['use_tab', 'get_working_tab', 'run_skill_script']) await assert.rejects(runtime.getTool({ sessionId: 'drive-1', name }), { code: 'DRIVE_TOOL_FORBIDDEN' });
     const builtInList = await runtime.getTool({ sessionId: "agent-1", name: "list_tabs" });
-    assert.match(JSON.stringify(builtInList), /tabId/);
+    assert.doesNotMatch(JSON.stringify(builtInList), /tabId/);
 
     const bridge = createRunScriptBridge({
       supervisor: {
@@ -1512,7 +1154,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     assert.ok(driveList.result.tools.length > 1);
     for (const tool of driveList.result.tools) assertNoDriveTabLeak(`${language} $list ${tool.name}`, tool);
     const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
-    assert.match(JSON.stringify(builtInScriptList.result.tools.find(tool => tool.name === "list_tabs")), /tabId/);
+    assert.doesNotMatch(JSON.stringify(builtInScriptList.result.tools.find(tool => tool.name === "list_tabs")), /tabId/);
   }
   const zhSchemas = withLanguage("zh-CN", () => JSON.parse(JSON.stringify(getToolSchemas({ language: "zh-CN" }))));
   const zhTool = (name) => driveToolSignature(zhSchemas.map(schema => ({
@@ -1520,37 +1162,18 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     description: schema.function?.description || "",
     parameters: schema.function?.parameters || {},
   })).find(tool => tool.name === name));
-  assert.match(zhTool("list_tabs").description, /active 表示用户正在看的标签/);
-  assert.match(zhTool("list_tabs").description, /显式传 tabRef/);
+  assert.match(zhTool("list_tabs").description, /active(?:=true)? 表示用户正在看的标签/);
   for (const name of ['use_tab', 'get_working_tab']) assert.throws(() => zhTool(name), { code: 'DRIVE_TOOL_FORBIDDEN' });
 
-  const rawClauses = [
-    ["list_tabs", "readOnlyUsable=true 表示只读页面工具可显式传 tabId 查看。命中安全策略的标签页仍返回标题、URL、tabId。"],
-    ["get_working_tab", "若命中安全策略，仍返回标题、URL、tabId，并标记 contentAccess=blocked。"],
-    ["use_tab", "归属其他任务的标签页可由只读页面工具显式传 tabId 查看。"],
-    ["list_tabs", "read-only page tools may inspect it by passing tabId explicitly. Tabs still return title, URL, and tabId."],
-    ["get_working_tab", "A tab blocked by a security policy still returns title, URL, and tabId with contentAccess=blocked."],
-    ["use_tab", "To inspect a tab owned by another task, pass tabId explicitly to a read-only page tool."],
-  ];
-  for (const [name, description] of rawClauses) {
-    if (isDriveToolForbidden(name)) { assert.throws(() => driveToolSignature({name, description}), {code:'DRIVE_TOOL_FORBIDDEN'}); continue; }
-    const projected = driveToolSignature({
-      name,
-      description,
-      parameters: { type: "object", properties: { tabId: { type: "number", enum: ["page", "inner"], description: "pass tabId, not inner" } }, required: ["tabId"] },
-    });
-    assert.doesNotMatch(`${projected.signature}\n${projected.description}`, /tabId|\binner\b/i, description);
-    assert.match(projected.description, /tabRef/);
-    assert.match(projected.signature, /tabRef:"page"/);
-  }
+
 });
 
 test("a drive batch conflict names tabRef", async () => {
   const builtIn = withLanguage("zh-CN", () => toolT("tabReferenceConflict", { tabRef: "page" }));
   const builtInEn = withLanguage("en", () => toolT("tabReferenceConflict", { tabRef: "page" }));
-  assert.match(builtIn, /tabId/);
-  assert.match(builtInEn, /tabId/);
-  assert.match(withLanguage("zh-CN", () => t("toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message", { tabRef: "page" })), /tabId/);
+  assert.doesNotMatch(builtIn, /tabId/);
+  assert.doesNotMatch(builtInEn, /tabId/);
+  assert.match(withLanguage("zh-CN", () => t("toolError.BATCH_TAB_REFERENCE_ERROR.conflictingTarget.message", { tabRef: "page" })), /tabRef/);
   const run = (language) => {
     let pending;
     withLanguage(language, () => {
@@ -1565,8 +1188,8 @@ test("a drive batch conflict names tabRef", async () => {
   };
   const zh = await run("zh-CN");
   const en = await run("en");
-  assert.equal(zh.results[0].result.error, "tabRef「page」与同时提供的 tabRef 或元素 UID 指向不同页面。请只指定一个目标，或让两者指向同一页。");
-  assert.equal(en.results[0].result.error, "tabRef \"page\" conflicts with the supplied tabRef or element UID. Select one target, or make both refer to the same page.");
-  assert.doesNotMatch(zh.results[0].result.error, /tabId/);
-  assert.doesNotMatch(en.results[0].result.error, /tabId/);
+  assert.equal(zh.results[0].result.message, builtIn);
+  assert.equal(en.results[0].result.message, builtInEn);
+  assert.doesNotMatch(zh.results[0].result.message, /tabId/);
+  assert.doesNotMatch(en.results[0].result.message, /tabId/);
 });

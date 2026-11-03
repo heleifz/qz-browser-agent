@@ -188,7 +188,8 @@ test("find_elements binds open shadow hits to inspectable, clickable node UIDs",
       expect(hit).not.toHaveProperty('lineRange');
     }
     const inspection = await h.call('inspect_element', { target: buy.target });
-    expect(inspection).toMatchObject({ tag: 'button', text: 'Buy', target: buy.target });
+    expect(inspection).toMatchObject({ tag: 'button', text: 'Buy' });
+    expect(inspection.target).toMatch(/^uid:/);
     expect(inspection).not.toHaveProperty('lineRange');
     const dom = await h.call('read_dom', { selector: buy.target });
     expect(dom.content).toContain('Buy');
@@ -271,7 +272,8 @@ test.describe("shadow hit testing", () => {
     expect(covered, snapshot).toBeTruthy();
     const clicked = await h.call("act_on_element", { target: covered, action: "click" });
     expect(clicked.code, JSON.stringify(clicked)).toBe("ELEMENT_OBSCURED");
-    expect(clicked.details?.state?.obscuredAtCenter ?? clicked.details?.originalState?.obscuredAtCenter).toBe(true);
+    expect(clicked.details.target).toMatch(/^uid:/);
+    expect((await h.call("inspect_element", { target: clicked.details.target })).state.obscuredAtCenter).toBe(true);
     expect((await h.state()).hits.covered || 0).toBe(0);
   });
 

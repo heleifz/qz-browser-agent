@@ -255,7 +255,10 @@ await assert.rejects(
   runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
   error => error.code === "DRIVE_SESSION_OCCUPIED",
 );
-await runtime.createDriveSession({ sessionId: "drive-s" });
+await assert.rejects(runtime.createDriveSession({ sessionId: "missing-title" }), { code: "SESSION_TITLE_REQUIRED" });
+assert.deepEqual(await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-s" }), {
+  sessionId: "drive-s", title: "Inspect example page", status: "completed",
+});
 const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" }, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
 assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
@@ -275,7 +278,7 @@ assert.equal(await runtime.getTool({ sessionId: "drive-listed", name: "not_a_too
 for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "use_tab", "get_working_tab", "qingzhou_skill_author__delete_skill", "mcp_call_tool"])  {
   await assert.rejects(
     () => runtime.getTool({ sessionId: "drive-listed", name }),
-    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message === '此工具不对直驱开放。请查询可用工具；页面操作显式传入 tabRef。',
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && /tabRef/.test(error.message),
   );
 }
 await assert.rejects(
@@ -406,8 +409,8 @@ assert.equal(snapshot.toolCount, driveToolNames.length + blockedToolNames.length
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);
 
-await runtime.createDriveSession({ sessionId: "drive-abort" });
-await runtime.createDriveSession({ sessionId: "drive-lease" });
+await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-abort" });
+await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-lease" });
 for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
   const original = tools[stage], controller = new AbortController();
   let release, entered;

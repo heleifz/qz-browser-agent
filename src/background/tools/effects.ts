@@ -1,3 +1,4 @@
+import { copyCreatedTabResult } from "../../shared/contracts/page-observation.js";
 import type { ToolEffect } from "../../shared/contracts/tool.js";
 import type { ToolContext } from "../../sdk/background.js";
 
@@ -17,7 +18,7 @@ export function issueToolEffects(result: unknown, effects: readonly ToolEffect[]
 /** A trusted adapter may wrap the same result; all copies share one consumable receipt. */
 export function copyToolEffects<T>(source: unknown, target: T): T {
   if (object(source) && object(target) && tickets.has(source)) tickets.set(target, tickets.get(source)!);
-  return target;
+  return copyCreatedTabResult(source, target);
 }
 
 export function consumeToolEffects(result: unknown, context: ToolContext): readonly ToolEffect[] {

@@ -225,7 +225,7 @@ const runtime = registerMediaTools({
     };
   },
   commitObservedPageNavigation({ pageBefore, pageAfter }) {
-    return pageBefore.url !== pageAfter.url ? { url: pageAfter.url, rateLimitRecorded: false } : null;
+    return pageBefore.url !== pageAfter.url ? { url: pageAfter.url } : null;
   },
   async getSecurityGuardrails() { guardrailReads += 1; return { rules: [] }; },
   async assertTabAllowed() {},
@@ -469,8 +469,8 @@ const independentContext = { ...screenContext, sessionId: "scroll-without-screen
 assert.throws(() => definitions.get("screenshot").validateArgs({ target: "viewport" }), error =>
   error.code === "SCREENSHOT_TARGET_INVALID" && /target/.test(error.message));
 assert.doesNotThrow(() => definitions.get("screenshot").validateArgs({ actionable: true }));
-assert.ok(definitions.get("act_on_screen").parameters.properties.tabId);
-assert.ok(definitions.get("collect_images").parameters.properties.tabId);
+assert.ok(definitions.get("act_on_screen").parameters.properties.tabRef);
+assert.ok(definitions.get("collect_images").parameters.properties.tabRef);
 const screenAction = definitions.get("act_on_screen");
 await assert.rejects(screenAction.execute({ tabId: 3, action: "scroll", x: 500, y: 400, deltaY: 120,
   returnScreenshot: false }, undefined, independentContext), error => error.code === "SCREENSHOT_CONTEXT_STALE"
@@ -1574,6 +1574,13 @@ await assert.rejects(definitions.get("screenshot").execute({ tabId: 3, actionabl
 measurementUnavailable = false;
 cdpFailure = true;
 
+listImageResults = [{ code: "INVALID_ELEMENT_TARGET", error: "Invalid target syntax", selector: "[", details: { selector: "[", tabId: 3 } }];
+const invalidImageTarget = await definitions.get("list_images").execute({ tabId: 3, target: "[" }, undefined, { sessionId: "session-a" });
+assert.deepEqual(Object.keys(invalidImageTarget).sort(), ["code", "details", "hint", "message"]);
+assert.deepEqual(invalidImageTarget.details, { target: "css:[" });
+assert.match(invalidImageTarget.hint, /target/);
+assert.doesNotMatch(JSON.stringify(invalidImageTarget), /selector|tabId/);
+
 const validImages = listedImages;
 const writesBeforeInvalidImageReply = imageMetadataWrites.length;
 listedImages = [{ src: { unsafe: "not a URL string" } }];
@@ -1587,7 +1594,8 @@ const listed = await definitions.get("list_images").execute({ tabId: 3 }, undefi
 const listImagesSchema = definitions.get("list_images").parameters;
 const collectImagesSchema = definitions.get("collect_images").parameters;
 const readImageSchema = definitions.get("read_image").parameters;
-assert.equal(listImagesSchema.properties.tabId.type, "number");
+assert.deepEqual(listImagesSchema.properties.tabRef.type, ["integer", "string"]);
+assert.equal(listImagesSchema.properties.tabId, undefined);
 assert.equal((listImagesSchema.required || []).includes("tabId"), false, "list_images should default to the working tab");
 assert.deepEqual(collectImagesSchema.required, ["table"]);
 assert.equal(collectImagesSchema.properties.targets.items.type, "string");
@@ -1782,7 +1790,7 @@ try {
     ["ready"],
     "failed attempts must stay in the tool diagnostics rather than the gallery table",
   );
-  assert.equal(partial.failures[0].src, "https://images.example/fail.png");
+  assert.equal(partial.failures[0].details.src, "https://images.example/fail.png");
 
   const embeddedCollection = await definitions.get("collect_images").execute({
     table: "embedded-images",
@@ -1915,12 +1923,12 @@ try {
       definitions.get("read_image").execute({ target: bound.images[0].target }, undefined, { sessionId: "session-a" }),
       error => error?.code === code
         && (!(failure instanceof Error) || error === failure)
-        && (code !== "CONTENT_SCRIPT_MESSAGE_FAILED" || (error.message === failure.error && error.details.stage === "reply")),
+        && (code !== "CONTENT_SCRIPT_MESSAGE_FAILED" || (error.message === failure.error && error.details.target === bound.images[0].target)),
       "a source-bound image must not return pixels when its current source cannot be verified",
     );
     await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
       && error.details.failures[0].code === code
-      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (failure.message || failure.error)));
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].message === (failure.message || failure.error)));
     assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, capturesBeforeUnknownSource);
     assert.equal(downloads, 0, "unverified page identity cannot become a successful URL fallback");
   }
@@ -1938,7 +1946,7 @@ try {
     const captures = cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length;
     await assert.rejects(collectBound(), error => error?.code === "IMAGE_COLLECTION_ALL_FAILED"
       && error.details.failures[0].code === code
-      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].error === (reply.message || reply.error)));
+      && (!code.startsWith("CONTENT_SCRIPT_") || error.details.failures[0].message === (reply.message || reply.error)));
     assert.equal(listImageResults.length, 0, "collection rechecks the image before capturing fallback pixels");
     assert.equal(cdpCalls.filter(([, method]) => method === "Page.captureScreenshot").length, captures);
   }

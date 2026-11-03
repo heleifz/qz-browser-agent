@@ -1,3 +1,4 @@
+import { toolError } from "../../shared/contracts/tool-error.js";
 import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
 import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 import {
@@ -442,7 +443,9 @@ class QingzhouMcpBridgeRuntime {
           () => abortRequest(failure("BRIDGE_REQUEST_TIMEOUT", "The browser operation timed out.")));
         payload = { ok: true, result };
       } catch (error) {
-        payload = { ok: false, error: error instanceof Error ? error.message : String(error), code: record(error).code || "", details: errorDetails(error) };
+        payload = { ok: false, error: toolError(String(record(error).code || "TOOL_EXECUTION_FAILED"), error instanceof Error ? error.message : String(error), {
+          hint: typeof record(error).hint === "string" ? String(record(error).hint) : undefined, details: errorDetails(error),
+        }) };
       }
       this.check(generation);
       // Results are bound to the exact service/worker lease that dequeued the request.
@@ -499,6 +502,6 @@ function errorDetails(error: unknown) {
     };
   }
   const keys = value.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
-    : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
+    : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : ["tabRef", "target", "line", "column"];
   return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number").map(key => [key, details[key]]));
 }

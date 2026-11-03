@@ -70,7 +70,7 @@ for (const phase of ["before", "create", "claim", "watch", "navigate", "claim-fa
     abortAt("before");
     const operation = openTab.execute({ url: "https://example.com/target", mode, watchNetwork }, controller.signal, context);
     if (phase === "success") {
-      assert.deepEqual(await operation, { id: 42, url: "https://example.com/target", pageMode: mode, networkWatch: { watching: true } });
+      assert.deepEqual(await operation, { tabRef: 42, url: "https://example.com/target", title: "", active: false, pageMode: mode, networkWatch: { watching: true } });
     } else {
       await assert.rejects(operation, error => phase === "claim-failure" ? error.message === "claim failed" : error.code === (phase === "emulate-failure" ? "PAGE_MODE_FAILED" : "OPERATION_ABORTED"));
     }

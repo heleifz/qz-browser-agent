@@ -13,7 +13,7 @@ const FRAME_MISSING_RETRIES = 20;
 /** Confirm the new main document using existing tabs/scripting permissions. */
 export async function navigateTab(tabId: number, url: string, assertTabAllowed: ToolExtensionAPI["assertTabAllowed"], signal?: AbortSignal) {
   let disposed = false;
-  const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while navigating", { tabId });
+  const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while navigating");
   const check = () => {
     if (disposed || signal?.aborted) throw cancelled();
   };
@@ -27,7 +27,7 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     try { return await wait(chrome.tabs.get(tabId)); }
     catch (error) {
       check();
-      throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"), { tabId, cause: String(error) });
+      throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", t("navigationTabClosed"), { cause: String(error) });
     }
   };
   const documentId = async () => {
@@ -79,7 +79,7 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
           const frameMissing = String(error).includes(FIREFOX_FRAME_MISSING);
           if (frameMissing) missingFrames += 1;
           if (tab.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
-            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { tabId, url: tab.url, cause: String(error) });
+            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { url: tab.url, cause: String(error) });
           }
         }
       }

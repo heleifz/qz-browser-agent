@@ -82,7 +82,7 @@ test("script timeouts read the last five traces once from the execution environm
     code: "async () => { await new Promise(() => {}); }",
   }, undefined, context);
   assert.equal(inner.code, "TOOL_TIMEOUT");
-  assert.deepEqual(inner.trace.map(row => row.message), ["row-1", "row-2", "row-3", "row-4", "row-5"]);
+  assert.deepEqual(inner.details.trace.map(row => row.message), ["row-1", "row-2", "row-3", "row-4", "row-5"]);
   const innerTypes = scriptMessages();
   assert.deepEqual(innerTypes.filter(type => type === "run_script_inner_trace_snapshot"), ["run_script_inner_trace_snapshot"]);
   assert.ok(innerTypes.indexOf("run_script_inner_trace_snapshot") < innerTypes.indexOf("run_script_inner_cancel"));
@@ -115,6 +115,6 @@ test("script timeouts read the last five traces once from the execution environm
     code: "async () => { await new Promise(() => {}); }",
   }, undefined, context);
   assert.equal(page.code, "TOOL_TIMEOUT");
-  assert.deepEqual(page.trace.map(row => row.message), ["row-1", "row-2", "row-3", "row-4", "row-5"]);
+  assert.deepEqual(page.details.trace.map(row => row.message), ["row-1", "row-2", "row-3", "row-4", "row-5"]);
   assert.equal(scriptMessages().includes("run_script_page_trace"), false);
 });

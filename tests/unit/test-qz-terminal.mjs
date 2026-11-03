@@ -316,7 +316,7 @@ test("OSC strings use BEL and both string terminators, including C1 and unfinish
 });
 
 test("errors retain actionable details and respect plain and color output", () => {
-  const payload = { ok: false, error: { code: "connection_pending", message: "Open the connection page in Chrome.",
+  const payload = { ok: false, error: { code: "CONNECTION_PENDING", message: "Open the connection page in Chrome.",
     url: "http://127.0.0.1:18765/qz-connect", hint: "Then run qz connect again.", guide: "https://example.com/guide" } };
   const plain = renderError(payload, { width: 40 });
   assert.match(plain, /Waiting for Chrome/);

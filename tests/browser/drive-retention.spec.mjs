@@ -46,7 +46,7 @@ test('drive retention removes old Session stores and owned documents without tou
       });
       return { oldImage, normalImage, sharedImage, galleryId: gallery.assetId };
     });
-    const { sessionId } = await callTool(environment.bridge.endpoint, 'qingzhou_create_drive_session', {});
+    const { sessionId } = await callTool(environment.bridge.endpoint, 'qingzhou_create_drive_session', { title: 'Drive retention regression' });
     await expect.poll(() => environment.page.evaluate(async () => Object.values((await chrome.storage.local.get('_sessions'))._sessions)
       .filter(record => record.source === 'external-drive').length)).toBe(200);
     const remaining = await environment.page.evaluate(async assets => {

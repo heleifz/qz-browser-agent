@@ -11,13 +11,13 @@ export async function beginPageNavigationObservation(tabId: number, signal?: Abo
   { settleMs = 180, timeoutMs = 10_000, probeMs = 100 } = {}) {
   let disposed = false, started = false;
   const check = () => {
-    if (disposed || signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabId });
+    if (disposed || signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabRef: tabId });
   };
   const wait = <T>(operation: Promise<T>, ms: number): Promise<T | null> => {
     check();
     return new Promise((resolve, reject) => {
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); };
-      const onAbort = () => { cleanup(); reject(new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabId })); };
+      const onAbort = () => { cleanup(); reject(new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabRef: tabId })); };
       const timer = setTimeout(() => { cleanup(); resolve(null); }, ms);
       signal?.addEventListener("abort", onAbort, { once: true });
       operation.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });

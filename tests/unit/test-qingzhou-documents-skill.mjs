@@ -1,3 +1,4 @@
+import "../support/default-locale.mjs";
 import { stripTypeScriptTypes } from "node:module";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

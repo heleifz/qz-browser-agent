@@ -1,5 +1,6 @@
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import type { ToolDependencies } from "./tool-scheduler.js";
+import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { ToolExecutionError } from "./arguments.js";
 import { isTabAlias, tabReferenceId } from "../../shared/tab-reference.js";
@@ -81,7 +82,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   }
   const parent = (entry: Entry) => parents.get(entry);
   const validResult = (entry: Entry, result: unknown, isError: boolean) => {
-    const value = record(result), id = value.tabRef ?? value.tabId ?? value.id;
+    const value = record(result), id = createdTabResultId(result) ?? value.tabRef ?? value.tabId ?? value.id;
     return entry.policy?.kind === "create" && !entry.error && !isError && !value.error
       && value.ok !== false && value.isError !== true && typeof id === "number" && Number.isInteger(id) && id > 0 ? id : null;
   };
@@ -105,8 +106,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       if (!tabId) throw error("dependency_failed", entry.args.tabRef);
       if (entry.args.tabId != null && entry.args.tabId !== tabId
         || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== tabId) throw error("conflicting_target", entry.args.tabRef);
-      const { tabRef: _ref, ...args } = entry.args;
-      return entry.policy?.kind === "target" ? { ...args, tabId } : args;
+      return entry.policy?.kind === "target" ? { ...entry.args, tabId } : entry.args;
     },
     complete(item: T, result: unknown, isError: boolean) {
       const entry = byItem.get(item)!, id = validResult(entry, result, isError);

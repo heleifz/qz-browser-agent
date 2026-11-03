@@ -1,3 +1,4 @@
+import { copyCreatedTabResult } from "../../shared/contracts/page-observation.js";
 import type { ToolContext } from "../../sdk/background.js";
 import { ToolExecutionError } from "./arguments.js";
 import { diagnosticTrace, formatTraceFields } from "../trace.js";
@@ -26,7 +27,7 @@ export async function runToolWithTimeout(
   const reportPartial: NonNullable<ToolContext["reportPartial"]> = (result, pending) => {
     if (settled || timedOut || controller.signal.aborted) return;
     const pageState = (result.tabRef ?? result.tabId) === (partial?.result.tabRef ?? partial?.result.tabId) ? partial?.result.pageState : undefined;
-    partial = { result: structuredClone({ ...(pageState ? { pageState } : {}), ...result }), pending };
+    partial = { result: copyCreatedTabResult(result, structuredClone({ ...(pageState ? { pageState } : {}), ...result })), pending };
   };
   const abort = new Promise<never>((_, reject) => {
     onAbort = () => { reject(cancelled()); controller.abort(cancelled()); };
@@ -45,7 +46,7 @@ export async function runToolWithTimeout(
         controller.abort(error);
         try {
           const trace = await takeTimeoutTrace(controller.signal);
-          if (saved && Array.isArray(trace) && trace.length) saved.result = { ...saved.result, trace: trace.slice(-5) };
+          if (saved && Array.isArray(trace) && trace.length) saved.result = copyCreatedTabResult(saved.result, { ...saved.result, trace: trace.slice(-5) });
         } catch { /* A missing trace still settles the deadline. */ }
         if (saved) resolve(fallback(saved, error));
         else reject(error);

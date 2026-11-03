@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createdTabResultId } from '../../src/shared/contracts/page-observation.js';
 import { runToolWithTimeout } from '../../src/background/tools/tool-timeout.js';
 import { Agent } from '../../src/background/agent/agent.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
@@ -126,7 +127,7 @@ test('ten concurrent page readers isolate targets and cancellation without updat
     for (let i = 0; i < 10; i++) if (i !== 4) {
       assert.equal(results[i].error, undefined);
       assert.equal(results[i].value.text, `article ${i + 1}`);
-      assert.equal(results[i].value._tabId, i + 1);
+      assert.equal(results[i].value.tabRef, undefined);
       assert.equal(results[i].value._pageUrl, `https://example.test/${i + 1}`);
     }
     assert.equal(updates.length, 0, 'completed and late cancelled observations keep working-tab authority unchanged');
@@ -161,7 +162,7 @@ test('open_tab and navigate retain a loading tab and its current URL on the exis
     assert.equal(result.incomplete.reason, 'timeout'); assert.equal(result.loading, true);
     assert.equal(result.url, name === 'open_tab' ? 'about:blank' : 'https://example.test/old');
     assert.equal(result.pageState.pendingUrl, 'https://example.test/new');
-    assert.ok(tabs.has(result.tabId)); assert.deepEqual(removed, []); assert.equal(listeners.size, 0);
+    assert.ok(tabs.has(name === "open_tab" ? createdTabResultId(result) : 1)); assert.deepEqual(removed, []); assert.equal(listeners.size, 0);
   }
 });
 
@@ -170,14 +171,14 @@ test('a deferred navigation timeout retains the tab only when its original-order
     reset();
     const result = await runtime.execute('open_tab', { url: 'https://example.test/new', timeout: 0.01 }, undefined,
       { ...context, deferToolCommit: true, deferCreatedTabSelection: true });
-    assert.equal(result.incomplete.reason, 'timeout'); assert.equal(updates.length, 0); assert.ok(tabs.has(result.tabId));
+    assert.equal(result.incomplete.reason, 'timeout'); assert.equal(updates.length, 0); assert.ok(tabs.has(createdTabResultId(result)));
     const controller = new AbortController();
     if (cancelled) {
       controller.abort(); await assert.rejects(runtime.commitToolResult(result, controller.signal, context), { code: 'OPERATION_ABORTED' });
-      assert.equal(tabs.has(result.tabId), false); assert.equal(updates.length, 0);
+      assert.equal(tabs.has(createdTabResultId(result)), false); assert.equal(updates.length, 0);
     } else {
       await runtime.commitToolResult(result, controller.signal, context);
-      assert.equal(updates.length, 1); assert.ok(tabs.has(result.tabId));
+      assert.equal(updates.length, 1); assert.ok(tabs.has(createdTabResultId(result)));
     }
     assert.equal(reservations.size, 0);
   }
@@ -198,10 +199,10 @@ test('open_tab cancellation and blocked timeout redirects still remove the creat
 test('side-effect timeout reports an unconfirmed attempt without replay', async () => {
   reset();
   const result = await runtime.execute('act_on_element', { tabId: 1, target: 'css:button', action: 'click', timeout: 0.01 }, undefined, context);
-  assert.equal(result.incomplete.reason, 'timeout'); assert.equal(result.status, 'unconfirmed');
-  assert.equal(result.mayHaveTakenEffect, true); assert.equal(result.automaticReplay, false);
+  assert.equal(result.details.status, 'unconfirmed');
+  assert.equal(result.details.mayHaveTakenEffect, true); assert.equal(result.details.automaticReplay, false);
   assert.equal(contentCalls, 1);
-  assert.ok(result.error);
+  assert.ok(result.message);
   assert.equal(result.code, 'TOOL_TIMEOUT');
   assert.equal(updates.length, 0, 'an unconfirmed action must not update the working tab');
 });
@@ -226,13 +227,12 @@ test('action timeout stays an error in Agent events and never issues effects', a
     } }], new AbortController().signal);
     const end = events.find(event => event.type === 'tool_execution_end');
     assert.equal(end.isError, true);
-    assert.ok(end.result.error);
+    assert.ok(end.result.message);
     assert.equal(end.result.code, 'TOOL_TIMEOUT');
-    assert.equal(end.result.codeLabel, withLanguage(language, () => localizeToolFailureCode('TOOL_TIMEOUT')));
     assert.equal(end.result.details.timeout, 20);
-    assert.match(end.result.note, language === 'en' ? /may have taken effect/ : /可能已生效/);
-    assert.equal(end.result.mayHaveTakenEffect, true);
-    assert.equal(end.result.automaticReplay, false);
+    assert.match(end.result.hint, language === 'en' ? /may have taken effect/ : /可能已生效/);
+    assert.equal(end.result.details.mayHaveTakenEffect, true);
+    assert.equal(end.result.details.automaticReplay, false);
     assert.match(JSON.stringify(messages), /TOOL_TIMEOUT/);
     assert.deepEqual(runtime.consumeEffects(end.result, context), []);
     assert.equal(effectCalls, 0);

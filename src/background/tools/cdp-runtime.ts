@@ -126,7 +126,7 @@ export function createCdpRuntime({
     assertRunCurrent(owner, id, context);
     if (!debuggerApi?.attach || !debuggerApi?.sendCommand || !debuggerApi?.detach) {
       throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", "chrome.debugger API is unavailable in this environment", {
-        tabId: id,
+        tabRef: id,
       });
     }
 
@@ -153,7 +153,7 @@ export function createCdpRuntime({
           "CDP_TAB_LEASE_CONFLICT",
           `Tab ${id} is already attached by another active operation`,
           {
-            tabId: id,
+            tabRef: id,
             sessionId: owner.sessionId || "",
             runId: owner.runId || "",
             currentSessionId: state.sessionId || "",
@@ -198,7 +198,7 @@ export function createCdpRuntime({
           if (tabs.get(id) === state) tabs.delete(id);
           assertStateActive(state);
           throw new ToolExecutionError("DEBUGGER_ATTACH_FAILED", `Failed to attach debugger to tab ${id}: ${String(record(err).message || err)}`, {
-            tabId: id,
+            tabRef: id,
             message: String(record(err).message || err),
           });
         } finally {
@@ -224,9 +224,8 @@ export function createCdpRuntime({
     } catch (err) {
       if (record(err).code === "CDP_RUN_RELEASED") throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, {
-        tabId: state.tabId,
+        tabRef: state.tabId,
         method,
-        params,
         message: String(record(err).message || err),
       });
     }
@@ -235,7 +234,7 @@ export function createCdpRuntime({
   async function evaluateCdpScript(tabId: unknown, params: Record<string, unknown> = {}, signal?: AbortSignal, context: ToolContext = {}) {
     if (signal?.aborted) {
       throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", {
-        tabId,
+        tabRef: tabId,
         engine: "cdp",
       });
     }
@@ -245,7 +244,7 @@ export function createCdpRuntime({
     const ownerKey = state.ownerKey;
     if (signal?.aborted) {
       throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", {
-        tabId,
+        tabRef: tabId,
         engine: "cdp",
       });
     }
@@ -288,7 +287,7 @@ export function createCdpRuntime({
               .finally(() => finishPhase?.()).catch(() => {});
           }
           reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running script", {
-            tabId: state.tabId,
+            tabRef: state.tabId,
             engine: "cdp",
           }));
         };
@@ -323,9 +322,8 @@ export function createCdpRuntime({
     } catch (err) {
       if (aborted || ["OPERATION_ABORTED", "CDP_RUN_RELEASED"].includes(String(record(err).code || ""))) throw err;
       throw new ToolExecutionError("CDP_COMMAND_FAILED", `Runtime.evaluate failed: ${String(record(err).message || err)}`, {
-        tabId: state.tabId,
+        tabRef: state.tabId,
         method: "Runtime.evaluate",
-        params,
         message: String(record(err).message || err),
       });
     } finally {
@@ -510,7 +508,7 @@ export function createCdpRuntime({
       throw new ToolExecutionError(
         "CDP_RUN_CONTEXT_REQUIRED",
         "CDP page access requires the current Session and Agent run",
-        { tabId: Number(tabId) || null, sessionId, runId },
+        { tabRef: Number(tabId) || null, sessionId, runId },
       );
     }
     return {
@@ -522,7 +520,7 @@ export function createCdpRuntime({
   }
 
   function assertRunCurrent(owner: CdpOwner, tabId: number, context: ToolContext = {}) {
-    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", { tabId });
+    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", { tabRef: tabId });
     if (owner?.kind !== "run") return;
     if (typeof isRunCurrent === "function" && isRunCurrent({
       sessionId: owner.sessionId,
@@ -582,15 +580,15 @@ export function createCdpRuntime({
     return new ToolExecutionError(
       "CDP_RUN_RELEASED",
       "The Agent run has ended and can no longer acquire browser control",
-      { tabId: Number(tabId) || null, sessionId, runId },
+      { tabRef: Number(tabId) || null, sessionId, runId },
     );
   }
 
   function positiveTabId(tabId: unknown) {
     const id = Number(tabId);
     if (!Number.isInteger(id) || id <= 0) {
-      throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "CDP requires a valid tabId", {
-        tabId: Number.isFinite(id) ? id : null,
+      throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Page access requires a valid tabRef", {
+        tabRef: Number.isFinite(id) ? id : null,
       });
     }
     return id;

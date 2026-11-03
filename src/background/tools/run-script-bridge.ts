@@ -1,4 +1,5 @@
-import { type DriveToolObservation, driveNoAliasText, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectDriveToolSurface } from "../mcp/external-drive.js";
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
+import { type DriveToolObservation, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -92,15 +93,8 @@ export function createRunScriptBridge({
   async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown) => void) {
     await ready();
     let language = getLanguage();
-    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) => withLanguage(language, () => {
-      const response = failureResponse(payload, options);
-      if (!String(message.runId || "").trim().startsWith("drive-")) return response;
-      const fallback = String(response.error || "");
-      const text = driveNoAliasText(response, fallback);
-      if (text === fallback) return response;
-      const result = plainObject(response.result);
-      return { ...response, error: text, message: text, result: { ...result, error: text, message: text } };
-    });
+    const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
+      withLanguage(language, () => failureResponse(payload, options));
     const toolName = String(message.toolName || "").trim();
     if (!toolName) {
       return respondFailure({
@@ -198,7 +192,7 @@ export function createRunScriptBridge({
       if (executionStopped) return respondFailure(executionStopped, { toolName });
       observe(result);
       const output = plainObject(result);
-      const isError = output.ok === false || output.isError === true || output.error != null;
+      const isError = isToolFailure(output);
       await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
       const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (resultStopped) return respondFailure(resultStopped, { toolName });
@@ -222,16 +216,13 @@ export function createRunScriptBridge({
         }
       }
       const modelResult = definition?.model?.projectResult ? definition.model.projectResult(result) : result;
-      const projected = driveRun
-        ? projectDriveToolSurface(toolName, toolArgs, modelResult, toolRuntime.getTabAliases?.(sessionId))
-        : modelResult;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {
         ok: true,
-        result: stripNestedToolPresentation(projected, Boolean(observation)),
+        result: stripNestedToolPresentation(modelResult, Boolean(observation)),
         ...(observation ? { observation } : {}),
         artifacts,
-        isError: Boolean(output.error),
+        isError: false,
       };
     } catch (error) {
       const failure = plainObject(error);
@@ -242,7 +233,7 @@ export function createRunScriptBridge({
       return respondFailure({
         error: localized?.message || String(localized || error),
         code: localized?.code || failure.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
-        codeLabel: localized?.codeLabel,
+        hint: localized.hint || failure.hint,
         details: localized?.details || failure.details || { toolName },
       }, { toolName });
     }
@@ -322,17 +313,13 @@ function failureResponse(payload: unknown, { toolName = "" } = {}) {
     code: input.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
     isError: true,
   }));
-  const details = plainObject(localized?.details, plainObject(input.details, { toolName }));
-  return {
-    ok: false,
-    error: localized?.error || localized?.message || String(input.error || input.message || "run_script tool bridge failed"),
-    code: localized?.code || input.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
-    codeLabel: localized?.codeLabel,
-    diagnostic: localized?.diagnostic,
-    details,
-    result: localized,
-    isError: true,
-  };
+  const failure = toolError(String(localized.code || input.code || "RUN_SCRIPT_TOOL_CALL_FAILED"),
+    String(localized.message || localized.error || input.message || input.error || "Script tool call failed."), {
+      hint: typeof input.hint === "string" ? input.hint : undefined,
+      details: plainObject(input.details),
+    });
+  return { ok: false, ...failure, result: failure, isError: true };
+
 }
 
 function plainObject(value: unknown, fallback?: Fields): Fields;

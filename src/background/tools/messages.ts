@@ -36,8 +36,8 @@ const messages = defineMessages("tool-runtime", {
     en: "This batch contains more than one open_tab, so the target page is ambiguous. Specify tabRef in the page call.",
   },
   tabReferenceConflict: {
-    "zh-CN": "tabRef「{tabRef}」与同时提供的 tabId 或元素 UID 指向不同页面。请只指定一个目标，或让两者指向同一页。",
-    en: "tabRef \"{tabRef}\" conflicts with the supplied tabId or element UID. Select one target, or make both refer to the same page.",
+    "zh-CN": "tabRef「{tabRef}」与同时提供的页面引用或元素 target 指向不同页面。请只指定一个目标，或让两者指向同一页。",
+    en: "tabRef \"{tabRef}\" conflicts with the supplied page reference or element target. Select one target, or make both refer to the same page.",
   },
   batchTabReferenceOutsideBatch: {
     "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。",
