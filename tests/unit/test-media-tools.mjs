@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 let tabPageUrl = "https://example.test/";
 let mainDocumentId = "";
@@ -588,7 +589,8 @@ assert.equal(clicked.coordinateBasisReady, true);
 assert.equal(clicked._image, "data:image/jpeg;base64,Y2Rw", "model feedback must keep the captured pixels untouched");
 assert.notEqual(clicked.screenshotId, actionable.screenshotId);
 assert.deepEqual(clicked.marker, { kind: "point", action: "click", x: 250, y: 600 });
-assert.deepEqual(clicked._display, {
+assert.equal(Object.hasOwn(clicked, "_display"), false, "host animation metadata stays outside the business result");
+assert.deepEqual(getToolResultPresentation(clicked)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -665,7 +667,7 @@ assert.equal(held.durationMs, 300);
 assert.equal(held.feedbackAvailable, false);
 assert.equal(held.coordinateBasisReady, true);
 assert.equal(held._image, undefined);
-assert.deepEqual(held._display, {
+assert.deepEqual(getToolResultPresentation(held)._display, {
   type: "imageWithAction",
   action: "long_press",
   kind: "point",
@@ -694,7 +696,7 @@ const scriptedAction = await definitions.get("act_on_screen").execute({
 }, undefined, { ...screenContext, source: "run_script" });
 assert.equal(scriptedAction.coordinateBasisReady, true);
 assert.equal(scriptedAction._image, undefined);
-assert.equal(scriptedAction._display, undefined, "run_script child actions should not create unused Chat UI animation frames");
+assert.equal(getToolResultPresentation(scriptedAction)._display, undefined, "run_script child actions should not create unused Chat UI animation frames");
 const scriptedObservation = await definitions.get("act_on_screen").execute({
   tabId: 3,
   action: "hover",
@@ -703,7 +705,7 @@ const scriptedObservation = await definitions.get("act_on_screen").execute({
   y: 600,
 }, undefined, { ...screenContext, source: "run_script" });
 assert.match(scriptedObservation._image, /^data:image\/jpeg;base64,/, "an explicitly requested script observation should return its image");
-assert.equal(scriptedObservation._display, undefined, "run_script observations should not create action animations");
+assert.equal(getToolResultPresentation(scriptedObservation)._display, undefined, "run_script observations should not create action animations");
 assert.equal(
   cdpCalls.slice(callsBeforeScriptedActions).filter(([, method]) => method === "Page.captureScreenshot").length,
   1,
@@ -721,7 +723,7 @@ const typed = await definitions.get("act_on_screen").execute({
   replace: true,
 }, undefined, screenContext);
 assert.equal(typed.feedbackAvailable, true);
-assert.match(typed._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "a direct action should capture a fresh animation pre-frame");
+assert.match(getToolResultPresentation(typed)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "a direct action should capture a fresh animation pre-frame");
 const typeCalls = cdpCalls.slice(callsBeforeType);
 assert.equal(typeCalls.some(([, method, params]) => (
   method === "Input.dispatchKeyEvent"
@@ -1051,8 +1053,8 @@ const modelSilentType = await definitions.get("act_on_screen").execute({
 }, undefined, screenContext);
 assert.equal(modelSilentType.coordinateBasisReady, true);
 assert.equal(modelSilentType.feedbackAvailable, false);
-assert.match(modelSilentType._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their source frame for UI replay");
-assert.match(modelSilentType._display?.afterImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their result frame for UI replay");
+assert.match(getToolResultPresentation(modelSilentType)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their source frame for UI replay");
+assert.match(getToolResultPresentation(modelSilentType)._display?.afterImage || "", /^data:image\/jpeg;base64,/, "model-silent actions should keep their result frame for UI replay");
 const callsBeforeModelSilentNavigation = cdpCalls.length;
 const pageUrlBeforeModelSilentNavigation = tabPageUrl;
 const loaderBeforeModelSilentNavigation = frameLoaderId;
@@ -1074,7 +1076,7 @@ const navigatedFromHiddenFeedback = await definitions.get("act_on_screen").execu
 onCdpCall = null;
 assert.equal(navigatedFromHiddenFeedback.urlChanged, true);
 assert.equal(navigatedFromHiddenFeedback.viewportChange.resized, false, "a 2 CSS px navigation jitter should not be reported as a resize");
-assert.match(navigatedFromHiddenFeedback._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "navigation from a model-hidden feedback frame should retain a fresh source preview for Chat UI");
+assert.match(getToolResultPresentation(navigatedFromHiddenFeedback)._display?.beforeImage || "", /^data:image\/jpeg;base64,/, "navigation from a model-hidden feedback frame should retain a fresh source preview for Chat UI");
 assert.equal(
   cdpCalls.slice(callsBeforeModelSilentNavigation).filter(([, method]) => method === "Page.captureScreenshot").length,
   2,
@@ -1112,8 +1114,8 @@ assert.deepEqual(changedNoCapture.viewportChange, {
   resized: false,
 }, "model-silent actions should expose the observed viewport movement independently of image delivery");
 assert.equal(changedNoCapture._image, undefined);
-assert.match(changedNoCapture._display?.beforeImage || "", /^data:image\/jpeg;base64,/);
-assert.match(changedNoCapture._display?.afterImage || "", /^data:image\/jpeg;base64,/);
+assert.match(getToolResultPresentation(changedNoCapture)._display?.beforeImage || "", /^data:image\/jpeg;base64,/);
+assert.match(getToolResultPresentation(changedNoCapture)._display?.afterImage || "", /^data:image\/jpeg;base64,/);
 assert.equal(
   cdpCalls.slice(callsBeforeChangedNoCapture).filter(([, method]) => method === "Page.captureScreenshot").length,
   2,
@@ -1136,7 +1138,7 @@ const observedScroll = await definitions.get("act_on_screen").execute({
 onCdpCall = null;
 assert.equal(observedScroll.repeat, 1, "scroll should preserve one-event behavior when repeat is omitted");
 assert.equal(observedScroll.coordinateBasisReady, true, "a returned screenshot should establish a new basis after viewport movement");
-assert.equal(observedScroll._display?.direction, "down", "scroll feedback should expose its dominant wheel direction to Chat UI");
+assert.equal(getToolResultPresentation(observedScroll)._display?.direction, "down", "scroll feedback should expose its dominant wheel direction to Chat UI");
 assert.deepEqual(observedScroll.viewportChange, {
   observed: true,
   scrolled: true,
@@ -1359,7 +1361,7 @@ const transitioned = await transitionRuntime.act({
   y: 600,
 }, undefined, transitionContext);
 assert.equal(transitioned._image, "data:image/jpeg;base64,YWZ0ZXI=", "the model image must be the clean post-navigation frame");
-assert.deepEqual(transitioned._display, {
+assert.deepEqual(getToolResultPresentation(transitioned)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -1377,7 +1379,7 @@ const scriptedTransition = await transitionRuntime.act({
   x: 250,
   y: 600,
 }, undefined, { ...transitionContext, source: "run_script" });
-assert.equal(scriptedTransition._display, undefined, "run_script child actions should omit the animation projection");
+assert.equal(getToolResultPresentation(scriptedTransition)._display, undefined, "run_script child actions should omit the animation projection");
 assert.equal(transitionPresentationCount, 2, "run_script child actions should not render animation previews");
 const scriptedTransitionObservation = await transitionRuntime.act({
   tabId: 6,
@@ -1387,7 +1389,7 @@ const scriptedTransitionObservation = await transitionRuntime.act({
   y: 600,
 }, undefined, { ...transitionContext, source: "run_script" });
 assert.equal(scriptedTransitionObservation._image, "data:image/jpeg;base64,YWZ0ZXI=");
-assert.equal(scriptedTransitionObservation._display, undefined);
+assert.equal(getToolResultPresentation(scriptedTransitionObservation)._display, undefined);
 assert.equal(transitionPresentationCount, 2, "run_script observations must not prepare animation previews");
 assert.equal(transitionRuntime.releaseRun("transition-session", "transition-run"), 1, "run teardown should release the retained display frame and coordinate basis");
 await assert.rejects(
@@ -1451,7 +1453,7 @@ assert.deepEqual(
   "image pixels must use the full screenshot CSS extent, including scrollbar space",
 );
 assert.deepEqual(rawAction.marker, { kind: "point", action: "click", x: 500, y: 1200 });
-assert.deepEqual(rawAction._display, {
+assert.deepEqual(getToolResultPresentation(rawAction)._display, {
   type: "imageWithAction",
   action: "click",
   kind: "point",
@@ -1470,7 +1472,7 @@ const rawDrag = await rawCoordinateRuntime.act({
   endX: 1800,
   endY: 1440,
 }, undefined, rawContext);
-assert.deepEqual(rawDrag._display, {
+assert.deepEqual(getToolResultPresentation(rawDrag)._display, {
   type: "imageWithAction",
   action: "drag",
   kind: "drag",
@@ -1533,8 +1535,8 @@ try {
   ], "both animation frames should be derived at the bounded presentation size");
   assert.equal(previewCanvases.every(item => item.options?.type === "image/jpeg"), true);
   assert.equal(previewCanvases.filter(item => item.width === 960).every(item => item.options?.quality === 0.72), true);
-  assert.equal(previewOnlyAction._display.beforeImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
-  assert.equal(previewOnlyAction._display.afterImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
+  assert.equal(getToolResultPresentation(previewOnlyAction)._display.beforeImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
+  assert.equal(getToolResultPresentation(previewOnlyAction)._display.afterImage, `data:image/jpeg;base64,${Buffer.from('960x639').toString('base64')}`);
   assert.deepEqual(previewOnlyAction.coordinateSpace, {
     origin: "top_left",
     width: 2048,

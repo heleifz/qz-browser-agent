@@ -94,8 +94,8 @@ assert.equal(
   assert.equal(payload.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
   assert.equal(payload.codeLabel, "脚本内工具会卸载当前页面");
   assert.equal(payload.diagnostic.category, "页面生命周期");
-  assert.equal(payload.details.originalCode, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
-  assert.match(payload.details.originalError, /run_script blocked/);
+  assert.equal(payload.details.originalCode, undefined);
+  assert.equal(payload.details.originalError, undefined);
 }
 
 {
@@ -105,7 +105,7 @@ assert.equal(
   const localized = localizeToolFailureError(err);
   assert.equal(localized.message, "未知工具：no_such_tool");
   assert.equal(localized.codeLabel, "未知工具");
-  assert.equal(localized.details.originalMessage, "Unknown tool: no_such_tool");
+  assert.deepEqual(localized.details, { name: "no_such_tool" });
 }
 
 {
@@ -200,7 +200,7 @@ for (const [language, syntax, failed] of [
     error: "Script evaluation failed: ReferenceError: price is not defined",
   });
   assert.equal(restored.error, failed);
-  assert.match(restored.details.originalError, /price is not defined/);
+  assert.equal(restored.details, undefined, "localization does not append internal diagnostics");
 });
 
 console.log("tool error localization tests passed");

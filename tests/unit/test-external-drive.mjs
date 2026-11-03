@@ -212,7 +212,7 @@ test("a calls batch rejects inner run_script before that call runs", async () =>
   assert.doesNotMatch(batch.results[1].result.message, /\b(?:inner|target)\b/i);
 });
 
-test("projection drops nodes and screenshot bytes", () => {
+test("projection preserves business fields while separating screenshot bytes", () => {
   const projected = projectDriveResult({
     snapshot: "tree",
     nodes: [{ id: 1 }],
@@ -220,9 +220,9 @@ test("projection drops nodes and screenshot bytes", () => {
     _image: "data:image/png;base64,aGk=",
   }, { projectResult: (result) => result });
   assert.equal(projected.value.snapshot, "tree");
-  assert.equal(Object.hasOwn(projected.value, "nodes"), false);
+  assert.deepEqual(projected.value.nodes, [{ id: 1 }]);
   assert.equal(Object.hasOwn(projected.value, "_image"), false);
-  assert.equal(Object.hasOwn(projected.value, "_display"), false);
+  assert.deepEqual(projected.value._display, { big: true });
   assert.deepEqual(projected.images, [{ mimeType: "image/png", data: "aGk=" }]);
 });
 
@@ -395,10 +395,10 @@ test("single drive no_alias matches calls and the script bridge", async () => {
   assert.equal(plain, "plain failure");
   assert.doesNotMatch(plain, /--session/);
 
-  const scriptCall = async (language, runId) => {
+  const scriptCall = async (language, runId, externalDrive = false) => {
     const bridge = createRunScriptBridge({
       supervisor: {
-        isRunCurrent: (_sessionId, id) => String(id).startsWith("drive-") || id === "run-current",
+        isRunCurrent: (_sessionId, id) => id === runId,
         hasAgent: () => false,
         getAbortSignal: () => new AbortController().signal,
       },
@@ -406,7 +406,7 @@ test("single drive no_alias matches calls and the script bridge", async () => {
       isTerminalRuntimeForRun: () => false,
       canManageSessions: async () => true,
       buildRunProfile: async () => ({}),
-      getRunToolContext: async () => ({ language }),
+      getRunToolContext: async () => ({ language, externalDrive }),
       toolRuntime: {
         resolveDefinition: () => ({ behavior: {} }),
         getSchemas: () => [],
@@ -424,9 +424,9 @@ test("single drive no_alias matches calls and the script bridge", async () => {
       runId,
     });
   };
-  const zhScript = await scriptCall("zh-CN", "drive-1");
-  const enScript = await scriptCall("en", "drive-1");
-  const builtIn = await scriptCall("en", "run-current");
+  const zhScript = await scriptCall("zh-CN", "opaque-zh-run", true);
+  const enScript = await scriptCall("en", "opaque-en-run", true);
+  const builtIn = await scriptCall("en", "drive-native-looking-run", false);
   assert.equal(zhScript.message, zhSentence);
   assert.equal(enScript.message, enSentence);
   assert.equal(zhScript.message, zhSingle);
@@ -468,7 +468,7 @@ test("one calls batch reuses tab aliases and the existing scheduler", async () =
   assert.equal(seen[1].args.tabRef, "page");
   assert.equal(batch.results[0].result.tabRef, 11);
   assert.equal(batch.results[1].result.snapshot, "ok");
-  assert.equal(Object.hasOwn(batch.results[1].result, "nodes"), false);
+  assert.deepEqual(batch.results[1].result.nodes, [1]);
   assert.equal(Object.hasOwn(batch, "images"), false);
   assert.deepEqual(batch.results[1].images, [{ mimeType: "image/png", data: "YQ==" }]);
   assert.equal(commits.length, 2);
@@ -687,8 +687,8 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
   releaseOpen();
   const openedResult = await first;
   assert.equal(openedResult.result.tabRef, 4);
-  assert.equal(Object.hasOwn(openedResult.result, "nodes"), false);
-  assert.equal(Object.hasOwn(openedResult.result, "_display"), false);
+  assert.deepEqual(openedResult.result.nodes, [9]);
+  assert.deepEqual(openedResult.result._display, { raw: true });
   assert.deepEqual(openedResult.images, [{ mimeType: "image/png", data: "YQ==" }]);
   assert.equal(metadata["drive-1"].source, "external-drive");
   assert.equal(metadata["drive-1"].title, "Inspect example page");
@@ -1135,7 +1135,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
 
     const bridge = createRunScriptBridge({
       supervisor: {
-        isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+        isRunCurrent: (_sessionId, runId) => [`opaque-${language}`, "drive-native-looking-run"].includes(runId),
         hasAgent: () => true,
         getAbortSignal: () => new AbortController().signal,
       },
@@ -1143,6 +1143,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       isTerminalRuntimeForRun: () => false,
       canManageSessions: async () => true,
       buildRunProfile: async () => ({}),
+      getRunToolContext: async (_sessionId, runId) => ({ externalDrive: runId === `opaque-${language}` }),
       toolRuntime: {
         resolveDefinition: () => ({ behavior: {} }),
         getSchemas: () => schemas,
@@ -1150,10 +1151,10 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       },
       collectArtifacts: () => [],
     });
-    const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: `drive-${language}` });
+    const driveList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: `opaque-${language}` });
     assert.ok(driveList.result.tools.length > 1);
     for (const tool of driveList.result.tools) assertNoDriveTabLeak(`${language} $list ${tool.name}`, tool);
-    const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "run-current" });
+    const builtInScriptList = await bridge.handleToolCall({ toolName: "__list_tools__", sessionId: "s1", runId: "drive-native-looking-run" });
     assert.doesNotMatch(JSON.stringify(builtInScriptList.result.tools.find(tool => tool.name === "list_tabs")), /tabId/);
   }
   const zhSchemas = withLanguage("zh-CN", () => JSON.parse(JSON.stringify(getToolSchemas({ language: "zh-CN" }))));

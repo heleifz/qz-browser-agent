@@ -45,7 +45,7 @@ for (const mode of ['development', 'production']) {
   test(`${mode}: unavailable page scripts expose the recovery explanation, not a private marker`, async () => {
     const f = await fixture(mode);
     f.context.chrome.scripting.executeScript = async () => { throw new Error('bridge unavailable'); };
-    const result = await f.run('async () => tools.$list()', {}, { runId: 'drive-unavailable' });
+    const result = await f.run('async () => tools.$list()', {}, { runId: 'opaque-unavailable-run', externalDrive: true });
     assert.equal(result.code, 'PAGE_CONTEXT_UNAVAILABLE');
     assert.equal(result.message, 'Page JavaScript context is unavailable; script was not executed.');
     assert.ok(result.hint);
@@ -89,11 +89,13 @@ for (const mode of ['development', 'production']) {
     assert.equal((await f.run('async () => await tools.read_article({})')).result, 42);
     assert.equal(f.context.lastToolMessage.parentCallId, 'parent-call');
     assert.equal(f.context.lastToolMessage.args.tabId, 7, 'ordinary implicit targeting stays on the script page');
+    await f.run('async () => await tools.read_article({})', {}, { runId: 'drive-native-identifier', externalDrive: false });
+    assert.equal(f.context.lastToolMessage.args.tabId, 7, 'a native run whose id starts with drive- still targets its script page');
     await f.run('async () => await tools.read_article({tabRef:"other"})');
     assert.equal(f.context.lastToolMessage.args.tabRef, 'other');
     assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'explicit references are never overwritten by the source page');
     for (const code of ['async () => await tools.read_article({tabRef:"other"})', 'async () => await tools.read_article({})']) {
-      await f.run(code, {}, { runId: 'drive-live' });
+      await f.run(code, {}, { runId: 'opaque-tool-run', externalDrive: true });
       assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'direct drive never injects an implicit page');
     }
   });

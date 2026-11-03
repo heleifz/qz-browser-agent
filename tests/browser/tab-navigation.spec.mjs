@@ -378,7 +378,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     expect(incompleteOpen).toMatchObject({ loading: true, incomplete: { reason: "timeout" } });
     expect(await worker.evaluate(async () => (await chrome.tabs.query({})).length)).toBe(before + 1);
     expect(incompleteOpen.tabRef).toBe('loading');
-    const loadingTabId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.pendingUrl === url || tab.url === url)?.id, `${origin}/open-timeout`);
+    const loadingTabId = await worker.evaluate(() => navigationRuntime.getTabAliases('navigation').loading);
     expect(loadingTabId).toEqual(expect.any(Number));
     const readers = [
       ['read_article', { limit: 1200 }], ['read_dom', {}], ['find_elements', { target: 'button' }],

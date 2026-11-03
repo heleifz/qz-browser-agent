@@ -1,4 +1,5 @@
 import { isToolFailure } from "../../shared/contracts/tool-error.js";
+import { copyToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
@@ -240,11 +241,8 @@ function parseToolCallArguments(value: unknown): unknown {
   }
 }
 
-function sanitizeToolResultForLLM(result: unknown, policy: Readonly<ToolModelPolicy>): unknown {
-  const projected = policy.projectResult ? policy.projectResult(result) : result;
-  if (projected == null || typeof projected !== "object" || Array.isArray(projected)) return projected;
-  const { _display, _debug, _rawCdp, _plugin, ...out } = record(projected);
-  return out;
+function projectToolResultForModel(result: unknown, policy: Readonly<ToolModelPolicy>): unknown {
+  return policy.projectResult ? policy.projectResult(result) : result;
 }
 
 // ---------------------------------------------------------------------------
@@ -2678,15 +2676,12 @@ export class Agent {
       const toolName = normalizeToolCallName(tc);
       // An empty identity renders as a bare "tool" fallback; resolve it when the caller has none.
       const identity = toolIdentity && Object.keys(toolIdentity).length ? toolIdentity : this._toolRuntime.getIdentity(toolName, lookup);
-      const result = {
-        error: err.message || String(error),
+      const result = copyToolResultPresentation(error, {
+        error: err.message || err.error || String(error),
         code: err.name === "AbortError" ? "OPERATION_ABORTED" : err.code || "TOOL_EXECUTION_FAILED",
         ...(err.codeLabel ? { codeLabel: err.codeLabel } : {}),
         details,
-        ...(details._tabId != null ? { _tabId: details._tabId } : {}),
-        ...(details._pageTitle ? { _pageTitle: details._pageTitle } : {}),
-        ...(details._pageUrl ? { _pageUrl: details._pageUrl } : {}),
-      };
+      });
       return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true };
     };
     const batch = planTabBatch(toolCalls, tc => {
@@ -2716,11 +2711,15 @@ export class Agent {
         if (!outcome) continue;
         settled.delete(call);
         const { id, toolName, toolIdentity, args, result, isError } = outcome;
+        const presentation = getToolResultPresentation(result);
         // Preparation failures and skipped calls still receive a paired ledger entry.
         emitStart(call, toolName, toolIdentity, args, false);
         this._emit({
           type: "tool_execution_end", spanId: this._makeToolSpanId(id), toolCallId: id, toolName,
-          ...toolIdentityEventFields(toolIdentity), args, result, isError,
+          ...toolIdentityEventFields(toolIdentity), args,
+          result: Object.keys(presentation).length && result && typeof result === "object" && !Array.isArray(result)
+            ? { ...record(result), ...presentation } : result,
+          isError,
         });
         for (const msg of this._buildToolResultMessages(id, result, isError, toolName)) {
           if (msg?.role === "tool") toolMessages.push(msg);
@@ -2820,7 +2819,7 @@ export class Agent {
         // Only this cursor publishes state, effects, bindings, final events and model messages.
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
-          const normalized = failure(outcome.call, { ...record(result), message: record(result).message || record(result).error }, undefined, outcome.toolIdentity);
+          const normalized = failure(outcome.call, result, undefined, outcome.toolIdentity);
           settled.set(outcome.call, normalized);
         } else settled.set(outcome.call, { ...outcome, result, isError });
         flushLedger();
@@ -2966,7 +2965,7 @@ export class Agent {
     if (!isError && result && record(result)._image) {
       const imageDataUrl = record(result)._image;
       const { _image, _imageDetail, ...rest } = record(result);
-      const sanitizedRest = sanitizeToolResultForLLM(rest, policy);
+      const sanitizedRest = projectToolResultForModel(rest, policy);
       const textPart = Object.keys(record(sanitizedRest)).length > 0 ? JSON.stringify(sanitizedRest) : promptT("imageReceived");
       const allowImages = this._runProfile?.features?.imageInput !== false;
       const imageDetail = ["low", "auto", "high"].includes(String(_imageDetail || "").toLowerCase())
@@ -2996,7 +2995,7 @@ export class Agent {
         ],
       });
     } else {
-      const sanitized = sanitizeToolResultForLLM(result, policy);
+      const sanitized = projectToolResultForModel(result, policy);
       messages.push({
         role: "tool",
         tool_call_id: toolCallId,

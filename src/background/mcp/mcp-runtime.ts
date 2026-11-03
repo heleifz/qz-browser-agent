@@ -374,6 +374,7 @@ export function createMcpRuntime({
     const schemas = tools.runtime.getSchemas({
       runProfile,
       context: {
+        externalDrive,
         dynamicContext: plainObject(params.dynamicContext),
         workingTab: runtime?.workingTab || null,
         pageUrl: String(runtime?.workingUrl || ""),
@@ -541,7 +542,7 @@ export function createMcpRuntime({
       lease = leased ? drive.begin(sessionId, signal) : null;
       const runtime = readRuntime(sessionId);
       runId = leased ? String(lease?.driveRunId || "") : "";
-      const context = { ...toolContext(sessionId, runId, runProfile, params, runtime), language };
+      const context = { ...toolContext(sessionId, runId, runProfile, params, runtime), language, externalDrive: source === "external-drive" };
       timeoutSignal = parsed.timeoutSeconds
         ? AbortSignal.timeout(parsed.timeoutSeconds * 1000)
         : null;
@@ -564,7 +565,7 @@ export function createMcpRuntime({
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
-          noteDriveTool(name, params.args, driveToolFailure(error), true, [], plainObject(error).details);
+          noteDriveTool(name, params.args, driveToolFailure(error), true, [], error);
           throw error;
         }
       }

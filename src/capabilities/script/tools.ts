@@ -11,7 +11,7 @@ type Fields = Record<string, unknown>;
 type Guardrails = { rules?: readonly Pick<SecurityGuardrails["rules"][number], "action" | "type" | "value">[] };
 type ScriptHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "evaluateCdpScript" | "skills"> & Partial<Pick<ToolExtensionAPI, "getToolRuntimeDependencies">> & { scriptTimeoutProperty: ToolParameter };
-interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; parentCallId?: string; depth?: number; reason?: string; scriptArgs?: Fields; securityGuardrails?: Guardrails }
+interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; externalDrive?: boolean; parentCallId?: string; depth?: number; reason?: string; scriptArgs?: Fields; securityGuardrails?: Guardrails }
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
@@ -424,8 +424,8 @@ registerTool({
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
-    const execution = await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run));
-    return String(context.runId || '').startsWith('drive-') ? describePageScriptExecution(record(execution)) : execution;
+    const execution = await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run, context));
+    return context.externalDrive === true ? describePageScriptExecution(record(execution)) : execution;
   },
 });
 
@@ -467,22 +467,21 @@ const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
 const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
 const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
-function makeRunScriptAbortedError(tabId: number, phase = "run") {
-  return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
-    tabRef: String(tabId),
-    phase,
-  });
+function makeRunScriptAbortedError(context: ToolContext, phase = "run") {
+  return Object.assign(new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
+    ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }), phase,
+  }), { hint: "Inspect the page before retrying the script." });
 }
 
-async function waitForPageScriptTurn(tabId: number, previous: Promise<void>, signal?: AbortSignal) {
+async function waitForPageScriptTurn(previous: Promise<void>, signal: AbortSignal | undefined, context: ToolContext) {
   if (!signal) {
     await previous.catch(() => {});
     return;
   }
-  if (signal.aborted) throw makeRunScriptAbortedError(tabId, "queue");
+  if (signal.aborted) throw makeRunScriptAbortedError(context, "queue");
   let abortHandler: (() => void) | null = null;
   const abortPromise = new Promise((_, reject) => {
-    abortHandler = () => reject(makeRunScriptAbortedError(tabId, "queue"));
+    abortHandler = () => reject(makeRunScriptAbortedError(context, "queue"));
     signal.addEventListener("abort", abortHandler, { once: true });
   });
   try {
@@ -492,7 +491,7 @@ async function waitForPageScriptTurn(tabId: number, previous: Promise<void>, sig
   }
 }
 
-async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | undefined, fn: () => Promise<T>, context: ToolContext = {}): Promise<T> {
   const key = Number(tabId);
   if (!Number.isFinite(key) || key <= 0) return fn();
 
@@ -503,8 +502,8 @@ async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | un
   pageScriptQueuesByTabId.set(key, current);
 
   try {
-    await waitForPageScriptTurn(key, previous, signal);
-    if (signal?.aborted) throw makeRunScriptAbortedError(key, "run");
+    await waitForPageScriptTurn(previous, signal, context);
+    if (signal?.aborted) throw makeRunScriptAbortedError(context, "run");
     return await fn();
   } finally {
     releaseTurn?.();
@@ -737,7 +736,7 @@ async function runScriptWithCdpToolBridge(tabId: number, code: string, context: 
   }
   return runPageScriptExclusive(tabId, signal, () => (
     runScriptWithCdpToolBridgeUnlocked(tabId, code, context, reason, scriptArgs, securityGuardrails, signal)
-  ));
+  ), context);
 }
 
 async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, context: ToolContext = {}, reason = "tool_api", scriptArgs: Fields = {}, securityGuardrails: Guardrails = {}, signal?: AbortSignal) {
@@ -750,7 +749,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
     return makePageContextUnavailableResult(err, { tabId, reason, phase: "tool_bridge_install" });
   }
-  const expression = buildCdpToolBridgeExpression(code, { tabId, sessionId, runId, parentCallId: context.toolExecutionId || "", depth, reason, scriptArgs, securityGuardrails });
+  const expression = buildCdpToolBridgeExpression(code, { tabId, sessionId, runId, externalDrive: context.externalDrive === true, parentCallId: context.toolExecutionId || "", depth, reason, scriptArgs, securityGuardrails });
   try {
     const evalResult = await evaluateCdpScript(tabId, {
       expression,
@@ -815,12 +814,13 @@ ${body}
 `;
 }
 
-function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, parentCallId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
+function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, externalDrive = false, parentCallId, depth, reason, scriptArgs = {}, securityGuardrails = {} }: ScriptOptions) {
   const source = wrapRunScriptSource(String(code || ""));
   return holdScriptTrace(`
   const __qzSourceTabId = ${JSON.stringify(tabId)};
   const __qzSessionId = ${JSON.stringify(sessionId)};
   const __qzRunId = ${JSON.stringify(runId || "")};
+  const __qzExternalDrive = ${JSON.stringify(externalDrive)};
   const __qzParentCallId = ${JSON.stringify(parentCallId || "")};
   const __qzDepth = ${JSON.stringify(depth)};
   const __qzReason = ${JSON.stringify(reason)};
@@ -839,7 +839,7 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
       input = args;
     }
     try {
-      if (!__qzRunId.startsWith("drive-") && input && typeof input === "object"
+      if (!__qzExternalDrive && input && typeof input === "object"
         && input.tabId == null && input.tabRef == null && __qzSourceTabId) input.tabId = __qzSourceTabId;
     } catch (_e) {}
     const safeInput = __qzSafeValueForMessage(input || {});

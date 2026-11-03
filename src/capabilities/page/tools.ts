@@ -5,7 +5,7 @@ import { isElementReply, createElementObservation, type ElementObservation, type
 import type { SecurityGuardrails } from "#sdk/shared/security";
 import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
-import { requireToolFields, toolError } from "#sdk/background/tools";
+import { bindToolResultPresentation, requireToolFields, toolError } from "#sdk/background/tools";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
@@ -196,7 +196,8 @@ registerTool({
       if (article.error) return { ...toolError(String(article.code || "ARTICLE_READ_FAILED"), String(article.error), {
         hint: "Use find_elements to refresh the target, then retry read_article.", details: 'target' in target ? { target: target.target } : undefined,
       }) };
-      return mode === 'selector' && 'target' in target ? { ...article, target: target.target } : article;
+      const { _display, ...content } = article;
+      return bindToolResultPresentation(mode === 'selector' && 'target' in target ? { ...content, target: target.target } : content, { _display });
     });
   },
 });

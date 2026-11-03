@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { assertScriptPageLifecycle } from "../../src/background/tools/behavior.js";
 import {
   createRunScriptArtifactCollector,
@@ -46,7 +47,7 @@ const toolRuntime = {
     if (name === "throws") throw Object.assign(new Error("exploded"), { code: "EXPLODED" });
     if (name === "store_alias") return { table: args.table, inserted: 2, totalRows: 2 };
     if (name === "act_on_screen") {
-      return {
+      return bindToolResultPresentation({
         feedbackAvailable: args.returnScreenshot === true,
         coordinateBasisReady: true,
         returnScreenshot: args.returnScreenshot,
@@ -54,12 +55,13 @@ const toolRuntime = {
           _image: "data:image/jpeg;base64,YWN0aW9u",
           _imageDetail: "high",
         } : {}),
+      }, {
         _display: {
           type: "imageWithAction",
           beforeImage: "data:image/jpeg;base64,YmVmb3Jl",
           afterImage: "data:image/jpeg;base64,YWZ0ZXI=",
         },
-      };
+      });
     }
     if (name === "screenshot") {
       return {
@@ -323,7 +325,7 @@ assert.equal((await activationBridge.handleToolCall({
 const driveExecutions = [];
 const driveBridge = createRunScriptBridge({
   supervisor: {
-    isRunCurrent: (_sessionId, runId) => runId === "run-current" || String(runId).startsWith("drive-"),
+    isRunCurrent: (_sessionId, runId) => ["run-current", "opaque-direct-run", "drive-native-looking-run"].includes(runId),
     hasAgent: () => false,
     getAbortSignal: () => controller.signal,
   },
@@ -331,7 +333,7 @@ const driveBridge = createRunScriptBridge({
   isTerminalRuntimeForRun: () => false,
   canManageSessions: async () => true,
   buildRunProfile: async () => ({}),
-  getRunToolContext: async () => null,
+  getRunToolContext: async (_sessionId, runId) => ({ externalDrive: runId === "opaque-direct-run" }),
   toolRuntime: {
     resolveDefinition: () => ({ behavior: {} }),
     getSchemas: () => [
@@ -349,7 +351,7 @@ const driveBridge = createRunScriptBridge({
       }
       driveExecutions.push(name);
       if (name === "list_tabs") {
-        if (String(context.runId).startsWith("drive-") && args.scope !== "all") return {
+        if (context.externalDrive === true && args.scope !== "all") return {
           tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }], count: 1, foreign: 1,
         };
         return [
@@ -366,7 +368,7 @@ const blockedAsk = await driveBridge.handleToolCall({
   toolName: "ask_llm",
   args: { prompt: "hi" },
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.equal(blockedAsk.ok, false);
 assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
@@ -374,13 +376,13 @@ assert.deepEqual(driveExecutions, []);
 const driveList = await driveBridge.handleToolCall({
   toolName: "__list_tools__",
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.deepEqual(driveList.result.tools, [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }]);
 const missingPage = await driveBridge.handleToolCall({
   toolName: "read_dom",
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.equal(missingPage.ok, false);
 assert.equal(missingPage.code, "DRIVE_TAB_REF_REQUIRED");
@@ -389,14 +391,14 @@ assert.equal((await driveBridge.handleToolCall({
   toolName: "read_dom",
   args: { tabRef: "page" },
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 })).ok, true);
 assert.deepEqual(driveExecutions, ["read_dom"]);
 const driveTabs = await driveBridge.handleToolCall({
   toolName: "list_tabs",
   args: {},
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.deepEqual(driveTabs.result, {
   tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
@@ -408,7 +410,7 @@ const allTabs = await driveBridge.handleToolCall({
   toolName: "list_tabs",
   args: { scope: "all" },
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.equal(Array.isArray(allTabs.result), true);
 assert.equal(allTabs.result.length, 2);
@@ -417,7 +419,7 @@ const plainTabs = await driveBridge.handleToolCall({
   toolName: "list_tabs",
   args: {},
   sessionId: "s1",
-  runId: "run-current",
+  runId: "drive-native-looking-run",
 });
 assert.equal(Array.isArray(plainTabs.result), true);
 assert.equal(plainTabs.result[1].tabRef, 8);
@@ -425,7 +427,7 @@ const driveAlias = await driveBridge.handleToolCall({
   toolName: "get_ax_tree",
   args: { tabRef: "page" },
   sessionId: "s1",
-  runId: "drive-1",
+  runId: "opaque-direct-run",
 });
 assert.equal(driveAlias.ok, false);
 assert.equal(driveAlias.code, "BATCH_TAB_REFERENCE_ERROR");
@@ -436,7 +438,7 @@ const builtInAlias = await driveBridge.handleToolCall({
   toolName: "get_ax_tree",
   args: { tabRef: "page" },
   sessionId: "s1",
-  runId: "run-current",
+  runId: "drive-native-looking-run",
 });
 assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
 assert.doesNotMatch(builtInAlias.message, /省略 tabRef|omit tabRef/i);

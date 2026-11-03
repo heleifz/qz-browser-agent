@@ -1,11 +1,13 @@
-import { toolError } from "../../shared/contracts/tool-error.js";
+import { toolError, toolErrorDetails, type ToolErrorDetails } from "../../shared/contracts/tool-error.js";
 
 /** Pure argument validation, before tab ownership, permissions, or execution. */
 export class ToolExecutionError extends Error {
-  constructor(public code: string, message: string, public details: Record<string, unknown> = {}) {
+  details: ToolErrorDetails;
+  constructor(public code: string, message: string, details: unknown = {}) {
     super(message);
     this.name = "ToolExecutionError";
     this.code = code.toUpperCase();
+    this.details = toolErrorDetails(details);
   }
   hint?: string;
   toJSON() { return toolError(this.code, this.message, { hint: this.hint, details: this.details }); }

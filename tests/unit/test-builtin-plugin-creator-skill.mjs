@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import "../support/default-locale.mjs";
 import assert from "node:assert/strict";
 import { getBuiltinSkillWorkbenchDisplayName, BUILTIN_SKILL_WORKBENCH_NAME } from "../../src/capabilities/skills/workbench.js";
@@ -481,7 +482,7 @@ assert.equal(Object.prototype.hasOwnProperty.call(updateSkillSchema.function.par
 
 const availableRenderers = await executeSkillWorkbenchTool("qingzhou_skill_author__load_available_renderers", { timeout: 30 });
 assert.equal(availableRenderers.ok, true);
-assert.equal(availableRenderers._plugin.runtime, "host");
+assert.equal(getToolResultPresentation(availableRenderers)._plugin.runtime, "host");
 assert.equal(availableRenderers.renderers.some(renderer => renderer.type === "table"), true);
 assert.equal(availableRenderers.renderers.some(renderer => renderer.type === "summary"), true);
 
@@ -615,7 +616,7 @@ assert.equal(allSkillNames.names.includes(BUILTIN_SKILL_WORKBENCH_NAME), true);
 assert.equal(allSkillNames.names.includes(BUILTIN_SITE_SKILL_AUTHOR_SKILL_NAME), true);
 assert.equal(allSkillNames.names.includes(toAgentSkillName("用户技能")), true);
 assert.equal(allSkillNames.items.every(item => typeof item.name === "string"), true);
-assert.equal(allSkillNames._plugin.runtime, "host");
+assert.equal(getToolResultPresentation(allSkillNames)._plugin.runtime, "host");
 
 const residentSkillNames = await executeSkillWorkbenchTool("qingzhou_skill_author__list_skills", { timeout: 30, scope: "resident" });
 assert.deepEqual(residentSkillNames.names, [toAgentSkillName("用户系统提示")]);
@@ -625,7 +626,7 @@ assert.equal(globalSkillNames.names.includes(BUILTIN_SITE_SKILL_AUTHOR_SKILL_NAM
 assert.equal(globalSkillNames.names.includes(toAgentSkillName("用户系统提示")), false);
 await assert.rejects(
   () => executeSkillWorkbenchTool("qingzhou_skill_author__list_skills", { timeout: 30, scope: "redident" }),
-  err => err?.code === "INVALID_ARGUMENTS" && /all, global, site, or resident/.test(err.details?.originalMessage || err.message),
+  err => err?.code === "INVALID_ARGUMENTS" && /all.*global.*site.*resident/.test(err.message),
 );
 
 const loadedUserViaTool = await tools.executeTool("load_skill", { name: "用户技能", includeResources: true }, null, {});
@@ -670,7 +671,7 @@ assert.equal(hostToolCall.context.source, "plugin_host");
 assert.equal(createdByHost.saved, true);
 assert.equal(createdByHost.name, toAgentSkillName("Host 插件技能"));
 assert.equal(createdByHost.displayName, "Host 插件技能");
-assert.equal(createdByHost._plugin.runtime, "host");
+assert.equal(getToolResultPresentation(createdByHost)._plugin.runtime, "host");
 const duplicateCreateByHost = await runtime.executeSkillTool(
   "qingzhou_skill_author__create_skill",
   {
@@ -711,7 +712,7 @@ const createdViaToolDispatcher = await executeSkillWorkbenchTool(
 assert.equal(createdViaToolDispatcher.saved, true);
 assert.equal(createdViaToolDispatcher.name, toAgentSkillName("Dispatcher 插件技能"));
 assert.equal(createdViaToolDispatcher.displayName, "Dispatcher 插件技能");
-assert.equal(createdViaToolDispatcher._plugin.runtime, "host");
+assert.equal(getToolResultPresentation(createdViaToolDispatcher)._plugin.runtime, "host");
 assert.equal(
   skillRegistryCommitCount,
   commitCountBeforeCreate + 1,

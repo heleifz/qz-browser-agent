@@ -42,7 +42,7 @@ test("isolated content bridge messages use the extension language instead of the
   assert.equal(await inLanguage("fr-FR", () => contentText("noStableSelector")), "Could not generate a stable selector for this element");
 });
 
-test("tool errors translate at the boundary and retain machine identity and original evidence", async () => {
+test("tool errors translate at the boundary and retain machine identity and public recovery data", async () => {
   const input = { ok: false, code: "DATA_ROW_CONFLICT", error: "changed revision 7", details: { rowId: "row:abc", revision: 7 } };
   const english = await inLanguage("en-GB", () => localizeToolFailurePayload(input));
   const chinese = await inLanguage("zh-CN", () => localizeToolFailurePayload(input));
@@ -51,7 +51,7 @@ test("tool errors translate at the boundary and retain machine identity and orig
   assert.equal(english.code, input.code);
   assert.equal(english.details.rowId, "row:abc");
   assert.equal(english.details.revision, 7);
-  assert.equal(english.details.originalError, input.error);
+  assert.equal(english.details.originalError, undefined);
   assert.equal(input.error, "changed revision 7");
   assert.equal(await inLanguage("de-DE", () => localizeToolFailureCode("TOOL_NOT_EXECUTED")), "Tool did not run");
 });
@@ -107,8 +107,7 @@ test("location failures keep stable codes and short recovery text", async () => 
         assert.equal(payload.code, code);
         assert.equal(payload.error, message);
         assert.equal(payload.codeLabel, label);
-        assert.equal(payload.details.originalCode, code);
-        assert.equal(payload.details.originalError, "The side panel did not return a location result");
+        assert.equal(payload.details, undefined, "localization adds no internal diagnostics");
         assert.equal(message.includes(code), false);
         assert.equal(/Chrome|Firefox/.test(message), false);
         assert.equal(label.includes("_"), false);

@@ -37,7 +37,7 @@ test('list_tabs constructs public discovery rows and preserves active independen
     getToolRuntimeDependencies:()=>({sessions:{resolveTargetTab:async()=>({ok:true,ownedByCurrentTask:true}),getTabAliases:()=>({page:5})}}),
     assertTabAllowed:async()=>{},assertUrlAllowed:()=>{},assertPageUrlAccessible:async()=>{},enablePreNavigationNetworkWatch:async()=>{},
     withDebugger:async()=>{},getDebuggerConnectionId:()=>null,setDebuggerRetention(){},releaseDebugger:async()=>{}});
-  const context={sessionId:'surface',runId:'drive-test',workingTabId:5};
+  const context={sessionId:'surface',runId:'opaque-operation-run',externalDrive:true,workingTabId:5};
   const rows=await definitions.get('list_tabs').execute({},undefined,context);
   assertPublic(rows); assert.deepEqual(rows, {tabs:[{tabRef:'page',title:'Page',url:'https://example.test',active:true}],count:1,foreign:0});
   assert.equal(Object.hasOwn(rows.tabs[0],'isWorkingTab'),false);assert.equal(Object.hasOwn(rows.tabs[0],'windowId'),false);
@@ -46,7 +46,7 @@ test('list_tabs constructs public discovery rows and preserves active independen
     assert.doesNotMatch(JSON.stringify(value),/workingTab|isWorkingTab|tabId|windowId/);
     assert.equal((Array.isArray(value)?value:value.tabs)[0].active,true);
   }
-  const native=await definitions.get('list_tabs').execute({},undefined,{...context,runId:'agent'});
+  const native=await definitions.get('list_tabs').execute({},undefined,{...context,runId:'drive-native-looking-run',externalDrive:false});
   assert.equal(native[0].isWorkingTab,true,'the native Agent keeps its default-page behavior');
   for(const name of ['use_tab','get_working_tab','run_skill_script']) {
     assert.equal(isDriveToolDefault(name),false);assert.equal(isDriveToolForbidden(name),true);
@@ -100,7 +100,7 @@ test('real runtime and batch admission failures share ToolError and retain publi
     isRunCurrent: () => true, getTabAliases: () => ({ page: 5 }),
     resolveTargetTab: async ({ tabId }) => ({ ok: true, tabId, ownedByCurrentTask: true }),
   } });
-  const context = { sessionId: 'surface', runId: 'drive-surface' };
+  const context = { sessionId: 'surface', runId: 'opaque-surface-run', externalDrive: true };
   const calls = [
     { id: 'missing-page', name: 'read_dom', args: {} },
     { id: 'missing-alias', name: 'read_dom', args: { tabRef: 'missing' } },
@@ -137,7 +137,7 @@ test('real Skill discovery failures and URL image failures produce the same Tool
   const { createToolRuntime } = await import('../../src/background/tools/runtime.js');
   const { runDriveCalls } = await import('../../src/background/mcp/external-drive.js');
   const runtime = createToolRuntime({ sessions: { isRunCurrent: () => true } });
-  const context = { sessionId: 'skill-surface', runId: 'drive-skill-surface' };
+  const context = { sessionId: 'skill-surface', runId: 'opaque-skill-surface-run', externalDrive: true };
   const cases = [
     ['load_skill', { name: 'missing-contract-skill' }, 'SKILL_NOT_FOUND'],
     ['load_skill_resource', { name: 'missing-contract-skill', path: 'missing.md' }, 'SKILL_NOT_FOUND'],
@@ -167,4 +167,163 @@ test('real Skill discovery failures and URL image failures produce the same Tool
   });
   assert.deepEqual(batch.results.map(row => row.result.code), ['INVALID_IMAGE_URL', 'UNSUPPORTED_IMAGE_URL_SCHEME']);
   for (const row of batch.results) { assert.equal(row.isError, true); assertFailure(row.result); }
+});
+
+test('business keys survive drive projection while owned presentation remains private', async () => {
+  const { bindToolResultPresentation, getToolResultPresentation } = await import('../../src/shared/contracts/tool-result-presentation.js');
+  const business = { nodes: [{ id: 1 }], snapshot: 'user snapshot', _display: 'user display', _debug: 'user debug',
+    _rawCdp: 'user raw data', _plugin: { source: 'user' }, selector: 'inventory', tabId: 'business field' };
+  const metadata = { _pageTitle: 'Observed page', _pageUrl: 'https://example.test/', _display: { type: 'native preview' } };
+  const result = bindToolResultPresentation(structuredClone(business), metadata);
+  assert.deepEqual(projectNamedDriveResult('custom_skill__business', {}, result).value, business);
+  assert.deepEqual(getToolResultPresentation(result), metadata);
+  assert.equal(Object.hasOwn(result, '_pageTitle'), false);
+  assert.equal(Object.hasOwn(result, '_pageUrl'), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), business);
+});
+
+test('nested mode comes from the trusted parent, and a host-rebuilt drive profile retains image tools', async () => {
+  globalThis.chrome = { runtime: { getURL: path => path }, storage: { local: createMemoryStorage() } };
+  const { withToolCallLifecycle } = await import('../../src/background/tools/call-lifecycle.js');
+  const { buildRunProfile } = await import('../../src/background/agent/run-profile.js');
+  const { getToolSchemas } = await import('../../src/background/tools/runtime.js');
+  const config = { provider: 'test', model: 'text-only', vision: false, toolCalling: true };
+  const profileInputs = [], observed = [];
+  let latestSkillSnapshot = { version: 1 };
+  const bridge = createRunScriptBridge({
+    supervisor: { isRunCurrent: () => true, hasAgent: () => true, getAbortSignal: () => new AbortController().signal },
+    getRuntime: () => ({ status: 'running' }), isTerminalRuntimeForRun: () => false,
+    canManageSessions: async () => false,
+    // The trusted fallback disagrees with the drive parent; parent authority must win.
+    getRunToolContext: async sessionId => ({ externalDrive: sessionId === 'metadata-drive', skillToolRegistrySnapshot: latestSkillSnapshot }),
+    buildRunProfile: async input => {
+      profileInputs.push(input);
+      return buildRunProfile({ ...input, config, platformInfo: { os: 'linux' } });
+    },
+    toolRuntime: {
+      resolveDefinition: () => ({ behavior: {} }),
+      getSchemas: context => getToolSchemas({ runProfile: context.runProfile }),
+      execute: async (name, args, _signal, context) => {
+        observed.push({ name, args, context });
+        if (name === 'load_skill') { latestSkillSnapshot = { version: 2 }; return { name: 'newly-loaded' }; }
+        return { accepted: true };
+      },
+    },
+    collectArtifacts: () => [],
+  });
+  await withToolCallLifecycle({ sessionId: 'parent-drive', runId: 'opaque-parent-run', externalDrive: true, skillToolRegistrySnapshot: { version: 0 } }, async parent => {
+    const base = { sessionId: parent.sessionId, runId: parent.runId, parentCallId: parent.toolExecutionId, externalDrive: false };
+    const forbidden = await bridge.handleToolCall({ ...base, toolName: 'ask_llm', args: { prompt: 'no' } });
+    assert.equal(forbidden.code, 'DRIVE_TOOL_FORBIDDEN');
+    const missing = await bridge.handleToolCall({ ...base, toolName: 'read_dom', args: {} });
+    assert.equal(missing.code, 'DRIVE_TAB_REF_REQUIRED');
+    const accepted = await bridge.handleToolCall({ ...base, toolName: 'read_dom', args: { tabRef: 'page' } });
+    assert.equal(accepted.ok, true);
+    assert.equal(observed.at(-1).context.externalDrive, true);
+    assert.equal(observed.at(-1).context.runId, 'opaque-parent-run');
+    const loaded = await bridge.handleToolCall({ ...base, toolName: 'load_skill', args: { name: 'newly-loaded' } });
+    assert.equal(loaded.ok, true);
+    assert.equal(observed.at(-1).context.skillToolRegistrySnapshot.version, 1, 'live registry supersedes the parent snapshot');
+    await bridge.handleToolCall({ ...base, toolName: 'read_dom', args: { tabRef: 'page' } });
+    assert.equal(observed.at(-1).context.skillToolRegistrySnapshot.version, 2, 'the same parent sees a newly loaded Skill');
+  });
+  await withToolCallLifecycle({ sessionId: 'parent-native', runId: 'drive-native-looking-run', externalDrive: false }, async parent => {
+    const accepted = await bridge.handleToolCall({ sessionId: parent.sessionId, runId: parent.runId,
+      parentCallId: parent.toolExecutionId, externalDrive: true, toolName: 'ask_llm', args: { prompt: 'allowed natively' } });
+    assert.equal(accepted.ok, true);
+    assert.equal(observed.at(-1).context.externalDrive, false, 'page messages cannot manufacture drive authority');
+  });
+  const listed = await bridge.handleToolCall({ sessionId: 'metadata-drive', runId: 'another-opaque-run',
+    externalDrive: false, toolName: '__list_tools__' });
+  assert.equal(listed.ok, true);
+  assert.equal(profileInputs.at(-1).externalDrive, true);
+  assert.ok(listed.result.tools.some(tool => tool.name === 'screenshot'), 'trusted drive metadata keeps images with vision:false');
+  const native = await bridge.handleToolCall({ sessionId: 'metadata-native', runId: 'drive-not-a-mode',
+    externalDrive: true, toolName: '__list_tools__' });
+  assert.equal(native.ok, true);
+  assert.equal(profileInputs.at(-1).externalDrive, false);
+  assert.ok(!native.result.tools.some(tool => tool.name === 'screenshot'));
+});
+
+
+test('trusted drive admission records one failure even if profile rebuilding fails', async () => {
+  const cards = [];
+  let executed = false;
+  const bridge = createRunScriptBridge({
+    supervisor: { isRunCurrent: () => true, hasAgent: () => false, getAbortSignal: () => new AbortController().signal },
+    getRuntime: () => ({ status: 'running' }), isTerminalRuntimeForRun: () => false,
+    canManageSessions: async () => false,
+    getRunToolContext: async () => ({ externalDrive: true }),
+    buildRunProfile: async () => { throw new Error('Cannot rebuild profile'); },
+    recordDriveTool: async event => { cards.push(event); },
+    toolRuntime: { resolveDefinition: () => ({ behavior: {} }), getSchemas: () => [],
+      execute: async () => { executed = true; throw new Error('must not execute'); } },
+    collectArtifacts: () => [],
+  });
+  const result = await bridge.handleToolCall({ sessionId: 'drive-profile-failure', runId: 'opaque-profile-run',
+    externalDrive: false, toolName: 'read_dom', args: { tabRef: 'page' } });
+  assert.equal(result.code, 'RUN_SCRIPT_TOOL_CALL_FAILED');
+  assert.ok(result.message);
+  assert.equal(executed, false);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].isError, true);
+  assert.equal(cards[0].runId, 'opaque-profile-run');
+});
+
+test('public error details preserve recovery data and authored payloads without execution internals', async () => {
+  const { toolError } = await import('../../src/shared/contracts/tool-error.js');
+  const value = { selector: 'business selector', tabId: 'business identifier', sessionId: 'business session' };
+  const schema = { type: 'object', properties: { selector: { type: 'string' }, tabId: { type: 'string' } } };
+  const trace = [{ message: 'Business trace', value }];
+  const publicDetails = { tabRef: 'shop', target: 'uid:t5.000001.1', line: 2, column: 4,
+    requestId: 'request-1', table: 'inventory', value, schema, trace };
+  const failure = toolError('recovery_needed', 'Choose the public reference', { hint: 'Refresh and retry.', details: {
+    ...publicDetails, sessionId: 'private-session', refSessionId: 'private-owner', runId: 'private-run',
+    tabId: 5, expectedTabRef: 9, method: 'DOM.resolveNode', engine: 'cdp',
+    originalCode: 'private-code', originalMessage: 'private-message', unknown: 'not public', index: 'wrong type',
+  } });
+  assert.deepEqual(failure, { code: 'RECOVERY_NEEDED', message: 'Choose the public reference', hint: 'Refresh and retry.', details: publicDetails });
+  assert.equal(failure.details.value, value);
+  assert.equal(failure.details.schema, schema);
+  assert.equal(failure.details.trace, trace);
+});
+
+test('runtime preserves the caller reference through real Content failures and omits an unknown reference', async () => {
+  const { createToolRuntime, sendToContent } = await import('../../src/background/tools/runtime.js');
+  const { createToolRegistry } = await import('../../src/background/tools/registry.js');
+  globalThis.chrome = { runtime: { getURL: path => path }, storage: { local: createMemoryStorage() }, tabs: {
+    get: async id => ({ id, url: 'https://example.test/', status: 'complete', title: 'Page' }),
+    sendMessage: async (_tabId, message) => {
+      if (message.action === 'ping') return { ok: true, url: 'https://example.test/', contentType: 'text/html', elementRefs: 1 };
+      throw new Error('Content connection was lost');
+    },
+  } };
+  const registry = createToolRegistry();
+  const received = [];
+  registry.forCapability('caller-reference')({ name: 'caller_reference_probe', page: 'tab',
+    parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] } } },
+    execute: async (args, _signal, context) => {
+      received.push({ tabId: args.tabId, requestedTabRef: context.requestedTabRef });
+      return sendToContent(args.tabId, 'probe', {}, context);
+    },
+  });
+  const runtime = createToolRuntime({ sessions: {
+    isRunCurrent: () => true, getTabAliases: () => ({ shop: 5, alternative: 5 }),
+    resolveTargetTab: async ({ tabId }) => ({ ok: true, tabId, ownedByCurrentTask: true }),
+  } });
+  const context = { sessionId: 'caller-reference', runId: 'opaque-caller-run', externalDrive: true, toolRegistrySnapshot: registry.snapshot() };
+  for (const requested of ['shop', 'alternative', '005', 5]) {
+    await assert.rejects(runtime.execute('caller_reference_probe', { tabRef: requested }, undefined, context), error => {
+      assert.equal(error.code, 'CONTENT_SCRIPT_MESSAGE_FAILED');
+      assert.equal(error.details.tabRef, requested);
+      assert.equal(Object.hasOwn(error.details, 'tabId'), false);
+      return true;
+    });
+    assert.deepEqual(received.at(-1), { tabId: 5, requestedTabRef: requested });
+  }
+  await assert.rejects(runtime.execute('caller_reference_probe', { tabId: 5 }, undefined, context), error => {
+    assert.equal(error.code, 'CONTENT_SCRIPT_MESSAGE_FAILED');
+    assert.equal(Object.hasOwn(error.details, 'tabRef'), false, 'an internal id must not become a made-up public reference');
+    return true;
+  });
 });

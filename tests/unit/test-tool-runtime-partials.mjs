@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createdTabResultId } from '../../src/shared/contracts/page-observation.js';
+import { getToolResultPresentation } from '../../src/shared/contracts/tool-result-presentation.js';
 import { runToolWithTimeout } from '../../src/background/tools/tool-timeout.js';
 import { Agent } from '../../src/background/agent/agent.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
@@ -128,7 +129,9 @@ test('ten concurrent page readers isolate targets and cancellation without updat
       assert.equal(results[i].error, undefined);
       assert.equal(results[i].value.text, `article ${i + 1}`);
       assert.equal(results[i].value.tabRef, undefined);
-      assert.equal(results[i].value._pageUrl, `https://example.test/${i + 1}`);
+      assert.equal(Object.hasOwn(results[i].value, '_pageUrl'), false);
+      assert.equal(getToolResultPresentation(results[i].value)._pageUrl, `https://example.test/${i + 1}`);
+      assert.deepEqual(runtime.getToolResultPageContext(results[i].value), getToolResultPresentation(results[i].value));
     }
     assert.equal(updates.length, 0, 'completed and late cancelled observations keep working-tab authority unchanged');
     await assert.rejects(runtime.execute('read_article', { tabId: 99, limit: 100 }, undefined,

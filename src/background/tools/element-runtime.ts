@@ -1,4 +1,4 @@
-import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
+import { toolError, isToolFailure, pageErrorDetails } from "../../shared/contracts/tool-error.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
@@ -424,11 +424,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       );
     }
     if (Number(matched) !== Number(ref.tabId)) {
-      throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${matched}`, {
-        target: elementTargetForUid(requestedUid),
-        tabRef: matched,
-        expectedTabRef: ref.tabId,
-      });
+      throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", "Element target belongs to a different page. Get a fresh target from this page.", pageErrorDetails(context, elementTargetForUid(requestedUid)));
     }
   }
 
@@ -438,24 +434,17 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     throw new ToolExecutionError(
       "ELEMENT_UID_SESSION_MISMATCH",
       `Element target belongs to another session. Take a fresh get_ax_tree snapshot in this session, then retry.`,
-      { target: elementTargetForUid(requestedUid), sessionId: currentSessionId, refSessionId },
+      pageErrorDetails(context, elementTargetForUid(requestedUid)),
     );
   }
 
   // Reject an explicit mismatch before resolving ownership can select or claim that tab.
   if (tabId && Number(tabId) !== Number(ref.tabId)) {
-    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
-      target: elementTargetForUid(requestedUid),
-      tabRef: tabId,
-      expectedTabRef: ref.tabId,
-    });
+    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", "Element target belongs to a different page. Get a fresh target from this page.", pageErrorDetails(context, elementTargetForUid(requestedUid)));
   }
   const resolvedTabId = Number(ref.tabId);
   if (!Number.isFinite(resolvedTabId) || resolvedTabId <= 0) {
-    throw new ToolExecutionError("MISSING_TAB_REF", `Element target has no usable page reference: uid:${requestedUid}`, {
-      target: elementTargetForUid(requestedUid),
-      expectedTabRef: ref.tabId,
-    });
+    throw new ToolExecutionError("MISSING_TAB_REF", `Element target has no usable page reference: uid:${requestedUid}`, pageErrorDetails(context, elementTargetForUid(requestedUid)));
   }
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
@@ -472,16 +461,14 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
         toolName: "element",
-        sessionId: currentSessionId,
-        tabRef: resolvedTabId,
-        ownerSessionId: resolved?.ownerSessionId || "",
+        target: elementTargetForUid(requestedUid),
         reason: resolved?.reason || "",
         message: resolved?.error || "",
       }, context);
     }
     if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
       throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", {
-        toolName: "element", sessionId: currentSessionId, tabRef: resolvedTabId,
+        toolName: "element", target: elementTargetForUid(requestedUid),
       }, context);
     }
   }
@@ -499,7 +486,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
   const urlChanged = Boolean(ref.pageUrl && currentUrl && !samePageUrl(currentUrl, ref.pageUrl));
   const previousPageError = () => new ToolExecutionError('STALE_ELEMENT_UID_PAGE_CHANGED',
     'Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.',
-    { target: elementTargetForUid(requestedUid), tabRef: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl });
+    pageErrorDetails(context, elementTargetForUid(requestedUid)));
   const storedDocumentId = String(ref.documentId || "");
   if (storedDocumentId) {
     const currentDocumentId = await readMainDocumentId(resolvedTabId);
@@ -637,7 +624,7 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
     const selector = requested || route.selector;
     const requestedIndex = Number(params.index);
     const index = Number.isInteger(requestedIndex) && requestedIndex >= 0 ? requestedIndex : route.index;
-    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action);
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action, context);
   };
   return run(call);
 }
@@ -715,8 +702,7 @@ async function objectFromBackend(send: CdpCommand, binding: { target?: string; r
     return objectId;
   } catch (err) {
     if (isCdpFallbackForbiddenError(err)) throw err;
-    const details = record(record(err).details);
-    const message = [record(err).message, details.originalError, details.originalMessage].map(value => String(value || "")).join(" ");
+    const message = String(record(err).message || err);
     if (/no node with|could not find node|node.*(?:detached|not found)/i.test(message)) throw staleElement(binding.target || "", "node_unavailable");
     if (err instanceof ToolExecutionError) throw err;
     throw staleElement(binding.target || "");
@@ -788,7 +774,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   await initializeContentScript(tabId, context);
   await discover();
   id = await select();
-  if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabRef: tabId });
+  if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", pageErrorDetails(context));
   return id;
 }
 
@@ -802,19 +788,19 @@ async function invokeBound(send: CdpCommand, objectId: string, action: string, p
     }));
     const details = record(remote.exceptionDetails);
     if (details.text || details.exception) {
-      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), pageErrorDetails(context));
     }
-    return asElementReply(record(remote.result).value, action);
+    return asElementReply(record(remote.result).value, action, context);
   } finally { finishPhase?.(); }
 }
 
-function asElementReply(value: unknown, action: string) {
+function asElementReply(value: unknown, action: string, context: ToolContext = {}) {
   const reply = record(value);
   const code = String(reply.code || "");
   if (code === "STALE_ELEMENT_UID" || code === "STALE_ELEMENT_UID_PAGE_CHANGED") {
-    throw new ToolExecutionError(code, String(reply.error || code), { action });
+    throw new ToolExecutionError(code, String(reply.error || code), pageErrorDetails(context));
   }
-  if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, { action });
+  if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, pageErrorDetails(context));
   return reply;
 }
 

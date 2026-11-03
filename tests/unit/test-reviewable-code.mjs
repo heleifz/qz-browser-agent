@@ -47,6 +47,10 @@ try {
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
     assert.notEqual(mutatedScriptCode, scriptCode);
     assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+    const pageControlledMode = scriptCode.replaceAll('context.externalDrive === true', 'pageControlledMode');
+    assert.notEqual(pageControlledMode, scriptCode);
+    assert.equal(cdpFindings(pageControlledMode, scriptPath).filter(item => !item.reviewed).length, 2,
+      'changing the host-supplied execution mode requires a new factory and bridge review');
     const implicitTarget = scriptCode.replace('input.tabRef == null', 'true');
     assert.notEqual(implicitTarget, scriptCode);
     assert.equal(cdpFindings(implicitTarget, scriptPath).filter(item => !item.reviewed).length, 1,

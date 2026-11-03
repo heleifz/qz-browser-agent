@@ -5,3 +5,4 @@ export { publishTimeoutTrace } from "../../background/tools/script-timeout-trace
 export { diagnosticTrace, formatTraceFields, shouldTraceStreamDelta, trace } from "../../background/trace.js";
 export { toolError } from "../../shared/contracts/tool-error.js";
 export type { ToolError } from "../../shared/contracts/tool-error.js";
+export { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";

@@ -1665,9 +1665,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const text = fullText.slice(start, end);
       const linkCount = countArticleLinks(article.content);
       // Display-only projection for the side panel's formatted preview.
-      // _display is stripped before the result reaches the model, and the
-      // live-layout measurement is skipped when this slice carries no image
-      // Markdown at all.
+      // Background binds these hints to the article's presentation metadata.
+      // Skip live-layout measurement when this slice carries no image Markdown.
       const imageDisplayHints = text.includes("![") ? articleCompactImageHints(article) : [];
 
       return {

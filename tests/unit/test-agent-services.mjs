@@ -286,7 +286,8 @@ test('Agent applies a newly named tool model policy through injected services', 
   await agent.prompt('inspect the new tool', {});
   assert.deepEqual(calls, [{ name: 'custom_visual', args: { tabId: 42, _tabId: 42, _pageTitle: 'Custom page', _pageUrl: 'https://example.test/custom' } }]);
   assert.ok(snapshots.every(version => version === 7), 'policy lookup uses the frozen run registry');
-  assert.equal(requests[1].find(message => message.role === 'tool').content, '{"answer":"visible"}');
+  assert.equal(requests[1].find(message => message.role === 'tool').content, '{"answer":"visible","_debug":"private"}',
+    'the declared model projection preserves its selected business fields');
   const image = requests[1].find(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'));
   assert.equal(image.content[0].text, 'Custom visual evidence');
   assert.deepEqual(events.find(event => event.type === 'tool_execution_end').result.rawNodes, ['UI only']);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { navigationDocuments } from "../support/navigation-documents.mjs";
 import { createSessionTabs } from "../../src/background/session/tabs.js";
 
@@ -449,8 +450,8 @@ const openedWithWatch = await tools.executeTool("open_tab", {
   networkMaxRecords: 50,
 }, null, sessionA());
 assert.equal(openedWithWatch.url, "https://fresh.example/start");
-assert.equal(openedWithWatch._pageUrl, "https://fresh.example/start");
-assert.equal(openedWithWatch._pageTitle, openedWithWatch.title, "sidebar metadata uses the observed tab title");
+assert.equal(getToolResultPresentation(openedWithWatch)._pageUrl, "https://fresh.example/start");
+assert.equal(getToolResultPresentation(openedWithWatch)._pageTitle, openedWithWatch.title, "sidebar metadata uses the observed tab title");
 assert.equal(openedWithWatch.networkWatch?.startedBeforeNavigation, true);
 assert.equal(openedWithWatch.networkWatch?.maxRecords, 50);
 assert.equal(

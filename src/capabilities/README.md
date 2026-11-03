@@ -135,7 +135,8 @@ updates. Use concise `pending` text naming the unfinished work. `behavior.timeou
 host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
 
-Tools pass serializable results to renderers. Package imports are limited to their own files, pinned
+Tools return business data; `bindToolResultPresentation` from `#sdk/background/tools` keeps display
+metadata beside that result until the host builds the renderer event. Package imports are limited to their own files, pinned
 npm dependencies, and `#sdk/*`. Type checking applies each runtime's constraints to its dependency
 graph and requires every TypeScript file to be reachable from a contribution declaration.
 

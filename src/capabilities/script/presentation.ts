@@ -12,12 +12,12 @@ export const presentations = (host: RendererServices): readonly ToolPresentation
   },
   argsSummary: ({ tool, args, result }) => {
     if (!isPageContextToolName(tool)) return undefined;
-    const drive = String(tool.runId || "").startsWith("drive-");
     const page = result && typeof result === "object" ? result as Record<string, unknown> : {};
-    // A script's returned title/url are user data, not the page it executed on.
-    const target = host.pageDisplayTarget(args, drive ? { _pageTitle: page._pageTitle, _pageUrl: page._pageUrl } : result, {
-      maxLength: 42, fallbackToTabId: drive, fallbackLabel: drive ? "" : t("currentPage"),
-    });
+    const details = page.details && typeof page.details === "object" ? page.details as Record<string, unknown> : {};
+    // A script's returned title/url are user data; only host page metadata identifies its execution page.
+    const target = host.pageDisplayTarget(args, {
+      _pageTitle: page._pageTitle ?? details._pageTitle, _pageUrl: page._pageUrl ?? details._pageUrl,
+    }, { maxLength: 42, fallbackToTabId: true });
     return target ? `(${target})` : "";
   },
   timelineBadge: () => ({ label: t("script"), order: 40 }),

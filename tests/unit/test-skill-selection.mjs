@@ -1,3 +1,4 @@
+import { bindToolResultPresentation, getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { registerHooks } from 'node:module';
@@ -17,7 +18,7 @@ const jobs = [{ key: 'job-a', company: 'Northstar', role: 'Backend engineer', lo
 { key: 'job-b', company: 'Harbor', role: 'Platform engineer', location: 'London', url: 'javascript:alert(1)' }];
 const context = { sessionId: 'selection-session', runId: 'selection-run', toolCallId: 'selection-call', language: 'en' };
 const metadata = { id: 'selection-example', runtime: 'inner', renderer };
-const result = () => ({ ok: true, hasResult: true, result: { jobs: structuredClone(jobs), _plugin: metadata }, _plugin: metadata });
+const result = () => bindToolResultPresentation({ ok: true, hasResult: true, result: { jobs: structuredClone(jobs) } }, { _plugin: metadata });
 const selected = ids => ({ submitted: true, answers: { selectedIds: ids } });
 
 test('maps declared paths to cards, preserves provenance and effects, returns only chosen source rows', async () => {
@@ -35,8 +36,8 @@ test('maps declared paths to cards, preserves provenance and effects, returns on
       ] }]);
     return selected(['job-b']);
   });
-  assert.deepEqual(output.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2, _plugin: metadata });
-  assert.equal(output._plugin, metadata); assert.equal(output.ok, true);
+  assert.deepEqual(output.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2 });
+  assert.equal(getToolResultPresentation(output)._plugin, metadata); assert.equal(output.ok, true);
   assert.equal(Object.hasOwn(output.result, 'jobs'), false);
   assert.deepEqual(input.result.jobs, jobs, 'collecting a selection never mutates a tool result');
   assert.deepEqual(consumeToolEffects(output, context), [{ type: 'context.siteChanged' }]);
@@ -44,7 +45,7 @@ test('maps declared paths to cards, preserves provenance and effects, returns on
 });
 
 test('nested source paths, single choice, empty results, optional empty selection and MCP data', async () => {
-  const nested = { _plugin: metadata, result: { payload: { jobs } } };
+  const nested = bindToolResultPresentation({ result: { payload: { jobs } } }, { _plugin: metadata });
   const single = await selectSkillResults({ ...renderer, sourcePath: 'payload', selectionMode: 'single' }, nested, undefined, context,
     async (_name, args) => { assert.equal(args.fields[0].type, 'single_choice'); return selected('job-a'); });
   assert.deepEqual(single.result.selectedIds, ['job-a']);
@@ -53,7 +54,7 @@ test('nested source paths, single choice, empty results, optional empty selectio
   const none = await selectSkillResults({ ...renderer, required: false }, { jobs }, undefined, context, async () => selected([]));
   assert.deepEqual(none, { selectedIds: [], selectedItems: [], totalItems: 2 });
   for (const body of [{ structuredContent: { jobs } }, { content: [{ type: 'text', text: JSON.stringify({ jobs }) }] }]) {
-    const mcp = await selectSkillResults(renderer, { ...body, _plugin: { runtime: 'mcp' } }, undefined, context, async () => selected(['job-a']));
+    const mcp = await selectSkillResults(renderer, bindToolResultPresentation(body, { _plugin: { runtime: 'mcp' } }), undefined, context, async () => selected(['job-a']));
     assert.deepEqual(mcp.selectedItems, [jobs[0]]);
     assert.equal(Object.hasOwn(mcp, 'structuredContent'), false);
     assert.equal(Object.hasOwn(mcp, 'content'), false);

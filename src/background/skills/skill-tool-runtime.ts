@@ -25,6 +25,7 @@ type HostCallTool = (name: string, args?: Fields) => Promise<unknown>;
 import { resolveSkillHostBinding } from "./skill-host-registry.js";
 import { copySkillManifestTrust, isTrustedSkillManifest } from "../../shared/skills/skill-provenance.js";
 import { copyToolEffects } from "../tools/effects.js";
+import { bindToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { summarizeSkillArgsForTrace } from "../tools/trace-summary.js";
 import { listSkills } from "./runtime.js";
 import { trace as runtimeTrace } from "../trace.js";
@@ -492,7 +493,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
       tool: tool.name,
       script: tool.script,
       trace: traceRows,
-      originalMessage: record(err.details).originalMessage || err.message || String(err),
     };
     runtimeTrace(`[skill] host error plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} code=${record(err).code || ""} message=${err instanceof Error ? err.message : err} durationMs=${Date.now() - startedAt}`);
     throw err;
@@ -931,18 +931,7 @@ function normalizeSkillToolResult(plugin: SkillManifest, tool: SkillTool, result
     tool: tool.name,
     ...skillToolPresentation(plugin, tool),
   };
-  const next: Fields = {
-    ...record(result),
-    _plugin: meta,
-  };
-  const nestedResult = record(result).result;
-  if (nestedResult && typeof nestedResult === "object" && !Array.isArray(nestedResult)) {
-    next.result = {
-      ...nestedResult,
-      _plugin: meta,
-    };
-  }
-  return copyToolEffects(result, next);
+  return bindToolResultPresentation(result, { _plugin: meta });
 }
 
 function resolveSkillToolRenderer(plugin: SkillManifest, tool: SkillTool) {

@@ -764,8 +764,8 @@ const runScriptBridge = createRunScriptBridge({
   canManageSessions: sessionCommands.canManageSessionTools,
   buildRunProfile,
   getRunToolContext: async (sessionId, runId) => {
-    const entry = await sessionAgentHost.getLiveEntry(sessionId);
-    return entry?.agent?.getRunToolContext(runId) || null;
+    const [entry, metadata] = await Promise.all([sessionAgentHost.getLiveEntry(sessionId), sessionRepository.getMetadata(sessionId)]);
+    return { ...entry?.agent?.getRunToolContext(runId), externalDrive: metadata?.source === "external-drive" };
   },
   recordDriveTool: observation => mcpRuntime.recordNestedTool(observation),
   applyNestedToolResult: async ({ sessionId, ...payload }) => {

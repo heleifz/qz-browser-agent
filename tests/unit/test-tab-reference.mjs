@@ -225,7 +225,7 @@ for (const ref of [123,'123','00123']) test(`numeric reference ${JSON.stringify(
   assert.equal(resolveTabReference(ref,{}),123);
 });
 for(const ref of [0,-1,1.5,'0','-1','12.4','','has spaces',NaN,{},null]) test(`invalid reference ${JSON.stringify(ref)} fails without a fallback`,()=>{
-  assert.throws(()=>resolveTabReference(ref,{}),{details:{reason:'invalid_reference',...(ref==null?{}:{tabRef:ref})}});
+  assert.throws(()=>resolveTabReference(ref,{}),{details:{reason:'invalid_reference',...(typeof ref==='string'||typeof ref==='number'&&Number.isFinite(ref)?{tabRef:ref}:{})}});
 });
 
 test('aliases persist across batches, follow-up runs, serialized runtime and host restart',async()=>{

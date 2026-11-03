@@ -1,3 +1,4 @@
+import { copyToolResultPresentation } from "../contracts/tool-result-presentation.js";
 import { isToolFailure, toolError } from "../contracts/tool-error.js";
 import { getLanguage } from "../i18n/index.js";
 import { t, type BackendMessageKey } from "../i18n/backend.js";
@@ -378,7 +379,9 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
   }
   const err = value as Record<string, unknown>;
   if (!(value instanceof Error) && typeof err.code === "string" && typeof err.message === "string" && !Object.hasOwn(err, "error")) {
-    return toolError(err.code, err.message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: objectValue(err.details) });
+    return copyToolResultPresentation(value, toolError(err.code, err.message, {
+      hint: typeof err.hint === "string" ? err.hint : undefined, details: objectValue(err.details),
+    }));
   }
   const original = String(err.message || err.error || "");
   const originalCode = String(err.code || context.code || "").trim();
@@ -390,18 +393,12 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
   if (localized && localized !== original) {
     try {
       err.message = localized;
-      if (err.details && typeof err.details === "object" && !Array.isArray(err.details)) {
-        err.details = { ...err.details, originalMessage: objectValue(err.details).originalMessage || original };
-      }
     } catch (_e) {}
   }
   const codeLabel = localizeToolFailureCode(originalCode, err.details || context.details);
   if (codeLabel) {
     try {
       err.codeLabel = codeLabel;
-      if (err.details && typeof err.details === "object" && !Array.isArray(err.details)) {
-        err.details = { ...err.details, originalCode: objectValue(err.details).originalCode || originalCode };
-      }
     } catch (_e) {}
   }
   return err;
@@ -411,7 +408,9 @@ export function localizeToolFailurePayload(payload: unknown, context: FailureCon
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
   const failure = payload as Record<string, unknown>;
   if (typeof failure.code === "string" && typeof failure.message === "string" && !Object.hasOwn(failure, "error")) {
-    return toolError(failure.code, failure.message, { hint: typeof failure.hint === "string" ? failure.hint : undefined, details: objectValue(failure.details) });
+    return copyToolResultPresentation(payload, toolError(failure.code, failure.message, {
+      hint: typeof failure.hint === "string" ? failure.hint : undefined, details: objectValue(failure.details),
+    }));
   }
   const hasFailureSignal = isFailurePayload(payload as Record<string, unknown>, context);
   if (!hasFailureSignal) return payload;
@@ -426,28 +425,21 @@ export function localizeToolFailurePayload(payload: unknown, context: FailureCon
   const codeLabel = localizeToolFailureCode(code, details);
   if (codeLabel) {
     out.codeLabel = codeLabel;
-    out.details = { ...details, originalCode: details.originalCode || code };
   }
 
   if (typeof out.error === "string" && out.error.trim()) {
     const original = out.error;
     out.error = localizeToolFailureText(original, baseContext);
-    if (out.error !== original) {
-      const nextDetails = out.details && typeof out.details === "object" && !Array.isArray(out.details) ? objectValue(out.details) : details;
-      out.details = { ...nextDetails, originalError: nextDetails.originalError || original };
-    }
   }
   if (typeof out.message === "string" && out.message.trim() && (out.ok === false || out.error)) {
     const original = out.message;
     out.message = localizeToolFailureText(original, baseContext);
-    const nextDetails = out.details && typeof out.details === "object" && !Array.isArray(out.details) ? objectValue(out.details) : details;
-    if (out.message !== original) out.details = { ...nextDetails, originalMessage: nextDetails.originalMessage || original };
   }
   if (!out.error && !out.message && codeLabel) out.error = codeLabel;
   if (out.diagnostic && typeof out.diagnostic === "object" && !Array.isArray(out.diagnostic)) {
     out.diagnostic = localizeToolDiagnostic(out.diagnostic);
   }
-  return out;
+  return copyToolResultPresentation(payload, out);
 }
 
 export function localizeToolFailureText(message: unknown = "", context: FailureContext = {}) {
@@ -499,7 +491,7 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
   }
   const tool = details.toolName || details.tool || details.name || t("toolFailure.thisTool");
   const action = details.action || "";
-  const tabId = details.tabId || details.refTabId || "";
+  const tabRef = details.tabRef || "";
   const missing = Array.isArray(details.missing) ? details.missing.join(", ") : "";
   switch (code) {
     case "UNKNOWN_TOOL":
@@ -528,7 +520,7 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
     case "MISSING_REQUIRED_ARGUMENTS":
       return t("toolFailure.requiredArguments", { tool: String(tool), suffix: detailSuffix(missing) });
     case "NOT_WEB_TAB":
-      return t("toolFailure.notWebTab", { tab: tabId ? t("toolFailure.tab", { id: String(tabId) }) : t("toolFailure.targetTab") });
+      return t("toolFailure.notWebTab", { tab: tabRef ? t("toolFailure.tab", { id: String(tabRef) }) : t("toolFailure.targetTab") });
     case "SECURITY_GUARDRAIL_BLOCKED":
       return securityGuardrailMessage(details);
     case "TOOL_TIMEOUT":

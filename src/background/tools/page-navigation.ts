@@ -10,14 +10,17 @@ export interface PreparedNavigation { url: string; rateLimitMatch?: unknown; rat
 export async function beginPageNavigationObservation(tabId: number, signal?: AbortSignal,
   { settleMs = 180, timeoutMs = 10_000, probeMs = 100 } = {}) {
   let disposed = false, started = false;
+  const cancelled = () => Object.assign(new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled"), {
+    hint: "Inspect the page state before retrying the action.",
+  });
   const check = () => {
-    if (disposed || signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabRef: tabId });
+    if (disposed || signal?.aborted) throw cancelled();
   };
   const wait = <T>(operation: Promise<T>, ms: number): Promise<T | null> => {
     check();
     return new Promise((resolve, reject) => {
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); };
-      const onAbort = () => { cleanup(); reject(new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled", { tabRef: tabId })); };
+      const onAbort = () => { cleanup(); reject(cancelled()); };
       const timer = setTimeout(() => { cleanup(); resolve(null); }, ms);
       signal?.addEventListener("abort", onAbort, { once: true });
       operation.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });

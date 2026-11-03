@@ -1,3 +1,4 @@
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -559,9 +560,9 @@ assert.equal(dispatched.args.args.$plugin.id, "xhs-booster");
 assert.deepEqual(dispatched.args.args.$plugin.config, {});
 assert.equal(dispatched.context.source, "plugin_tool");
 assert.equal(result.ok, true);
-assert.equal(result._plugin.id, "xhs-booster");
-assert.equal(result._plugin.displayName, "小红书增强");
-assert.equal(result._plugin.category.label, "采集");
+assert.equal(getToolResultPresentation(result)._plugin.id, "xhs-booster");
+assert.equal(getToolResultPresentation(result)._plugin.displayName, "小红书增强");
+assert.equal(getToolResultPresentation(result)._plugin.category.label, "采集");
 await assert.rejects(
   () => runtime.executeSkillTool(
     "xhs_booster__collect_notes",
@@ -572,12 +573,12 @@ await assert.rejects(
   ),
   err => err?.code === "MISSING_REQUIRED_ARGUMENTS" && err?.details?.missing?.includes("timeout"),
 );
-assert.equal(Object.prototype.hasOwnProperty.call(result._plugin, removedPluginGroupField), false);
-assert.equal(result._plugin.tool, "xhs_booster__collect_notes");
-assert.equal(result._plugin.title, "采集笔记");
-assert.equal(result._plugin.script, "scripts/collect.js");
-assert.equal(result._plugin.renderer.type, "list");
-assert.equal(result._plugin.renderer.itemsPath, "items");
+assert.equal(Object.prototype.hasOwnProperty.call(getToolResultPresentation(result)._plugin, removedPluginGroupField), false);
+assert.equal(getToolResultPresentation(result)._plugin.tool, "xhs_booster__collect_notes");
+assert.equal(getToolResultPresentation(result)._plugin.title, "采集笔记");
+assert.equal(getToolResultPresentation(result)._plugin.script, "scripts/collect.js");
+assert.equal(getToolResultPresentation(result)._plugin.renderer.type, "list");
+assert.equal(getToolResultPresentation(result)._plugin.renderer.itemsPath, "items");
 
 const mcpManifest = {
   format: SKILL_MANIFEST_FORMAT,
@@ -915,9 +916,9 @@ try {
   );
   assert.equal(mcpResult.ok, true);
   assert.equal(mcpResult.text, "resolved:react");
-  assert.equal(mcpResult._plugin.runtime, "mcp");
-  assert.equal(mcpResult._plugin.mcp.tool, "resolve-library-id");
-  assert.equal(mcpResult._plugin.renderer.type, "text");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.runtime, "mcp");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.mcp.tool, "resolve-library-id");
+  assert.equal(getToolResultPresentation(mcpResult)._plugin.renderer.type, "text");
   assert.equal(mcpFetchCalls.some(call => call.body.method === "tools/call" && call.body.params.arguments.libraryName === "react"), true);
   assert.equal(mcpFetchCalls.some(call => getHeaderValue(call.headers, "mcp-session-id") === "mock-session"), true);
   const registeredMcpToolResult = await tools.executeTool(
@@ -928,7 +929,7 @@ try {
   );
   assert.equal(registeredMcpToolResult.ok, true);
   assert.equal(registeredMcpToolResult.text, "resolved:solid");
-  assert.equal(registeredMcpToolResult._plugin.runtime, "mcp");
+  assert.equal(getToolResultPresentation(registeredMcpToolResult)._plugin.runtime, "mcp");
 } finally {
   globalThis.fetch = originalFetch;
 }
@@ -983,12 +984,14 @@ const plainResult = await runtime.executeSkillTool(
     ok: true,
     hasResult: true,
     resultType: "object",
-    result: { value: 1 },
+    _plugin: { userData: "outer" },
+    result: { value: 1, _plugin: { userData: "nested" } },
   }),
 );
-assert.equal(plainResult._plugin.renderer, null);
-assert.equal(plainResult._plugin.script, "scripts/plain.js");
-assert.equal(plainResult.result._plugin.script, "scripts/plain.js");
+assert.equal(getToolResultPresentation(plainResult)._plugin.renderer, null);
+assert.equal(getToolResultPresentation(plainResult)._plugin.script, "scripts/plain.js");
+assert.deepEqual(plainResult._plugin, { userData: "outer" }, "presentation does not overwrite a business field");
+assert.deepEqual(plainResult.result, { value: 1, _plugin: { userData: "nested" } }, "presentation does not change the script result");
 
 const collisionManifestA = {
   format: SKILL_MANIFEST_FORMAT,

@@ -17,8 +17,8 @@ function fixture() {
   let nextTab = 0, runtime, bridge;
   const supervisor = {
     peekEntry: () => null, getRuntime: id => runtimes[id], getAbortSignal: () => null, hasAgent: () => false,
-    mintDriveRunId: () => 'drive-stable', takeDriveRunForRelease: () => '',
-    isRunCurrent: (_id, runId) => runId === 'drive-stable',
+    mintDriveRunId: () => 'opaque-stable-run', takeDriveRunForRelease: () => '',
+    isRunCurrent: (_id, runId) => runId === 'opaque-stable-run',
   };
   const transcriptOptions = {
     repository: { readRecord: async id => stored[id], readActiveConversation: async () => null },
@@ -64,6 +64,7 @@ function fixture() {
   });
   bridge = createRunScriptBridge({
     supervisor, getRuntime: id => runtimes[id], canManageSessions: async () => false, buildRunProfile: async () => ({}),
+    getRunToolContext: async id => ({ externalDrive: metadata[id]?.source === 'external-drive' }),
     toolRuntime, collectArtifacts: () => [], recordDriveTool: input => runtime.recordNestedTool(input),
   });
   return { runtime, bridge, transcript, transcriptOptions, events };
@@ -102,7 +103,7 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
   const history = await f.transcript.get(sessionId);
   assert.equal(history.length, 14, '8 batch calls + 5 nested invocations + parent script');
   assert.equal(new Set(history.map(row => row.toolCallId)).size, 14);
-  assert.ok(history.every(row => row.runId === 'drive-stable'), 'do not rotate the execution run to fix display identity');
+  assert.ok(history.every(row => row.runId === 'opaque-stable-run'), 'do not rotate the execution run to fix display identity');
   assert.deepEqual(history.slice(0, 6).map(row => row.name), ['open_tab', 'read_article', 'open_tab', 'read_article', 'open_tab', 'read_article']);
   assert.equal(history.at(-3).isError, true);
   assert.equal(history.at(-2).isError, true);
@@ -122,19 +123,20 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
   assert.equal(cards.length, 14, 'direct drive bypasses ordinary wait filtering as well as grouping');
   assert.ok(cards.every(card => card.type === 'tool'));
   assert.equal(new Set(cards.map(card => card._uiKey)).size, 14);
-  const hidden = { type: 'tool', name: 'image_assets', toolCallId: 'legacy-hidden', runId: 'drive-stable' };
+  const hidden = { type: 'tool', name: 'image_assets', toolCallId: 'legacy-hidden', runId: 'opaque-stable-run' };
   assert.equal(projection.uiHistory([...restored, hidden], { sessionId }).length, 15, 'even ordinary hidden entries stay visible in drive');
 });
 
-test('script labels use actual page metadata or explicit tabRef, never current page in a drive run', () => {
-  {
-    const tool = { name: 'run_script', runId: 'drive-stable' };
+test('script labels use host page metadata or explicit tabRef independently of run identity', () => {
+  for (const runId of ['opaque-script-run', 'drive-native-identifier']) {
+    const tool = { name: 'run_script', runId };
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'a' }, { _pageTitle: 'Actual page', result: { title: 'Other' } }), '(Actual page)');
     assert.match(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'bdb' }, { ok: true, result: { title: 'Not a page', url: 'https://wrong.test/' } }), /bdb/);
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'bdb' }, { _pageUrl: 'https://actual.test/', result: { title: 'Not a page' } }), '(https://actual.test/)');
     assert.match(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 17 }, {}), /17/);
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, {}), '');
-    assert.match(toolPresentationRegistry.project('argsSummary', { name: 'run_script', runId: 'agent' }, {}, {}), /当前页面|Current page/);
+    assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { details: { _pageTitle: 'Historical page' } }), '(Historical page)');
+    assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { title: 'User title', url: 'https://user-data.test/' }), '');
   }
 });
 
@@ -167,10 +169,10 @@ test('settled script parents and stopped drive sessions cannot publish late nest
   const f = fixture();
   const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   let parentCallId;
-  await withToolCallLifecycle({ sessionId, runId: 'drive-stable' }, parent => { parentCallId = parent.toolExecutionId; });
-  const stale = await f.bridge.handleToolCall({ sessionId, runId: 'drive-stable', parentCallId, toolName: 'wait', args: { seconds: 0 } });
+  await withToolCallLifecycle({ sessionId, runId: 'opaque-stable-run', externalDrive: true }, parent => { parentCallId = parent.toolExecutionId; });
+  const stale = await f.bridge.handleToolCall({ sessionId, runId: 'opaque-stable-run', parentCallId, toolName: 'wait', args: { seconds: 0 } });
   assert.equal(stale.code, 'RUN_STOPPED');
   f.runtime.drive.noteStopped(sessionId);
-  await f.runtime.recordNestedTool({ sessionId, runId: 'drive-stable', name: 'wait', args: {}, result: {}, isError: false });
+  await f.runtime.recordNestedTool({ sessionId, runId: 'opaque-stable-run', name: 'wait', args: {}, result: {}, isError: false });
   assert.equal(f.events.length, 0);
 });

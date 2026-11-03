@@ -1,5 +1,6 @@
 import { t } from "../../shared/i18n/backend.js";
 import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
+import { copyToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { driveToolText } from "./tool-messages.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
@@ -210,11 +211,6 @@ export function projectDriveResult(result: unknown, policy: ModelPolicy = null):
   }
   if (!projected || typeof projected !== "object" || Array.isArray(projected)) return { value: projected, images: [] };
   const value = { ...(projected as Fields) };
-  delete value._display;
-  delete value._debug;
-  delete value._rawCdp;
-  delete value._plugin;
-  if (Array.isArray(value.nodes) && "snapshot" in value) delete value.nodes;
   const images: DriveImage[] = [];
   const raw = value._image;
   delete value._image;
@@ -273,7 +269,7 @@ function failed(call: DriveCall, error: unknown, args: unknown = call.args): Dri
     name: call.name,
     args,
     isError: true,
-    result: toolError(code, message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: err.details as Fields | undefined }),
+    result: copyToolResultPresentation(error, toolError(code, message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: err.details as Fields | undefined })),
   };
 }
 

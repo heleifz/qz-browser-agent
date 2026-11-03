@@ -45,9 +45,9 @@ const sessions = {
   supervisor: {
     getUserWait: sessionId => sessionId === "s1" && waits.has(runtimeState.waitId) ? { sessionId, waitId: runtimeState.waitId, runId: activeRunId } : null,
     isRunCurrent(sessionId, runId) {
-      return sessionId === "s1" && runId === activeRunId || String(runId || "").startsWith("drive-");
+      return sessionId === "s1" && runId === activeRunId || runId === `opaque-${sessionId}`;
     },
-    mintDriveRunId(sessionId) { return `drive-${sessionId}`; },
+    mintDriveRunId(sessionId) { return `opaque-${sessionId}`; },
     takeDriveRunForRelease() { return ""; },
     clearDriveRunId() {},
     resolveUserWait({ waitId }) {
@@ -261,8 +261,9 @@ assert.deepEqual(await runtime.createDriveSession({ title: "Inspect example page
 });
 const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" }, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
-assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
-assert.equal(driveTool.runId, "drive-drive-s");
+assert.equal(executed.at(-1).context.externalDrive, true, "trusted Session metadata determines mode even when its runId is opaque");
+assert.equal(executed.at(-1).context.runId, "opaque-drive-s", "a client runId is not the drive execution identity");
+assert.equal(driveTool.runId, "opaque-drive-s");
 assert.notEqual(driveTool.runId, "public-run");
 const loadedBeforeDrive = loadedNames.length;
 await assert.rejects(
@@ -311,18 +312,18 @@ assert.deepEqual(driveNotes.map(event => [event.toolName, event.isError, event.t
 ]);
 assert.equal(new Set(driveNotes.map(event => event.toolCallId)).size, 2);
 assert.ok(driveNotes.every(event => !["tree", "shot"].includes(event.toolCallId)));
-assert.equal(driveNotes.every(event => event.runId === "drive-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
+assert.equal(driveNotes.every(event => event.runId === "opaque-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
 assert.deepEqual(persistedDriveSessions, ["drive-s"]);
 {
   const previous = toolRuntime.execute;
-  toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "drop-me" });
+  toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "business-debug" });
   try {
     driveNotes.length = 0;
     const shot = await runtime.executeTool({ sessionId: "drive-s", name: "screenshot", args: { tabRef: 4 } });
     assert.equal(Object.hasOwn(shot.result, "_image"), false);
-    assert.equal(Object.hasOwn(shot.result, "_debug"), false);
+    assert.equal(shot.result._debug, "business-debug");
     assert.equal(driveNotes[0].result._image, "data:image/png;base64,aaaa");
-    assert.equal(Object.hasOwn(driveNotes[0].result, "_debug"), false);
+    assert.equal(driveNotes[0].result._debug, "business-debug");
     assert.equal(executed.at(-1).context.toolCallId || "", "", "drive recording stays off the execution context");
   } finally {
     toolRuntime.execute = previous;

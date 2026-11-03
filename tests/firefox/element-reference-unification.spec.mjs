@@ -17,7 +17,7 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     `);
     const call = (name, args = {}) => firefoxSidebar.extension('background', `
       const request = ${JSON.stringify({ name, args: { tabId, ...args } })};
-      const context = Cu.cloneInto({sessionId:'firefox-refs',runId:'drive-firefox-refs',workingTabId:${tabId},source:'agent'},content);
+      const context = Cu.cloneInto({sessionId:'firefox-refs',runId:'opaque-firefox-refs',externalDrive:true,workingTabId:${tabId},source:'agent'},content);
       try {
         const tools=view.__qzFirefoxPageTools;
         const result=await tools.execute(request.name,Cu.cloneInto(request.args,content),undefined,context);

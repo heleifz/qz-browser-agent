@@ -67,7 +67,7 @@ registerTool({
 // Skills
 // ===========================================================================
 
-const getSkillRuntimeGuidance = (context?: ToolContext) => String(context?.runId || '').startsWith('drive-') ? directDriveSkillGuidance() : modelT("runtimeGuidance");
+const getSkillRuntimeGuidance = (context?: ToolContext) => context?.externalDrive === true ? directDriveSkillGuidance() : modelT("runtimeGuidance");
 
 registerTool({
   name: "list_skills",

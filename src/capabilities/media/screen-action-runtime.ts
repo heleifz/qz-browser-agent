@@ -35,7 +35,7 @@ interface PerformedAction { point: Point | null; marker: Marker | null; duration
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error);
 import { createCdpKeyboard, createCdpTouch, primaryModifierForContext } from "#sdk/background/browser";
-import { diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
+import { bindToolResultPresentation, diagnosticTrace, formatTraceFields } from "#sdk/background/tools";
 
 const SNAPSHOT_LIMIT = 64;
 const PRESENTATION_QUALITY = 72;
@@ -306,11 +306,6 @@ export function createScreenActionRuntime({
           ...(observation?.coordinateSpace || retainedSnapshot?.coordinateSpace ? {
             coordinateSpace: observation?.coordinateSpace || retainedSnapshot?.coordinateSpace,
           } : {}),
-          ...(animate ? imageActionDisplay(performed.marker, {
-            action,
-            beforeImage,
-            afterImage,
-          }) : {}),
           feedbackAvailable: Boolean(observation),
           coordinateBasisReady,
           ...(observationError ? { feedbackError: observationError } : {}),
@@ -326,7 +321,7 @@ export function createScreenActionRuntime({
           observation: Boolean(observation),
           animation: animate,
         });
-        return result;
+        return bindToolResultPresentation(result, animate ? imageActionDisplay(performed.marker, { action, beforeImage, afterImage }) : {});
       }, context);
     } finally {
       if (snapshot && latestSnapshot(tabId, context) === snapshot) snapshot.consumedAt = 0;

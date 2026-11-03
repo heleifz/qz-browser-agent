@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import {
   QINGZHOU_SKILL_FORMAT,
   QINGZHOU_SKILL_SCHEMA_VERSION,
@@ -101,7 +102,7 @@ assert.deepEqual(dispatches[0].args.args.$plugin.config, {
 });
 assert.equal(dispatches[0].context.skillExecution.plugin.id, "runtime-example");
 assert.equal(dispatches[0].context.skillExecution.config.token, "private-token");
-assert.equal(innerResult._plugin.runtime, "inner");
+assert.equal(getToolResultPresentation(innerResult)._plugin.runtime, "inner");
 
 await executeSkillTool(
   "runtime_example__page_check",

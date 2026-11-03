@@ -9,6 +9,7 @@ import { findBuiltinSkill } from "../../src/shared/skills/builtin-skills.js";
 import { parseSkillManifest, findSkillManifestResource } from "../../src/shared/skills/skill-manifest.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
 import { clearTraceLog, getTraceLog } from "../../src/background/trace.js";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 globalThis.chrome = {
   runtime: { getURL: path => path },
@@ -50,7 +51,9 @@ test("a newly named tool declares unload behavior once for direct script and for
   assert.equal(targets.length, before, "invalid arguments must fail before target ownership work");
   const denied = await nested("__custom_page_action", { action: "leave" });
   assert.equal(denied.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
-  assert.equal(denied.details.targetTabId, 31);
+  assert.deepEqual(denied.details, { action: "leave", submit: false });
+  assert.equal(Object.hasOwn(denied.details, "targetTabId"), false);
+  assert.equal(Object.hasOwn(denied.details, "sourceTabId"), false);
   assert.equal(calls, 0);
   await assert.rejects(runtime.execute("__custom_page_action", { action: "leave" }, undefined,
     { ...scriptContext, source: "plugin_host" }), { code: "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED" });
@@ -74,7 +77,13 @@ test("built-in unload declarations retain navigation, closing, click, submit and
   ]) {
     const result = await nested(name, args);
     assert.equal(result.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED", `${name} ${JSON.stringify(args)}`);
-    assert.equal(result.details.sourceTabId, 31);
+    assert.deepEqual(result.details, {
+      ...(args.action ? { action: args.action } : {}),
+      ...(args.key || args.value ? { key: args.key || args.value } : {}),
+      submit: args.submit === true,
+    });
+    assert.equal(Object.hasOwn(result.details, "sourceTabId"), false);
+    assert.equal(Object.hasOwn(result.details, "targetTabId"), false);
   }
   assert.equal((await nested('act_on_element', { target: 'uid:unknown', action: 'click' })).code, 'STALE_ELEMENT_UID');
   const policy = runtime.resolveDefinition("act_on_element").behavior.mayUnloadPage;
@@ -88,18 +97,21 @@ test("new observation tools promote images only through trusted definitions and 
   let calls = 0;
   const image = "data:image/png;base64,b2JzZXJ2YXRpb24=";
   const parameters = { type: "object", properties: { observe: { type: "boolean" } } };
-  const execute = () => { calls++; return { _image: image, _imageDetail: "high", _display: { image }, behavior: { nestedObservation: true } }; };
+  const execute = () => { calls++; return bindToolResultPresentation(
+    { _image: image, _imageDetail: "high", _display: { label: "business value" }, behavior: { nestedObservation: true } },
+    { _display: { image } }); };
   tools.defineTool({ name: "__custom_observe", description: "Test", parameters,
     behavior: { nestedObservation: args => args.observe === true }, execute });
   tools.defineTool({ name: "__ordinary_image", description: "Test", parameters, execute });
   const promoted = await nested("__custom_observe", { observe: true });
   assert.deepEqual(promoted.observation, { _image: image, _imageDetail: "high" });
   assert.equal(promoted.result._image, undefined);
-  assert.equal(promoted.result._display, undefined);
+  assert.deepEqual(promoted.result._display, { label: "business value" }, "business fields survive separately bound host presentation");
   for (const [name, args] of [["__custom_observe", { observe: false }], ["__ordinary_image", { observe: true }]]) {
     const result = await nested(name, args);
     assert.equal(result.observation, undefined, "an ordinary result cannot declare its own observation role");
     assert.equal(result.result._image, image);
+    assert.deepEqual(result.result._display, { label: "business value" });
   }
   currentRun = false;
   assert.equal((await nested("__custom_observe", { observe: true })).code, "RUN_STOPPED");
