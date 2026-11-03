@@ -31,7 +31,7 @@ test('documented default and guide tool names resolve in the actual drive catalo
   const schemas = getToolSchemas({ skillToolRegistrySnapshot, loadedPluginSkillNames: ['qingzhou-documents'] });
   const names = new Set(schemas.map(schema => schema.function.name).filter(name => !isDriveToolForbidden(name)));
   const guide = driveGuide({ explicit: 'en', env: {} });
-  const defaultText = guide.split('The default tier is:')[1].split('\n\n')[1];
+  const defaultText = guide.split('The listed tools are:')[1].split('\n\n')[1];
   const defaults = defaultText.match(/\b[a-z]+(?:_[a-z]+)*\b/g);
   assert.deepEqual(new Set(defaults), new Set([...names].filter(isDriveToolDefault)));
   const guideText = guide.split('These include ')[1].split('. wait_until')[0];

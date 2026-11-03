@@ -24,12 +24,12 @@ function loadGuideSource() {
   throw new Error(`direct-drive guide is missing. Looked in ${errors.join(", ")}.`);
 }
 
-/** English CLI guide. The package copy is a packed mirror, not a second draft. */
+/** Read the direct-drive usage guide. */
 export function driveGuide() {
   const text = loadGuideSource();
   const start = text.indexOf(MARKER_START);
   const end = text.indexOf(MARKER_END, start + MARKER_START.length);
-  if (start < 0 || end < 0) throw new Error("direct-drive guide is missing the English section.");
+  if (start < 0 || end < 0) throw new Error("direct-drive guide content is missing.");
   return `${text.slice(start + MARKER_START.length, end).trim()}\n`;
 }
 

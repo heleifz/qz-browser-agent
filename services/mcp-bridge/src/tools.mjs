@@ -252,7 +252,7 @@ export function resultToContent(result) {
 const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
-  description: "Return the English qz CLI direct-drive guide as an optional reference.",
+  description: "Return the qz CLI direct-drive guide as an optional reference.",
   inputSchema: {
     type: "object",
     additionalProperties: false,

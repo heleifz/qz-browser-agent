@@ -10,7 +10,7 @@ The external agent plans the work and drives the connected browser. Do not start
 
 ## Install and connect
 
-The only discoverable skill is skills/qz-browser-agent, including this guide and references/create-task.md. Install or update it:
+Install or update the skill:
 
 ```sh
 npx skills add alibaba/qz-browser-agent -g
@@ -76,17 +76,17 @@ JS
 
 A successful open_tab returns tabRef, not id. `tabAlias` is recommended for readability and is not required. Use that alias or the tabRef returned by open_tab/list_tabs next. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. A returned positive integer or its numeric string is also a tabRef; never guess one. Direct-drive results name the page with tabRef: only open_tab/list_tabs return it, preserving a supplied alias; other page tools do not echo it.
 
-Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. Page-independent calls validate a supplied tabRef, then ignore it. wait still waits only for a duration; use wait_for_navigation for page loading.
+Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. wait waits for a duration; use wait_for_navigation for page loading.
 
 One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
 
 ## Discover tools and use their parameters
 
-`qz tools --session "$SID"` and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
+`qz tools --session "$SID"` and tools.$list() in a script return compact signatures. The listed tools are:
 
 open_tab, navigate, list_tabs, close_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
 
-Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`. These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
+Look up additional tools by name: `qz tools --session "$SID" wait_until`. These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
 
 - open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
 - read_article({tabRef,target?,limit:6000}): read body text; use source:"target" for an element source, and continue with nextOffset. Do not substitute an accessibility tree for document text.
@@ -98,11 +98,11 @@ Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`
 
 Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Reuse returned uid: targets first; use css: targets when no uid is available. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read. ToolError is never truncated.
 
-An element has one identity field: target. Uids come from the shared registry as `uid:t<tab>.<snap>.<n>`, falling back to css:… when binding fails; rect is always `{x,y,width,height}`. AX, find_elements, list_images, inspect_element and wait_for_element return targets to pass directly to act_on_element, inspect_element or screenshot. list_images({tabRef,target?,limit?}) prefers uids for images, falling back to css: when binding fails. Element/range arguments for read_article/read_dom/find_elements/list_images/wait_for_element are named target; get_ax_tree also uses target for its range.
+Use returned target values unchanged. A target is `uid:t<tab>.<snap>.<n>` or `css:...`; rect is `{x,y,width,height}`. AX, find_elements, list_images, inspect_element and wait_for_element return targets accepted by act_on_element, inspect_element and screenshot.
 
 ## calls is a batch, not a transaction
 
-Each call's id only correlates this response; it neither merges historical calls nor interpolates earlier values into later arguments. The side panel shows each top-level and in-script tool call separately. Fixed-alias open/read calls may share a batch. Split requests when the next step requires an unknown uid, fileId or docModelId. Inspect each results item's isError. Failures do not roll back completed actions; do not blindly replay the entire batch. At most 10 items, and only one in-flight batch per session.
+Use each call's id to match its entry in results. Fixed-alias open/read calls may share a batch. Split requests when the next step requires an unknown uid, fileId or docModelId. Inspect each results item's isError. Failures do not roll back completed actions; do not blindly replay the entire batch. At most 10 items, and only one in-flight batch per session.
 
 For a two-page comparison:
 
@@ -166,15 +166,15 @@ Examples omit metadata such as clientId/runId.
 | qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_EVALUATION_FAILED","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 | qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 
-script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and at most five trace rows. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
+script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and trace information. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
 
 ## Finish, reconnect and recover
 
-A CLI process exiting **does not immediately close its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; process exit is not proof that cleanup completed. Keep the 200 most recently active drive records; older sessions are protected while work is in flight, then the limit is checked again.
+A CLI process exiting **does not immediately close its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; process exit is not proof that cleanup completed.
 
 Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. Do not use global qz stop for task cleanup.
 
-Cleanup closes tabs this session opened with open_tab. Pre-existing user tabs and tabs handed back to the user never close automatically. User activation hands a tab back, stops automation, and preserves the tab. Extension restarts restore the idle cleanup deadline; expired sessions close their created tabs, preserving explicitly kept or handed-back user tabs. The next day is a new task: qz connect, then create again, without reusing old aliases.
+Cleanup closes tabs opened by this session. It preserves pre-existing tabs and tabs handed back to the user. If the user activates a task tab, automation stops on that tab and the tab stays open. For a new task or a later day, run qz connect and create a new session.
 
 Change one thing per retry and retain the error code and sentence:
 
@@ -182,15 +182,14 @@ Change one thing per retry and retain the error code and sentence:
 - DRIVE_SESSION_REQUIRED: create first and pass its ID. DRIVE_SESSION_NOT_FOUND: check the ID/browser; create for a new task.
 - DRIVE_SESSION_ENDED: the session has ended; no further tab cleanup calls are needed. Create for a new task.
 - DRIVE_SESSION_OCCUPIED: the ID belongs to an ordinary task; create a new session.
-- DRIVE_SESSION_BUSY: a call is in flight. The bridge retries once; if still busy, wait for that batch.
+- DRIVE_SESSION_BUSY: a call is in flight. Wait for that batch to finish.
 - DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS: name or calls, not both; each row needs id/name and object args; at most 10 calls.
 - DRIVE_TAB_REF_REQUIRED: supply this session's explicit tabRef. BATCH_TAB_REFERENCE_ERROR: check aliases, open-before-read order, and session identity. no_alias occurs only when an alias was passed but no matching alias exists in this session.
 - SESSION_TAB_UNOWNED: use this session's page or open_tab first.
 - UNKNOWN_TOOL: start with `qz tools --session "$SID"`, inspect by name or load the matching Skill.
+- DRIVE_TOOL_FORBIDDEN: choose an available tool from `qz tools --session "$SID"`.
 - DRIVE_BATCH_TIMEOUT: inspect completed results before raising the budget/splitting steps. OPERATION_ABORTED: inspect the page before retrying.
 - Login/challenge: stop and ask the user to sign in in this browser, then retry.
 
-Blocked names: ask_llm, manage_sessions, manage_settings, manage_guardrails, manage_skill_settings, manage_goal, example_echo, qingzhou_call, create_skill, update_skill, delete_skill, manage_skill, edit_skill_resource, import_skill_from_page_zip, import_git_skill_repository, install_skill_to_git, import_page_zip, import_git_repository, manage_bookmarks, wait_for_user, ask_user, send_message, and names starting with mcp_. DRIVE_TOOL_FORBIDDEN also applies to tools.* inside scripts.
-
-The side panel for a drive session is view-only. Do not route around the blacklist from a script. Do not use curl/wget for page content; bash only handles local files. Do not install another skill named qz-drive. Do not configure a qz model.
+The side panel for a drive session is view-only. Use browser tools for page content; use the shell for local files.
 <!-- qz-drive-guide:end -->

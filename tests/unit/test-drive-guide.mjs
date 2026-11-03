@@ -28,7 +28,7 @@ test("the packed drive guide is the only discoverable skill, English-only and bo
   assert.match(guide, /get_ax_tree/);
   assert.match(guide, /references\/create-task\.md/);
   assert.match(guide, /npx skills add alibaba\/qz-browser-agent -g/);
-  assert.match(guide, /The side panel for a drive session is view-only\. Do not route around the blacklist from a script\./);
+  assert.match(guide, /The side panel for a drive session is view-only\. Use browser tools for page content; use the shell for local files\./);
   assert.doesNotMatch(guide, /page\.click|selectOption|npx skills add[^\n]*qz-drive/);
   assert.doesNotMatch(source, /^name: qz-drive$/m);
   assert.doesNotMatch(guide, /omit tabRef|a returned id|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/i);
