@@ -441,6 +441,12 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
       assert.equal(collectRequest.uidBatch?.[variant]?.targets?.length, 2, `list_images on tab ${variant} must yield two uid targets`);
     }
 
+    const targetTabIds = await page.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      return Object.fromEntries(["a", "b", "c"].map(variant => [variant,
+        tabs.find(tab => String(tab.url || "").endsWith(`/uid-batch/${variant}`))?.id]));
+    });
+    for (const variant of ["a", "b", "c"]) assert.equal(typeof targetTabIds[variant], "number");
     const fixturePage = variant => browserContext.pages().find(candidate => candidate.url().includes(`/uid-batch/${variant}`));
     const renamed = fixturePage("b");
     assert.ok(renamed, "fixture tab b must be open");
@@ -466,7 +472,7 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
         }
         return original.call(chrome.scripting, options);
       };
-    }, collectRequest.uidBatch.a.tabId);
+    }, targetTabIds.a);
     providerServer.release("QZ_E2E_TABUIDS_COLLECT");
     const seen = await worker.evaluate(async tabId => {
       const deadline = Date.now() + 15_000;
@@ -474,9 +480,9 @@ async function uidBatchCollectAcrossTabsHonorsDocumentIdentity(page, browserCont
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       return globalThis.__uidBatchProbe.seen;
-    }, collectRequest.uidBatch.b.tabId);
-    assert.ok(seen.includes(collectRequest.uidBatch.b.tabId), "different uid tabs must execute concurrently");
-    assert.equal(seen.filter(tabId => tabId === collectRequest.uidBatch.a.tabId).length, 1,
+    }, targetTabIds.b);
+    assert.ok(seen.includes(targetTabIds.b), "different uid tabs must execute concurrently");
+    assert.equal(seen.filter(tabId => tabId === targetTabIds.a).length, 1,
       "a second call on the held uid tab must wait for its lane");
     await worker.evaluate(() => globalThis.__uidBatchProbe.restore());
     await waitEvent(page, { type: "agent_end", sessionId, runId: started.runId }, after, 90_000);
@@ -2454,12 +2460,12 @@ async function createProviderServer() {
         connection: "keep-alive",
       });
       const base = `http://127.0.0.1:${server.address().port}`;
-      // Alias bindings only live inside one batch, so later batches address tabs by id.
+      // Later batches reuse the public reference returned by each opening.
       const results = uidBatchToolResults(body);
       const calls = count === 1
         ? ["a", "b", "c"].map(variant => [`uid_batch_open_${variant}`, "open_tab", JSON.stringify({ url: `${base}/uid-batch/${variant}`, tabAlias: variant })])
         : count === 2
-          ? ["a", "b", "c"].map(variant => [`uid_batch_list_${variant}`, "list_images", JSON.stringify({ tabId: results[`open_${variant}`]?.id })])
+          ? ["a", "b", "c"].map(variant => [`uid_batch_list_${variant}`, "list_images", JSON.stringify({ tabRef: results[`open_${variant}`]?.tabRef })])
           : ["a", "b", "c"].map(variant => [`uid_batch_collect_${variant}`, "collect_images", JSON.stringify({
             table: "uid_batch_e2e",
             targets: uidBatchTargets(body)[variant]?.targets || [],
@@ -2958,7 +2964,6 @@ function uidBatchTargets(body) {
     const listed = results[`list_${variant}`];
     if (!listed) continue;
     byVariant[variant] = {
-      tabId: listed.tabId,
       targets: (Array.isArray(listed.images) ? listed.images : [])
         .map(image => String(image?.target || ""))
         .filter(target => target.startsWith("uid:")),
