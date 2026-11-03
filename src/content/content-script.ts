@@ -20,7 +20,7 @@ interface ElementSummary extends PageAction {
 interface ContentRequest {
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
-  index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
+  index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
   maxWidth?: number; maxHeight?: number; format?: string; quality?: number;
 }
@@ -816,10 +816,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
   }
 
-  function queryElement(selector: unknown, index: number) {
+  function queryElement(selector: unknown, index: number, clickTarget = false) {
     const query = queryAll(selector);
     if (query.error) return { ...query.error, interactable: getInteractableElements() };
-    const element = selector instanceof Element ? query.elements[0] : query.elements[index];
+    let element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
         ...toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
@@ -829,6 +829,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         }),
         interactable: getInteractableElements(),
       };
+    }
+    if (clickTarget) {
+      const resolved = resolveClickTarget(element);
+      if ("error" in resolved) return resolved;
+      element = resolved.element;
     }
     return { element, matched: query.elements.length };
   }
@@ -1788,23 +1793,22 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       };
     },
 
-    inspectElement({ selector, index = 0 }) {
-      const targetResult = queryElement(selector, index);
+    inspectElement({ selector, index = 0, clickTarget = false }) {
+      const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
-      const inspection = getElementInspection(el, { selector, index, matched, ...getElementDomLocation(el) });
+      const inspection = getElementInspection(el, { ...(clickTarget ? {} : { selector, index }), matched, ...getElementDomLocation(el) });
       return { ...inspection, _elementRef: rememberElement(el),
         parent: el.parentElement ? { ...inspection.parent, _elementRef: rememberElement(el.parentElement) } : null };
     },
 
-    scrollElementIntoView({ selector, index = 0, block = "center" }) {
-      const targetResult = queryElement(selector, index);
+    scrollElementIntoView({ selector, index = 0, block = "center", clickTarget = false }) {
+      const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
       el.scrollIntoView({ behavior: "instant", block, inline: "center" });
       return getElementInspection(el, {
-        selector,
-        index,
+        ...(clickTarget ? {} : { selector, index }),
         matched,
         scrolledIntoView: true,
         ...getElementDomLocation(el),
@@ -2510,6 +2514,23 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return { element: el, point: visibleSelf, href: getHref(el) || undefined };
     }
 
+    // Native labels activate their control even when the control itself is transparent
+    // or has no box. Keep the actual label distinct from the requested control.
+    const labels = "labels" in el ? el.labels as NodeListOf<HTMLLabelElement> | null : null;
+    if (!isDisabled(el)) for (const label of labels || []) {
+      if (label.control !== el) continue;
+      label.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      const point = clickablePointFor(label);
+      if (!point) continue;
+      let hit = elementAtPoint(label, point.x, point.y);
+      if (!hit || (hit !== el && hit !== label && !label.contains(hit))) continue;
+      while (hit && hit !== label && hit !== el) {
+        if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
+        hit = hit.parentElement;
+      }
+      if (hit === label || hit === el) return { element: label, point, href: getHref(el) || undefined };
+    }
+
     const descendants = [...el.querySelectorAll("a[href], button, [role='button'], input, textarea, select, [onclick], [tabindex]")]
       .filter(isVisible);
     for (const child of descendants) {
@@ -2892,6 +2913,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const top = elementAtPoint(el, x, y);
+    if (el instanceof HTMLLabelElement && top === el.control) return false;
     return !!top && top !== el && !el.contains(top);
   }
 

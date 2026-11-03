@@ -32,6 +32,7 @@ let state = { value: "old", checked: false, kind: "button" };
 
 function replyFor(action, params = {}) {
   const button = state.kind !== "check" && state.kind !== "fill";
+  const summarySelector = state.summarySelector && (action !== "inspectElement" || state.inspections++ > 0);
   const body = {
     tag: state.kind === "check" ? "input" : button ? "button" : "input",
     type: state.kind === "check" ? "checkbox" : state.kind === "fill" ? "text" : "",
@@ -43,9 +44,10 @@ function replyFor(action, params = {}) {
     checked: state.checked,
     value: state.value,
     clickablePoint: { x: 12, y: 16 },
-    selector: params.selector || "",
+    selector: summarySelector ? state.summarySelector : params.selector || "",
     index: params.index,
   };
+  if (action === "inspectElement" && state.bindCss) body._elementRef = "observed-element";
   if (action === "prepareElementFill") return { ...body, fillMode: "text", contentEditable: false };
   if (action === "readDom") return { content: "scoped-text", selector: params.selector || "" };
   if (action === "resolveCheckTarget") return { ...body, element: { ...body } };
@@ -86,9 +88,12 @@ const element = createElementRuntime({
       if (method === "Runtime.evaluate") return { result: { value: { extensionId: "extension-id", bridge: true, elementRefs: true } } };
       if (method === "Runtime.callFunctionOn") {
         const payload = params.arguments?.[0]?.value || {};
+        if (payload.action === "resolveElementRefs") return { result: { subtype: "array", objectId: "observed-elements" } };
         contentCalls.push({ tabId, action: payload.action, selector: payload.selector, index: payload.index, via: "node" });
         return { result: { value: replyFor(payload.action, payload) } };
       }
+      if (method === "Runtime.getProperties") return { result: [{ name: "0", value: { subtype: "node", objectId: "observed-node" } }] };
+      if (method === "DOM.describeNode") return { node: { backendNodeId: 42 } };
       if (method === "Runtime.releaseObjectGroup" || method === "Runtime.disable") return {};
       return {};
     });
@@ -147,6 +152,24 @@ function callsSince(mark) {
 }
 
 describe("element uid routing", { concurrency: 1 }, () => {
+for (const action of ["fill", "click"]) test(`CSS ${action} reuses its registered uid for a deep DOM element summary`, async () => {
+  const selector = 'input[placeholder="请输入终点"]';
+  const summarySelector = `body.body-container > ${Array.from({ length: 25 }, (_, index) => `div.ant-layout:nth-of-type(${index + 1})`).join(" > ")} > input.ant-input`;
+  state = { value: "old", checked: false, kind: action === "fill" ? "fill" : "button",
+    bindCss: true, summarySelector, inspections: 0 };
+  const result = await tools.get("act_on_element").execute({ tabId: 5, target: `css:${selector}`, action,
+    ...(action === "fill" ? { value: "曲院风荷" } : {}) }, undefined, context);
+
+  assert.match(result.target, /^uid:t5\.[a-z0-9]+\.\d+$/);
+  assert.equal(result.element.target, result.target, "the post-action absolute CSS describes the already registered node");
+  assert.equal(action === "fill" ? result.filled : result.clickDispatched, true);
+  if (action === "fill") assert.equal(result.element.value, "曲院风荷");
+  else assert.equal(result.originalElement.target, result.target);
+  const registered = await element.resolveElementReference(5, { target: result.element.target }, context);
+  assert.equal(registered.ref.backendNodeId, 42);
+  assert.equal(registered.ref.selector, selector);
+});
+
 test("selector-only uid click, fill, check, and read use the stored selector", async () => {
   const clickTarget = register("t5.00aa01.1", { selector: "button.save", index: 1 });
   const fillTarget = register("t5.00aa01.2", { selector: "input.name", index: 2 });
@@ -257,5 +280,20 @@ test("one node binding covers every step of a fill", async () => {
   assert.equal(resolveCount, 1, "the action keeps the node resolved at the start");
   assert.equal(callsSince(before).some(call => call.via === "content"), false);
   assert.equal(callsSince(before).every(call => call.via === "node"), true);
+});
+
+test("an action preserves its supplied UID instead of registering its inspection again", async () => {
+  const target = register("t5.00aa06.1", {
+    selector: "input.destination", backendNodeId: 77, loaderId: "loader-live",
+  });
+  state = { value: "old", checked: false, kind: "fill", bindCss: true,
+    summarySelector: "body > main > section > input.destination", inspections: 0 };
+  const before = nodeMethods.length;
+  const result = await tools.get("act_on_element").execute({ tabId: 5, target, action: "fill", value: "曲院风荷" }, undefined, context);
+  assert.equal(result.filled, true);
+  assert.equal(result.target, target);
+  assert.equal(result.element.target, target);
+  assert.equal(nodeMethods.slice(before).includes("DOM.describeNode"), false,
+    "an existing UID already identifies the node and must not be rebound into another snapshot");
 });
 });

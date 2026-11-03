@@ -352,6 +352,7 @@ npm test -- live agent --cases document_pipeline,network_form_edge
 npm test -- live agent --suite journeys
 npm test -- live realworld
 npm test -- live deepseek
+npm test -- live direct-drive --output tests/results/live-direct-drive
 npm test -- live rate
 npm test -- live cli-mcp --duration-seconds 1800
 npm test -- live multi-browser
@@ -359,6 +360,11 @@ npm test -- live multi-browser
 
 `agent` calls a real model against constructed pages; `realworld` and `cli-mcp` visit public sites.
 `deepseek` checks extension lifecycle and stream behavior; `rate` checks Provider throttling.
+`direct-drive` gives a real external DeepSeek agent the current browser Skill and a qz CLI tool.
+It creates a titled drive session, follows Wikipedia links and images through returned element
+targets, runs a page script, and checks session grouping and tool cards. It saves CLI/model traces
+and screenshots in the output directory. `cli-mcp` and the Pi delegation runners use the built-in
+Agent through `qz create`.
 `cli-mcp` runs English research, data, document, and interaction tasks with real DeepSeek responses
 through CLI and MCP in one isolated Chrome profile. Its 30-minute clock starts after setup; individual
 task failures are recorded and cancelled before the next task. It saves transcripts, downloads,

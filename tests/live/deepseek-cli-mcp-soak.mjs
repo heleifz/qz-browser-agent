@@ -68,7 +68,7 @@ try {
   do {
     const test = selected[index % selected.length];
     await runCase(test, ++index);
-    if (index % selected.length === 0) report.tabCleanup.push(await closeCompletedTaskTabs({ mcp,
+    if (index % selected.length === 0) report.tabCleanup.push(await closeCompletedTaskTabs({ mcp, page: environment.page,
       sessionIds: report.tasks.map(task => task.sessionId).filter(Boolean), activeSessionIds: [...activeSessions] }));
     const health = await readHealth(environment.bridge.endpoint);
     report.health.push({ at: new Date().toISOString(), elapsedSeconds: elapsed(), connected: health.status.clientCount === 1, polls: environment.pollRequests.length });

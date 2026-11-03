@@ -68,14 +68,16 @@ try {
     current.on("console", message => {
       if (message.type() !== "error") return;
       const text = redact(message.text(), apiKey), resource = redact(message.location().url || "", apiKey);
-      let missingSiteIcon = false;
+      let externalReason = "";
       try {
         const url = new URL(resource), owner = new URL(current.url());
-        missingSiteIcon = /^https?:$/.test(url.protocol) && url.origin === owner.origin && url.pathname === "/favicon.ico"
-          && /^Failed to load resource: the server responded with a status of 404\b/.test(text);
+        if (/^https?:$/.test(url.protocol) && url.origin === owner.origin) {
+          if (url.pathname === "/favicon.ico" && /^Failed to load resource: the server responded with a status of 404\b/.test(text)) externalReason = "missing_site_icon";
+          if (text === "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an invalid sandbox flag.") externalReason = "invalid_site_sandbox_token";
+        }
       } catch { /* Unknown locations remain unexpected diagnostics. */ }
-      if (missingSiteIcon) {
-        externalDiagnostics.push({ page: current.url(), resource, message: text, reason: "missing_site_icon" });
+      if (externalReason) {
+        externalDiagnostics.push({ page: current.url(), resource, message: text, reason: externalReason });
         report.externalDiagnostics = externalDiagnostics;
       } else diagnostics.push(`${text}${resource ? ` (${resource})` : ""}`);
     });

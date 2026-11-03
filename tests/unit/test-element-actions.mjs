@@ -11,7 +11,7 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1, rejectUnbound = false } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
@@ -51,7 +51,10 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     async useElement(_tabId, _ref, _context, run) { return run(content); },
     elementTargetForSelector: selector => `css:${selector}`,
     getElementTargetDescription: () => "test target",
-    async sendToContent(_tabId, action, params) { return content(action, params); },
+    async sendToContent(_tabId, action, params) {
+      assert.equal(rejectUnbound, false, "a frame target must stay on its node-bound Content connection");
+      return content(action, params);
+    },
     clickPointReady: inspected => Boolean(inspected.clickablePoint),
     clickNotReadyResult: () => ({ error: "No point", code: "CLICK_POINT_OUT_OF_VIEWPORT" }),
     getPageContext: () => ({ pageMode: mobile ? "mobile" : "desktop" }),
@@ -594,6 +597,32 @@ for (const mobile of [false, true]) {
 function frameBox(y) {
   return { model: { content: [8, y, 308, y, 308, y + 80, 8, y + 80] } };
 }
+
+test("an iframe's resolved label stays on its original node-bound frame through click refresh", async () => {
+  const f = fixture({ frameId: "child", rejectUnbound: true });
+  const target = "uid:t7.00abcd.1";
+  const original = { ...f.inspection(), selector: "#control", visible: false, clickablePoint: null };
+  const label = { ...f.inspection(), selector: "#label", tag: "label", editable: false };
+  f.onContent((action, params) => {
+    if (action === "resolveClickTarget") return { resolvedSelector: "#label", element: label, originalElement: original };
+    if (action === "inspectElement" || action === "scrollElementIntoView") return { ...(params.clickTarget ? label : original) };
+  });
+  f.onCommand(method => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(40);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+  });
+  const clicked = await f.call({ target, action: "click" });
+  assert.equal(clicked.target, target);
+  assert.equal(clicked.originalElement.target, target);
+  assert.equal(clicked.element.target, "css:#label");
+  assert.equal(clicked.clickDispatched, true);
+  assert.equal(clicked.inputDelivered, true);
+  assert.equal(f.messages.filter(message => message.params.clickTarget).length, 2,
+    "both scrolling and the final inspection resolve the click surface in the original frame");
+  const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
+  assert.deepEqual([release.params.x, release.params.y], [28, 60]);
+});
 
 test("an in-view iframe click keeps the shifted point and does not scroll", async () => {
   const f = fixture({ frameId: "child" });

@@ -348,19 +348,20 @@ registerTool({
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
     let observedElement: ElementObservation | undefined;
-    let observedSelector = '';
-    const actionElement = (candidate: unknown): ElementObservation | undefined => {
+    const actionElement = (candidate: unknown, original = true): ElementObservation | undefined => {
       if (!isElementReply(candidate)) return undefined;
-      const handle = !candidate.selector || candidate.selector === observedSelector
-        ? observedElement?.target || resolvedTarget : elementTargetForSelector(candidate.selector);
+      const handle = original ? resolvedTarget : elementTargetForSelector(candidate.selector);
       return createElementObservation(candidate, handle);
     };
+    const originalClickTarget = (reply: ElementReply) => !isElementReply(reply.element)
+      || !isElementReply(reply.originalElement) || reply.element.selector === reply.originalElement.selector;
     const contentOutcome = (reply: ElementReply) => ({
       action: normalizedAction, target: resolvedTarget,
       clicked: reply.clicked, filled: reply.filled,
       submitted: reply.submitted, checked: reply.checked, selected: reply.selected, pressed: reply.pressed,
       key: reply.key, href: reply.href, navigated: reply.navigated, scrolledTo: reply.scrolledTo,
-      element: actionElement(reply.element), originalElement: actionElement(reply.originalElement),
+      element: actionElement(reply.element, normalizedAction !== "click" || originalClickTarget(reply)),
+      originalElement: actionElement(reply.originalElement),
     });
     const fillToken = normalizedAction === "fill" && ref.uid
       ? `${ref.uid}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}` : "";
@@ -386,11 +387,10 @@ registerTool({
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction, resolvedTarget);
     // Bind the observed node before the action can navigate or replace it. Never rebind
     // an action's old summary against a new document after the side effect.
-    if (inspected._elementRef) {
+    if (!ref.uid && inspected._elementRef) {
       const described = await addElementTargetsToFindResult(inspected, tabId, context, ref.ref);
       if (described && typeof described === 'object') observedElement = described as ElementObservation;
     } else observedElement = createElementObservation(inspected, resolvedTarget);
-    observedSelector = String(inspected.selector || '');
     resolvedTarget = observedElement?.target || resolvedTarget;
 
     if (normalizedAction === "click") {
@@ -436,17 +436,18 @@ registerTool({
               href: navigationUrl,
               ...pageDelta,
               ...(observedNavigation ? { observedNavigation } : {}),
-              element: actionElement(resolved.element || current),
+              element: actionElement(resolved.element || current, originalClickTarget(resolved)),
               originalElement: actionElement(inspected),
             };
           } finally { observation.dispose(); }
         }
         if (resolved.resolvedSelector) {
           const resolvedInspection = await sendToContent(tabId, "scrollElementIntoView", {
-            selector: resolved.resolvedSelector,
-            index: 0,
+            selector,
+            index,
+            clickTarget: true,
             block: "center",
-          }, undefined, context);
+          }, bound, context);
           if (!resolvedInspection.error) {
             current = resolvedInspection;
             pointSelector = resolved.resolvedSelector;
@@ -494,7 +495,7 @@ registerTool({
         await withDebugger(tabId, async (_target, send) => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
-          const refreshed = await sendToContent(tabId, "inspectElement", { selector: pointSelector, index: pointIndex }, sameTarget ? bound : undefined, context);
+          const refreshed = await sendToContent(tabId, "inspectElement", { selector, index, ...(!sameTarget ? { clickTarget: true } : {}) }, bound, context);
           if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
           if (frameId) {
             const readGeometry = async () => ({
@@ -506,7 +507,8 @@ registerTool({
             applyFramePageViewport(inspected, geometry.origin, geometry.viewport);
             applyFramePageViewport(current, geometry.origin, geometry.viewport);
             if (framePointMissesPage(current, geometry.origin, geometry.viewport)) {
-              const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector: pointSelector, index: pointIndex, block: "center" }, bound, context);
+              const scrolled = await sendToContent(tabId, "scrollElementIntoView", { selector, index,
+                ...(pointSelector !== selector || pointIndex !== index ? { clickTarget: true } : {}), block: "center" }, bound, context);
               if (scrolled.error) { frameFailure = scrolled; return; }
               current = scrolled;
               movedFrameIntoPage = true;
@@ -580,7 +582,7 @@ registerTool({
           href: current.href || resolved?.href || undefined,
           ...pageDelta,
           ...(observedNavigation ? { observedNavigation } : {}),
-          element: actionElement(current),
+          element: actionElement(current, !resolved || originalClickTarget(resolved)),
           originalElement: current !== inspected ? actionElement(inspected) : undefined,
         };
       } catch (err) {

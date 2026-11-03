@@ -46,6 +46,26 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       expect(schema.signature).toMatch(/\btarget\??:string/);
       expect(schema.signature).not.toMatch(/\bselector\??:/);
     }
+    const controls = await invoke('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
+    expect(controls.message, JSON.stringify(controls)).toBeUndefined();
+    for (const [id, name] of [['overlay-toggle', 'Overlay menu'], ['detached-toggle', 'Detached menu']]) {
+      const target = axTarget(controls, name, 'button');
+      expect(target || '', controls.snapshot).toMatch(uidPattern);
+      const clicked = await invoke('act_on_element', { target, action: 'click' });
+      expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
+      expect(clicked.clickDispatched || clicked.clicked, JSON.stringify(clicked)).toBe(true);
+      expect(clicked.inputDelivered, JSON.stringify(clicked)).toBe(true);
+      expect(clicked.target).toBe(target);
+      expect(clicked.originalElement?.target).toBe(target);
+      expect(clicked.element.tag, JSON.stringify(clicked)).toBe('label');
+      expect(clicked.element.target).toMatch(/^(?:uid|css):/);
+      expect(clicked.element.target).not.toBe(target);
+      expect(clicked.element.text).toBe(`${name} label`);
+      expect(clicked.originalElement.tag).toBe('input');
+      expect(clicked.originalElement.name).toBe(name);
+      await expect(page.locator(`#${id}`)).toBeChecked();
+      await expect(page.locator(`#${id}`)).toHaveAttribute('data-input-trusted', 'true');
+    }
     const found = await invoke('find_elements', { target: 'body', tags: ['button', 'img'], limit: 40 });
     expect(found.message, JSON.stringify(found)).toBeUndefined();
     expect(found.results.length).toBeGreaterThanOrEqual(5);
@@ -57,7 +77,8 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     expect(shadow.target).toMatch(uidPattern);
     const clicked = await invoke('act_on_element', { target: alpha.target, action: 'click' });
     expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
-    expect(clicked.element.target).toMatch(uidPattern);
+    expect(clicked.target).toBe(alpha.target);
+    expect(clicked.element.target).toBe(alpha.target);
     expect(JSON.stringify(clicked)).not.toContain('_elementRef');
     const cssClick = await invoke('act_on_element', { target: 'css:#alpha', action: 'click' });
     expect(cssClick.target, JSON.stringify(cssClick)).toMatch(uidPattern);

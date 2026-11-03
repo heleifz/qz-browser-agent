@@ -26,11 +26,34 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       }
       catch(error) { const failure=Cu.waiveXrays(error); return {message:String(failure.message),code:String(failure.code || ''),...(failure.hint ? {hint:String(failure.hint)} : {}),...(failure.details ? {details:JSON.parse(JSON.stringify(failure.details))} : {})}; }
     `);
+    const controls = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
+    expect(controls.message, JSON.stringify(controls)).toBeUndefined();
+    for (const [id, name] of [['overlay-toggle', 'Overlay menu'], ['detached-toggle', 'Detached menu']]) {
+      const target = targetFor(controls, name, 'button');
+      expect(target || '', controls.snapshot).toMatch(uidPattern);
+      const clicked = await call('act_on_element', { target, action: 'click' });
+      expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
+      expect(clicked.clickDispatched || clicked.clicked, JSON.stringify(clicked)).toBe(true);
+      expect(clicked.inputDelivered, JSON.stringify(clicked)).toBe(true);
+      expect(clicked.target).toBe(target);
+      expect(clicked.originalElement?.target).toBe(target);
+      expect(clicked.element.tag, JSON.stringify(clicked)).toBe('label');
+      expect(clicked.element.target).toMatch(/^(?:uid|css):/);
+      expect(clicked.element.target).not.toBe(target);
+      expect(clicked.element.text).toBe(`${name} label`);
+      expect(clicked.originalElement.tag).toBe('input');
+      expect(clicked.originalElement.name).toBe(name);
+      await expect(page.locator(`#${id}`)).toBeChecked();
+      await expect(page.locator(`#${id}`)).toHaveAttribute('data-input-trusted', 'true');
+    }
     const found = await call('find_elements', { target: 'body', tags: ['button', 'img'], limit: 40 });
     expect(found.message, JSON.stringify(found)).toBeUndefined();
     expect(found.results.every(item => uidPattern.test(item.target) && !('selector' in item) && !('uid' in item))).toBe(true);
     const alpha = found.results.find(item => item.name === 'Alpha' || item.text === 'Alpha');
-    expect((await call('act_on_element', { target: alpha.target, action: 'click' })).message).toBeUndefined();
+    const alphaClick = await call('act_on_element', { target: alpha.target, action: 'click' });
+    expect(alphaClick.message, JSON.stringify(alphaClick)).toBeUndefined();
+    expect(alphaClick.target).toBe(alpha.target);
+    expect(alphaClick.element.target).toBe(alpha.target);
     await expect(page.locator('#alpha')).toHaveAttribute('data-clicked', 'yes');
     const inspected = await call('inspect_element', { target: '#alpha' });
     expect(inspected.target).toMatch(uidPattern);
