@@ -406,9 +406,10 @@ Use `-t` for `--title`. Run `qz help COMMAND` or `qz COMMAND --help` for command
 
 The default MCP catalog is the direct-drive set: `qingzhou_guide`, `qingzhou_create_drive_session`,
 `qingzhou_execute_tool`, `qingzhou_list_tools`, `qingzhou_get_tool`, and `qingzhou_bridge_status`.
-Call `qingzhou_guide` once on a new connection. It returns the direct-drive text in
-`skills/qz-browser-agent/SKILL.md`. Install or update that skill with
-`npx skills add alibaba/qz-browser-agent -g`. `qz mcp` prints that URL. `qz mcp --profile full`
+`qingzhou_guide` returns the English CLI workflow from `skills/qz-browser-agent/SKILL.md`.
+MCP clients use the protocol below and [MCP connection setup](#connect-an-mcp-client).
+Install or update the CLI skill with `npx skills add alibaba/qz-browser-agent -g`.
+`qz mcp` prints the local MCP endpoint. `qz mcp --profile full`
 prints the task and diagnostic catalog. A direct-drive session lists the default tool tier from
 `qingzhou_list_tools`. `qingzhou_get_tool` still returns a guide-tier tool, and returns
 `DRIVE_TOOL_FORBIDDEN` for a blocked name. Set `wait: false` to receive a job ID and read the

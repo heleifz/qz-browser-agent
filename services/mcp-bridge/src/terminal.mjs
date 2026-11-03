@@ -531,7 +531,7 @@ export function renderHelp(topic = "", options = {}) {
   out.shellNote();
   if (!topic) {
     out.line();
-    out.line(driveGuide({ explicit: options.lang, env: options.env || process.env }));
+    out.line(driveGuide());
   }
   return out.finish();
 }

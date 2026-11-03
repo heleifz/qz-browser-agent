@@ -1,203 +1,10 @@
 ---
 name: qz-browser-agent
-description: Drive the connected browser directly. Create one session per task, then pass its sessionId and an explicit tabRef to page tools. Do not configure a qz model. Read references/create-task.md only when the built-in agent should plan the task.
+description: Drive the connected browser through the qz CLI. Create one session per task, then pass its sessionId and an explicit tabRef to page tools. Do not configure a qz model. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
-<!-- qz-drive-guide:zh-CN -->
-不要配置轻舟模型
-
-外部 agent 自己编排，在已经连接的浏览器里开标签、读页面、操作元素。不启动轻舟内置模型，也不要调用 `qz create`。只有需要内置 agent 规划执行时才读 references/create-task.md。
-
-## 安装与连接
-
-唯一可发现技能是 skills/qz-browser-agent，里面带这份说明和 references/create-task.md。安装或更新：
-
-```sh
-npx skills add alibaba/qz-browser-agent -g
-```
-
-下文 `qz` 是 `npx --yes qz-browser-agent@latest` 的简称，不要求全局安装 CLI。Bash/Zsh 可先定义函数；PowerShell 使用完整 npx 命令替换 qz。连接命令必须在装有扩展的机器上运行，要求 Node.js 22 或更高：
-
-```sh
-qz() { npx --yes qz-browser-agent@latest "$@"; }
-node --version
-qz status --json
-qz connect
-```
-
-查看 status 的 `result.connected`、`result.browsers`。未连接时下一步是 `qz connect`，不要配置模型。它启动本机服务，在默认浏览器打开配对页，请用户确认一次；只有一个在线浏览器时复用它。扩展未安装时 `qz install` 打开商店，让用户添加扩展并完成首次数据说明，然后配对。
-
-指定 Profile 时：
-
-```sh
-qz connect --no-open --name work --json
-```
-
-把 `result.url` 打开在用户选定的、已装扩展的 Profile。macOS Chrome 可设置 QZ_PAIRING_URL 和 QZ_PROFILE_DIRECTORY 后运行：
-
-```sh
-open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
-```
-
-自定义数据目录再加 `--user-data-dir`。配对前后比较 `qz browsers --json`，记下新出现的 clientId；后续命令带 `--client CLIENT_UUID`。多浏览器在线时必须选定，不能与 connect 的 --no-open/--name 混用。--name 命名打开配对 URL 的 Profile，不写则保留旧名或分配 default、browser-2 等名字。一次只绑定一个 Profile。
-
-连不上先检查 status 的地址；connect --port 仅在服务未启动时指定端口，已有服务保持原地址。改地址后仍需用户确认。升级不兼容时先等当前任务结束，再 `qz stop`、更新并重新加载各浏览器扩展、`qz connect`。stop 会断开所有浏览器，**不是任务清理命令**。
-
-`qz skill` 和 MCP `qingzhou_guide` 返回这份说明；每条新连接读一次，不要每轮重读。`--lang zh-CN|en` 选择语言，否则跟随 QZ_GUIDE_LANG/LANG。`qz mcp` 打印 MCP 地址。默认目录：qingzhou_guide、qingzhou_create_drive_session、qingzhou_execute_tool、qingzhou_list_tools、qingzhou_get_tool、qingzhou_bridge_status。`qz mcp --profile full` 打印任务和诊断目录地址。
-
-## 一个任务一个会话
-
-先 `qz session create --title "查看示例页"`，标题必填，缺失退出码 2；stdout 打出 `sessionId <id>`；`--json` 则取 result.sessionId。MCP 调 qingzhou_create_drive_session({title:"查看示例页"})，取返回的 sessionId。每次 create 都创建新会话，不启动模型。
-
-后续每次 `qz script --session ID`、`qz exec --session ID`、`qz tools --session ID` 都带同一 ID；MCP 执行工具时显式传同一个 sessionId；qingzhou_list_tools / qingzhou_get_tool 可不带会话查询基础目录；按名查询已加载 Skill 的工具时，qingzhou_get_tool 带 sessionId。漏掉 `--session` 退出码 2，不会新建，也不会沿用上次会话。不存在的 ID 返回 DRIVE_SESSION_NOT_FOUND；检查 ID 和浏览器选择，不要自造 ID。换新任务再 create，并行的独立任务各自创建会话。
-
-### 可复制的黄金路径（Bash/Zsh）
-
-先完成连接及上面的 qz 函数定义。多浏览器时给函数内的 npx 调用追加 `--client CLIENT_UUID`。以下每步失败就停：
-
-```sh
-CREATED=$(qz session create --title "Inspect example page" --json) || exit 1
-SID=$(printf '%s' "$CREATED" | node -e 'const x=JSON.parse(require("fs").readFileSync(0,"utf8")); if(!x.ok || !x.result.sessionId) process.exit(1); console.log(x.result.sessionId)') || exit 1
-qz exec --session "$SID" <<'JSON'
-{"calls":[
-  {"id":"open","name":"open_tab","args":{"url":"https://example.com","tabAlias":"page"}},
-  {"id":"read","name":"get_ax_tree","args":{"tabRef":"page","scope":"viewport","limit":40}}
-]}
-JSON
-test "$?" -eq 0 || exit 1
-# 检查上一批每项 isError；有错误就不要继续。
-qz script --session "$SID" --tab page --json - <<'JS'
-async () => {
-  // 读取示例页的标题和地址，确认页面内容。
-  return { title: document.title, href: location.href };
-}
-JS
-```
-
-`open_tab` 成功时看 tabRef，不是 id。tabAlias 建议写上，便于阅读，但不是必填。下一步使用别名，或 open_tab/list_tabs 返回的 tabRef。别名是 1–64 个字母、数字、下划线或连字符，不能全为数字；关闭标签后失效。tabRef 也可为返回的正整数或其数字字符串，不能凭空猜值。直驱结果用 tabRef 标识页面：仅 open_tab/list_tabs 返回它，指定别名时原样回显；其他页面工具不回显。
-
-页面工具（包括 act_on_screen）始终传 `tabRef`。一批中每项都传自己的页面引用；缺失时返回 DRIVE_TAB_REF_REQUIRED。open_tab、list_tabs、list_skills、load_skill、wait、wait_until 不需要页面引用；read_image 传 url、collect_images 仅传 urls 时也不需要。非页面调用若带 tabRef，验证后忽略，不改变工具含义；wait 仍只等待指定时长，等页面加载用 wait_for_navigation。
-
-同一标签只归一个会话，后来者失败，不中断先占用者。查看其他网页用 list_tabs({scope:"all"})，只读操作显式传 tabRef；修改页面需使用本会话拥有的页面。默认 list_tabs 是本会话短列表 `{tabs:[{tabRef,title,url,active}],count,foreign}`。active 表示用户正在看的标签，不会替页面工具选择目标。
-
-## 发现工具与常用参数
-
-`qz tools --session "$SID"`、qingzhou_list_tools({})（或带 sessionId）、脚本 tools.$list() 默认返回短签名，不是完整 JSON Schema：
-
-open_tab、navigate、list_tabs、close_tab、get_ax_tree、find_elements、read_article、act_on_element、scroll_page、screenshot、wait_for_element、wait_for_navigation、run_script、load_skill、list_skills。
-
-说明书档不在默认列表但仍可按名查询：`qz tools --session "$SID" wait_until`，或 qingzhou_get_tool({sessionId,name:"wait_until"})。包括 read_dom、inspect_element、act_on_screen、wait、wait_for_response、wait_for_network_idle、wait_until、文档工具、list_images、collect_images、read_image、read_image_asset、data_store、download_url、list_downloads、save_file、network_watch、network_recent、network_body、read_console_messages、browse_history、set_page_mode、get_location、send_alert、load_skill_resource。wait_until 的 until 是带时区的绝对时间。
-
-- open_tab({url,tabAlias?})、navigate({tabRef,url})：url 用 http/https。
-- read_article({tabRef,target?,limit:6000})：读正文；指定元素来源用 source:"target"；跟随 nextOffset 分段续读，不用树代替全文。
-- get_ax_tree({tabRef,target?,scope?,depth?,limit?})：取 snapshot 中的 uid。scope 只能是 viewport 或 full。省略 target 时用 viewport，uid:/css: 范围用 full；缩小 target/limit，勿把截断 preview 当完整树。
-- find_elements({tabRef,pattern?,target?,limit?})：pattern 是正则，默认忽略大小写，不是字面文本。字面 `a.b` 要用 JSON 字符串 `"a\\.b"`；其它正则元字符也需转义。返回 target 原样交给元素工具。
-- act_on_element({tabRef,target,action,value?,key?})：target 用 uid: 或 css:；action 仅 click、fill、press、select、check、uncheck、scroll。fill/select 需要 value，press 需要 key，一次一个动作。
-- wait_for_element({tabRef,target,timeout?,absent?})：优先用 uid:，css: 兜底。普通等待检查 found；absent:true 表示原节点已移除或不可见，成功时 found 也是 false，必须检查 timedOut 是否为 true，不能把超时当成功消失。
-- wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?})：等加载完成，不是等 URL 变化。调用时已经加载就立即返回 already_complete，不能证明上一动作成功。用 fromUrl 比较 urlChanged，再读页面确认结果。
-
-导航、同 URL 重载或 DOM 替换都可能使 uid 失效。遇到失效重新 find_elements 或读取局部 get_ax_tree，使用新 target；不要反复提交旧 uid。优先复用返回的 uid: 目标；没有 uid 时用 css: 目标，不要为一个按钮连续读整树、list_tabs、截图。screenshot 仅在语义工具不够时使用，图片不进入 JSON 正文。截视口不传 target；截元素传 uid: 或 css: 目标。默认超过约 48000 字符的业务结果会变为 `{truncated:true,totalChars,limitChars,preview}`，请缩小读取；ToolError 不截断。
-
-元素身份只有 target，uid 来自统一登记表，格式为 `uid:t<tab>.<snap>.<n>`，无法绑定时为 css:…；rect 统一为 `{x,y,width,height}`。AX、find_elements、list_images、inspect_element、wait_for_element 返回的 target 可直接用于 act_on_element、inspect_element、screenshot。list_images({tabRef,target?,limit?}) 的图片以 uid 为主，绑定失败回落 css:。read_article/read_dom/find_elements/list_images/wait_for_element 的元素或范围参数统一叫 target；get_ax_tree 的范围参数也叫 target。
-
-## calls 是批次，不是事务
-
-calls 每项的 id 只关联本次响应，不会合并历史调用，也不会把前项的返回值插值给后项。侧栏逐次展示顶层和脚本内的工具调用。固定 alias 的 open/read 可同批；读到 uid、fileId、docModelId 后才能确定的下一步要拆请求。检查 `results` 中每项的 isError；失败不回滚已执行动作，不要盲目重放整批。一批最多 10 项，同会话只能有一批在执行。
-
-例如两页对比：
-
-```sh
-qz exec --session "$SID" <<'JSON'
-{"calls":[
-  {"id":"a-open","name":"open_tab","args":{"url":"https://example.com/a","tabAlias":"a"}},
-  {"id":"a-read","name":"read_article","args":{"tabRef":"a","limit":4000}},
-  {"id":"b-open","name":"open_tab","args":{"url":"https://example.com/b","tabAlias":"b"}},
-  {"id":"b-read","name":"read_article","args":{"tabRef":"b","limit":4000}}
-]}
-JSON
-```
-
-## 页面脚本与三层超时
-
-直驱的 run_script 在该页执行，并带 tabRef。直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或分次 execute_tool，不要嵌套另一段 run_script 字符串。
-
-`qz script --session "$SID" --tab page page.js` 读取本机文件，页面代码是单个 `async () => { ... }` 函数表达式；不要写 IIFE、main() 或函数外 return。用一行注释说明页面、动作和目的。可访问 document/window、input/args、tools/tool、trace/log。tabRef 是调用参数，不是自动提供的脚本变量；嵌套页面工具也显式传别名。页面运行环境不提供 Node.js、fs、process 或 require。
-
-MCP 等价调用：qingzhou_execute_tool({sessionId,name:"run_script",args:{tabRef:"page",timeout:30,code:"async () => { return document.title; }"}})。CLI script 没有 mutatesPage 选项，修改页面时用 exec 并传 mutatesPage:true：
-
-```sh
-qz exec --session "$SID" <<'JSON'
-{"name":"run_script","args":{"tabRef":"page","timeout":30,"mutatesPage":true,"code":"async () => { document.querySelector('#query').value = 'example'; return {changed:true}; }"}}
-JSON
-```
-
-优先用 act_on_element 填表/点击；会卸载页面的点击或导航拆成普通工具步骤，随后重新读页面。
-
-三层预算都以秒计：
-
-1. args.timeout 是脚本执行期限，必填；<=0 不设脚本期限，>0 最多执行这么久。CLI script 默认 120；它的 --timeout 同时设置脚本期限，只接受 >0 且 <=3600。
-2. limits.timeoutSeconds 是一批 calls 的总执行预算，不能当作客户端等待。超过时返回 DRIVE_BATCH_TIMEOUT，不保证回滚。
-3. CLI exec --timeout / MCP timeoutSeconds 是请求等待，默认 180。CLI 与桥接对 run_script 都至少等该请求中最长脚本 timeout + 60，且不缩短更长的客户端设置；脚本 timeout<=0 时请求等待上限为 86400。不会改写 args.timeout 或 limits.timeoutSeconds。多段串行脚本的总时间还需显式给足请求预算；外部 agent 的 shell/MCP 超时也要更长。
-
-不要用 sleep 掩盖请求超时。BRIDGE_REQUEST_TIMEOUT 后先检查本次调用和页面状态，不立刻重发。加载更多宜按少量页分步、返回数量/游标，无增长时停；脚本自身超时仍可能发生，先确认已完成部分再续跑。
-
-## PDF：先加载文档 Skill
-
-先发现并加载 Skill；文档工具只在加载后可用。PDF 阅读器不支持正文读取或页面操作；遇到 PDF_PAGE_UNSUPPORTED / 无法注入脚本时，用 qingzhou-documents 文档工具读取原始 PDF URL，不要换 CORS 代理或在线查看器。以下 URL/ID 是占位值：替换 URL，逐步取返回值再填写下一条，不要原样提交 FILE_ID/DOC_MODEL_ID。
-
-```sh
-qz exec --session "$SID" '{"name":"list_skills","args":{}}'
-qz exec --session "$SID" '{"name":"load_skill","args":{"name":"qingzhou-documents"}}'
-qz exec --session "$SID" '{"name":"qingzhou_documents__document_fetch","args":{"url":"https://example.com/report.pdf"}}'
-# 读取 result.result.fileId，填写下一条的 FILE_ID。
-qz exec --session "$SID" '{"name":"qingzhou_documents__document_parse","args":{"fileId":"FILE_ID"}}'
-# 读取 result.result.docModelId，填写下一条的 DOC_MODEL_ID。
-qz exec --session "$SID" '{"name":"qingzhou_documents__document_read_chunk","args":{"docModelId":"DOC_MODEL_ID","chunkIndex":0}}'
-```
-
-按 read_chunk 返回的 next 按需续读。fileId/docModelId 属于当前会话。若 PDF 是另一个 Skill 的包内资源，调用 load_skill_resource({name,path}) 可直接返回 docModelId，再分块读；不用重新 fetch/parse。文档工具名保留 qingzhou_documents__ 前缀。
-
-## 返回值：按入口解包
-
-以下省略 clientId、runId 等元数据；MCP 指 content 中 text 的 JSON 解码值。
-
-| 入口 | 成功：脚本 return 7 | 工具失败（脚本语法错误） | 抛出/传输失败 |
-| --- | --- | --- | --- |
-| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_EVALUATION_FAILED","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
-| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
-| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}` | MCP isError:true，text 为 `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`；连接未建立时可能没有工具响应 |
-
-script stdout 直接是返回值；exec 的脚本值在 result.result.result，MCP 在 result.result。普通工具如 open_tab 的数据分别在 exec 的 result.result、MCP 的 result；批次分别看 result.results、results。exec 外层 ok:true 仅表示传输成功，仍要检查工具结果与每项 isError。CLI exit 0 成功、1 工具/传输失败、2 参数非法。错误统一为 `{code,message,hint?,details?}`，行列号和最多 5 条 trace 放在 details；抛出型失败在交互终端未加 --json 时写 stderr。错误有行列号/堆栈摘要时保留它们，不要盖成笼统失败。超过字符上限时直接处理截断包，不再按普通返回值解包。
-
-## 收尾、隔天与出错恢复
-
-MCP 连接与业务 Session 不同：每个 CLI 进程会关闭自己的连接，**不会立即关闭业务标签**。同任务下一个进程继续显式带同一 sessionId。业务调用结束后空闲约 30 分钟，运行中的扩展会触发该会话清理；不要把传输连接结束当成清理完成的保证。直驱记录按最近活动保留 200 条，较旧的进行中会话暂不清理，调用结束后再检查上限。
-
-任务完成只需 `qz cancel "$SID"`：结束会话并清理标签，不要再 close_tab。close_tab 仅用于会话进行中关闭单个标签；结束后执行工具返回 DRIVE_SESSION_ENDED，新任务重新 create。要保留打开的标签，用 full MCP 的 qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false})，full 地址由 qz mcp --profile full 获取。不要用全局 qz stop 收尾。
-
-清理默认关闭本会话 open_tab 创建的标签；用户原有或已交还用户的标签不会自动关闭。用户主动激活标签会交还，自动化停止，标签保留。扩展重启后恢复空闲清理期限，过期会话清理其创建的标签；显式保留或交还用户的标签不动。隔天视为新任务：qz connect，然后重新 create，不复用旧别名。
-
-错误只修一处再试，保留 code 和原句：
-
-- 未连接：qz connect，不循环重试、不配置模型。
-- DRIVE_SESSION_REQUIRED：先 create，携带 ID。DRIVE_SESSION_NOT_FOUND：检查 ID/浏览器；新任务重新 create。
-- DRIVE_SESSION_ENDED：会话已结束，无需补关标签；新任务重新 create。
-- DRIVE_SESSION_OCCUPIED：此 ID 是普通任务，改用 create 得到新 ID。
-- DRIVE_SESSION_BUSY：已有调用在飞；桥接最多自动重试一次，仍忙就等当前批次结束。
-- DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS：name 与 calls 二选一；每项 id/name、对象 args；一批最多 10 项。
-- DRIVE_TAB_REF_REQUIRED：补本会话的显式 tabRef。BATCH_TAB_REFERENCE_ERROR：检查 alias、open 在 read 前、同一 session。no_alias 仅在已经传入别名但本会话没有该别名时出现。
-- SESSION_TAB_UNOWNED：使用本会话页面，或先 open_tab。
-- UNKNOWN_TOOL：先 `qz tools --session "$SID"`，按名查询或加载对应 Skill。
-- DRIVE_BATCH_TIMEOUT：检查已执行结果再调整批次预算/拆步。OPERATION_ABORTED：先看页面是否已经变化。
-- 登录墙/验证：停下来，请用户在这个浏览器登录，再重试。
-
-不能直驱：ask_llm、manage_sessions、manage_settings、manage_guardrails、manage_skill_settings、manage_goal、example_echo、qingzhou_call、create_skill、update_skill、delete_skill、manage_skill、edit_skill_resource、import_skill_from_page_zip、import_git_skill_repository、install_skill_to_git、import_page_zip、import_git_repository、manage_bookmarks、wait_for_user、ask_user、send_message，以及任何 mcp_ 开头的工具。DRIVE_TOOL_FORBIDDEN 在脚本 tools.* 中同样有效。
-
-侧栏对直驱会话只查看。不要通过脚本绕过黑名单。不要用 curl/wget 获取页面正文；bash 只处理本机文件。不要安装另一份名叫 qz-drive 的技能。不要配置轻舟模型。
-<!-- qz-drive-guide:end -->
-
 <!-- qz-drive-guide:en -->
-不要配置轻舟模型
+Do not configure a qz model.
 
 The external agent plans the work and drives the connected browser. Do not start a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
 
@@ -236,13 +43,13 @@ Add --user-data-dir for a custom data directory. Compare qz browsers --json befo
 
 For connection failures inspect the address in status. connect --port selects a port only before service startup; a running service keeps its address. The user must still confirm pairing. For incompatible upgrades, finish current tasks, qz stop, update/reload every extension, then qz connect. stop disconnects all browsers; it is **not task cleanup**.
 
-qz skill and MCP qingzhou_guide return this guide. Read once on a new connection, not every turn. --lang zh-CN|en chooses the language; otherwise use QZ_GUIDE_LANG/LANG. qz mcp prints the MCP URL. The default catalog contains qingzhou_guide, qingzhou_create_drive_session, qingzhou_execute_tool, qingzhou_list_tools, qingzhou_get_tool and qingzhou_bridge_status. qz mcp --profile full prints the task/diagnostic catalog URL.
+qz skill returns this guide. Read once when starting a task, not every turn.
 
 ## One task uses one session
 
-Run `qz session create --title "Inspect example page"` first; a readable title is required, and omitting it exits 2. stdout prints `sessionId <id>`. With --json, read result.sessionId. On MCP call qingzhou_create_drive_session({title:"Inspect example page"}) and read sessionId. Each create makes a new session without starting a model.
+Run `qz session create --title "Inspect example page"` first; a readable title is required, and omitting it exits 2. stdout prints `sessionId <id>`. With --json, read result.sessionId. Each create makes a new session without starting a model.
 
-Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID; MCP tool execution passes the same sessionId. qingzhou_list_tools / qingzhou_get_tool may omit it for the base catalog. To inspect a loaded Skill tool by name, pass sessionId to qingzhou_get_tool. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
+Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
 
 ### Copyable golden path (Bash/Zsh)
 
@@ -275,11 +82,11 @@ One tab belongs to one session at a time; a later claimant fails without interru
 
 ## Discover tools and use their parameters
 
-`qz tools --session "$SID"`, qingzhou_list_tools({}) (or with sessionId), and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
+`qz tools --session "$SID"` and tools.$list() in a script return compact signatures, not full JSON Schema. The default tier is:
 
 open_tab, navigate, list_tabs, close_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
 
-Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until` or qingzhou_get_tool({sessionId,name:"wait_until"}). These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
+Guide-tier tools remain callable by name: `qz tools --session "$SID" wait_until`. These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
 
 - open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
 - read_article({tabRef,target?,limit:6000}): read body text; use source:"target" for an element source, and continue with nextOffset. Do not substitute an accessibility tree for document text.
@@ -312,11 +119,11 @@ JSON
 
 ## Page scripts and three timeout budgets
 
-Direct-drive run_script passes tabRef and runs in that tab. The script runs in the tab named by tabRef. Orchestrate with calls or separate execute_tool requests; do not nest another run_script string.
+Direct-drive run_script passes tabRef and runs in that tab. The script runs in the tab named by tabRef. Orchestrate with calls or separate `qz exec --session ID` requests; do not nest another run_script string.
 
 `qz script --session "$SID" --tab page page.js` reads a local file. Page code is a single `async () => { ... }` function expression: no IIFE, main(), or return outside a function. Start with a comment naming the page, action and purpose. Scripts can access document/window, input/args, tools/tool and trace/log. tabRef is a call argument, not an injected script variable; nested page tool calls explicitly pass an alias too. Page execution does not provide Node.js, fs, process or require.
 
-The equivalent MCP call is qingzhou_execute_tool({sessionId,name:"run_script",args:{tabRef:"page",timeout:30,code:"async () => { return document.title; }"}}). CLI script has no mutatesPage option. For page changes use exec with mutatesPage:true:
+CLI script has no mutatesPage option. For page changes use exec with mutatesPage:true:
 
 ```sh
 qz exec --session "$SID" <<'JSON'
@@ -330,7 +137,7 @@ All three budgets are seconds:
 
 1. args.timeout is required and limits script execution. <=0 means no script deadline; >0 is its maximum duration. CLI script defaults to 120; its --timeout sets this deadline and accepts only >0 and <=3600.
 2. limits.timeoutSeconds limits the entire calls batch's execution, not client waiting. Expiry yields DRIVE_BATCH_TIMEOUT without a rollback guarantee.
-3. CLI exec --timeout / MCP timeoutSeconds sets request waiting, default 180. The CLI and bridge both wait at least the longest script timeout in that request plus 60, preserving a longer client setting. Script timeout<=0 uses a request upper bound of 86400. Neither args.timeout nor limits.timeoutSeconds is rewritten. Allow enough total request time for several serial scripts; the external agent's shell/MCP deadline must also be longer.
+3. CLI exec --timeout sets request waiting, default 180. It waits at least the longest script timeout in that request plus 60, preserving a longer client setting. Script timeout<=0 uses a request upper bound of 86400. Neither args.timeout nor limits.timeoutSeconds is rewritten. Allow enough total request time for several serial scripts; the external agent's shell deadline must also be longer.
 
 Do not hide a request timeout with sleep. On BRIDGE_REQUEST_TIMEOUT inspect the call and page before resending. For load-more work, process a few pages per step, return count/cursor, and stop on no growth. Script execution can still time out; inspect completed work before continuing.
 
@@ -350,23 +157,22 @@ qz exec --session "$SID" '{"name":"qingzhou_documents__document_read_chunk","arg
 
 Follow read_chunk's next value only as needed. fileId/docModelId belong to this session. For PDF resources packaged in another Skill, load_skill_resource({name,path}) returns docModelId directly; read chunks without fetching/parsing again. Keep the qingzhou_documents__ prefix.
 
-## Results by interface
+## CLI results
 
-Examples omit metadata such as clientId/runId. MCP means the decoded JSON from a text content block.
+Examples omit metadata such as clientId/runId.
 
-| Interface | Success: script returns 7 | Tool failure (script syntax) | Thrown/transport failure |
+| Command | Success: script returns 7 | Tool failure (script syntax) | Thrown/transport failure |
 | --- | --- | --- | --- |
 | qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_EVALUATION_FAILED","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 | qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
-| MCP execute_tool | `{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}` | `{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}` | MCP isError:true, text `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}`; connection failures may have no tool response |
 
-script stdout is the returned value. exec script values are at result.result.result; MCP at result.result. Ordinary tool data, such as open_tab, is at exec result.result or MCP result. Batches are at result.results or results respectively. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and at most five trace rows. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
+script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and at most five trace rows. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
 
 ## Finish, reconnect and recover
 
-MCP connections and business Sessions are different. Each CLI process closes its connection, **not immediately its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; transport disconnection is not proof that cleanup completed. Keep the 200 most recently active drive records; older sessions are protected while work is in flight, then the limit is checked again.
+A CLI process exiting **does not immediately close its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; process exit is not proof that cleanup completed. Keep the 200 most recently active drive records; older sessions are protected while work is in flight, then the limit is checked again.
 
-Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. To retain opened tabs, use full MCP qingzhou_stop_session({sessionId:SID,keepTabs:true,cascade:false}); obtain the full URL with qz mcp --profile full. Do not use global qz stop for task cleanup.
+Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. Do not use global qz stop for task cleanup.
 
 Cleanup closes tabs this session opened with open_tab. Pre-existing user tabs and tabs handed back to the user never close automatically. User activation hands a tab back, stops automation, and preserves the tab. Extension restarts restore the idle cleanup deadline; expired sessions close their created tabs, preserving explicitly kept or handed-back user tabs. The next day is a new task: qz connect, then create again, without reusing old aliases.
 

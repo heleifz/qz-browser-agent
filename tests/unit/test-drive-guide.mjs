@@ -8,7 +8,7 @@ import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeou
 
 const CHARS_PER_TOKEN = 23156 / 5700;
 
-test("the packed drive guide is the only discoverable skill, localized and bounded", () => {
+test("the packed drive guide is the only discoverable skill, English-only and bounded", () => {
   const source = readFileSync(new URL("../../skills/qz-browser-agent/SKILL.md", import.meta.url), "utf8");
   const mirror = readFileSync(new URL("../../services/mcp-bridge/src/qz-drive-SKILL.md", import.meta.url), "utf8");
   assert.equal(mirror, source);
@@ -17,42 +17,57 @@ test("the packed drive guide is the only discoverable skill, localized and bound
     .map(entry => entry.name);
   assert.deepEqual(skillDirs, ["qz-browser-agent"]);
   resetDriveGuideCache();
-  const zh = driveGuide({ explicit: "zh-CN", env: {} });
-  const en = driveGuide({ explicit: "en", env: {} });
-  assert.match(zh, /不要配置轻舟模型/);
-  assert.match(en, /不要配置轻舟模型/);
-  assert.match(zh, /https:\/\/example\.com/);
-  assert.match(en, /https:\/\/example\.com/);
-  assert.match(zh, /get_ax_tree/);
-  assert.match(zh, /references\/create-task\.md/);
-  assert.match(en, /references\/create-task\.md/);
-  assert.match(zh, /npx skills add alibaba\/qz-browser-agent -g/);
-  assert.match(en, /npx skills add alibaba\/qz-browser-agent -g/);
-  assert.match(zh, /侧栏对直驱会话只查看。不要通过脚本绕过黑名单。/);
-  assert.match(en, /The side panel for a drive session is view-only\. Do not route around the blacklist from a script\./);
-  assert.doesNotMatch(zh, /page\.click|selectOption/);
-  assert.doesNotMatch(en, /page\.click|selectOption/);
-  assert.doesNotMatch(zh, /npx skills add[^\n]*qz-drive/);
-  assert.doesNotMatch(en, /npx skills add[^\n]*qz-drive/);
+  const guide = driveGuide();
+  for (const options of [
+    { explicit: "en", env: {} }, { explicit: "zh-CN", env: {} },
+    { env: { QZ_GUIDE_LANG: "zh-CN", LANG: "zh_CN.UTF-8" } },
+  ]) assert.equal(driveGuide(options), guide, "the CLI guide is the same English reference for every locale");
+  assert.doesNotMatch(source, /[\u3400-\u9fff]|qz-drive-guide:zh-CN/);
+  assert.match(guide, /Do not (?:configure|start) a qz model/i);
+  assert.match(guide, /https:\/\/example\.com/);
+  assert.match(guide, /get_ax_tree/);
+  assert.match(guide, /references\/create-task\.md/);
+  assert.match(guide, /npx skills add alibaba\/qz-browser-agent -g/);
+  assert.match(guide, /The side panel for a drive session is view-only\. Do not route around the blacklist from a script\./);
+  assert.doesNotMatch(guide, /page\.click|selectOption|npx skills add[^\n]*qz-drive/);
   assert.doesNotMatch(source, /^name: qz-drive$/m);
-  assert.doesNotMatch(source, /省略 tabRef|omit tabRef/i);
-  assert.doesNotMatch(source, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
-  assert.doesNotMatch(source, /返回的 id|a returned id/i);
-  assert.doesNotMatch(source, /\binner\b/i);
-  assert.doesNotMatch(source, /tabId/);
-  assert.match(zh, /直驱结果用 tabRef 标识页面/);
-  assert.match(en, /Direct-drive results name the page with tabRef/);
-  assert.match(zh, /直驱的 run_script 在该页执行，并带 tabRef/);
-  assert.match(zh, /直驱脚本只在 tabRef 所指的标签页里运行/);
-  assert.match(en, /Direct-drive run_script passes tabRef and runs in that tab/);
-  assert.match(en, /The script runs in the tab named by tabRef/);
-  assert.doesNotMatch(source, /target:"page"|target page|第一次调用创建会话|The first call creates a session/);
-  assert.match(zh, /qz session create/);
-  assert.match(en, /qz session create/);
-  assert.match(zh, /scope 只能是 viewport 或 full/);
-  assert.match(en, /scope is only viewport or full/);
-  assert.match(zh, /漏掉 `--session` 退出码 2/);
-  assert.match(en, /Missing `--session` exits 2 and does not create or reuse a session/);
+  assert.doesNotMatch(guide, /omit tabRef|a returned id|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/i);
+  assert.match(guide, /Direct-drive results name the page with tabRef/);
+  assert.match(guide, /Direct-drive run_script passes tabRef and runs in that tab/);
+  assert.match(guide, /The script runs in the tab named by tabRef/);
+  assert.doesNotMatch(guide, /target:"page"|target page|The first call creates a session/);
+  assert.match(guide, /qz session create --title/);
+  assert.match(guide, /scope is only viewport or full/);
+  assert.match(guide, /Missing `--session` exits 2 and does not create or reuse a session/);
+  assert.match(guide, /stdout prints `sessionId <id>`/);
+  assert.match(guide, /A missing tabRef is DRIVE_TAB_REF_REQUIRED/);
+  assert.match(guide, /only when an alias was passed/);
+  assert.match(guide, /One task uses one session/);
+  assert.match(guide, /tabAlias` is recommended for readability and is not required/);
+  assert.match(guide, /Page tools always pass `tabRef`/);
+  assert.match(guide, /The CLI does not resume the previous session/);
+  const tokens = guide.length / CHARS_PER_TOKEN;
+  assert.ok(guide.length > 1000 && tokens <= 5000, `${guide.length} chars is ${tokens} estimated tokens`);
+});
+
+test("the English CLI guide documents sessions, recovery, dependent PDF calls and result layers", () => {
+  const guide = driveGuide();
+  assert.doesNotMatch(guide, /qz (?:script|exec|tools)(?! --session)/);
+  for (const value of ["npx --yes qz-browser-agent@latest", "CREATED=$(qz session create --title \"Inspect example page\" --json)",
+    "DRIVE_SESSION_NOT_FOUND", "already_complete", "timedOut", "mutatesPage:true",
+    "result.result.result", "qz cancel", "limits.timeoutSeconds",
+    "qingzhou_documents__document_fetch", "qingzhou_documents__document_parse", "qingzhou_documents__document_read_chunk"]) {
+    assert.ok(guide.includes(value), value);
+  }
+  assert.doesNotMatch(guide, /\bMCP\b|\bqz mcp\b|\bqingzhou_(?:guide|create_drive_session|execute_tool|list_tools|get_tool|bridge_status|stop_session)\b|keepTabs:true/i,
+    "the direct-drive Skill teaches the CLI interface");
+  assert.match(guide, /load_skill.*qingzhou-documents/);
+  assert.match(guide, /regex/);
+  assert.match(guide, /not a transaction/);
+  assert.doesNotMatch(guide, /waits for the URL to change|When the client disconnects/);
+});
+
+test("MCP server instructions retain their explicit session and page-reference contract", () => {
   const bridgeTools = readFileSync(new URL("../../services/mcp-bridge/src/tools.mjs", import.meta.url), "utf8");
   const instructions = bridgeTools.slice(bridgeTools.indexOf("const DRIVE_INSTRUCTIONS"), bridgeTools.indexOf("export function mcpCatalogProfile"));
   assert.doesNotMatch(instructions, /不传 sessionId 时，这条 MCP 连接共用一个新 id|Without sessionId, this MCP connection keeps one new id/);
@@ -65,43 +80,6 @@ test("the packed drive guide is the only discoverable skill, localized and bound
   assert.match(instructions, /does not create a session/);
   assert.match(instructions, /open_tab \/ list_tabs 返回的 tabRef/);
   assert.match(instructions, /the tabRef returned by open_tab or list_tabs/);
-  assert.match(zh, /一个任务一个会话/);
-  assert.match(zh, /先 `qz session create --title "查看示例页"`，标题必填，缺失退出码 2；stdout 打出 `sessionId <id>`/);
-  assert.doesNotMatch(zh, /第一次调用创建会话/);
-  assert.match(zh, /缺失时返回 DRIVE_TAB_REF_REQUIRED/);
-  assert.match(zh, /no_alias 仅在已经传入别名/);
-  assert.match(en, /stdout prints `sessionId <id>`/);
-  assert.doesNotMatch(en, /The first call creates a session/);
-  assert.match(en, /A missing tabRef is DRIVE_TAB_REF_REQUIRED/);
-  assert.match(en, /only when an alias was passed/);
-  assert.match(zh, /tabAlias 建议写上，便于阅读，但不是必填/);
-  assert.match(zh, /页面工具（包括 act_on_screen）始终传 `tabRef`/);
-  assert.match(en, /One task uses one session/);
-  assert.match(en, /tabAlias` is recommended for readability and is not required/);
-  assert.match(en, /Page tools always pass `tabRef`/);
-  assert.match(en, /The CLI does not resume the previous session/);
-  for (const text of [zh, en]) {
-    const tokens = text.length / CHARS_PER_TOKEN;
-    assert.ok(text.length > 1000 && tokens <= 5000, `${text.length} chars is ${tokens} estimated tokens`);
-  }
-});
-
-test("drive guide documents executable sessions, recovery, dependent PDF calls and result layers", () => {
-  const source = readFileSync(new URL("../../skills/qz-browser-agent/SKILL.md", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /qz (?:script|exec|tools)(?! --session)/);
-  for (const lang of ["zh-CN", "en"]) {
-    const guide = driveGuide({ explicit: lang, env: {} });
-    for (const value of ["npx --yes qz-browser-agent@latest", "CREATED=$(qz session create --title \"Inspect example page\" --json)",
-      "DRIVE_SESSION_NOT_FOUND", "qingzhou_create_drive_session", "already_complete", "timedOut", "mutatesPage:true",
-      "result.result.result", "keepTabs:true", "qingzhou_stop_session", "limits.timeoutSeconds",
-      "qingzhou_documents__document_fetch", "qingzhou_documents__document_parse", "qingzhou_documents__document_read_chunk"]) {
-      assert.ok(guide.includes(value), `${lang}: ${value}`);
-    }
-    assert.match(guide, /load_skill.*qingzhou-documents/);
-    assert.match(guide, /regex|正则/);
-    assert.match(guide, /not a transaction|不是事务/);
-    assert.doesNotMatch(guide, /等地址变化|waits for the URL to change|When the client disconnects|客户端断开，或空闲/);
-  }
 });
 
 test("qz script runs on the page for one tabRef and prints only the returned value", () => {

@@ -55,7 +55,7 @@ test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catal
   assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
   const names = driveToolCatalog().map(tool => tool.name);
   assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
-  assert.match(driveToolCatalog()[0].description, /先读说明书/);
+  assert.match(driveToolCatalog()[0].description, /qz CLI.*optional reference/);
   const execute = driveToolCatalog().find(tool => tool.name === "qingzhou_execute_tool");
   assert.doesNotMatch(execute.description, /先读说明书/);
   assert.match(execute.description, /在已连接的浏览器里执行现有工具/);

@@ -492,12 +492,12 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     const parsed = parseCommand(argv);
     mode = outputMode(parsed.options, stdout, env);
     if (parsed.command === "help") {
-      const help = renderHelp(parsed.helpTopic, { ...mode, lang: parsed.options.lang, env });
+      const help = renderHelp(parsed.helpTopic, mode);
       stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { help } })}\n` : help);
       return 0;
     }
     if (parsed.command === "skill") {
-      const guide = driveGuide({ explicit: parsed.options.lang, env });
+      const guide = driveGuide();
       stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { guide } })}\n` : guide);
       return 0;
     }

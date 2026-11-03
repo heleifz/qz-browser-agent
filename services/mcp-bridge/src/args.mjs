@@ -76,7 +76,7 @@ export function parseCommand(argv) {
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
   if (options.profile !== undefined && !["full", "drive"].includes(options.profile)) invalid("--profile must be full or drive.");
-  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a language, such as zh-CN or en.");
+  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a value.");
   if (options.client !== undefined) {
     options["client-id"] = options.client;
     delete options.client;

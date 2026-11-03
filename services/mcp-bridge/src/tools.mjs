@@ -252,14 +252,14 @@ export function resultToContent(result) {
 const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
-  description: "先读说明书。返回直驱说明书全文。一条新连接调用一次。Read the guide first. Call this once on a new connection before other tools.",
+  description: "Return the English qz CLI direct-drive guide as an optional reference.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
-    properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
+    properties: {},
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。先带可读 title 调用 qingzhou_create_drive_session，或 qz session create --title TITLE，之后每次执行工具都带返回的 sessionId；list_tools/get_tool 查询基础目录无需会话。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Call qingzhou_guide once. Create a session with a readable title using qingzhou_create_drive_session or qz session create --title TITLE, then pass that sessionId on every tool execution. list_tools/get_tool can inspect the base catalog without a session. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
+const DRIVE_INSTRUCTIONS = "先带可读 title 调用 qingzhou_create_drive_session，或 qz session create --title TITLE，之后每次执行工具都带返回的 sessionId；list_tools/get_tool 查询基础目录无需会话。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Create a session with a readable title using qingzhou_create_drive_session or qz session create --title TITLE, then pass that sessionId on every tool execution. list_tools/get_tool can inspect the base catalog without a session. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
 
 export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   const explicit = String(profile || "").trim().toLowerCase();
@@ -287,7 +287,7 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
       const progressToken = request.params._meta?.progressToken;
       const input = { ...(request.params.arguments || {}) };
       if (request.params.name === "qingzhou_guide") {
-        return { content: [{ type: "text", text: driveGuide({ explicit: input.lang }) }] };
+        return { content: [{ type: "text", text: driveGuide() }] };
       }
       if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
         if (!String(input.scope || "").trim()) input.scope = "session";
