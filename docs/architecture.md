@@ -229,8 +229,9 @@ reads and writes. Use the [Data](../src/sdk/shared/data.ts) and
 
 ## Pages, debugger connections, and scripts
 
-[Session tabs](../src/background/session/tabs.ts) owns the working tab and claimed tabs. Page tools
-resolve targets through it. Parent and child Sessions have separate runs and tabs; creating,
+[Session tabs](../src/background/session/tabs.ts) owns claimed tabs and validates explicit page references.
+Active tabs describe user visibility; recent-page state supports presentation, never default targeting.
+Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation

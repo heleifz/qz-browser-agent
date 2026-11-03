@@ -10,7 +10,7 @@ import { defaultShell, optionTerminator, shellArgument, shellQuote } from "../..
 import { parseCommand } from "../../services/mcp-bridge/src/args.mjs";
 
 const taskId = "2d02892a-1111-4222-8333-0123456789ab";
-const task = { id: taskId, title: "杭州网页研究与城市景点整理", status: "running", running: true };
+const task = { sessionId: taskId, title: "杭州网页研究与城市景点整理", status: "running", running: true };
 const parsed = action => ({ command: "tasks", action });
 const snapshot = {
   sessionId: taskId, session: task, status: "completed", runtime: { status: "completed" },
@@ -61,7 +61,7 @@ test("help recommends direct creation, optional titles, waiting, and contextual 
 });
 
 test("task lists preserve complete IDs and real statuses at wide and narrow widths", () => {
-  const sessions = [task, { ...task, id: "second", title: "Compare 👩🏽‍💻 laptops", status: "waiting_user", running: true }];
+  const sessions = [task, { ...task, sessionId: "second", title: "Compare 👩🏽‍💻 laptops", status: "waiting_user", running: true }];
   for (const width of [40, 80]) {
     const result = renderResult(parsed("list"), { sessions }, { width });
     assert.match(result, /Tasks · 2/);
@@ -330,7 +330,7 @@ test("errors retain actionable details and respect plain and color output", () =
 });
 
 test("suggested shell commands use placeholders for untrusted identifiers", () => {
-  const output = renderResult(parsed("create"), { session: { id: "task; touch /tmp/bad", title: "Task" }, started: true });
+  const output = renderResult(parsed("create"), { session: { sessionId: "task; touch /tmp/bad", title: "Task" }, started: true });
   assert.match(output, /Task  task; touch \/tmp\/bad/);
   assert.match(output, /qz show TASK_ID/);
   assert.match(output, /qz cancel TASK_ID/);

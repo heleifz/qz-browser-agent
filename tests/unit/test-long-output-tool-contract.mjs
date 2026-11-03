@@ -38,7 +38,7 @@ assertPropertyOrder(runScript.parameters, ["timeout", "tabRef", "args", "mutates
 assert.match(runScript.parameters.properties.code.description, /最后填写 code/, "run_script code description should tell the model to fill code last");
 
 const readArticle = resolveToolDefinition("read_article");
-assert.deepEqual(readArticle.parameters.required, ["limit"], "read_article should require an explicit context budget limit");
+assert.deepEqual(readArticle.parameters.required, ["limit", "tabRef"], "read_article should require an explicit context budget limit");
 assertPropertyOrder(readArticle.parameters, ["tabRef", "source", "target", "offset", "limit"], "read_article should keep a small flat parameter surface");
 assert.doesNotMatch(Object.keys(readArticle.parameters.properties).join(" "), /includeHtml|includeLinks/, "read_article should not expose HTML or link-list toggles");
 assert.match(readArticle.description, /target\/linkCount/, "read_article should return one target and link count for follow-up tools");

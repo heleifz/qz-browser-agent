@@ -58,14 +58,13 @@ function assertTargetInfrastructure() {
 }
 
 function assertElementToolSchemasUseTarget() {
-  assertToolUsesTargetOnly("inspect_element", { required: /\brequired: \["target"\]/ });
-  assertToolUsesTargetOnly("act_on_element", { required: /\brequired: \["target", "action"\]/ });
+  assertToolUsesTargetOnly("inspect_element", { required: ["target", "tabRef"] });
+  assertToolUsesTargetOnly("act_on_element", { required: ["target", "action", "tabRef"] });
   assertToolUsesTargetOnly("scroll_page");
   assertToolUsesTargetOnly("screenshot");
   assertToolUsesTargetOnly("read_image");
-  const readImage = toolBlock("read_image");
   assert.match(resolveToolDefinition("read_image").description, /url 或 target 二选一/, "read_image should state its simple alternative-input contract");
-  assert.doesNotMatch(readImage, /\banyOf\b/, "read_image should expose a provider-safe object schema");
+  assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }], "image URLs are page-free, while element reads require an explicit page and target");
 }
 
 function assertToolUsesTargetOnly(name, { required = null } = {}) {
@@ -73,7 +72,7 @@ function assertToolUsesTargetOnly(name, { required = null } = {}) {
   assert.match(block, /\btarget: \{ type: "string"/, `${name} should expose target`);
   assert.doesNotMatch(block, /\buid: \{ type: "string"/, `${name} should not expose uid as a tool argument`);
   assert.doesNotMatch(block, /\bselector: \{ type: "string"/, `${name} should not expose selector as an element argument`);
-  if (required) assert.match(block, required, `${name} should enforce target requirements`);
+  if (required) assert.deepEqual(resolveToolDefinition(name).parameters.required, required, `${name} should enforce target and page requirements`);
 }
 
 function assertSelectorFieldsAcceptTargetSyntax() {
@@ -91,7 +90,7 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /target 不是自然语言/, "system prompt should warn against natural-language targets");
   assert.match(prompt, /\[css: <css_selector>\] 是用户通过鼠标点选页面元素生成的显式页面区域引用/, "system prompt should recognize user-picked page regions");
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
-  assert.match(prompt, /不要只凭 selector 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
+  assert.match(prompt, /不要只凭 target 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
   assert.doesNotMatch(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt must not teach unprefixed CSS compatibility");
   assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
   assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
@@ -109,7 +108,7 @@ async function assertPromptAndUiUseTarget() {
       async *chatStream(messages) {
         requests.push(structuredClone(messages));
         yield { type: "done", message: requests.length === 1
-          ? { role: "assistant", content: null, tool_calls: [{ id: "ax-call", type: "function", function: { name: "get_ax_tree", arguments: "{}" } }] }
+          ? { role: "assistant", content: null, tool_calls: [{ id: "ax-call", type: "function", function: { name: "get_ax_tree", arguments: '{"tabRef":5}' } }] }
           : { role: "assistant", content: "done" } };
       },
       async chat() { throw new Error("Unexpected fallback"); },
@@ -151,7 +150,7 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /其下还有 N 行未展开/, "get_ax_tree should explain that N is unexpanded lines");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /t5493|保底|不计入 limit/, "get_ax_tree should not spell out uid format or budget exceptions");
   assert.match(resolveToolDefinition("get_ax_tree").description, /canvases\(name\/rect\/inViewport\/bitmapSize\)/, "get_ax_tree should advertise large Canvas discovery");
-  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
+  assert.match(resolveToolDefinition("get_ax_tree").description, /视觉操作坐标必须以 screenshot\(\{tabRef,actionable:true\}\) 返回的原始图片为准/, "get_ax_tree should distinguish CSS canvas hints from screen coordinates");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /actions\(target\/selector/, "get_ax_tree should not advertise selectors in actions");
   assert.doesNotMatch(resolveToolDefinition("get_ax_tree").description, /同时返回 actions/, "get_ax_tree should not advertise a separate actions list");
   assert.match(block, /target: \{ type: "string"/, "get_ax_tree should expose a root parameter for subtree expansion");
@@ -193,7 +192,7 @@ function assertAxTreeCompactContract() {
   assertOrderedSubstrings(VISUAL_SCREEN_ACTION_RULE, [
     'get_ax_tree({tabRef})',
     "act_on_element",
-    "screenshot({actionable:true})",
+    "screenshot({tabRef,actionable:true})",
     "act_on_screen",
   ], "system prompt should expose one ordered visual-action route");
   assert.doesNotMatch(tools, /context_store/, "get_ax_tree should not depend on context_store");
@@ -286,7 +285,7 @@ function assertScreenActionContract() {
   assert.match(resolveToolDefinition("act_on_screen").description, /传 x\/y 时按截图坐标定位，type 先点击再输入/, "screen typing should make its optional focus coordinates explicit");
   assert.match(resolveToolDefinition("act_on_screen").description, /replace=true 且 text 为空表示清空/, "screen typing should expose clear as an intentional replace operation");
   assert.doesNotMatch(toolsRuntime, /type:\s*\["x",\s*"y"\]/, "the public preflight must not reintroduce coordinates for focused typing");
-  assert.match(actionBlock, /required: \["action", "returnScreenshot"\]/, "screen actions should require the screenshot-return decision");
+  assert.deepEqual(resolveToolDefinition("act_on_screen").parameters.required, ["action", "returnScreenshot", "tabRef"], "screen actions require their page, action, and screenshot-return decision");
   assert.doesNotMatch(screenActionRuntime, /POST_ACTION_CAPTURE_SETTLE_MS|settleAfterDispatchedInput|waitForInputAcknowledgements/, "screen actions must not hide fixed sleeps or an unbounded acknowledgement barrier");
   assert.match(resolveToolDefinition("act_on_screen").parameters.properties.returnScreenshot.description, /需要观察本次操作结果时传 true；已验证且无需逐步观察的连续操作传 false/, "screen action screenshot choice should be stated as an Agent decision");
   assert.match(resolveToolDefinition("act_on_screen").description, /viewportChange 客观记录浏览器视口变化/, "screen actions should expose observable viewport facts");
@@ -294,7 +293,7 @@ function assertScreenActionContract() {
   assert.doesNotMatch(actionBlock, /\banyOf\b/, "screen actions should keep a provider-safe flat schema");
   assert.doesNotMatch(actionBlock, /\btarget: \{ type: "string"/, "screen actions should not depend on DOM targets");
   assert.doesNotMatch(actionBlock, /screenshotId: \{ type: "string"/, "screen actions should not make the model copy fragile frame ids");
-  assert.match(resolveToolDefinition("act_on_screen").description, /坐标依据必须来自该页最近一次 screenshot\(actionable=true\) 或 act_on_screen\(returnScreenshot:true\)/, "screen actions should use the selected page's coordinate basis");
+  assert.match(resolveToolDefinition("act_on_screen").description, /坐标依据必须来自该页最近一次 screenshot\(\{tabRef,actionable:true\}\) 或 act_on_screen\(\{tabRef,action,returnScreenshot:true\}\)/, "screen actions should use the selected page's coordinate basis");
   assert.match(actionBlock, /screenActions\.act\(args, signal, context\)/, "the public tool should delegate to one screen-action runtime");
   assert.match(screenActionRuntime, /const coordinateIndependent = \["press", "type", "scroll"\]\.includes\(action\) && validated\.x == null/, "actions without screenshot coordinates should be independent of input screenshots");
   assert.match(screenActionRuntime, /const snapshot = coordinateIndependent \? null : resolve\(tabId, context\)/, "only coordinate-dependent screen actions should resolve the latest scoped frame");
@@ -318,7 +317,7 @@ function assertScreenActionContract() {
   assert.match(screenActionRuntime, /for \(let index = 0; index < prepared\.repeat; index \+= 1\)/, "scroll repeat should stay one bounded atomic screen action");
   assert.match(screenActionRuntime, /viewportChange: describeViewportChange\(current, actionStateAfter\)/, "screen actions should report observed viewport movement on every result path");
   assert.match(actionBlock, /"long_press"[^\n]*requireToolFields\("act_on_screen", args, \["x",\s*"y"\]/, "long press should require coordinates before reaching the runtime");
-  assert.match(prompt, /没有可靠 target.*screenshot\(\{actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
+  assert.match(prompt, /没有可靠 target.*screenshot\(\{tabRef,actionable:true\}\)/, "the prompt should reserve screen actions for visual-only controls");
   assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");

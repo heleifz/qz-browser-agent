@@ -9,18 +9,8 @@ type TabsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "getToolRuntimeDependencies" | "makeSessionTabTargetError"
   | "assertTabAllowed" | "assertUrlAllowed" | "assertPageUrlAccessible" | "enablePreNavigationNetworkWatch"
   | "withDebugger" | "getDebuggerConnectionId" | "setDebuggerRetention" | "releaseDebugger"> & { defaultNetworkLimit?: number };
-interface UsableTab extends TabReference {
-  pageMode?: string; contentAccess?: string;
-  usable?: boolean; ownedByCurrentTask?: boolean; securityGuardrailBlocked?: boolean;
-  unusableCode?: string; unusableReason?: string; claimRequired?: boolean;
-  isWorkingTab?: boolean; readOnlyUsable?: boolean; ownerSessionId?: string;
-}
 import { formatTab, isPageTab, pageReferenceForResult, bindCreatedTabResult } from "#sdk/shared/browser";
-import {
-  annotateSecurityGuardrailTab,
-  annotateSecurityGuardrailTabs,
-  getSecurityGuardrails,
-} from "#sdk/shared/security";
+import { getSecurityGuardrails } from "#sdk/shared/security";
 
 /** Registers tab discovery, ownership, creation, and navigation tools. */
 export function registerTabsNavigationTools({
@@ -48,127 +38,36 @@ registerTool({
     properties: { scope: { type: "string", enum: ["owned", "all"], description: toolT("listTabsScope") } },
   } as const; },
   execute: async ({ scope = "owned" }, _signal, context = {}) => {
-    const tabs = await chrome.tabs.query({});
-    const guardrails = await getSecurityGuardrails();
-    const formatted = tabs.filter(isPageTab).map((tab) => ({ ...formatTab(tab), ...modes.describePage(Number(tab.id)) }));
-    const annotated = annotateSecurityGuardrailTabs(formatted, guardrails);
-    const available = await annotateTabsWithSessionUsability(annotated, context);
-    const aliases = getToolRuntimeDependencies(context).sessions?.getTabAliases?.(String(context.sessionId || '')) || {};
-    const direct = context.externalDrive === true;
-    const selected = direct && scope !== 'all' ? available.filter(tab => tab.ownedByCurrentTask) : available;
-    const described = selected.map(tab => describeToolTab(tab, direct,
-      Object.keys(aliases).find(alias => aliases[alias] === Number(tab.id))));
-    return direct ? { tabs: described, count: described.length, foreign: available.filter(tab => !tab.ownedByCurrentTask).length } : described;
+    const tabs = (await chrome.tabs.query({})).filter(isPageTab).map(tab => formatTab(tab));
+    const sessions = getToolRuntimeDependencies(context).sessions;
+    const sessionId = String(context.sessionId || "").trim();
+    const aliases = sessions?.getTabAliases?.(sessionId) || {};
+    const described: PageObservation[] = [];
+    let foreign = 0;
+    for (const tab of tabs) {
+      const ownership = sessionId ? await sessions?.resolveTargetTab?.({
+        sessionId, tabId: Number(tab.id), source: "tool:list_tabs", checkOnly: true,
+      }) : null;
+      const owned = ownership?.ok === true && ownership.ownedByCurrentTask !== false;
+      if (!owned) foreign += 1;
+      if (scope === "all" || owned) described.push(describeToolTab(tab,
+        Object.keys(aliases).find(alias => aliases[alias] === Number(tab.id))));
+    }
+    return { tabs: described, count: described.length, foreign };
   },
 });
 
-function describeToolTab(tab: UsableTab, direct = false, requested?: string | number): PageObservation & { isWorkingTab?: boolean; claimRequired?: boolean } {
-  if (direct) return { tabRef: pageReferenceForResult(requested, Number(tab.id)), title: String(tab.title || ''), url: String(tab.url || ''), active: Boolean(tab.active) };
+function describeToolTab(tab: TabReference, requested?: string | number): PageObservation {
   return {
-    tabRef: pageReferenceForResult(requested, Number(tab.id)), title: String(tab.title || ''), url: String(tab.url || ''), active: Boolean(tab.active), pinned: Boolean(tab.pinned),
-    pageMode: tab.pageMode === 'mobile' ? 'mobile' : 'desktop',
-    usable: tab.usable, readOnlyUsable: tab.readOnlyUsable, ownedByCurrentTask: tab.ownedByCurrentTask,
-    ownerSessionId: tab.ownerSessionId, contentAccess: tab.contentAccess,
-    securityGuardrailBlocked: tab.securityGuardrailBlocked, unusableCode: tab.unusableCode, unusableReason: tab.unusableReason,
-    isWorkingTab: tab.isWorkingTab, claimRequired: tab.claimRequired,
+    tabRef: pageReferenceForResult(requested, Number(tab.id)),
+    title: String(tab.title || ""), url: String(tab.url || ""), active: Boolean(tab.active),
   };
 }
-
-async function annotateTabsWithSessionUsability(tabs: UsableTab[] = [], context: ToolContext = {}) {
-  const sessionId = typeof context?.sessionId === "string" ? context.sessionId.trim() : "";
-  const workingTabId = Number(context?.workingTabId);
-  const out = [];
-  for (const tab of tabs) {
-    const item: UsableTab = {
-      ...tab,
-      usable: false,
-      ownedByCurrentTask: false,
-    };
-    if (!sessionId) {
-      item.unusableCode = "SESSION_TAB_TARGET_REQUIRED";
-      item.unusableReason = "missing_session";
-      out.push(item);
-      continue;
-    }
-    const tabId = Number(tab?.id);
-    if (!Number.isFinite(tabId) || tabId <= 0) {
-      item.unusableCode = "SESSION_TAB_UNAVAILABLE";
-      item.unusableReason = "invalid_tab";
-      out.push(item);
-      continue;
-    }
-    const resolved = await getToolRuntimeDependencies(context).sessions?.resolveTargetTab?.({
-      sessionId,
-      tabId,
-      source: "tool:list_tabs:usability",
-      checkOnly: true,
-    });
-    if (resolved?.ok) {
-      item.ownedByCurrentTask = resolved.ownedByCurrentTask !== false;
-      item.claimRequired = resolved.claimRequired === true;
-      item.isWorkingTab = Number.isFinite(workingTabId) && workingTabId > 0 && tabId === workingTabId;
-      if (item.securityGuardrailBlocked) {
-        item.usable = false;
-        item.readOnlyUsable = false;
-        item.unusableCode = "SECURITY_GUARDRAIL_BLOCKED";
-        item.unusableReason = "security_guardrail_blocked";
-      } else {
-        item.usable = true;
-        item.readOnlyUsable = true;
-      }
-    } else {
-      item.unusableCode = resolved?.code || "SESSION_TAB_UNOWNED";
-      item.unusableReason = resolved?.reason || "not_owned_by_current_task";
-      if (resolved?.ownerSessionId) item.ownerSessionId = resolved.ownerSessionId;
-      item.readOnlyUsable = !item.securityGuardrailBlocked && resolved?.code === "SESSION_TAB_FOREIGN";
-    }
-    out.push(item);
-  }
-  return out;
-}
-
-registerTool({
-  name: "get_working_tab",
-  get description() { return toolT("getWorkingTabDescription"); },
-  get parameters() { return { type: "object", properties: {} } as const; },
-  execute: async (_args, _signal, context = {}) => {
-    const tabId = Number(context?.workingTabId);
-    if (!Number.isFinite(tabId) || tabId <= 0) {
-      return { hasWorkingTab: false };
-    }
-    const resolved = await getToolRuntimeDependencies(context).sessions?.resolveTargetTab?.({
-      sessionId: context?.sessionId || "",
-      tabId,
-      source: "tool:get_working_tab",
-    });
-    if (!resolved?.ok) {
-      throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
-        toolName: "get_working_tab",
-        sessionId: context?.sessionId || "",
-        tabId,
-        ownerSessionId: resolved?.ownerSessionId || "",
-        reason: resolved?.reason || "",
-        message: resolved?.error || "",
-      });
-    }
-    const tab = resolved.tab || await chrome.tabs.get(tabId);
-    if (!isPageTab(tab)) {
-      throw new ToolExecutionError("NO_WORKING_WEB_TAB", t("currentSessionWorkingTabIsNotAWebPage"), {
-        tab: formatTab(tab),
-      });
-    }
-    return {
-      hasWorkingTab: true,
-      ...describeToolTab(annotateSecurityGuardrailTab(formatTab(tab), await getSecurityGuardrails())),
-      ...modes.describePage(tabId),
-    };
-  },
-});
 
 registerTool({
   name: "open_tab",
   behavior: { parallelOpen: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
-  workingTab: "created",
+  tabLifecycle: "created",
   model: { pageContext: false, omitArguments: ["active"] },
   effects: () => [{ type: "context.siteChanged" }],
   get description() { return toolT("openTabDescription"); },
@@ -202,25 +101,23 @@ registerTool({
         context = await context.prepareCreatedTab({ ...tab, url, pendingUrl: url });
       }
       const tabId = await claimCreatedTab(tab, url, context, signal);
-      const direct = context.externalDrive === true;
       claimed = true;
-      context.reportPartial?.(bindCreatedTabResult({ tabRef: pageReferenceForResult(tabAlias, tabId), url, title: String(tab.title || ""), active: Boolean(tab.active), ...(!direct ? modes.describePage(tabId) : {}) }, tabId), "navigation commit");
+      context.reportPartial?.(bindCreatedTabResult({ ...describeToolTab({ ...tab, id: tabId, url }, tabAlias) }, tabId), "navigation commit");
       // Preserve the host's private runtime bindings when allowing setup on the new blank tab.
       if (mode === "mobile") await modes.change(tabId, mode, signal,
         Object.assign(Object.create(context), { allowPreNavigationBlank: true }), false);
-      const networkWatch = watchNetwork ? await enablePreNavigationNetworkWatch(tabId, {
+      if (watchNetwork) await enablePreNavigationNetworkWatch(tabId, {
         resetNetwork,
         networkMaxRecords,
         allowPreNavigationBlank: true,
-      }, context) : null;
+      }, context);
       if (signal?.aborted) {
         throw new ToolExecutionError("OPERATION_ABORTED", watchNetwork
           ? "Operation aborted before navigating tab" : "Operation aborted while opening tab", { url, tabRef: tabAlias });
       }
       await navigateTab(tabId, url, assertTabAllowedBySecurityGuardrails, signal);
       const opened = await chrome.tabs.get(tabId);
-      const page = { tabRef: pageReferenceForResult(tabAlias, tabId), url: opened.url || url, title: String(opened.title || ""), active: Boolean(opened.active) };
-      return bindCreatedTabResult(direct ? page : { ...page, ...modes.describePage(tabId), ...(watchNetwork ? { networkWatch } : {}) }, tabId);
+      return bindCreatedTabResult(describeToolTab({ ...opened, url: opened.url || url }, tabAlias), tabId);
     } catch (error) {
       const timedOut = signal?.aborted && signal.reason?.code === "TOOL_TIMEOUT";
       if (tab?.id != null && !(claimed && timedOut)) {
@@ -235,13 +132,13 @@ registerTool({
   name: "set_page_mode",
   page: "owned",
   behavior: { mayUnloadPage: true },
-  model: { pageContext: "working" },
+  model: { pageContext: "explicit" },
   effects: (_args, result: { changed: boolean }) => result.changed ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("setPageModeDescription"); },
   get parameters() { return { type: "object", properties: {
     mode: { type: "string", enum: ["desktop", "mobile"], description: toolT("pageMode") },
     tabRef: { type: ["integer", "string"], description: toolT("navigateTabId") },
-  }, required: ["mode"] } as const; },
+  }, required: ["mode", "tabRef"] } as const; },
   timeout: { defaultMs: 20000, maxMs: 120000 },
   execute: async ({ mode, tabId }, signal, context = {}) => {
     if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "set_page_mode" });
@@ -263,7 +160,7 @@ async function resolveNewTabWindowId(context: ToolContext = {}) {
 registerTool({
   name: "close_tab",
   behavior: { mayUnloadPage: true },
-  workingTab: "clear",
+  tabLifecycle: "clear",
   model: { pageContext: "explicit" },
   effects: () => [{ type: "context.siteChanged" }],
   get description() { return toolT("closeTabDescription"); },
@@ -283,41 +180,6 @@ registerTool({
 });
 
 registerTool({
-  name: "use_tab",
-  workingTab: "claim",
-  effects: () => [{ type: "context.siteChanged" }],
-  get description() { return toolT("useTabDescription"); },
-  get parameters() { return {
-    type: "object",
-    properties: {
-      tabRef: { type: ["integer", "string"], description: toolT("closeTabTabId") },
-    },
-    required: ["tabRef"],
-  } as const; },
-  page: "owned",
-  timeout: { defaultMs: 20000, maxMs: 120000 },
-  execute: async ({ tabId }) => {
-    const before = await chrome.tabs.get(tabId);
-    await assertTabAllowedBySecurityGuardrails(tabId, { tool: "use_tab", source: "tab" });
-    if (!isPageTab(before)) {
-      throw new ToolExecutionError("NOT_WEB_TAB", t("tabIsNotAWebPageAndCannotBe", { tabId: String(tabId) }), {
-        tab: formatTab(before),
-      });
-    }
-
-    return {
-      active: Boolean(before.active),
-      visibleChanged: false,
-      title: before.title || "",
-      url: before.url || "",
-      focusedWindow: false,
-      note: toolT("workingTabSelected"),
-      ...modes.describePage(tabId),
-    };
-  },
-});
-
-registerTool({
   name: "navigate",
   behavior: { parallelTab: true, mayUnloadPage: true, timeoutResult: { kind: "navigation", pending: "navigation commit" } },
   model: { pageUrlArgument: "url" },
@@ -332,7 +194,7 @@ registerTool({
       resetNetwork: { type: "boolean", description: toolT("openTabResetNetwork") },
       networkMaxRecords: { type: "number", description: toolT("openTabNetworkMaxRecords") },
     },
-    required: ["url"],
+    required: ["url", "tabRef"],
   } as const; },
   page: "tab",
   timeout: { defaultMs: 20000, maxMs: 120000 },

@@ -154,7 +154,8 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   result = bindInputClient(name, result, clientId);
   if (observe) {
-    const sessionId = name === "qingzhou_create_session" ? result?.session?.id || result?.sessionId : args.sessionId;
+    const sessionId = name === "qingzhou_create_session"
+      ? result?.session?.sessionId || result?.sessionId || result?.session?.id : args.sessionId;
     if (name === "qingzhou_create_session") {
       if (!sessionId) throw new BridgeError("INVALID_RESPONSE", "The task was created without an ID. Use qingzhou_list_sessions to find it before retrying.");
       await onTaskUpdate?.({ type: "created", sessionId, clientId, ...result });

@@ -109,7 +109,7 @@ test('screen actions require an explicit drive page and use its alias rather tha
   registry.forCapability('drive-test')({ ...resolveToolDefinition('act_on_screen'), execute: args => ({ operated: args.tabId }) });
   const context = { ...f.context, toolRegistrySnapshot: registry.snapshot() };
   const args = { tabRef: 'pdf', action: 'press', key: 'Escape', returnScreenshot: false };
-  assert.equal(prepareDriveToolCall('act_on_screen', {}).error.code, 'DRIVE_TAB_REF_REQUIRED');
+  assert.equal(prepareDriveToolCall('act_on_screen', {}).error.code, 'TAB_REF_REQUIRED');
   assert.equal((await f.runtime.execute('act_on_screen', args, undefined, context)).operated, 8);
   const batch = await runDriveCalls([{ id: 'screen', name: 'act_on_screen', args }], {
     aliases: f.aliases, context, signal: new AbortController().signal,

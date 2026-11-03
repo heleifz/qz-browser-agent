@@ -130,7 +130,7 @@ assert.equal(schemaContexts.at(-1).runProfile.id, "frozen-profile");
 assert.equal(schemaContexts.at(-1).skillToolRegistrySnapshot, skillToolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).toolRegistrySnapshot, toolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).language, "en");
-assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(schemaContexts.at(-1).loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 
 const tooDeep = await bridge.handleToolCall({
@@ -231,11 +231,11 @@ assert.equal(stored.artifacts[0].table, "rows");
 assert.equal(appended.length, 1);
 assert.equal(appended[0].artifacts[0].totalRows, 2);
 assert.deepEqual(refreshes[0], ["s1", { action: "artifacts", touchSession: true, delay: 400 }]);
-assert.equal(executions.at(-1).context.workingTabId, 31);
+assert.equal(executions.at(-1).context.workingTabId, undefined);
 assert.equal(executions.at(-1).context.senderTabId, 9);
 assert.equal(executions.at(-1).context.runScriptToolDepth, 2);
 assert.equal(executions.at(-1).context.skillToolRegistrySnapshot, skillToolRegistrySnapshot);
-assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(executions.at(-1).context.loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 assert.equal(nestedResults.at(-1).toolName, "store_alias");
 assert.equal(nestedResults.at(-1).runId, "run-current");
@@ -385,7 +385,7 @@ const missingPage = await driveBridge.handleToolCall({
   runId: "opaque-direct-run",
 });
 assert.equal(missingPage.ok, false);
-assert.equal(missingPage.code, "DRIVE_TAB_REF_REQUIRED");
+assert.equal(missingPage.code, "TAB_REF_REQUIRED");
 assert.deepEqual(driveExecutions, []);
 assert.equal((await driveBridge.handleToolCall({
   toolName: "read_dom",

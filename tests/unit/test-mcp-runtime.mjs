@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { localizeToolFailureError } from "../../src/shared/tools/tool-error-localization.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 
 const executed = [];
@@ -34,7 +36,7 @@ const skillItems = [{
   ],
 }];
 
-const metadata = { s1: { id: "s1", title: "Session" } };
+const metadata = { s1: { id: "s1", title: "Session", parentSessionId: "0", titleSource: "manual" } };
 const sessions = {
   normalizeId: value => String(value || "").trim(),
   requireId(value, operation) {
@@ -175,6 +177,8 @@ assert.equal((await runtime.cancelUserWait({ sessionId: "s1", waitId: "missing" 
 runtimeState.waitId = "wait-2";
 runtimeState.waitForm = { fields: [{ id: "choice", type: "text" }] };
 const pending = await runtime.getSnapshot("s1");
+assert.deepEqual(pending.session, { sessionId: "s1", title: "Session", status: runtimeState.status });
+assert.equal(metadata.s1.titleSource, "manual", "public Session observations leave stored metadata unchanged");
 assert.deepEqual(pending.input, runtime.getUserInput({ sessionId: "s1" }));
 assert.equal(pending.input.responseTemplate.answers.choice, "<text>");
 assert.deepEqual((await runtime.getState("s1")).input, pending.input);
@@ -348,6 +352,25 @@ assert.deepEqual(persistedDriveSessions, ["drive-s"]);
   }
 }
 
+{
+  const previous = toolRuntime.execute;
+  try {
+    for (const language of ["en", "zh-CN"]) for (const name of ["Error", "AbortError", "TimeoutError"]) {
+      const failure = Object.assign(new Error("Injected lost touchEnd response"), { name });
+      toolRuntime.execute = async () => { throw withLanguage(language, () => localizeToolFailureError(failure)); };
+      driveNotes.length = 0;
+      await assert.rejects(runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" } }), error => error === failure);
+      assert.equal(driveNotes.length, 1, "each failure produces exactly one card");
+      assert.deepEqual(driveNotes[0].result, {
+        code: name === "Error" ? "TOOL_EXECUTION_FAILED" : "OPERATION_ABORTED",
+        message: "Injected lost touchEnd response",
+      }, "MCP keeps the concrete Error message and recognizes cancellation by native name");
+    }
+  } finally {
+    toolRuntime.execute = previous;
+  }
+}
+
 const listedSkills = await runtime.listSkills({ scope: "global", query: "guide" });
 assert.equal(listedSkills.count, 1);
 assert.equal(listedSkills.items[0].content, undefined);
@@ -401,6 +424,7 @@ const snapshot = await runtime.getSnapshot("s1", {
   includeTrace: true,
   traceLimit: 5,
 });
+assert.deepEqual(snapshot.session, { sessionId: "s1", title: "Session", status: snapshot.status });
 assert.equal(snapshot.artifacts.total, 0);
 assert.deepEqual(snapshot.usage, {
   inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,

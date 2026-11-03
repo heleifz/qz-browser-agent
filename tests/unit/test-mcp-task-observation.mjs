@@ -32,7 +32,7 @@ test("create streams task text and actionable input, remains waiting, and binds 
       assert.equal(Object.hasOwn(params, "stream"), false);
       assert.equal(Object.hasOwn(params, "wait"), false);
       await pairBrowser(state, { id: "browser-b" });
-      return { session: { id: "task" } };
+      return { session: { sessionId: "task", title: "Plan a trip", status: "pending" } };
     }
     assert.equal(method, "get_session_snapshot");
     assert.equal(params.compact, false);
@@ -187,7 +187,7 @@ test("timeout recovery watches the original task through later runs without repl
 test("all MCP observation entry points follow queued work across run boundaries", async t => {
   for (const [name, args, accepted] of [
     ["qingzhou_watch_task", { sessionId: "task", stream: true }, null],
-    ["qingzhou_create_session", { firstMessage: "Start", wait: true }, { session: { id: "task" } }],
+    ["qingzhou_create_session", { firstMessage: "Start", wait: true }, { session: { sessionId: "task", title: "Start", status: "pending" } }],
     ["qingzhou_send_message", { sessionId: "task", text: "Follow up", stream: true }, { accepted: true, clientMessageId: "target" }],
     ["qingzhou_respond_to_user_input", { sessionId: "task", waitId: "old-wait", action: "approve", wait: true }, { accepted: true, runId: "run" }],
   ]) {

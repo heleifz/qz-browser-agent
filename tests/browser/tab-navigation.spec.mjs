@@ -60,12 +60,13 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     // Exercise explicit reader installation before document_idle, independently of manifest injection.
     manifest.content_scripts = manifest.content_scripts.filter(entry => !entry.js?.some(path => path.endsWith('/content-script.js')));
     await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
-      import { createToolRuntime } from "./background/tools/runtime.js";
+      import { createToolRuntime, getToolResultPageContext } from "./background/tools/runtime.js";
       import { Agent } from "./background/agent/agent.js";
       import { createSessionTabs } from "./background/session/tabs.js";
       globalThis.navigationTestAgent = Agent;
       globalThis.navigationTestSessionTabs = createSessionTabs;
-      globalThis.navigationTestRuntime = createToolRuntime;`);
+      globalThis.navigationTestRuntime = createToolRuntime;
+      globalThis.navigationTestResultContext = getToolResultPageContext;`);
     manifest.background.service_worker = "navigation-test-worker.js";
     await writeFile(manifestPath, JSON.stringify(manifest));
     browser = await chromium.launchPersistentContext(join(directory, "profile"), {
@@ -97,7 +98,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       globalThis.navigationRuntime = runtime;
       globalThis.navigationCall = async (name, args) => {
         globalThis.navigationAbort = new AbortController();
-        try { return await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" }); }
+        try {
+          const result = await runtime.execute(name, args, navigationAbort.signal, { sessionId: "navigation", runId: "run" });
+          globalThis.navigationPresentation = navigationTestResultContext(result);
+          return result;
+        }
         catch (error) { return { code: error.code, error: error.message, details: error.details }; }
       };
     });
@@ -114,7 +119,8 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         tc('first-read', 'read_article', { tabRef: 'first', limit: 1200 }),
       ], new AbortController().signal);
       return { before, state: navigationState, ends: events.filter(event => event.type === 'tool_execution_end'),
-        ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id) };
+        ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
+        outputs: messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content)) };
     }, { origin, watchNetwork });
     expect(first.before.ownedTabIds).toEqual([]);
     expect(first.before.workingTabId).toBeNull();
@@ -123,13 +129,14 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     ]);
     expect(first.ends.every(event => !event.isError)).toBe(true);
     expect(first.ids).toEqual(['first-open', 'first-read']);
+    expect(Object.keys(first.outputs[0]).sort()).toEqual(['active', 'tabRef', 'title', 'url']);
     const firstTabId = await worker.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, `${origin}/first-open`);
     expect(firstTabId).toEqual(expect.any(Number));
     expect(first.state.ownedTabIds).toEqual([firstTabId]);
     expect(first.state.workingTabId).toBe(firstTabId);
     if (watchNetwork) {
-      expect(first.ends[0].result.networkWatch.startedBeforeNavigation).toBe(true);
-      expect(JSON.stringify(await call('network_recent', { tabRef: 'first' }))).toContain('/first-open');
+      const watched = await call('network_recent', { tabRef: 'first' });
+      expect(watched.results.some(record => record.url.endsWith('/first-open')), 'the initial request proves monitoring started before navigation').toBe(true);
     }
     expect(first.state.tabAliases).toEqual({ first: firstTabId });
     expect((await call('read_article', { tabRef: 'first', limit: 1200 })).text).toContain('Document /first-open');
@@ -162,12 +169,15 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     await slow("navigate", { tabRef: tabId, url: `${origin}/next` }, "/next");
     expect((await article()).text).toContain("Document /next generation 2");
     const redirected = await slow("navigate", { tabRef: tabId, url: `${origin}/redirect` }, "/landed");
-    expect(redirected._pageUrl).toBe(`http://localhost:${server.address().port}/landed`);
+    expect(redirected).not.toHaveProperty('_pageUrl');
+    const redirectedUrl = await worker.evaluate(() => navigationPresentation._pageUrl);
+    expect(redirectedUrl).toBe(`http://localhost:${server.address().port}/landed`);
     expect((await article()).text).toContain("Document /landed generation 1");
     for (let i = 0; i < 2; i++) {
-      const fragment = await call("navigate", { tabRef: tabId, url: `${redirected._pageUrl}#section`, timeout: 2 });
+      const fragment = await call("navigate", { tabRef: tabId, url: `${redirectedUrl}#section`, timeout: 2 });
       expect(fragment, `fragment attempt ${i}: ${JSON.stringify(fragment)}`).not.toHaveProperty("error");
-      expect(fragment._pageUrl).toBe(`${redirected._pageUrl}#section`);
+      expect(fragment).not.toHaveProperty('_pageUrl');
+      expect(await worker.evaluate(() => navigationPresentation._pageUrl)).toBe(`${redirectedUrl}#section`);
     }
 
     // A held image must not prevent the navigation tool from returning at commit.

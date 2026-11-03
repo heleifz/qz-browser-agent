@@ -6,10 +6,10 @@ const target = "uid:t8.000001.3";
 for (const language of ["zh-CN", "en"]) withLanguage(language, () => {
   const en = language === "en";
   const capability = toolT("readViewportRoot", { target });
-  assert.equal(capability, en ? `read with target="${target}" or scope:"full"` : `用 target="${target}" 或 scope:"full" 读取`);
+  assert.equal(capability, en ? `read with the same tabRef and target="${target}" or scope:"full"` : `保持 tabRef，用 target="${target}" 或 scope:"full" 读取`);
   for (const [key, expected] of [
-    ["aboveViewport", en ? '↑ 7 AX nodes omitted above viewport; read with scope:"full" or a tree target passed as target' : '↑ 视口上方省略 7 个 AX 节点；用 scope:"full" 或树中 target 传给 target 读取'],
-    ["belowViewport", en ? '↓ 7 AX nodes omitted below viewport; read with scope:"full" or a tree target passed as target' : '↓ 视口下方省略 7 个 AX 节点；用 scope:"full" 或树中 target 传给 target 读取'],
+    ["aboveViewport", en ? '↑ 7 AX nodes omitted above viewport; read with the same tabRef and scope:"full" or a tree target passed as target' : '↑ 视口上方省略 7 个 AX 节点；保持 tabRef，用 scope:"full" 或树中 target 传给 target 读取'],
+    ["belowViewport", en ? '↓ 7 AX nodes omitted below viewport; read with the same tabRef and scope:"full" or a tree target passed as target' : '↓ 视口下方省略 7 个 AX 节点；保持 tabRef，用 scope:"full" 或树中 target 传给 target 读取'],
     ["foldedAbove", en ? `↑ This block omits 7 content items above; ${capability}` : `↑ 此区块上方省略 7 项内容；${capability}`],
     ["foldedBelow", en ? `↓ This block omits 7 content items below; ${capability}` : `↓ 此区块下方省略 7 项内容；${capability}`],
     ["unmeasuredViewport", en ? "Geometry unavailable: 7 nodes." : "几何信息缺失：7 个节点。"],

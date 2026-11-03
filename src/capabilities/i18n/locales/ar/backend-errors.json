@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "يلزم tabRef",
+  "backend.toolError.TAB_REF_REQUIRED.message": "تتطلب أدوات الصفحة تحديد tabRef صراحةً.",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "افتح صفحة باستخدام open_tab أو ابحث عنها باستخدام list_tabs، ثم مرّر tabRef الخاص بها.",
   "backend.toolError.UNSUPPORTED_URL.label": "بروتوكول الصفحة غير مدعوم",
   "backend.toolError.UNSUPPORTED_URL.message": "استخدم عنوان صفحة HTTP أو HTTPS أو file:// مع إذن الوصول.",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "يلزم إذن الوصول إلى الملفات",

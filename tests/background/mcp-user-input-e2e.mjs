@@ -111,7 +111,7 @@ async function waitForSnapshotInput(sessionId, kind, previousWaitId = "") {
 
 async function createWaiting(marker, kind) {
   const created = await command(["create", marker, "--title", marker]);
-  const sessionId = created.session.id;
+  const sessionId = created.session.sessionId;
   return { sessionId, input: await waitForInput(sessionId, kind) };
 }
 
@@ -210,7 +210,7 @@ async function formsRoundTrip() {
     assert.equal(watching.settled, false, `create --stream exited before its form: ${watching.stdout}`);
     return watching.created;
   }, "Streaming CLI did not report its created task");
-  const sessionId = watching.created.session.id;
+  const sessionId = watching.created.session.sessionId;
   const input = await waitForInput(sessionId, "form");
   await assertStillWaiting(watching, "create --stream must remain alive at the first form");
   assert.equal(watching.stdout, "", "JSON stdout stays empty while a task is waiting");
@@ -296,7 +296,7 @@ async function selfContainedRecovery() {
   const marker = "QZ_INPUT_SELF_CONTAINED";
   const firstCall = toolCalls.length;
   const created = await command(["create", marker, "--title", marker]);
-  const sessionId = created.session.id;
+  const sessionId = created.session.sessionId;
   const input = await waitForSnapshotInput(sessionId, "form");
   assert.deepEqual(input.form.fields.map(field => field.id), ["project_scope", "run_mode", "output_formats"]);
   assert.deepEqual(input.form.fields[2].defaultValue, ["csv"], "ask_user normalizes multi-choice defaults into defaultValue");
@@ -336,7 +336,7 @@ async function submitAndWait() {
     assert.equal(watching.settled, false, `create --wait exited before its form: ${watching.stdout}`);
     return watching.created;
   }, "Waiting CLI did not report its created task");
-  const sessionId = watching.created.session.id;
+  const sessionId = watching.created.session.sessionId;
   await waitForInput(sessionId, "form");
   await assertStillWaiting(watching, "create --wait must remain alive until an independent answer");
   const submitted = await command(["submit", sessionId, "-", "--wait"], { readStdin: async () => JSON.stringify({ note: "Completed through stdin" }) });
@@ -460,7 +460,7 @@ async function queuedFollowupStream() {
     assert.equal(creating.settled, false, `Creation ended before its form: ${creating.stdout}`);
     return creating.created;
   }, "Creation did not report its task");
-  const sessionId = creating.created.session.id;
+  const sessionId = creating.created.session.sessionId;
   const input = await waitForInput(sessionId, "form");
   const watching = startCliProcess(["watch", sessionId, "--client", clientId, "--stream", "--json"]);
   const sending = startCliProcess(["send", sessionId, followup, "--client", clientId, "--stream", "--json"]);
@@ -652,7 +652,7 @@ async function timeoutRecovery() {
   const marker = "QZ_INPUT_TIMEOUT";
   const followup = "QZ_INPUT_TIMEOUT_FOLLOWUP";
   const created = await command(["create", marker]);
-  const sessionId = created.session.id;
+  const sessionId = created.session.sessionId;
   await waitUntil(() => fixture.count(marker) === 1, "The timeout task did not reach its provider gate");
   const watching = startCliProcess(["watch", sessionId, "--client", clientId, "--json"], { timeout: 2 });
   const timedOut = await watching.envelope();

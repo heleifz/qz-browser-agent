@@ -47,7 +47,9 @@ test('list_tabs constructs public discovery rows and preserves active independen
     assert.equal((Array.isArray(value)?value:value.tabs)[0].active,true);
   }
   const native=await definitions.get('list_tabs').execute({},undefined,{...context,runId:'drive-native-looking-run',externalDrive:false});
-  assert.equal(native[0].isWorkingTab,true,'the native Agent keeps its default-page behavior');
+  assert.deepEqual(native, rows, 'native and drive expose the same Tab observations');
+  assert.equal(definitions.has('use_tab'), false);
+  assert.equal(definitions.has('get_working_tab'), false);
   for(const name of ['use_tab','get_working_tab','run_skill_script']) {
     assert.equal(isDriveToolDefault(name),false);assert.equal(isDriveToolForbidden(name),true);
     assert.throws(()=>driveToolSignature({name}),{code:'DRIVE_TOOL_FORBIDDEN'});
@@ -111,7 +113,7 @@ test('real runtime and batch admission failures share ToolError and retain publi
     getBatchTabPolicy: (name, args) => runtime.getBatchTabPolicy(name, args, context),
     execute: (name, args, signal, current) => runtime.execute(name, args, signal, current),
   });
-  assert.deepEqual(batch.results.map(row => row.result.code), ['DRIVE_TAB_REF_REQUIRED', 'BATCH_TAB_REFERENCE_ERROR', 'STALE_ELEMENT_UID']);
+  assert.deepEqual(batch.results.map(row => row.result.code), ['TAB_REF_REQUIRED', 'BATCH_TAB_REFERENCE_ERROR', 'STALE_ELEMENT_UID']);
   for (const row of batch.results) {
     assert.equal(row.isError, true);
     assert.ok(Object.keys(row.result).every(key => ['code', 'message', 'hint', 'details'].includes(key)), JSON.stringify(row.result));
@@ -121,6 +123,92 @@ test('real runtime and batch admission failures share ToolError and retain publi
   }
   assert.equal(batch.results[1].result.details.tabRef, 'missing');
   assert.equal(batch.results[2].result.details.target, 'uid:t5.000000.999');
+  for (const externalDrive of [false, true]) for (const tabRef of [null, '  ']) {
+    await assert.rejects(runtime.execute('read_dom', { tabRef }, undefined, { ...context, externalDrive }), error => {
+      assert.equal(error.code, 'BATCH_TAB_REFERENCE_ERROR');
+      assert.equal(error.details.reason, 'invalid_reference');
+      assertPublic(error.details);
+      return true;
+    });
+  }
+  const invalidBatch = await runDriveCalls([null, '  '].map((tabRef, index) => ({ id: `invalid-${index}`, name: 'read_dom', args: { tabRef } })), {
+    aliases: { page: 5 }, context, signal: new AbortController().signal,
+    getBatchTabPolicy: (name, args) => runtime.getBatchTabPolicy(name, args, context),
+    execute: (name, args, signal, current) => runtime.execute(name, args, signal, current),
+  });
+  assert.equal(invalidBatch.results.length, 2);
+  assert.ok(invalidBatch.results.every(row => row.isError && row.result.code === 'BATCH_TAB_REFERENCE_ERROR'
+    && row.result.details.reason === 'invalid_reference'));
+
+});
+
+test('page tools require a caller reference in every mode despite visible, previous, owned, or UID context', async () => {
+  const { createToolRuntime } = await import('../../src/background/tools/runtime.js');
+  const { createToolRegistry } = await import('../../src/background/tools/registry.js');
+  const resolved = [], executed = [];
+  globalThis.chrome = { runtime: { getURL: path => path }, storage: { local: createMemoryStorage() },
+    tabs: { get: async id => ({ id, url: 'https://example.test/', title: 'Page', active: true }) } };
+  const registry = createToolRegistry();
+  registry.forCapability('explicit-reference')({ name: 'explicit_reference_probe', page: 'owned',
+    parameters: { type: 'object', properties: {
+      tabRef: { type: ['integer', 'string'] }, target: { type: 'string' },
+    }, required: ['tabRef'] },
+    execute: args => { executed.push(args); return { text: 'observed' }; },
+  });
+  const runtime = createToolRuntime({ sessions: {
+    isRunCurrent: () => true, getTabAliases: () => ({ page: 5 }),
+    resolveTargetTab: async input => { resolved.push(input); return { ok: true, tabId: input.tabId, ownedByCurrentTask: true }; },
+  } });
+  runtime.element.registerElementRef({ uid: 't5.000001.1', tabId: 5, sessionId: 'explicit-reference' });
+  for (const externalDrive of [false, true]) {
+    const context = { sessionId: 'explicit-reference', runId: externalDrive ? 'opaque-page-run' : 'drive-native-name', externalDrive,
+      toolRegistrySnapshot: registry.snapshot(), workingTabId: 5,
+      workingTab: { id: 5, url: 'https://previous.test/' }, activeTab: { id: 5 },
+      dynamicContext: { userVisibleTab: { id: 5, active: true }, tabs: [{ id: 5, ownedByCurrentTask: true }] },
+    };
+    assert.deepEqual(await runtime.execute('explicit_reference_probe', { tabRef: 'page' }, undefined, context), { text: 'observed' });
+    const count = resolved.length;
+    for (const args of [{}, { target: 'css:body' }, { target: 'uid:t5.000001.1' }]) {
+      await assert.rejects(runtime.execute('explicit_reference_probe', args, undefined, context), error => {
+        assert.equal(error.code, 'TAB_REF_REQUIRED');
+        assert.match(error.hint, /tabRef/);
+        assertPublic(error.details);
+        return true;
+      });
+    }
+    assert.equal(resolved.length, count, 'missing references fail before ownership or content work');
+  }
+  assert.equal(executed.length, 2);
+  assert.ok(executed.every(args => args.tabId === 5));
+});
+
+test('nested page tools require their own reference in native and drive execution', async () => {
+  globalThis.chrome = { runtime: { getURL: path => path }, storage: { local: createMemoryStorage() } };
+  const { createToolRuntime } = await import('../../src/background/tools/runtime.js');
+  let ownershipChecks = 0;
+  const runtime = createToolRuntime({ sessions: {
+    isRunCurrent: () => true, getTabAliases: () => ({ page: 5 }),
+    resolveTargetTab: async () => { ownershipChecks++; assert.fail('missing nested targets fail before page access'); },
+  } });
+  for (const externalDrive of [false, true]) {
+    const bridge = createRunScriptBridge({
+      supervisor: { isRunCurrent: () => true, hasAgent: () => true, getAbortSignal: () => new AbortController().signal },
+      getRuntime: () => ({ status: 'running', workingTabId: 5 }), isTerminalRuntimeForRun: () => false,
+      getRunToolContext: async () => ({ externalDrive, workingTabId: 5, dynamicContext: { userVisibleTab: { id: 5 } } }),
+      canManageSessions: async () => true, buildRunProfile: async () => ({}), toolRuntime: runtime, collectArtifacts: () => [],
+    });
+    const response = await bridge.handleToolCall({ sessionId: 'nested-ref', runId: 'opaque-nested-reference',
+      toolName: 'read_dom', args: {} }, { tab: { id: 5 } });
+    assert.equal(response.ok, false);
+    assert.equal(response.isError, true);
+    const result = response.result;
+    assert.equal(result.code, 'TAB_REF_REQUIRED');
+    assert.equal(typeof result.message, 'string');
+    assert.match(result.hint, /tabRef/, JSON.stringify({ externalDrive, response }));
+    assert.ok(Object.keys(result).every(key => ['code', 'message', 'hint', 'details'].includes(key)));
+    assertPublic(result);
+  }
+  assert.equal(ownershipChecks, 0);
 });
 
 test('large ToolErrors retain their native contract instead of becoming truncation results', async () => {
@@ -216,7 +304,7 @@ test('nested mode comes from the trusted parent, and a host-rebuilt drive profil
     const forbidden = await bridge.handleToolCall({ ...base, toolName: 'ask_llm', args: { prompt: 'no' } });
     assert.equal(forbidden.code, 'DRIVE_TOOL_FORBIDDEN');
     const missing = await bridge.handleToolCall({ ...base, toolName: 'read_dom', args: {} });
-    assert.equal(missing.code, 'DRIVE_TAB_REF_REQUIRED');
+    assert.equal(missing.code, 'TAB_REF_REQUIRED');
     const accepted = await bridge.handleToolCall({ ...base, toolName: 'read_dom', args: { tabRef: 'page' } });
     assert.equal(accepted.ok, true);
     assert.equal(observed.at(-1).context.externalDrive, true);

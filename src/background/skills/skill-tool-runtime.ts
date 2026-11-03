@@ -264,10 +264,10 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
   };
   if (tool.runtime === "host") return executeHostSkillScript(plugin, tool, scriptArgs, signal, context, executeBuiltinTool);
   const innerRuntime = tool.runtime === "inner";
-  const tabId = Number(inputArgs.tabId || context.workingTabId);
+  const tabId = Number(inputArgs.tabId);
   const runSkillScriptArgs = {
     ...(innerRuntime ? { target: "inner" } : {}),
-    ...(!innerRuntime && Number.isFinite(tabId) && tabId > 0 ? { tabId } : {}),
+    ...(!innerRuntime && Number.isFinite(tabId) && tabId > 0 ? { tabId, ...(context.requestedTabRef != null ? { tabRef: context.requestedTabRef } : {}) } : {}),
     skill: plugin.skillName,
     script: tool.script,
     args: scriptArgs,
@@ -815,7 +815,7 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
       ...properties,
       tabRef: normalizeSkillToolTabRefProperty(properties.tabRef || legacyTabId),
     };
-    if (next.required) next.required = uniqueRequired(next.required.map(field => field === "tabId" ? "tabRef" : field));
+    next.required = uniqueRequired([...(next.required || []).map(field => field === "tabId" ? "tabRef" : field), "tabRef"]);
   }
   return next;
 }
@@ -825,7 +825,7 @@ function isSkillScriptTool(tool: Partial<SkillTool> = {}) {
 }
 
 export function isSkillPageTool(tool: Partial<SkillTool> = {}) {
-  return (tool.runtime || "page") === "page" && tool.needsPage !== false;
+  return tool.needsPage === true || ((tool.runtime || "page") === "page" && tool.needsPage !== false);
 }
 
 function normalizeSkillToolTabRefProperty(property?: ToolParameter): ToolParameter {

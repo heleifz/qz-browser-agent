@@ -4,16 +4,6 @@ export interface PageObservation {
   title: string;
   url: string;
   active: boolean;
-  pinned?: boolean;
-  pageMode?: 'desktop' | 'mobile';
-  usable?: boolean;
-  readOnlyUsable?: boolean;
-  ownedByCurrentTask?: boolean;
-  ownerSessionId?: string;
-  contentAccess?: unknown;
-  securityGuardrailBlocked?: boolean;
-  unusableCode?: string;
-  unusableReason?: string;
 }
 
 const createdPages = new WeakMap<object, number>();

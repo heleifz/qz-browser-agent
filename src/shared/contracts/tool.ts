@@ -49,7 +49,7 @@ export type ToolEffect =
 /** Trusted model-facing projection; never accepted from a Skill manifest or result payload. */
 export interface ToolModelPolicy {
   noImages?: { description?: string; omitParameters?: readonly string[] };
-  pageContext?: false | "working" | "explicit";
+  pageContext?: false | "explicit";
   pageUrlArgument?: string;
   omitArguments?: readonly string[];
   preserveResult?: boolean;
@@ -76,7 +76,7 @@ export interface ToolBehavior {
   parallelTab?: boolean;
   /**
    * Arguments that may carry element uid references beyond the singular `target`/`selector`/`root`
-   * fields. A uid pins its registered tab: the runtime must not substitute the working tab for it,
+   * fields. A uid pins its registered tab: the explicit page reference must agree with it,
    * and the batch planner schedules the call on the uids' shared tab. Return non-uid targets too
    * so mixed calls remain serialized. A throwing extractor falls back to the singular fields.
    */
@@ -102,7 +102,7 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   behavior?: Readonly<ToolBehavior>;
   requires?: { browserPermission?: ToolBrowserPermission; images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[] };
   /** Trusted tab lifecycle role; ordinary result payloads cannot grant ownership. */
-  workingTab?: "created" | "clear" | "claim" | ((args: ToolArguments<S>) => "update" | "claim");
+  tabLifecycle?: "created" | "clear" | "claim" | ((args: ToolArguments<S>) => "update" | "claim");
   effects?(args: ToolArguments<S>, result: Result): readonly ToolEffect[];
   /** Pure boundary checks may preserve domain-specific errors before schema validation. */
   validateArgs?(args: Record<string, unknown>): undefined;

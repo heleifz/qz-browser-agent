@@ -39,7 +39,7 @@
     { "action": "assert", "expect": "navText", "equals": "2/3" },
     { "action": "assert", "expect": "activeText", "includes": "操作元素" },
     { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-slot", "includes": "元素引用已过期" },
-    { "action": "assert", "expect": "selectorText", "selector": ".tool-error-message", "includes": "元素 target 已过期或不存在" },
+    { "action": "assert", "expect": "selectorText", "selector": ".tool-error-message", "includes": "Element target is stale or unknown." },
     { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-slot", "includes": "uid:btn-save" },
     { "action": "click", "selector": ".tool-timeline-raw-btn:not(.hidden)", "label": "查看标准错误与恢复提示" },
     { "action": "assert", "expect": "selectorText", "selector": ".tool-timeline-raw-panel:not(.hidden)", "includes": "元素引用已过期" },

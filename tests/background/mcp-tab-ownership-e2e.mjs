@@ -104,7 +104,7 @@ async function cliMcpBrowserRoundTrip(environment, baseUrl) {
   assert.equal(created.title, "CLI local page");
   assert.equal(created.status, "idle", "creating a drive session must not invoke a model");
   const listed = await command("tasks");
-  assert.ok(listed.sessions.some(session => session.id === sessionId));
+  assert.ok(listed.sessions.some(session => session.sessionId === sessionId));
   const snapshot = await command("show", sessionId);
   assert.equal(snapshot.sessionId, sessionId);
   assert.equal(snapshot.session.title, "CLI local page");
@@ -249,9 +249,9 @@ async function cliModelTasks(environment, fixture) {
   })).result;
   assert.equal(created.length, 1, "the prompt creates exactly one task");
   assert.equal(stream.snapshot.status, "completed");
-  assert.equal(stream.snapshot.sessionId, stream.session.id);
+  assert.equal(stream.snapshot.sessionId, stream.session.sessionId);
   assert.equal(stream.snapshot.session.title, "Chosen CLI title", "an explicit CLI title survives task completion");
-  assert.equal(stream.snapshot.session.titleSource, "manual");
+  assert.deepEqual(Object.keys(stream.snapshot.session).sort(), ["sessionId", "status", "title"]);
   const deltas = updates.filter(update => update.type === "text");
   assert.ok(deltas.length >= 2, "CLI receives live partial snapshots before the final answer");
   assert.equal(deltas.map(update => update.text).join(""), "Streaming from the real extension.");
@@ -284,7 +284,7 @@ async function cliModelTasks(environment, fixture) {
   assert.ok(waitingUpdates.some(update => update.type === "status" && update.status === "waiting_user"));
   await new Promise(resolve => setTimeout(resolve, 1600));
   assert.equal(waitingSettled, false, "--stream keeps waiting for user input");
-  const stopped = (await runCli(["cancel", waitingTask.session.id, "--timeout", "30"], dependencies)).result;
+  const stopped = (await runCli(["cancel", waitingTask.session.sessionId, "--timeout", "30"], dependencies)).result;
   assert.equal(stopped.stopped, true, "the isolated human wait is cleaned up through the normal CLI");
   await waitingRun;
   if (waitingError) throw waitingError;

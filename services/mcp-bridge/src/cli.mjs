@@ -453,7 +453,7 @@ async function dispatchCommand(parsed, dependencies) {
     throw new QzError("TASK_NOT_FOUND", TASK_NOT_FOUND_MESSAGE, missingTaskDetails(id, clientId));
   }
   if (command === "tasks" && action === "create" && options.wait) {
-    const sessionId = result?.session?.id || result?.sessionId;
+    const sessionId = result?.session?.sessionId || result?.sessionId || result?.session?.id;
     if (!sessionId) throw new QzError("INVALID_RESPONSE", "The task was created without an ID. Run qz tasks to find it before retrying.");
     await dependencies.onTaskCreated?.(result);
     result = { ...result, snapshot: await observe(sessionId) };

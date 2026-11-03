@@ -61,12 +61,14 @@ commitSkillToolRegistryCandidate(prepareSkillToolRegistryFromSkills([{
   ],
 }]));
 
-const schemas = getActiveSkillToolSchemasSync({});
+const schemas = getActiveSkillToolSchemasSync({ language: "zh-CN" });
 const innerSchema = schemas.find(item => item.function.name === "runtime_example__inner_query");
 assert.ok(innerSchema);
 assert.equal(Object.hasOwn(innerSchema.function.parameters.properties, "tabId"), false);
-assert.match(innerSchema.function.description, /内部 Worker/);
-assert.match(innerSchema.function.description, /\$plugin\.config/);
+assert.match(innerSchema.function.description, /无需网页，可读取 Skill 设置并请求其允许的网络来源/);
+assert.doesNotMatch(innerSchema.function.description, /内部 Worker|\$plugin|runtime:/);
+const pageSchema = schemas.find(item => item.function.name === "runtime_example__page_check");
+assert.ok(pageSchema.function.parameters.required.includes("tabRef"), "page Skill tools require an explicit public page reference");
 
 const configCalls = [];
 const dispatches = [];
@@ -80,14 +82,14 @@ const skillSettings = {
 };
 const dispatch = async (name, args, signal, context) => {
   dispatches.push({ name, args, signal, context });
-  return { ok: true, hasResult: true, result: { runtime: args.target || "page" } };
+  return { ok: true, result: { executed: true } };
 };
 
 const innerResult = await executeSkillTool(
   "runtime_example__inner_query",
   { timeout: 20, value: "hello" },
   null,
-  { sessionId: "session-1", workingTabId: 42 },
+  { sessionId: "session-1" },
   dispatch,
   { skillSettings },
 );
@@ -103,12 +105,13 @@ assert.deepEqual(dispatches[0].args.args.$plugin.config, {
 assert.equal(dispatches[0].context.skillExecution.plugin.id, "runtime-example");
 assert.equal(dispatches[0].context.skillExecution.config.token, "private-token");
 assert.equal(getToolResultPresentation(innerResult)._plugin.runtime, "inner");
+assert.deepEqual(innerResult, { ok: true, result: { executed: true } }, "internal execution settings do not wrap the public business result");
 
 await executeSkillTool(
   "runtime_example__page_check",
-  { timeout: 10 },
+  { timeout: 10, tabId: 42 },
   null,
-  { sessionId: "session-1", workingTabId: 42 },
+  { sessionId: "session-1" },
   dispatch,
   { skillSettings },
 );

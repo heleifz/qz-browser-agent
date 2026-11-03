@@ -283,12 +283,22 @@ function sessionA(extra = {}) {
 }
 
 resetCalls();
-await assertRejectsWithCode(tools.executeTool("read_article", { limit: 4000 }), "SESSION_TAB_TARGET_REQUIRED");
+await assertRejectsWithCode(tools.executeTool("read_article", { limit: 4000 }), "TAB_REF_REQUIRED");
 assert.deepEqual(state.queryCalls, [], "missing target must not query active browser tab");
 assert.deepEqual(state.sendMessages, [], "missing target must not touch content scripts");
+for (const externalDrive of [false, true]) {
+  resetCalls();
+  await assertRejectsWithCode(
+    tools.executeTool("read_article", { limit: 4000 }, null, sessionA({ externalDrive })),
+    "TAB_REF_REQUIRED",
+  );
+  assert.deepEqual(state.queryCalls, [], "a legacy working tab or active tab cannot supply the missing tabRef");
+  assert.deepEqual(state.sendMessages, []);
+  assert.deepEqual(state.resolveCalls, [], "missing explicit identity fails before ownership resolution");
+}
 
 resetCalls();
-const foreignArticle = await tools.executeTool("read_article", { tabId: 2, limit: 4000 }, null, sessionA());
+const foreignArticle = await tools.executeTool("read_article", { tabRef: 2, limit: 4000 }, null, sessionA());
 assert.equal(foreignArticle.text, "article:2");
 assert.equal(foreignArticle._tabId, undefined, "page observations do not expose private browser IDs");
 assert.deepEqual(
@@ -300,7 +310,7 @@ assert.deepEqual(state.workingTabUpdates, [], "read-only foreign access must not
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("screenshot", { tabId: 2 }, null, sessionA()),
+  tools.executeTool("screenshot", { tabRef: 2 }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
 assert.equal(state.resolveCalls[0]?.readOnly, false, "screenshots require task ownership because they acquire CDP");
@@ -308,7 +318,7 @@ assert.equal(state.events.some(event => event.type === "debugger.attach"), false
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("screenshot", { tabId: 2, actionable: true }, null, sessionA()),
+  tools.executeTool("screenshot", { tabRef: 2, actionable: true }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
 assert.equal(state.resolveCalls[0]?.readOnly, false, "actionable screenshots must require task ownership up front");
@@ -316,7 +326,7 @@ assert.equal(state.events.some(event => event.type === "debugger.attach"), false
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("get_ax_tree", { tabId: 2 }, null, sessionA()),
+  tools.executeTool("get_ax_tree", { tabRef: 2 }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
 assert.equal(state.resolveCalls[0]?.readOnly, false, "AX snapshots require task ownership because they acquire CDP");
@@ -326,7 +336,7 @@ resetCalls();
 state.rejectedRunIds.add("stale-run");
 try {
   await assertRejectsWithCode(
-    tools.executeTool("screenshot", { tabId: 1 }, null, sessionA({ runId: "stale-run" })),
+    tools.executeTool("screenshot", { tabRef: 1 }, null, sessionA({ runId: "stale-run" })),
     "CDP_RUN_RELEASED",
   );
 } finally {
@@ -336,7 +346,7 @@ assert.equal(state.events.some(event => event.type === "debugger.attach"), false
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("screenshot", { tabId: 3, target: "css:body", actionable: true }, null, sessionA()),
+  tools.executeTool("screenshot", { tabRef: 3, target: "css:body", actionable: true }, null, sessionA()),
   "SCREENSHOT_COORDINATES_UNAVAILABLE",
 );
 assert.deepEqual(state.resolveCalls, [], "invalid screenshot arguments must fail before target resolution");
@@ -345,7 +355,7 @@ assert.equal(state.events.some(event => event.type === "debugger.attach"), false
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("act_on_screen", { tabId: 3, action: "click", returnScreenshot: false }, null, sessionA()),
+  tools.executeTool("act_on_screen", { tabRef: 3, action: "click", returnScreenshot: false }, null, sessionA()),
   "MISSING_REQUIRED_ARGUMENTS",
 );
 assert.deepEqual(state.resolveCalls, [], "action-scoped arguments must fail before target resolution");
@@ -355,7 +365,7 @@ assert.equal(state.events.some(event => event.type === "debugger.attach"), false
 resetCalls();
 await assertRejectsWithCode(
   tools.executeTool("act_on_screen", {
-    tabId: 3,
+    tabRef: 3,
     action: "press",
     key: "Hyper+A",
     returnScreenshot: false,
@@ -367,49 +377,52 @@ assert.equal(tabOwners.has(3), false);
 
 resetCalls();
 const listedBeforeClaim = await tools.executeTool("list_tabs", {}, null, sessionA());
-assert.deepEqual(listedBeforeClaim.map(tab => tab.tabRef), [1, 2, 3]);
-assert.deepEqual(listedBeforeClaim.map(tab => tab.usable), [true, false, true]);
-assert.deepEqual(listedBeforeClaim.map(tab => tab.readOnlyUsable), [true, true, true]);
-assert.deepEqual(listedBeforeClaim.map(tab => tab.ownedByCurrentTask), [true, false, false]);
-assert.equal(listedBeforeClaim[0].isWorkingTab, true);
-assert.equal(listedBeforeClaim[1].unusableCode, "SESSION_TAB_FOREIGN");
-assert.equal(listedBeforeClaim[2].claimRequired, true);
-assert.equal(listedBeforeClaim[1].active, true, "list_tabs should still reveal the user's visible page");
-assert.deepEqual(state.queryCalls, [{}], "list_tabs may inspect all tabs but must label usability");
+assert.deepEqual(listedBeforeClaim, {
+  tabs: [{ tabRef: 1, url: "https://owned.example/a", title: "Owned", active: false }],
+  count: 1, foreign: 2,
+});
+assert.deepEqual(state.queryCalls, [{}], "owned scope inspects browser tabs without exposing foreign rows");
 assert.deepEqual(
   state.resolveCalls.map(item => [item.tabId, item.checkOnly, item.readOnly]),
   [[1, true, false], [2, true, false], [3, true, false]],
-  "list_tabs should use read-only ownership checks",
+  "list_tabs checks ownership without claiming tabs",
 );
-assert.deepEqual(state.workingTabUpdates, [], "list_tabs must not change the session working tab");
+assert.deepEqual(state.workingTabUpdates, [], "list_tabs must not change session tab authority");
 
 resetCalls();
-const article = await tools.executeTool("read_article", { limit: 4000 }, null, sessionA());
+const allTabs = await tools.executeTool("list_tabs", { scope: "all" }, null, sessionA());
+assert.deepEqual(allTabs, {
+  tabs: state.tabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })),
+  count: 3, foreign: 2,
+});
+assert.equal(allTabs.tabs[1].active, true, "active describes the user's visible page, including a foreign tab");
+assert.deepEqual(state.workingTabUpdates, [], "all scope must not claim or select a tab");
+
+resetCalls();
+const article = await tools.executeTool("read_article", { tabRef: 1, limit: 4000 }, null, sessionA());
 assert.equal(article.text, "article:1");
 assert.equal(article._tabId, undefined);
+assert.equal(article.tabRef, undefined, "ordinary page observations do not echo page identity");
 assert.deepEqual(
   state.sendMessages.map(item => [item.tabId, item.message.action]),
   [[1, "ping"], [1, "readArticle"]],
-  "owned working tab should be the only page messaging target",
+  "the explicit tabRef is the only page messaging target",
 );
 assert.ok(state.sendMessages.every(item => item.frameId === 0), "page messages stay on the main frame");
-assert.deepEqual(state.queryCalls, [], "owned working tab path should not query active browser tab");
+assert.deepEqual(state.queryCalls, [], "an explicit page never requires an active-tab query");
+
+for (const name of ["get_working_tab", "use_tab"]) {
+  resetCalls();
+  await assertRejectsWithCode(tools.executeTool(name, { tabRef: 3 }, null, sessionA()), "UNKNOWN_TOOL");
+  assert.equal(toolsModule.getToolSchemas().some(tool => tool.function.name === name), false);
+  assert.deepEqual(state.queryCalls, []);
+  assert.deepEqual(state.resolveCalls, [], "removed tools cannot enter ownership resolution");
+  assert.deepEqual(state.tabUpdates, []);
+  assert.deepEqual(state.workingTabUpdates, []);
+}
 
 resetCalls();
-const current = await tools.executeTool("get_working_tab", {}, null, sessionA());
-assert.equal(current.hasWorkingTab, true);
-assert.equal(current.tabRef, 1);
-assert.equal(current.title, "Owned");
-assert.deepEqual(state.queryCalls, [], "get_working_tab means session working tab, not browser active tab");
-
-resetCalls();
-const missingWorking = await tools.executeTool("get_working_tab", {}, null, sessionA({ workingTabId: null }));
-assert.deepEqual(missingWorking, { hasWorkingTab: false });
-assert.deepEqual(state.queryCalls, [], "missing working tab is a normal getter result and must not query the active browser tab");
-assert.deepEqual(state.resolveCalls, [], "missing working tab should not enter tab ownership resolution");
-
-resetCalls();
-const unownedArticle = await tools.executeTool("read_article", { tabId: 3, limit: 4000 }, null, sessionA());
+const unownedArticle = await tools.executeTool("read_article", { tabRef: 3, limit: 4000 }, null, sessionA());
 assert.equal(unownedArticle.text, "article:3");
 assert.deepEqual(
   state.sendMessages.map(item => [item.tabId, item.message.action]),
@@ -421,27 +434,25 @@ assert.deepEqual(state.workingTabUpdates, [], "read-only unowned access must not
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("use_tab", { tabId: 2 }, null, sessionA()),
+  tools.executeTool("navigate", { tabRef: 2, url: "https://foreign.example/b" }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
-assert.deepEqual(state.tabUpdates, [], "use_tab must not activate or otherwise mutate a foreign visible tab");
-assert.deepEqual(state.workingTabUpdates, [], "use_tab must not transfer a tab owned by another session");
+assert.deepEqual(state.tabUpdates, [], "an explicit foreign target must fail before navigation or activation");
+assert.deepEqual(state.workingTabUpdates, [], "a page action must not transfer another session's tab");
 
 resetCalls();
-const switched = await tools.executeTool("use_tab", { tabId: 3 }, null, sessionA());
-assert.equal(switched.tabId, undefined);
-assert.equal(switched.active, false);
-assert.equal(switched.visibleChanged, false);
+const claimed = await tools.executeTool("navigate", { tabRef: 3, url: "https://unowned.example/b" }, null, sessionA());
+assert.equal(claimed.tabRef, undefined);
 assert.deepEqual(
   state.resolveCalls.map(item => [item.tabId, item.checkOnly, item.readOnly]),
   [[3, false, false]],
-  "use_tab should resolve ownership through the central tab gate",
+  "an explicit unowned target resolves ownership through the central tab gate",
 );
-assert.deepEqual(state.tabUpdates, [], "use_tab should not activate or otherwise mutate the user's visible tab");
+assert.deepEqual(state.tabUpdates, [{ tabId: 3, patch: { url: "https://unowned.example/b" } }]);
+assert.equal(state.tabs.find(tab => tab.id === 2).active, true, "claiming a page keeps the user's visible tab unchanged");
 assert.equal(tabOwners.get(3), "session-a");
 assert.equal(state.workingTabUpdates[0]?.sessionId, "session-a");
-assert.equal(state.workingTabUpdates[0]?.toolName, "use_tab");
-assert.equal(state.workingTabUpdates[0]?.claim, true);
+assert.equal(state.workingTabUpdates[0]?.toolName, "navigate");
 
 resetCalls();
 const openedWithWatch = await tools.executeTool("open_tab", {
@@ -452,8 +463,9 @@ const openedWithWatch = await tools.executeTool("open_tab", {
 assert.equal(openedWithWatch.url, "https://fresh.example/start");
 assert.equal(getToolResultPresentation(openedWithWatch)._pageUrl, "https://fresh.example/start");
 assert.equal(getToolResultPresentation(openedWithWatch)._pageTitle, openedWithWatch.title, "sidebar metadata uses the observed tab title");
-assert.equal(openedWithWatch.networkWatch?.startedBeforeNavigation, true);
-assert.equal(openedWithWatch.networkWatch?.maxRecords, 50);
+assert.deepEqual(Object.keys(openedWithWatch).sort(), ["active", "tabRef", "title", "url"]);
+assert.equal(openedWithWatch.active, false);
+assert.equal(state.tabs.find(tab => tab.id === 2).active, true, "opening a page keeps the user's visible tab unchanged");
 assert.equal(
   state.resolveCalls.find(call => call.source === "cdp:run")?.allowPreNavigationBlank,
   true,
@@ -491,8 +503,8 @@ assert.deepEqual(
 );
 
 resetCalls();
-const nav = await tools.executeTool("navigate", { url: "https://owned.example/b" }, null, sessionA());
-assert.equal(nav.tabId, undefined);
+const nav = await tools.executeTool("navigate", { tabRef: 1, url: "https://owned.example/b" }, null, sessionA());
+assert.equal(nav.tabRef, undefined);
 assert.equal(state.tabs.find(tab => tab.id === 1).url, "https://owned.example/b");
 assert.deepEqual(state.tabUpdates, [{ tabId: 1, patch: { url: "https://owned.example/b" } }]);
 assert.equal(state.workingTabUpdates[0]?.sessionId, "session-a");
@@ -500,12 +512,13 @@ assert.equal(state.workingTabUpdates[0]?.toolName, "navigate");
 
 resetCalls();
 const watchedNav = await tools.executeTool("navigate", {
+  tabRef: 1,
   url: "https://owned.example/c",
   watchNetwork: true,
   resetNetwork: true,
   networkMaxRecords: 60,
 }, null, sessionA());
-assert.equal(watchedNav.tabId, undefined);
+assert.equal(watchedNav.tabRef, undefined);
 assert.equal(watchedNav.url, "https://owned.example/c");
 assert.equal(watchedNav.networkWatch?.startedBeforeNavigation, true);
 assert.equal(watchedNav.networkWatch?.maxRecords, 60);
@@ -527,13 +540,13 @@ assert.deepEqual(
 resetCalls();
 await assertRejectsWithCode(
   tools.executeTool("run_skill_script", { skill: "demo", script: "scripts/demo.js", timeout: 0 }),
-  "SESSION_TAB_TARGET_REQUIRED",
+  "TAB_REF_REQUIRED",
 );
 assert.deepEqual(state.queryCalls, [], "plugin skill script target fallback must not use active browser tab");
 
 resetCalls();
 await assertRejectsWithCode(
-  tools.executeTool("run_skill_script", { skill: "demo", script: "scripts/demo.js", tabId: 2, timeout: 0 }, null, sessionA()),
+  tools.executeTool("run_skill_script", { skill: "demo", script: "scripts/demo.js", tabRef: 2, timeout: 0 }, null, sessionA()),
   "SESSION_TAB_FOREIGN",
 );
 
@@ -590,6 +603,7 @@ for (const mode of ['desktop', 'mobile']) for (const watchNetwork of [false, tru
   });
   resetCalls();
   const result = await runtime.execute('open_tab', { url: 'https://first.example/article', mode, watchNetwork }, controller.signal, context);
+  assert.deepEqual(Object.keys(result).sort(), ['active', 'tabRef', 'title', 'url']);
   assert.deepEqual(runtimeState.ownedTabIds, [], 'CDP setup must not publish provisional ownership');
   assert.equal(runtimeState.workingTabId, null);
   assert.equal(state.tabs.find(tab => tab.id === result.tabRef)?.url, 'https://first.example/article');

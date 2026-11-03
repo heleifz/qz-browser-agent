@@ -1598,8 +1598,13 @@ const collectImagesSchema = definitions.get("collect_images").parameters;
 const readImageSchema = definitions.get("read_image").parameters;
 assert.deepEqual(listImagesSchema.properties.tabRef.type, ["integer", "string"]);
 assert.equal(listImagesSchema.properties.tabId, undefined);
-assert.equal((listImagesSchema.required || []).includes("tabId"), false, "list_images should default to the working tab");
+assert.deepEqual(listImagesSchema.required, ["tabRef"], "image discovery requires an explicit page reference");
 assert.deepEqual(collectImagesSchema.required, ["table"]);
+assert.deepEqual(collectImagesSchema.anyOf, [
+  { required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } },
+  { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } },
+]);
+assert.deepEqual(readImageSchema.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }]);
 assert.equal(collectImagesSchema.properties.targets.items.type, "string");
 assert.equal(collectImagesSchema.properties.urls.items.type, "string");
 assert.equal(readImageSchema.properties.target.type, "string");

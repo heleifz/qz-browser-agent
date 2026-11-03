@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "tabRef 필요",
+  "backend.toolError.TAB_REF_REQUIRED.message": "페이지 도구에는 tabRef를 명시해야 합니다.",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "open_tab으로 페이지를 열거나 list_tabs로 찾은 뒤 해당 tabRef를 전달하세요.",
   "backend.toolError.UNSUPPORTED_URL.label": "지원하지 않는 페이지 프로토콜",
   "backend.toolError.UNSUPPORTED_URL.message": "HTTP, HTTPS 또는 액세스가 허용된 file:// 페이지 URL을 사용하세요.",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "파일 액세스 권한 필요",

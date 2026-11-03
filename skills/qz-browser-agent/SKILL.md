@@ -76,7 +76,7 @@ JS
 
 A successful open_tab returns tabRef, not id. `tabAlias` is recommended for readability and is not required. Use that alias or the tabRef returned by open_tab/list_tabs next. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. A returned positive integer or its numeric string is also a tabRef; never guess one. Direct-drive results name the page with tabRef: only open_tab/list_tabs return it, preserving a supplied alias; other page tools do not echo it.
 
-Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is DRIVE_TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url or collect_images with only urls. wait waits for a duration; use wait_for_navigation for page loading.
+Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url, collect_images with only urls, or run_script for computation without a page. wait waits for a duration; use wait_for_navigation for page loading.
 
 One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
 
@@ -119,7 +119,7 @@ JSON
 
 ## Page scripts and three timeout budgets
 
-Direct-drive run_script passes tabRef and runs in that tab. The script runs in the tab named by tabRef. Orchestrate with calls or separate `qz exec --session ID` requests; do not nest another run_script string.
+`qz script --session ID` always runs in the page named by required `--tab`. With `qz exec --session ID`, run_script with tabRef runs in that page; without tabRef it runs JavaScript computation or tool orchestration without document/window. Each nested page tool still passes tabRef. Use calls for independent operations; do not nest another run_script string.
 
 `qz script --session "$SID" --tab page page.js` reads a local file. Page code is a single `async () => { ... }` function expression: no IIFE, main(), or return outside a function. Start with a comment naming the page, action and purpose. Scripts can access document/window, input/args, tools/tool and trace/log. tabRef is a call argument, not an injected script variable; nested page tool calls explicitly pass an alias too. Page execution does not provide Node.js, fs, process or require.
 
@@ -166,7 +166,7 @@ Examples omit metadata such as clientId/runId.
 | qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_EVALUATION_FAILED","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 | qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 
-script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and trace information. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied engine text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
+script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and trace information. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied error text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
 
 ## Finish, reconnect and recover
 
@@ -184,7 +184,7 @@ Change one thing per retry and retain the error code and sentence:
 - DRIVE_SESSION_OCCUPIED: the ID belongs to an ordinary task; create a new session.
 - DRIVE_SESSION_BUSY: a call is in flight. Wait for that batch to finish.
 - DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS: name or calls, not both; each row needs id/name and object args; at most 10 calls.
-- DRIVE_TAB_REF_REQUIRED: supply this session's explicit tabRef. BATCH_TAB_REFERENCE_ERROR: check aliases, open-before-read order, and session identity. no_alias occurs only when an alias was passed but no matching alias exists in this session.
+- TAB_REF_REQUIRED: supply this session's explicit tabRef. BATCH_TAB_REFERENCE_ERROR: check aliases, open-before-read order, and session identity. no_alias occurs only when an alias was passed but no matching alias exists in this session.
 - SESSION_TAB_UNOWNED: use this session's page or open_tab first.
 - UNKNOWN_TOOL: start with `qz tools --session "$SID"`, inspect by name or load the matching Skill.
 - DRIVE_TOOL_FORBIDDEN: choose an available tool from `qz tools --session "$SID"`.

@@ -16,15 +16,15 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       return (await view.chrome.tabs.query({})).find(tab => tab.url === ${JSON.stringify(fixture.url)}).id;
     `);
     const call = (name, args = {}) => firefoxSidebar.extension('background', `
-      const request = ${JSON.stringify({ name, args: { tabId, ...args } })};
-      const context = Cu.cloneInto({sessionId:'firefox-refs',runId:'opaque-firefox-refs',externalDrive:true,workingTabId:${tabId},source:'agent'},content);
+      const request = ${JSON.stringify({ name, args: { tabRef: tabId, ...args } })};
+      const context = Cu.cloneInto({sessionId:'firefox-refs',runId:'opaque-firefox-refs',externalDrive:true,source:'agent'},content);
       try {
         const tools=view.__qzFirefoxPageTools;
         const result=await tools.execute(request.name,Cu.cloneInto(request.args,content),undefined,context);
         const project=tools.getModelPolicy(request.name)?.projectResult;
         return JSON.parse(JSON.stringify(project ? project(result) : result));
       }
-      catch(error) { const failure=Cu.waiveXrays(error); return {message:String(failure.message),code:String(failure.code || '')}; }
+      catch(error) { const failure=Cu.waiveXrays(error); return {message:String(failure.message),code:String(failure.code || ''),...(failure.hint ? {hint:String(failure.hint)} : {}),...(failure.details ? {details:JSON.parse(JSON.stringify(failure.details))} : {})}; }
     `);
     const found = await call('find_elements', { target: 'body', tags: ['button', 'img'], limit: 40 });
     expect(found.message, JSON.stringify(found)).toBeUndefined();

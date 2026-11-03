@@ -181,7 +181,7 @@ registerTool({
       offset: { type: "number", description: toolT("readArticleOffset") },
       limit: { type: "number", description: toolT("readArticleLimit") },
     },
-    required: ["limit"],
+    required: ["limit", "tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -215,6 +215,7 @@ registerTool({
       limit: { type: "number", description: toolT("readDomLimit") },
       target: { type: "string", description: toolT("readDomSelector") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -248,6 +249,7 @@ registerTool({
       limit: { type: "number", description: toolT("findElementsLimit") },
       includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -272,7 +274,7 @@ registerTool({
       target: { type: "string", description: getElementTargetDescription() },
       index: { type: "number", description: toolT("inspectElementIndex") },
     },
-    required: ["target"],
+    required: ["target", "tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -324,7 +326,7 @@ registerTool({
       key: { type: "string", description: toolT("actOnElementKey") },
       submit: { type: "boolean", description: toolT("actOnElementSubmit") },
     },
-    required: ["target", "action"],
+    required: ["target", "action", "tabRef"],
   } as const; },
   page: "owned",
   timeout: args => String(args.action || "").trim().toLowerCase() === "click" ? { defaultMs: 1800000, maxMs: 7200000 } : { defaultMs: 20000, maxMs: 120000 },
@@ -338,12 +340,12 @@ registerTool({
     }
 
     const ref = await resolveElementReference(tabId, { target, index }, context);
-    tabId = ref.tabId;
     const selector = ref.selector;
     index = ref.index;
     let resolvedTarget = ref.target || elementTargetForSelector(selector);
+    if (!ref.tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef for the page containing the element.", { target: resolvedTarget });
+    tabId = ref.tabId;
     const toolArgsForUpdates = { tabId, target, index, action, value, key, submit };
-    if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, action });
     let bound: ((action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>) | undefined;
     let observedElement: ElementObservation | undefined;
     let observedSelector = '';
@@ -378,7 +380,6 @@ registerTool({
     }
     return perform();
     async function perform() {
-    if (!tabId) throw new ToolExecutionError("NO_ACTIVE_TAB", t("noActiveTabIsAvailable"), { target: resolvedTarget, action });
     const frameId = String(ref.ref?.frameId || "");
 
     const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
@@ -830,6 +831,7 @@ registerTool({
       target: { type: "string", description: toolT("scrollPageTarget", { targetDescription: getElementTargetDescription() }) },
       index: { type: "number", description: toolT("scrollPageIndex") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 20000, maxMs: 120000 },

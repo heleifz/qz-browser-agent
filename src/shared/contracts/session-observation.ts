@@ -1,8 +1,17 @@
-/** External lifecycle receipt; execution authority and private runtime state are not wire data. */
-export interface SessionStopReceipt {
+/** Session identity shared by task creation, listing and progress observations. */
+export interface SessionObservation {
   sessionId: string;
-  stopped: boolean;
+  title: string;
   status: string;
+}
+
+export function publicSessionObservation(sessionId: string, title: string, status: string): SessionObservation {
+  return { sessionId, title, status };
+}
+
+/** Lifecycle receipt; execution authority and private runtime state are not wire data. */
+export interface SessionStopReceipt extends SessionObservation {
+  stopped: boolean;
 }
 
 /** Task progress exposed by the MCP producer, without an implicit page target. */

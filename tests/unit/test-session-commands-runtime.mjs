@@ -22,6 +22,7 @@ import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
 import { t } from "../../src/shared/i18n/backend.js";
 
 await creationRunAndHistoryFlow();
+await publicSessionObservations();
 await duplicateAcceptedPromptIsIdempotent();
 await submittedMessageStartsOrQueuesAtomically();
 await acceptedCleanupIsPostCommitAndNonBlocking();
@@ -175,6 +176,48 @@ async function creationRunAndHistoryFlow() {
   const listed = await fixture.commands.listSessionsRuntime({ limit: 1 });
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0].id, sessionId);
+}
+
+async function publicSessionObservations() {
+  const fixture = createFixture();
+  const created = await fixture.commands.createSessionFromApi({ title: 'Compare public prices' });
+  const session = created.session;
+  const sessionId = session.sessionId;
+  assert.deepEqual(session, { sessionId, title: 'Compare public prices', status: 'idle' });
+  assert.equal(created.started, false);
+  assert.equal((await fixture.repository.getMetadata(sessionId)).id, sessionId, 'stored identity remains internal');
+  fixture.setRuntime(sessionId, {
+    status: 'completed', running: false, runId: 'private-run',
+    workingTab: { id: 73, title: 'Private page', url: 'https://example.test/' },
+    visitedTaskSites: [{ id: 73, url: 'https://example.test/' }],
+  });
+  const completed = { ...session, status: 'completed' };
+  const listed = await fixture.commands.listSessionsRuntime({ publicView: true });
+  assert.deepEqual(listed.sessions, [completed]);
+  const scoped = await fixture.commands.listSessionsRuntime({ publicView: true, scope: 'session', sessionId });
+  assert.deepEqual(scoped, { scope: 'session', session: completed, otherCount: 0 });
+  const internal = await fixture.commands.listSessionsRuntime();
+  assert.equal(internal.sessions[0].id, sessionId, 'UI summaries retain their existing stored identity');
+  assert.equal(internal.sessions[0].workingTab.id, 73, 'public observations do not change private runtime state');
+  fixture.transcripts.set(sessionId, [{ type: 'assistant', content: 'Prices collected' }]);
+  const tail = await fixture.commands.getLastMessagesRuntime({ sessionId, num: 1 });
+  assert.deepEqual(tail.session, completed);
+  assert.equal(tail.runId, undefined);
+  assert.equal(tail.messages[0].content, 'Prices collected');
+  const waited = await fixture.commands.waitSessionsRuntime({ sessionIds: [sessionId], num: 1 });
+  assert.deepEqual(Object.fromEntries(Object.keys(completed).map(key => [key, waited.sessions[0][key]])), completed);
+  assert.equal(waited.sessions[0].runId, undefined);
+  assert.equal(waited.sessions[0].lastMessages[0].content, 'Prices collected');
+  fixture.setRuntime(sessionId, { status: 'running', running: true, runId: 'private-stop-run' });
+  const stopped = await fixture.commands.stopSessionRuntime(sessionId, { source: 'tool', cascade: false });
+  assert.deepEqual(stopped, {
+    sessionId, title: session.title, status: 'aborted', stopped: true,
+    stoppedChildren: [], stoppedChildCount: 0,
+  });
+  const deleted = await fixture.commands.deleteSessionRuntime(sessionId, { source: 'tool', requestedBy: 'parent' });
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.source, undefined);
+  assert.equal(deleted.requestedBy, undefined);
 }
 
 async function duplicateAcceptedPromptIsIdempotent() {
@@ -1832,7 +1875,7 @@ async function stopPortOrderingAndIdleNoOp() {
   const checkpoint = fixture.runtimes.get("ordered-stop");
   const stopped = await fixture.commands.stopSessionRuntime("ordered-stop", { cascade: false });
   assert.equal(stopped.stopped, false);
-  assert.equal(stopped.hadRuntime, false);
+  assert.equal(stopped.hadRuntime, undefined, 'public stop receipts omit private runtime state');
   assert.equal(fixture.runtimes.get("ordered-stop"), checkpoint, "idle stop must not rewrite its terminal checkpoint");
   assert.equal(calls.some(([kind]) => kind === "persist"), false);
 }

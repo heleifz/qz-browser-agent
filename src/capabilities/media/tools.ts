@@ -190,6 +190,7 @@ registerTool({
       maxHeight: { type: "number", description: toolT("screenshotMaxHeight") },
       actionable: { type: "boolean", description: toolT("screenshotActionable") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -307,7 +308,7 @@ registerTool({
       deltaY: { type: "number", description: toolT("actOnScreenDeltaY") },
       repeat: { type: "number", minimum: 1, maximum: 20, description: toolT("actOnScreenRepeat") },
     },
-    required: ["action", "returnScreenshot"],
+    required: ["action", "returnScreenshot", "tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 20000, maxMs: 120000 },
@@ -336,6 +337,7 @@ registerTool({
       visibleOnly: { type: "boolean", description: toolT("listImagesVisibleOnly") },
       limit: { type: "number", description: toolT("listImagesLimit") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -374,9 +376,7 @@ async function resolveSelectedImageTarget(selectedTarget: string, tabId: number 
     target: selectedTarget,
     index: 0,
   }, context);
-  // Mixed UID/CSS calls keep tabId unset globally. The runtime checks the CSS
-  // default's ownership; apply that default only to the selector target here.
-  if (!ref.uid && !ref.tabId) ref.tabId = Number(context.workingTabId) || undefined;
+  if (!ref.uid && !ref.tabId) ref.tabId = tabId;
   if (!ref.tabId) {
     throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "collect_images" });
   }
@@ -466,6 +466,7 @@ registerTool({
       quality: { type: "number", description: toolT("collectImagesQuality") },
     },
     required: ["table"],
+    anyOf: [{ required: ["urls"], properties: { urls: { minItems: 1 }, targets: { maxItems: 0 } } }, { required: ["tabRef", "targets"], properties: { targets: { minItems: 1 } } }],
   } as const; },
   page: args => Array.isArray(args.urls) && args.urls.some(url => String(url || "").trim()) && !(Array.isArray(args.targets) && args.targets.some(target => String(target || "").trim())) ? false : "owned",
   timeout: { defaultMs: 120000, maxMs: 600000 },
@@ -685,6 +686,7 @@ registerTool({
       format: { type: "string", enum: ["jpeg", "png", "webp"], description: toolT("readImageFormat") },
       quality: { type: "number", description: toolT("readImageQuality") },
     },
+    anyOf: [{ required: ["url"] }, { required: ["tabRef", "target"] }],
   } as const; },
   page: args => String(args.url || "").trim() ? false : "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -1584,7 +1586,7 @@ async function normalizeMediaImage(input: Blob | string, options: ImageSizeOptio
 }
 
 async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { format = "jpeg", quality = 70, padding = 0, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions & { padding?: number } = {}, context: ToolContext = {}): Promise<ElementScreenshot> {
-  if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("elementScreenshotRequiresTabid"), { target: ref.target || elementTargetForRef(ref) });
+  if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", t("elementScreenshotRequiresTabid"), { target: ref.target || elementTargetForRef(ref) });
   await assertTabAllowedBySecurityGuardrails(tabId, { tool: "screenshot", source: "element" });
   let boundsInfo: BoundsInfo | null = null;
   let runtimeError: unknown = null;
@@ -1935,7 +1937,7 @@ async function withVisibleCapture<T>(windowId: number, fn: () => Promise<T>): Pr
 }
 
 async function captureTabScreenshot(tabId: number | undefined, { format = "jpeg", quality = 70, maxWidth = IMAGE_MAX_EDGE, maxHeight = IMAGE_MAX_EDGE }: ScreenshotOptions = {}, context: ToolContext = {}) {
-  if (!tabId) throw new ToolExecutionError("MISSING_TAB_ID", t("screenshotRequiresTabid"));
+  if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", t("screenshotRequiresTabid"));
   let phaseStartedAt = Date.now();
   let currentPhase = "guardrails";
   recordScreenCaptureTrace("guardrails.started", tabId, context);

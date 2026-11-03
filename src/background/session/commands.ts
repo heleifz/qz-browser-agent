@@ -11,6 +11,8 @@ import type { createSessionAgentHost } from "./agent-host.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { TranscriptEntry } from "../../shared/contracts/session.js";
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
+import { publicSessionObservation, type SessionStopReceipt } from "../../shared/contracts/session-observation.js";
+import { toolError } from "../../shared/contracts/tool-error.js";
 import type { chat as llmChat } from "../llm/index.js";
 import type { getCurrentRuntimeConfig } from "../runtime-config.js";
 import type { normalizeSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
@@ -228,18 +230,20 @@ async function listSessionsRuntime({
     const match = requestedId ? sessions.find((session) => session.id === requestedId) : undefined;
     return {
       scope: "session",
-      session: match ? compactSessionRecord(match) : null,
+      session: match ? (publicView ? publicSessionRecord(match) : compactSessionRecord(match)) : null,
       otherCount: sessions.filter((session) => session.id !== requestedId).length,
     };
   }
   const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
   return {
-    sessions: sessions.slice(0, max).map((session) => formatSessionRuntimeRecord(session, { publicView })),
+    sessions: sessions.slice(0, max).map((session) => publicView
+      ? publicSessionRecord(session) : formatSessionRuntimeRecord(session)),
   };
 }
 
 
-async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID }: Fields = {}, signal?: AbortSignal) {
+async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID,
+  publicView = false }: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const message = String(firstMessage || "").trim();
@@ -255,7 +259,7 @@ async function createSessionRuntime({ title = "", firstMessage = "", parentSessi
   broadcast({ type: "session_created", session, firstMessage: message });
   broadcast({ type: "sessions_changed", action: "create", sessionId: session.id, session });
   const started = launchSessionPrompt(session.id, message, signal);
-  return { session, started };
+  return { session: publicView ? publicSessionRecord(session) : session, started };
 }
 
 async function createSessionMetadataRuntime({
@@ -933,6 +937,7 @@ function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
     title: params.title || "",
     firstMessage: params.firstMessage || params.text || "",
     parentSessionId: params.parentSessionId || ROOT_SESSION_ID,
+    publicView: true,
   }, signal);
 }
 
@@ -1330,10 +1335,9 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   const artifacts = await sessionArtifacts.collect(id, transcript);
   return {
     sessionId: id,
-    session: sessions[id] || null,
+    session: sessions[id] ? publicSessionRecord(sessions[id]) : null,
     running: runtime.running,
     pendingStart: runtime.pendingStart,
-    runId: runtime.runId,
     source,
     count: tail.length,
     messages: tail,
@@ -1387,18 +1391,17 @@ async function waitSessionsRuntime({
   const ids = normalizeWaitSessionIds(sessionIds);
   const caller = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
   if (ids.length === 0) {
-    return localizeToolFailurePayload({
-      error: "manage_sessions wait requires sessionIds",
-      code: "MISSING_SESSION_IDS",
+    return localizeToolFailurePayload(toolError("MISSING_SESSION_IDS", "manage_sessions wait requires sessionIds", {
+      hint: "Pass sessionIds returned by manage_sessions create or list.",
       details: { action: "wait" },
-    }, { toolName: "manage_sessions" });
+    }), { toolName: "manage_sessions" });
   }
   if (caller && ids.includes(caller)) {
-    return localizeToolFailurePayload({
-      error: "Cannot wait for the session currently executing this tool",
-      code: "CANNOT_WAIT_CALLER_SESSION",
-      details: { sessionId: caller, sessionIds: ids },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("CANNOT_WAIT_CALLER_SESSION",
+      "Cannot wait for the session currently executing this tool", {
+        hint: "Choose other sessionIds to wait for.",
+        details: { action: "wait" },
+      }), { toolName: "manage_sessions" });
   }
 
   const mode = waitFor === "any" ? "any" : "all";
@@ -1407,11 +1410,10 @@ async function waitSessionsRuntime({
   const sessions = await getSessions();
   const missingIds = ids.filter((id) => !sessions[id] && !sessionSupervisor.has(id));
   if (missingIds.length > 0) {
-    return localizeToolFailurePayload({
-      error: "Some sessions do not exist",
-      code: "SESSION_NOT_FOUND",
-      details: { sessionIds: ids, missingIds },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("SESSION_NOT_FOUND", "Some sessions do not exist", {
+      hint: "Call manage_sessions with action list, then retry with existing sessionIds.",
+      details: { missing: missingIds },
+    }), { toolName: "manage_sessions" });
   }
 
   const startedAt = nowBeijingDateTime();
@@ -1694,7 +1696,11 @@ function compactSessionRecord(session: Partial<SessionMetadata> & { id: string }
   };
 }
 
-function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false, publicView = false } = {}) {
+function publicSessionRecord(session: Partial<SessionMetadata> & { id: string }) {
+  return publicSessionObservation(session.id, session.title?.trim() || t("session.new"), getSessionRuntimeState(session.id).status);
+}
+
+function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false } = {}) {
   const runtime = getSessionRuntimeState(session.id);
   const base = compact
     ? {
@@ -1715,7 +1721,8 @@ function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: st
     runtimeReason: runtime.reason,
     tracker: runtime.tracker,
     goal: canExposeSessionGoal(session) ? runtime.goal : null,
-    ...(publicView ? {} : { workingTab: runtime.workingTab, visitedTaskSites: runtime.visitedTaskSites }),
+    workingTab: runtime.workingTab,
+    visitedTaskSites: runtime.visitedTaskSites,
     pendingSteerings: runtime.pendingSteerings,
     pendingFollowUps: runtime.pendingFollowUps,
   };
@@ -1798,15 +1805,12 @@ async function collectWaitSessionSummaries(sessionIds: string[], num: number) {
       });
     }
     const session = sessions[id] || { id, title: tail?.session?.title || "", updatedAt: "" };
-    const runtimeRecord = formatSessionRuntimeRecord(session, { compact: true });
+    const runtime = getSessionRuntimeState(id);
     summaries.push({
-      sessionId: id,
-      title: runtimeRecord.title,
-      status: runtimeRecord.status,
-      running: runtimeRecord.running,
-      pendingStart: runtimeRecord.pendingStart,
-      runId: runtimeRecord.runId,
-      updatedAt: runtimeRecord.updatedAt,
+      ...publicSessionObservation(id, session.title?.trim() || t("session.new"), runtime.status),
+      running: runtime.running,
+      pendingStart: runtime.pendingStart,
+      updatedAt: session.updatedAt || session.createdAt || "",
       lastMessages: tail?.messages || [],
       lastMessagesSource: tail?.source || "",
       artifactCount: artifacts?.total || 0,
@@ -1946,8 +1950,6 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
     deleted: true,
     stopped,
     hadRuntime,
-    requestedBy: meta.requestedBy || "",
-    source: meta.source || "",
   };
   broadcast({ type: "session_deleted", ...result });
   broadcast({ type: "sessions_changed", action: "delete", sessionId: id });
@@ -2027,7 +2029,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     if (extra && !driveRunIds.includes(extra)) driveRunIds.push(extra);
   }
 
-  const externalDrive = (await getSessions())[id]?.source === "external-drive";
+  const session = (await getSessions())[id];
+  const externalDrive = session?.source === "external-drive";
   let keepDriveTabs = meta.keepTabs === true;
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
@@ -2147,17 +2150,10 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
   if (!hadRuntime) {
     void closeStoppedTabs();
-    if (meta.source === 'mcp_bridge') return { sessionId: id, stopped: false, status: String(before.status || 'idle') } satisfies import('../../shared/contracts/session-observation.js').SessionStopReceipt;
     return {
-      sessionId: id,
+      ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), before.status),
       stopped: false,
-      hadRuntime: false,
-      runId,
-      status: before.status || "idle",
-      runtime: before,
-      source: meta.source || "",
-      parentSessionId: meta.parentSessionId || "",
-    };
+    } satisfies SessionStopReceipt;
   }
 
   if (externalDrive) await closeStoppedTabs();
@@ -2174,17 +2170,10 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   broadcast(stateEvent);
   broadcast({ type: "sessions_changed", action: "run_state", sessionId: id });
 
-  if (meta.source === 'mcp_bridge') return { sessionId: id, stopped: true, status: String(runtime.status) } satisfies import('../../shared/contracts/session-observation.js').SessionStopReceipt;
   return {
-    sessionId: id,
+    ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), runtime.status),
     stopped: true,
-    hadRuntime,
-    runId,
-    status: runtime.status,
-    runtime,
-    source: meta.source || "",
-    parentSessionId: meta.parentSessionId || "",
-  };
+  } satisfies SessionStopReceipt;
 }
 
 async function releaseTerminalRunResources(sessionId: string, runId: unknown, eventType: string) {

@@ -1,4 +1,4 @@
-import { isToolFailure } from "../../shared/contracts/tool-error.js";
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
 import { copyToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
@@ -10,7 +10,7 @@ import {
   buildContextCapsuleMessage, buildDocumentCapsuleMessage, buildGoalSnapshotCapsuleMessage,
   buildGoalDeletedContextEventMessage, buildSiteSkillContextEventMessage, formatGoalForCompaction,
   formatDynamicContext, shouldExposeGoalContext, isGoalSnapshotCapsuleMessage,
-  collectDynamicContext, collectSiteSkillPreviewContext, collectToolRuntimeContext,
+  collectDynamicContext, collectSiteSkillPreviewContext,
   collectSiteSkillCandidateUrls, siteSkillSignature, normalizeDynamicContext,
 } from "./context.js";
 import type { DynamicContext, DynamicContextProvider, GoalContext, GoalDeletedSnapshot, SiteSkill } from "./context.js";
@@ -54,7 +54,6 @@ import { nowBeijingDateTime } from "../../shared/time-utils.js";
 import {
   buildSecurityGuardrailPromptSection,
 } from "../../shared/security-guardrails.js";
-import { formatTab } from "../../shared/tab-utils.js";
 import { toolIdentityEventFields } from "../../shared/tools/tool-identity.js";
 import { normalizeMessageDocuments } from "../../shared/documents/document-attachments.js";
 import {
@@ -89,7 +88,6 @@ interface AgentToolPort {
   getParallelReadTab?(name: string, args: unknown, context: Facts): number | null;
   getTabAliases?(sessionId: string): Record<string, number>;
   getBatchTabPolicy?(name: string, args: unknown, context: Facts): ToolBatchTabPolicy | null;
-  hasUidElementTargets?(name: string, args: unknown, context: Facts): boolean;
   commitToolResult?(result: unknown, signal: AbortSignal, context: Facts): Promise<void>;
   discardToolResult?(result: unknown, context: Facts): Promise<void>;
   getSchemas(context: Facts): object[];
@@ -2676,12 +2674,11 @@ export class Agent {
       const toolName = normalizeToolCallName(tc);
       // An empty identity renders as a bare "tool" fallback; resolve it when the caller has none.
       const identity = toolIdentity && Object.keys(toolIdentity).length ? toolIdentity : this._toolRuntime.getIdentity(toolName, lookup);
-      const result = copyToolResultPresentation(error, {
-        error: err.message || err.error || String(error),
-        code: err.name === "AbortError" ? "OPERATION_ABORTED" : err.code || "TOOL_EXECUTION_FAILED",
-        ...(err.codeLabel ? { codeLabel: err.codeLabel } : {}),
-        details,
-      });
+      const result = copyToolResultPresentation(error, toolError(
+        err.name === "AbortError" || err.name === "TimeoutError" ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
+        String(err.message || err.error || error),
+        { hint: typeof err.hint === "string" ? err.hint : undefined, details },
+      ));
       return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true };
     };
     const batch = planTabBatch(toolCalls, tc => {
@@ -2756,8 +2753,6 @@ export class Agent {
             toolRegistrySnapshot: this._toolRegistrySnapshot,
             language: this._runLanguage,
           });
-          const toolRuntimeContext = await this._collectToolRuntimeContext();
-          args = await this._enrichToolCallArgsWithPageContext(toolName, args, toolRuntimeContext);
           assertActive();
           emitStart(tc, toolName, toolIdentity, args, true);
           const result = executionResult = await this._toolRuntime.execute(toolName, args, callSignal, {
@@ -2773,8 +2768,6 @@ export class Agent {
             runId: identity.runId,
             spanId: this._makeToolSpanId(id),
             toolCallId: id,
-            workingTabId: toolRuntimeContext.workingTabId || null,
-            workingTab: toolRuntimeContext.workingTab || null,
             sourceWindowId: this._dynamicContextSnapshot?.sourceWindowId ?? null,
             dynamicContext: this._dynamicContextSnapshot,
             loadedPluginSkillNames: this._loadedSkillToolNames,
@@ -2807,7 +2800,7 @@ export class Agent {
           pendingMessages = await this._applyToolResultEffects(outcome.toolName, result, isError);
           assertActive();
         } catch (error) {
-          result = { error: record(error).message, code: record(error).code || "TOOL_EXECUTION_FAILED", details: record(error).details };
+          result = failure(outcome.call, error, undefined, outcome.toolIdentity).result;
           isError = true;
         }
         await this._toolRuntime.discardToolResult?.(outcome.result, identity);
@@ -2902,56 +2895,6 @@ export class Agent {
     return collectSiteSkillPreviewContext(this._dynamicContextProvider, {
       reason: "site-skills", signal: this._abortCtrl?.signal, runId: this._currentRunId || "",
     });
-  }
-
-  async _collectToolRuntimeContext() {
-    return collectToolRuntimeContext(this._dynamicContextProvider, {
-      reason: "tool", signal: this._abortCtrl?.signal, runId: this._currentRunId || "",
-    }, this._dynamicContextSnapshot?.workingTab || null);
-  }
-
-  async _enrichToolCallArgsWithPageContext(toolName: string, args: unknown = {}, toolRuntimeContext: Awaited<ReturnType<Agent["_collectToolRuntimeContext"]>> | null = null) {
-    const policy = this._toolModelPolicy(toolName);
-    if (!policy.pageContext) return args;
-    if (!args || typeof args !== "object" || Array.isArray(args)) return args;
-    const input = { ...record(args) };
-    const working = toolRuntimeContext?.workingTab || this._dynamicContextSnapshot?.workingTab || null;
-    const explicitTabId = Number(input.tabId);
-    const workingTabId = Number(toolRuntimeContext?.workingTabId || working?.id);
-    // A uid pins its element's registered tab; substituting the working tab would
-    // target the wrong page. The tool resolves the uid's own tab downstream.
-    if (!(Number.isFinite(explicitTabId) && explicitTabId > 0) && policy.pageContext !== "explicit"
-      && this._toolRuntime.hasUidElementTargets?.(toolName, input, {
-        skillToolRegistrySnapshot: this._skillToolRegistrySnapshot,
-        toolRegistrySnapshot: this._toolRegistrySnapshot,
-        language: this._runLanguage,
-      })) {
-      return input;
-    }
-    const tabId = Number.isFinite(explicitTabId) && explicitTabId > 0
-      ? explicitTabId
-      : (Number.isFinite(workingTabId) && workingTabId > 0 && policy.pageContext !== "explicit" ? workingTabId : null);
-
-    if (tabId) {
-      input.tabId = tabId;
-      input._tabId = input._tabId ?? tabId;
-      try {
-        const tab = await this._browserContext.getTab?.(tabId);
-        const formattedTab = tab ? formatTab(tab, { titleLimit: 120 }) : { title: "", url: "" };
-        if (formattedTab.title && !input._pageTitle) input._pageTitle = formattedTab.title;
-        const tabUrl = formattedTab.url;
-        if (!input._pageUrl) input._pageUrl = tabUrl;
-      } catch (_err) {
-        if (Number(working?.id) === tabId) {
-          if (working?.title && !input._pageTitle) input._pageTitle = working.title;
-          if (working?.url && !input._pageUrl) input._pageUrl = working.url;
-        }
-      }
-    } else if (policy.pageUrlArgument && input[policy.pageUrlArgument] && !input._pageUrl) {
-      input._pageUrl = input[policy.pageUrlArgument];
-    }
-
-    return input;
   }
 
   /**

@@ -33,14 +33,14 @@ test("the packed drive guide is the only discoverable skill, English-only and bo
   assert.doesNotMatch(source, /^name: qz-drive$/m);
   assert.doesNotMatch(guide, /omit tabRef|a returned id|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/i);
   assert.match(guide, /Direct-drive results name the page with tabRef/);
-  assert.match(guide, /Direct-drive run_script passes tabRef and runs in that tab/);
-  assert.match(guide, /The script runs in the tab named by tabRef/);
+  assert.match(guide, /qz script --session ID` always runs in the page named by required `--tab`/);
+  assert.match(guide, /run_script with tabRef runs in that page; without tabRef it runs JavaScript computation or tool orchestration without document\/window/);
   assert.doesNotMatch(guide, /target:"page"|target page|The first call creates a session/);
   assert.match(guide, /qz session create --title/);
   assert.match(guide, /scope is only viewport or full/);
   assert.match(guide, /Missing `--session` exits 2 and does not create or reuse a session/);
   assert.match(guide, /stdout prints `sessionId <id>`/);
-  assert.match(guide, /A missing tabRef is DRIVE_TAB_REF_REQUIRED/);
+  assert.match(guide, /A missing tabRef is TAB_REF_REQUIRED/);
   assert.match(guide, /only when an alias was passed/);
   assert.match(guide, /One task uses one session/);
   assert.match(guide, /tabAlias` is recommended for readability and is not required/);

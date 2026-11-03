@@ -293,15 +293,13 @@ export function createSessionTabs({
     if (!isCurrent()) return aborted();
     const runtime = supervisor.getRuntime(id) || {};
     const explicitTabId = Number(tabId);
-    const targetTabId = Number.isFinite(explicitTabId) && explicitTabId > 0
-      ? explicitTabId
-      : Number(runtime.workingTabId);
+    const targetTabId = explicitTabId;
     if (!id || !Number.isFinite(targetTabId) || targetTabId <= 0) {
       return {
         ok: false,
-        code: "SESSION_TAB_TARGET_REQUIRED",
+        code: "TAB_REF_REQUIRED",
         reason: "missing_target_tab",
-        error: t("browser.noWorkingTab"),
+        error: t("toolError.TAB_REF_REQUIRED.message"),
         sessionId: id,
         tabId: null,
       };
@@ -363,8 +361,6 @@ export function createSessionTabs({
 
     if (pending) return { ok: true, sessionId: id, tabId: targetTabId, tab: formatted, ownedByCurrentTask: true };
     if (!owner) {
-      if (tabOnly) return { ok: false, code: "SESSION_TAB_UNOWNED", reason: "tab_not_owned_by_current_session",
-        error: t("browser.tabUnowned"), sessionId: id, tabId: targetTabId };
       if (readOnly) {
         return {
           ok: true,

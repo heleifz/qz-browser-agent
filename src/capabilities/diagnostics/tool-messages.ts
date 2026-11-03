@@ -4,12 +4,12 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("diagnostics-tools", {
   readConsoleMessagesDescription: {
-    "zh-CN": "读取目标标签页最近的 console 日志与 JS 异常（按时间倒序）。用于排查前端报错与点击后异常。",
-    en: "Read recent console messages and JavaScript exceptions from the target tab (newest first) to diagnose frontend errors and post-action exceptions.",
+    "zh-CN": "读取 tabRef 指定标签页最近的 console 日志与 JS 异常（按时间倒序）。用于排查前端报错与点击后异常。",
+    en: "Read recent console messages and JavaScript exceptions from the tab specified by tabRef (newest first) to diagnose frontend errors and post-action exceptions.",
   },
   readConsoleMessagesTabId: {
-    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 id。",
-    en: "Target tabRef: an alias or the id returned by open_tab/list_tabs.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
+    en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   readConsoleMessagesReset: {
     "zh-CN": "是否清空已有 console 记录并重新监听，默认 false。",
@@ -44,8 +44,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Regex flags. Default: i.",
   },
   networkWatchDescription: {
-    "zh-CN": "在已打开标签页上开启或重置 Network 后置监听，只记录调用之后发生的请求摘要（适合点击、搜索、提交、翻页前调用；响应体按需用 network_body 读取）。抓首屏或重定向请求请在 open_tab/navigate 中传 watchNetwork:true。",
-    en: "Start or reset post-load network monitoring on an open tab to record summaries of requests made after this call (call before clicking, searching, submitting, or paging; read bodies with network_body). Pass watchNetwork:true to open_tab/navigate for initial load or redirect requests.",
+    "zh-CN": "在 tabRef 指定的已打开标签页上开启或重置 Network 后置监听，只记录调用之后发生的请求摘要（适合点击、搜索、提交、翻页前调用；响应体按需用 network_body 读取）。抓首屏或重定向请求请在 open_tab/navigate 中传 watchNetwork:true。",
+    en: "Start or reset post-load network monitoring on the open tab specified by tabRef to record summaries of requests made after this call (call before clicking, searching, submitting, or paging; read bodies with network_body). Pass watchNetwork:true to open_tab/navigate for initial load or redirect requests.",
   },
   networkWatchReset: {
     "zh-CN": "是否清空已有记录，默认 true。",
@@ -56,8 +56,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Maximum buffered requests. Default: 200; range: 20–1000.",
   },
   networkRecentDescription: {
-    "zh-CN": "查看目标标签页最近的 Network 请求摘要（按时间倒序返回 requestId、method、url、status、mimeType、resourceType 等）。大型接口采样或排查 SPA 数据源、鉴权与限频时配合 network_body 使用。",
-    en: "View recent network request summaries for the target tab (newest first, returning requestId, method, url, status, mimeType, resourceType, etc.). Pair with network_body to sample large APIs or diagnose SPA data sources, auth, and rate limits.",
+    "zh-CN": "查看 tabRef 指定标签页最近的 Network 请求摘要（按时间倒序返回 requestId、method、url、status、mimeType、resourceType 等）。大型接口采样或排查 SPA 数据源、鉴权与限频时配合 network_body 使用。",
+    en: "View recent network request summaries for the tab specified by tabRef (newest first, returning requestId, method, url, status, mimeType, resourceType, etc.). Pair with network_body to sample large APIs or diagnose SPA data sources, auth, and rate limits.",
   },
   networkRecentLimit: {
     "zh-CN": "最多返回条数，默认 20，范围 1–100。",
@@ -92,8 +92,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Regex to match response mimeType (e.g. json).",
   },
   networkBodyDescription: {
-    "zh-CN": "按 requestId 读取 Network 响应体（requestId 来自 network_recent 或 wait_for_response）。",
-    en: "Read a network response body by requestId (from network_recent or wait_for_response).",
+    "zh-CN": "在 tabRef 指定的标签页按 requestId 读取 Network 响应体（requestId 来自 network_recent 或 wait_for_response）。",
+    en: "Read a network response body by requestId from the tab specified by tabRef (from network_recent or wait_for_response).",
   },
   networkBodyRequestId: {
     "zh-CN": "来自 network_recent 或 wait_for_response 的 requestId。",
@@ -104,8 +104,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Maximum characters to return. Default: 120000; range: 1000–1000000.",
   },
   waitForResponseDescription: {
-    "zh-CN": "等待匹配 URL/method/status/mimeType 的 Network 响应（已缓冲匹配项则立即返回），可选附带响应体。",
-    en: "Wait for a network response matching URL, method, status, or mimeType (returns immediately if already buffered), optionally including the body.",
+    "zh-CN": "等待 tabRef 指定标签页内匹配 URL/method/status/mimeType 的 Network 响应（已缓冲匹配项则立即返回），可选附带响应体。",
+    en: "Wait for a network response in the tab specified by tabRef matching URL, method, status, or mimeType (returns immediately if already buffered), optionally including the body.",
   },
   waitForResponseUrlPattern: {
     "zh-CN": "必填。请求 URL 正则。",
@@ -132,8 +132,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Maximum body characters. Default: 120000; range: 1000–1000000.",
   },
   waitForNetworkIdleDescription: {
-    "zh-CN": "等待目标标签页在途网络请求归零并连续空闲，适合点击、搜索或翻页后替代固定等待。",
-    en: "Wait for in-flight network requests in the target tab to stay idle; use after clicking, searching, or paging instead of a fixed delay.",
+    "zh-CN": "等待 tabRef 指定标签页在途网络请求归零并连续空闲，适合点击、搜索或翻页后替代固定等待。",
+    en: "Wait for in-flight network requests in the tab specified by tabRef to stay idle; use after clicking, searching, or paging instead of a fixed delay.",
   },
   waitForNetworkIdleIdleSeconds: {
     "zh-CN": "连续空闲秒数，默认 0.8，范围 0.1–10。",

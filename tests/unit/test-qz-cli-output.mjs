@@ -6,7 +6,7 @@ import { main, runCli } from "../../services/mcp-bridge/src/cli.mjs";
 import { createLiveOutput } from "../../services/mcp-bridge/src/output.mjs";
 
 const running = { endpoint: "http://127.0.0.1:23456", health: { features: { browserPairing: 1 }, status: { connected: true, clients: [{ clientId: "fixture" }] } } };
-const created = { session: { id: "task-1", title: "杭州天气" }, started: true };
+const created = { session: { sessionId: "task-1", title: "杭州天气", status: "pending" }, started: true };
 const snapshot = (status, text = "", extra = {}) => ({ sessionId: "task-1", session: created.session,
   runId: "run-1", status, runtime: { status, runId: "run-1" },
   transcript: text ? [{ type: "assistant", spanId: "answer", runId: "run-1", content: text, streaming: status === "running" }] : [], ...extra });

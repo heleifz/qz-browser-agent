@@ -157,14 +157,14 @@ export function installSecurityGuards(guardrails: unknown, world: ScriptWorld = 
     if (!rule || rule.action === "allow") return null;
     return { type: rule.type, domain: rule.type === "domain" ? rule.value : undefined, pattern: rule.type === "pattern" ? rule.value : undefined, host };
   }
-  function assertAllowed(input: unknown, source: string) {
+  function assertAllowed(input: unknown, action: string) {
     const match = matchUrl(input);
     if (!match) return;
     const label = match.type === "pattern" ? ("模糊匹配 " + match.pattern) : (match.domain + " 及其子域名");
-    const error: ScriptFailure = new Error("安全护栏已阻止 run_script" + (world === "inner" ? " inner" : "") + " 访问 " + label + "。");
+    const error: ScriptFailure = new Error("安全护栏已阻止 run_script 访问 " + label + "。");
     error.code = "SECURITY_GUARDRAIL_BLOCKED";
     error.details = {
-      source,
+      action,
       blockedType: match.type,
       blockedDomain: match.domain,
       blockedPattern: match.pattern,

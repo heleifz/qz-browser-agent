@@ -261,7 +261,7 @@ assert.doesNotMatch(mcpToolsSource, /registerTool\(\{\s*name:\s*"mcp_call_server
 const toolSchemas = tools.getToolSchemas();
 const publicToolNames = toolSchemas.map(schema => schema.function.name);
 assert.equal(publicToolNames.includes("list_tabs"), true);
-assert.equal(publicToolNames.includes("get_working_tab"), true);
+assert.equal(publicToolNames.includes("get_working_tab"), false);
 assert.equal(publicToolNames.includes("get_active_tab"), false);
 assert.equal(publicToolNames.includes("search_tabs"), false);
 assert.equal(publicToolNames.includes("mcp_inspect_server"), false);
@@ -377,11 +377,11 @@ assert.equal(activeSchemaNames.includes("qingzhou_skill_author__create_skill"), 
 assert.equal(activeSchemaNames.includes("qingzhou_skill_author__edit_skill_resource"), false);
 const activeXhsToolSchema = activeSchemas.find(schema => schema.function.name === "xhs_booster__collect_notes");
 assert.equal(activeXhsToolSchema.function.parameters.properties.timeout.type, "number");
-assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout"]);
+assert.deepEqual(activeXhsToolSchema.function.parameters.required, ["timeout", "tabRef"]);
 assert.deepEqual(activeXhsToolSchema.function.parameters.properties.tabRef.type, ["integer", "string"]);
 assert.equal(activeXhsToolSchema.function.parameters.properties.tabId, undefined);
 assert.deepEqual(runtime.getSkillToolParameters(manifest.tools[0]), activeXhsToolSchema.function.parameters);
-assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), false, "plugin page tools should default to the current working tab");
+assert.equal(activeXhsToolSchema.function.parameters.required.includes("tabRef"), true, "plugin page tools require an explicit page reference");
 assert.match(
   toolsSource,
   /resolveToolTimeoutMs\(definition, executionArgs\)/,
@@ -977,9 +977,9 @@ assert.equal(frozenIdentity.familyId, "plugin:collector");
 assert.equal(runtime.getSkillToolDefinition("plain_plugin__plain_run", { skillToolRegistrySnapshot: frozenRegistry }), null);
 const plainResult = await runtime.executeSkillTool(
   "plain_plugin__plain_run",
-  { timeout: 0 },
+  { timeout: 0, tabId: 7 },
   null,
-  { workingTabId: 7 },
+  {},
   async () => ({
     ok: true,
     hasResult: true,

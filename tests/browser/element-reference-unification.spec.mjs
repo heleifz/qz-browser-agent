@@ -158,12 +158,14 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       const context = { sessionId: 'native-agent-audit', runId: 'native-run', source: 'agent', workingTabId: tab.id,
         runProfile: { model: { vision: true }, features: { imageInput: true, toolImages: true }, tools: { disabled: [] } } };
       try {
-        await runtime.execute('wait_for_navigation', {}, undefined, context);
+        let missingReference;
+        try { await runtime.execute('wait_for_navigation', {}, undefined, context); } catch (error) { missingReference = error.code; }
+        await runtime.execute('wait_for_navigation', { tabRef: tab.id }, undefined, context);
         const definitions = runtime.getSchemas({ runProfile: context.runProfile }).filter(item => ['act_on_screen', 'collect_images'].includes(item.function.name));
-        const press = await runtime.execute('act_on_screen', { action: 'press', key: 'Escape', returnScreenshot: false }, undefined, context);
-        const collection = await runtime.execute('collect_images', { table: 'native-images', targets: ['#photo'] }, undefined, context);
+        const press = await runtime.execute('act_on_screen', { tabRef: tab.id, action: 'press', key: 'Escape', returnScreenshot: false }, undefined, context);
+        const collection = await runtime.execute('collect_images', { tabRef: tab.id, table: 'native-images', targets: ['#photo'] }, undefined, context);
         const urls = await runtime.execute('collect_images', { table: 'native-url-images', urls: [`${url}pixel.png`] }, undefined, { ...context, workingTabId: null });
-        return { definitions, press: { status: press.status, code: press.code, tabId: press.tabId, tabRef: press.tabRef },
+        return { definitions, missingReference, press: { status: press.status, code: press.code, tabId: press.tabId, tabRef: press.tabRef },
           collection: { collected: collection.collected, error: collection.message },
           urls: { collected: urls.collected, error: urls.message }, tabId: tab.id };
       } finally { await chrome.tabs.remove(tab.id); }
@@ -171,8 +173,10 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     for (const { function: schema } of native.definitions) {
       expect(schema.parameters.properties.tabId).toBeUndefined();
       expect(schema.parameters.properties.tabRef).toBeTruthy();
-      expect(schema.parameters.required || []).not.toContain('tabRef');
+      if (schema.name === 'act_on_screen') expect(schema.parameters.required).toContain('tabRef');
+      else expect(schema.parameters.anyOf).toContainEqual({ required: ['tabRef', 'targets'], properties: { targets: { minItems: 1 } } });
     }
+    expect(native.missingReference).toBe('TAB_REF_REQUIRED');
     expect(native.press.status).toBe('completed');
     expect(native.press.tabId).toBeUndefined();
     expect(native.press.tabRef).toBeUndefined();

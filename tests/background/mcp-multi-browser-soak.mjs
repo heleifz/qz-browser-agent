@@ -121,7 +121,7 @@ function transcript(snapshot) { return createSessionRecord([], snapshot.transcri
 async function round(browser, number) {
   const marker = `QZ_MULTI_${browser.name.toUpperCase()}_${number}_BROWSE`;
   const created = await cli(browser, ["create", `Read the test page and summarize it. [${marker}]`, "--title", marker, "--wait"]);
-  const id = created.sessionId || created.session?.id;
+  const id = created.sessionId || created.session?.sessionId;
   assert.ok(id); browser.sessions.add(id);
   assert.equal(created.snapshot.status, "completed", JSON.stringify(created.snapshot));
   assert.ok(JSON.stringify(transcript(created.snapshot)).includes(marker));
@@ -171,7 +171,7 @@ try {
       assert.equal(again.result.connected, true);
       await browser.closeExtensionPages(); await browser.detach();
     } else await connect(browser);
-    browser.initialSessions = new Set((await mcp(browser, "qingzhou_list_sessions", { limit: 500 })).sessions.map(session => session.id));
+    browser.initialSessions = new Set((await mcp(browser, "qingzhou_list_sessions", { limit: 500 })).sessions.map(session => session.sessionId));
     await screenshotSettings(browser);
     report.profiles.push({ name, uuid: browser.uuid, version: browser.version });
   }
@@ -225,14 +225,14 @@ try {
     const browser = browsers[0];
     while (browser.sessions.size < 105) {
       const created = await mcp(browser, "qingzhou_create_session", { title: `inventory-${browser.sessions.size}` });
-      browser.sessions.add(created.session.id);
+      browser.sessions.add(created.session.sessionId);
     }
     for (const browser of browsers) {
       // list_sessions has a documented 500 cap and defaults to 100; this fixture remains below the cap.
       assert.ok(browser.sessions.size < 500);
       const inventory = await mcp(browser, "qingzhou_list_sessions", { limit: 500 });
       const expected = [...new Set([...browser.initialSessions, ...browser.sessions])].sort();
-      const actual = inventory.sessions.map(session => session.id).sort();
+      const actual = inventory.sessions.map(session => session.sessionId).sort();
       assert.deepEqual(actual, expected);
       for (const [sessionId, expectedHistory] of browser.histories) {
         const snapshot = await mcp(browser, "qingzhou_get_session_snapshot", { sessionId, compact: false, tail: false, includeArtifacts: false });

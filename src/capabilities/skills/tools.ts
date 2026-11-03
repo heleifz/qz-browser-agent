@@ -1,4 +1,3 @@
-import { directDriveSkillGuidance } from '#sdk/shared/browser';
 import { modelT } from "./model-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
@@ -67,8 +66,6 @@ registerTool({
 // Skills
 // ===========================================================================
 
-const getSkillRuntimeGuidance = (context?: ToolContext) => context?.externalDrive === true ? directDriveSkillGuidance() : modelT("runtimeGuidance");
-
 registerTool({
   name: "list_skills",
   get description() { return modelT("listSkills"); },
@@ -124,7 +121,7 @@ registerTool({
       builtin: skill.builtin === true,
       readOnly: skill.readOnly === true,
       updatedAt: skill.updatedAt,
-      runtime: getSkillRuntimeGuidance(context),
+      runtime: modelT("runtimeGuidance"),
       content: skill.content,
       resources: summarizeSkillResources(skill.resources, { includeContent: includeResources }),
       ...summarizeSkillMcpFields(skill),
@@ -337,7 +334,7 @@ async function executeCreateSkillAction({ name, displayName, description, conten
     urlPatterns: skill.urlPatterns,
     resources: summarizeSkillResources(skill.resources, { includeContent: false }),
     ...summarizeSkillMcpFields(skill),
-    runtime: getSkillRuntimeGuidance(),
+    runtime: modelT("runtimeGuidance"),
     updatedAt: skill.updatedAt,
   };
 }
@@ -415,7 +412,7 @@ async function executeUpdateSkillAction({
     diagnostics: result.diagnostics || [],
     resources: summarizeSkillResources(skill.resources, { includeContent: false }),
     ...summarizeSkillMcpFields(skill),
-    runtime: getSkillRuntimeGuidance(),
+    runtime: modelT("runtimeGuidance"),
     updatedAt: skill.updatedAt,
   };
 }

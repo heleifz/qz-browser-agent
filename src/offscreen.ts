@@ -48,7 +48,7 @@ chrome.runtime.onMessage.addListener((input: unknown, _sender, sendResponse) => 
         ready: false,
         sandboxReady: false,
         error: messageOf(err),
-        code: record(err).code || "INNER_RUNNER_SANDBOX_NOT_READY",
+        code: record(err).code || "SCRIPT_CONTEXT_UNAVAILABLE",
       }));
     return true;
   }
@@ -71,7 +71,7 @@ chrome.runtime.onMessage.addListener((input: unknown, _sender, sendResponse) => 
         engine: "offscreen_inner",
         execution_world: "inner",
         error: messageOf(err),
-        code: record(err).code || "INNER_RUNNER_FAILED",
+        code: record(err).code || "SCRIPT_CONTEXT_UNAVAILABLE",
         details: record(err).details || {},
         trace: [],
         elapsedMs: 0,
@@ -141,7 +141,7 @@ window.addEventListener("message", (event) => {
         response: {
           ok: false,
           error: messageOf(err),
-          code: record(err).code || "INNER_TOOL_CALL_FAILED",
+          code: record(err).code || "RUN_SCRIPT_TOOL_CALL_FAILED",
           details: record(err).details || {},
         },
       });
@@ -334,7 +334,7 @@ function traceInnerOffscreen(phase: string, details: Record<string, unknown> = {
 }
 
 function makeSandboxReadyTimeoutError() {
-  return Object.assign(new Error("run_script inner sandbox did not report ready"), { code: "INNER_RUNNER_SANDBOX_NOT_READY" });
+  return Object.assign(new Error("The script context did not become ready."), { code: "SCRIPT_CONTEXT_UNAVAILABLE" });
 }
 
 function publishInnerRunResult(requestId: unknown, result: unknown) {

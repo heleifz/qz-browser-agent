@@ -87,7 +87,7 @@ assert.ok(providerFacingSchemas.some(schema => schema.function?.name === "act_on
 const screenActionSchema = providerFacingSchemas.find(schema => schema.function?.name === "act_on_screen");
 assert.deepEqual(
   screenActionSchema?.function?.parameters?.required,
-  ["action", "returnScreenshot"],
+  ["action", "returnScreenshot", "tabRef"],
   "screen actions must force the model to choose whether post-action capture is worth its cost",
 );
 assert.equal(
@@ -121,8 +121,8 @@ for (const schema of providerFacingSchemas) {
   assert.equal(parameters.type, "object", `${name} must expose an object parameter schema`);
   assert.deepEqual(
     schemaKeywordPaths(parameters, "anyOf"),
-    [],
-    `${name} must not expose provider-fragile anyOf schemas`,
+    ['read_image', 'collect_images'].includes(name) ? ['$.anyOf'] : [],
+    `${name} publishes compound variants only for URL or explicit-page image input`,
   );
 }
 

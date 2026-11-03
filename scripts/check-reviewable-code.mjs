@@ -23,25 +23,25 @@ const REVIEWED = new Map([
     files: /^sidepanel\/(?:chunk-[\w.-]+|features\/chat\/math-runtime)\.js$/u,
     reason: "loadMathRuntime loads only packaged vendor/mathjax/startup.js, with a local test-server fallback.",
   }]),
-  ["dynamic-code:154ed0174e4cd217b9e41855bf47960f6bad58ba559943ee1f0343db2c2ad992", {
+  ["dynamic-code:a8389379dd8eaa69a783517fac2e496ceaa4a9353ca8de52c7db8493267e9a9a", {
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
-    reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. Traces stay in the worker and a timeout reads the last five once. See policy risk in the audit guide.",
+    reason: "Existing user/Agent script executor in an isolated sandbox Worker; no extension APIs. The trace label is now script.start; compiled source, injected bindings and sandbox permissions are unchanged. Traces stay in the worker and a timeout reads the last five once. See policy risk in the audit guide.",
   }],
   ["dynamic-code:81fe6123d9379eaf3a7984ce93a65fba133bd41bdaa7d964e467da13b55748c4", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
-  ["worker-source:4fa83efb89118d47a96a996f59089c33e027081d3aeb00692e7961a9b8d2f9a4", {
+  ["worker-source:ad4b0258b2b2526a5d813615f09b95cf7ef92c48619d19974c20c8cb464ddc8a", {
     files: /^runner-sandbox\.js$/u,
-    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. A timeout snapshot is forwarded once and does not terminate the worker. ToolError message/hint/details are data in the embedded worker reply.",
+    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. Infrastructure failures use the public script-context code; Worker identity, cancellation and message routing are unchanged. A timeout snapshot is forwarded once and does not terminate the worker. ToolError message/hint/details are data in the embedded worker reply.",
   }],
   ...[
     ["41b62865f6aa87aca8e8c99c210abfd293106c427db8efccb1c65ff7df75b0f3", "background/tools/cdp-runtime", "Run-owned CDP evaluator; errors include only the caller's page reference when provided. Ownership, cancellation and CDP source/target are unchanged. A script timeout reads the last five traces with a fixed Runtime.callFunctionOn on the promise held by CDP, then terminates. Existing page-script capability."],
     ["a36dfc60d9dd63fbe417be448b1ec12a50a982e938a85837212784e1a267bf48", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element; geometry uses the shared Rect contract."],
-    ["14d076aa3015b2fd18d627f969cd9aaecbf2859e9c65c9b11aaefcd57b81129c", "capabilities/script/tools", "Page-script tool bridge carries Session/run identity, host-supplied externalDrive mode and arguments to the same run-owned evaluator. The mode is serialized data; it never comes from page messages."],
+    ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run/parent-call identity and arguments as JSON data to the same run-owned evaluator. No caller mode or implicit page is injected."],
     ["d8437ba77796cdef3249f94639760a4ef2dcaa0f15b306c69909725881b748bb", "capabilities/script/tools", "Existing explicit-return page-script fallback uses the same run-owned evaluator."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["06b8f212337334bc92da772559835b2134bb5912650c318f4eff067430fbbedb", "capabilities/script/tools", "Entire createScriptTools factory; host-supplied externalDrive mode selects the source DTO and is serialized into the page bridge only as data. Drive calls never inject a default tab, and explicit tabRef suppresses the ordinary page default. Cancellation errors preserve only the caller's page reference. Session/run/parent identity, packaged source guards and run-owned execution are unchanged. Page traces stay on the CDP-held promise; an inner timeout reads the last five once. Policy risk remains."],
+    ["1440eaad6f856c0d1fd396da01eced6173fe7ea6d1ea948a96ebc2457bb020fa", "capabilities/script/tools", "Entire createScriptTools factory; an explicit page reference selects the run-owned page executor, and page-free scripts use the existing sandbox Worker. Nested tools never receive an implicit page. Session/run/parent identity, cancellation and packaged security guards remain intact. Both environments construct the same business DTO. Page traces stay on the CDP-held promise; a timeout reads the last five once. Policy risk remains."],
     ["60ac3b226baabdc75705c018ae301fdb89773f66bee9b698dd8be223e7829ed0", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant; validates live context identity and the element-reference protocol version. Only public error context changed; probe source and frame selection are unchanged."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
     ["310c1da6f6f300ce376933ce009128593452efba2f7ecb5aceb8afed362de17b", "background/tools/element-runtime", "bindContentElementRefs resolves bounded batches of original-node tokens through the packaged ISOLATED_CONTENT_INVOKE bridge; token arrays are CDP values, not code. It checks the document/frame and limits concurrent node descriptions."],
@@ -58,9 +58,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function; caller context is used only for public failure details.",
   }],
-  ["cdp-execution:e7c4c9d8d840617e3a0190375e2105a05a9e7ccc061d63524482884a7df4697f", {
+  ["cdp-execution:4df3b05a2d61826c4452fb35c91e12b7797ae73ead57d6590eca0cd1e50282b6", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: same reviewed host-mode explicit-target bridge and page-script factory, without bundled shorthand expansion. Page traces stay on the CDP-held promise; an inner timeout reads the last five once.",
+    reason: "Unbundled createScriptTools: an explicit page reference selects the run-owned page executor; page-free scripts use the existing sandbox Worker. Nested tools never receive an implicit page. Session/run/parent identity, cancellation and packaged security guards remain intact. Both environments construct the same business DTO. Page traces stay on the CDP-held promise; a timeout reads the last five once.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,

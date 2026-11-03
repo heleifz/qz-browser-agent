@@ -33,16 +33,16 @@ test('five public schemas expose target only, while legacy selector is canonical
   const context = { ...f.context, toolRegistrySnapshot: registry.snapshot() };
   const sources = schemas.find(item => item.function.name === 'read_article').function.parameters.properties.source.enum;
   assert.ok(sources.includes('target')); assert.ok(!sources.includes('selector'));
-  await f.runtime.execute('read_article', { source: 'selector', selector: ref.target, limit: 100 }, undefined, context);
+  await f.runtime.execute('read_article', { tabRef: 5, source: 'selector', selector: ref.target, limit: 100 }, undefined, context);
   assert.equal(seen.at(-1).source, 'target');
   assert.equal(seen.at(-1).target, ref.target);
   for (const name of names) {
-    await f.runtime.execute(name, { selector: ref.target, limit: 100 }, undefined, context);
+    await f.runtime.execute(name, { tabRef: 5, selector: ref.target, limit: 100 }, undefined, context);
     assert.equal(seen.at(-1).target, ref.target);
     assert.equal(Object.hasOwn(seen.at(-1), 'selector'), false);
-    await f.runtime.execute(name, { target: '#chosen', selector: 'uid:unknown', limit: 100 }, undefined, context);
+    await f.runtime.execute(name, { tabRef: 5, target: '#chosen', selector: 'uid:unknown', limit: 100 }, undefined, context);
     assert.equal(seen.at(-1).target, '#chosen', 'canonical target wins over a legacy alias');
-    assert.equal(f.runtime.getBatchTabPolicy(name, { selector: ref.target }, context).tabId, 5);
+    assert.equal(f.runtime.getBatchTabPolicy(name, { tabRef: 5, selector: ref.target }, context).tabId, 5);
     await assert.rejects(f.runtime.execute(name, { tabRef: 5, target: 'uid:unknown', limit: 100 }, undefined, context), { code: 'STALE_ELEMENT_UID' });
   }
 });

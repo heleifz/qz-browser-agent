@@ -777,6 +777,7 @@ registerTool({
       limit: { type: "number", description: toolT("getAxTreeLimit") },
       actionsLimit: { type: "number", description: toolT("getAxTreeActionsLimit") },
     },
+    required: ["tabRef"],
   } as const; },
   argumentAliases: { root: "target", selector: "target" },
   page: "owned",
@@ -789,7 +790,7 @@ registerTool({
     const sessionId = String(context.sessionId || "").trim();
     const requestedRoot = String(target || "root").trim() || "root";
     const snapshotScope = scope || (requestedRoot === "root" ? "viewport" : "full");
-    let targetTabId = tabId;
+    let targetTabId: number | undefined = tabId;
     let resolvedRoot = requestedRoot;
     let overviewSelector = "body";
     let rootBackendNodeId = 0;

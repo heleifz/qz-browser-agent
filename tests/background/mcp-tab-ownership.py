@@ -46,7 +46,7 @@ async def create_session(session: ClientSession, title: str) -> str:
     payload = await call(session, "qingzhou_create_drive_session", {
         "title": title,
     })
-    session_id = payload.get("sessionId") or payload.get("id") or (payload.get("session") or {}).get("id")
+    session_id = payload.get("sessionId")
     assert session_id, payload
     return str(session_id)
 
@@ -120,12 +120,22 @@ async def amain(args: argparse.Namespace) -> int:
             free = next((item for item in listed["tabs"] if str(item.get("url") or "").rstrip("/") == free_url), None)
             assert free and set(free) == {"tabRef", "url", "title", "active"}, listed
             free_tab_ref = int(free["tabRef"])
-            await expect_denied(session, root_a, "navigate", {
-                "tabRef": free_tab_ref, "url": f"{base_url}/must-not-claim",
-            }, {"SESSION_TAB_UNOWNED"})
             free_article = await execute(session, root_a, "read_article", {"tabRef": free_tab_ref, "limit": 4000})
             assert "free" in json.dumps(free_article), free_article
             assert free_tab_ref not in await owned_tabs(session, root_a)
+
+            claimed_url = f"{base_url}/claimed-free"
+            await execute(session, root_a, "navigate", {"tabRef": free_tab_ref, "url": claimed_url})
+            assert await owned_tabs(session, root_a) == sorted([tab_a, tab_a2, free_tab_ref])
+            claimed_tabs = await execute(session, root_a, "list_tabs", {})
+            claimed_free = next(item for item in claimed_tabs["tabs"] if item["tabRef"] == free_tab_ref)
+            assert claimed_free["url"] == claimed_url, claimed_free
+            assert claimed_free["active"] == free["active"], "ownership must not change the user's active tab"
+            await expect_denied(session, root_b, "navigate", {
+                "tabRef": free_tab_ref, "url": f"{base_url}/must-not-steal",
+            }, {"SESSION_TAB_FOREIGN", "SESSION_TAB_UNOWNED"})
+            assert await execute(session, root_a, "close_tab", {"tabRef": free_tab_ref}) == {"closed": True}
+            assert await owned_tabs(session, root_a) == sorted([tab_a, tab_a2])
 
             await execute(session, root_a, "navigate", {"tabRef": tab_a, "url": f"{base_url}/owned-navigation"})
             navigated = await execute(session, root_a, "read_article", {"tabRef": tab_a, "limit": 4000})

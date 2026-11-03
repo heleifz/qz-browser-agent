@@ -3,7 +3,7 @@ import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
 import { driveToolText } from "./tool-messages.js";
-import type { SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
+import { publicSessionObservation, type SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
@@ -332,7 +332,8 @@ export function createMcpRuntime({
     const runtime = state.runtime || (await sessions.getRuntimeOutput(id));
     const snapshot: Fields = {
       sessionId: id,
-      session: metadata[id] || null,
+      session: metadata[id] ? publicSessionObservation(id, metadata[id].title?.trim() || t("session.new"),
+        String(state.status || state.runtime?.status || "idle")) : null,
       state,
       runtime,
       input: state.input,
@@ -474,7 +475,7 @@ export function createMcpRuntime({
       sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
       drive.restore(sessionId, Date.now());
       const created = (await sessions.listMetadata())[sessionId];
-      return { sessionId, title: String(created?.title || title), status: String(readRuntime(sessionId).status || "idle") };
+      return publicSessionObservation(sessionId, String(created?.title || title), String(readRuntime(sessionId).status || "idle"));
     } finally { release(); void onDriveSettled(); }
   }
 

@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "tabRef が必要です",
+  "backend.toolError.TAB_REF_REQUIRED.message": "ページツールには tabRef を明示的に指定してください。",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "open_tab でページを開くか list_tabs で探し、その tabRef を渡してください。",
   "backend.toolError.UNSUPPORTED_URL.label": "未対応のページプロトコル",
   "backend.toolError.UNSUPPORTED_URL.message": "HTTP、HTTPS、またはアクセスが許可された file:// ページの URL を使用してください。",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "ファイルへのアクセス許可が必要です",

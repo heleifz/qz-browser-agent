@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "請提供 tabRef",
+  "backend.toolError.TAB_REF_REQUIRED.message": "頁面工具必須明確傳入 tabRef。",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "先用 open_tab 開啟頁面或用 list_tabs 尋找頁面，再傳入對應的 tabRef。",
   "backend.toolError.UNSUPPORTED_URL.label": "不支援此網頁協定",
   "backend.toolError.UNSUPPORTED_URL.message": "請使用 HTTP、HTTPS 或已授權的 file:// 網頁網址。",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "需要檔案存取權限",

@@ -65,7 +65,7 @@ test("task-owned local HTML supports page tools, scripts and tab cleanup", async
         try {
           return await runtime.execute(name, args, new AbortController().signal,
             { ...supervisor.getRuntime("local-file"), sessionId: "local-file", runId: "file-run", language: "en" });
-        } catch (error) { return { code: error.code, message: error.message, details: error.details }; }
+        } catch (error) { return { code: error.code, message: error.message, hint: error.hint, details: error.details }; }
       };
     });
     const call = (name, args) => worker.evaluate(({ name, args }) => localFileCall(name, args), { name, args });
@@ -73,14 +73,17 @@ test("task-owned local HTML supports page tools, scripts and tab cleanup", async
     const opened = succeeded(await call("open_tab", { url: fileUrl }));
     const tabRef = opened.tabRef;
     expect(opened.url).toBe(fileUrl);
-    expect(succeeded(await call("list_tabs", {})).find(tab => tab.tabRef === tabRef)).toMatchObject({ url: fileUrl, usable: true });
-    expect(succeeded(await call("get_working_tab", {})).url).toBe(fileUrl);
+    expect(Object.keys(opened).sort()).toEqual(["active", "tabRef", "title", "url"]);
+    const listed = succeeded(await call("list_tabs", { scope: "owned" }));
+    const localTab = listed.tabs.find(tab => tab.tabRef === tabRef);
+    expect(localTab).toMatchObject({ tabRef, url: fileUrl, active: false });
+    expect(Object.keys(localTab).sort()).toEqual(["active", "tabRef", "title", "url"]);
     expect(succeeded(await call("read_article", { tabRef, limit: 2000 })).text).toContain("Local hiring report");
     expect(JSON.stringify(succeeded(await call("read_dom", { tabRef })))).toContain("Show remote roles");
     expect(JSON.stringify(succeeded(await call("inspect_element", { tabRef, target: "css:#filter" })))).toContain("Show remote roles");
     expect(JSON.stringify(succeeded(await call("get_ax_tree", { tabRef })))).toContain("Show remote roles");
     succeeded(await call("act_on_element", { tabRef, target: "css:#filter", action: "click" }));
-    expect(succeeded(await call("read_article", { tabRef, source: "target", target: "#result", limit: 1000 })).text).toContain("Remote roles only");
+    expect(succeeded(await call("read_article", { tabRef, source: "target", target: "css:#result", limit: 1000 })).text).toContain("Remote roles only");
     const script = succeeded(await call("run_script", {
       tabRef, timeout: 10, mutatesPage: true,
       code: "document.querySelector('#result').textContent = 'Script verified'; ({ title: document.title, url: location.href })",

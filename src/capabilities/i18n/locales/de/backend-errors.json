@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "tabRef erforderlich",
+  "backend.toolError.TAB_REF_REQUIRED.message": "Seitenwerkzeuge erfordern eine explizite tabRef.",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "Öffne eine Seite mit open_tab oder finde sie mit list_tabs und übergib dann ihre tabRef.",
   "backend.toolError.UNSUPPORTED_URL.label": "Nicht unterstütztes Seitenprotokoll",
   "backend.toolError.UNSUPPORTED_URL.message": "Verwenden Sie eine HTTP-, HTTPS- oder freigegebene file://-Seiten-URL.",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "Dateizugriff erforderlich",

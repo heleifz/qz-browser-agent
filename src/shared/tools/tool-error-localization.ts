@@ -212,6 +212,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   RUN_SCRIPT_TOOL_CALL_FAILED: { label: "toolError.RUN_SCRIPT_TOOL_CALL_FAILED.label", message: "toolError.RUN_SCRIPT_TOOL_CALL_FAILED.message" },
   RUN_SCRIPT_TOOL_DEPTH_EXCEEDED: { label: "toolError.RUN_SCRIPT_TOOL_DEPTH_EXCEEDED.label", message: "toolError.RUN_SCRIPT_TOOL_DEPTH_EXCEEDED.message" },
   RUN_STOPPED: { label: "toolError.RUN_STOPPED.label", message: "toolError.RUN_STOPPED.message" },
+  SCRIPT_CONTEXT_UNAVAILABLE: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
+  SCRIPT_REQUEST_INVALID: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
   SCRIPT_EVALUATION_FAILED: { label: "toolError.SCRIPT_EVALUATION_FAILED.label", message: "toolError.SCRIPT_EVALUATION_FAILED.message" },
   SCRIPT_EXECUTION_UNAVAILABLE: { label: "toolError.SCRIPT_EXECUTION_UNAVAILABLE.label", message: "toolError.SCRIPT_EXECUTION_UNAVAILABLE.message" },
   SCRIPT_SYNTAX_ERROR: { label: "toolError.SCRIPT_SYNTAX_ERROR.label", message: "toolError.SCRIPT_SYNTAX_ERROR.message" },
@@ -232,7 +234,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   SESSION_TAB_FOREIGN: { label: "toolError.SESSION_TAB_FOREIGN.label" },
   SESSION_TAB_NOT_WEB: { label: "toolError.SESSION_TAB_NOT_WEB.label" },
   SESSION_TAB_TARGET_DENIED: { label: "toolError.SESSION_TAB_TARGET_DENIED.label" },
-  SESSION_TAB_TARGET_REQUIRED: { label: "toolError.SESSION_TAB_TARGET_REQUIRED.label" },
+  SESSION_TAB_TARGET_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
+  TAB_REF_REQUIRED: { label: "toolError.TAB_REF_REQUIRED.label", message: "toolError.TAB_REF_REQUIRED.message" },
   SESSION_TAB_UNAVAILABLE: { label: "toolError.SESSION_TAB_UNAVAILABLE.label" },
   SESSION_TAB_UNOWNED: { label: "toolError.SESSION_TAB_UNOWNED.label" },
   SESSION_TOOL_FORBIDDEN: { label: "toolError.SESSION_TOOL_FORBIDDEN.label", message: "toolError.SESSION_TOOL_FORBIDDEN.message" },
@@ -385,6 +388,11 @@ export function localizeToolFailureError(value: unknown, context: FailureContext
   }
   const original = String(err.message || err.error || "");
   const originalCode = String(err.code || context.code || "").trim();
+  if (err.name === "AbortError" || err.name === "TimeoutError") return value;
+  if (value instanceof Error && (!originalCode || originalCode.toUpperCase() === "TOOL_EXECUTION_FAILED" || !hasLocalizedToolFailureCode(originalCode))) {
+    try { if (!err.code) err.code = originalCode || "TOOL_EXECUTION_FAILED"; } catch (_error) {}
+    return value;
+  }
   const localized = localizeToolFailureText(original, {
     ...context,
     code: originalCode,

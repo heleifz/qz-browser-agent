@@ -53,8 +53,7 @@ class QingzhouMcpClient:
     def session_id_from_payload(payload: dict[str, Any]) -> str:
         session_id = (
             payload.get("sessionId")
-            or payload.get("id")
-            or (payload.get("session") or {}).get("id")
+            or (payload.get("session") or {}).get("sessionId")
         )
         if not session_id:
             raise RuntimeError(f"create_session returned no session id: {payload}")

@@ -74,11 +74,11 @@ test('single-call preflight failures each produce one persistent failed card', a
   const f = fixture();
   const { sessionId } = await f.runtime.createDriveSession({ title: "Inspect example page" });
   for (const [name, args] of [['act_on_screen', { action: 'press', key: 'Escape', returnScreenshot: false }], ['collect_images', { table: 'test', targets: ['css:img'] }]]) {
-    await assert.rejects(f.runtime.executeTool({ sessionId, name, args }), { code: 'DRIVE_TAB_REF_REQUIRED' });
+    await assert.rejects(f.runtime.executeTool({ sessionId, name, args }), { code: 'TAB_REF_REQUIRED' });
   }
   const history = await f.transcript.get(sessionId);
   assert.deepEqual(history.map(row => row.name), ['act_on_screen', 'collect_images']);
-  assert.ok(history.every(row => row.isError && row.result.code === 'DRIVE_TAB_REF_REQUIRED'));
+  assert.ok(history.every(row => row.isError && row.result.code === 'TAB_REF_REQUIRED'));
   assert.equal(new Set(history.map(row => row.toolCallId)).size, 2);
   assert.equal((await createSessionTranscript(f.transcriptOptions).hydrate(sessionId)).length, 2);
 });

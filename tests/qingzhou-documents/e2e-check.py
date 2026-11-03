@@ -394,6 +394,7 @@ def run():
                   }
                   return {
                     fetched, parsed, chunk, created, createdPdfFromModel, modelPdfRenderHtml, listed, downloaded, foreignError,
+                    fetchedPresentation: toolRuntime.getToolResultPageContext(fetched),
                     workbookParsed, workbookFirst, workbookSecond, workbookTextValue,
                     directCreated,
                     directHtml,
@@ -449,7 +450,8 @@ def run():
     expect(len(result["workbookFirst"].get("rows", [])) == 50, "XLSX first page size is incorrect")
     expect(result["workbookSecond"].get("offset") == 50, "XLSX next cursor was not honored")
     expect(result["workbookTextValue"].count("row-1\n") == 1, "XLSX conversion duplicated sheet rows")
-    expect(result["fetched"].get("_plugin", {}).get("id") == "qingzhou-documents", "plugin metadata is missing")
+    expect(result["fetchedPresentation"].get("_plugin", {}).get("id") == "qingzhou-documents", "plugin presentation metadata is missing")
+    expect("_plugin" not in result["fetched"], "plugin presentation metadata leaked into the business result")
     expect("trace" not in result["chunk"], "document result was duplicated into host trace")
     expect(result["foreignError"].get("code") == "DOCUMENT_SESSION_FOREIGN", "foreign session access should be rejected")
 

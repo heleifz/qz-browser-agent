@@ -169,7 +169,7 @@ for (const finalUrl of ["about:blank", "chrome://settings", "https://blocked.tes
   test(`reader rechecks a page that settles before its first readiness poll: ${finalUrl}`, async () => {
     tab = { id: 1, url: "about:blank", status: "loading" }; closed = denied = false; reads = 0;
     afterResolve = () => { tab = { id: 1, url: finalUrl, status: "complete" }; };
-    await assert.rejects(runtime.execute("read_article", { limit: 1200 }, undefined, context), {
+    await assert.rejects(runtime.execute("read_article", { tabRef: 1, limit: 1200 }, undefined, context), {
       code: finalUrl.startsWith("https:") ? "SECURITY_GUARDRAIL_BLOCKED" : "SESSION_TAB_NOT_WEB",
     });
     assert.equal(reads, 0);

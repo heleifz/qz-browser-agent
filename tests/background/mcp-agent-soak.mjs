@@ -135,7 +135,7 @@ async function scenario(name, round, operation) {
   await delay(750);
 }
 function marker(round, type) { return `QZ_SOAK_${String(round).padStart(4, "0")}_${type}`; }
-function remember(created) { const id = created.session?.id || created.sessionId; assert.ok(id); sessions.add(id); return id; }
+function remember(created) { const id = created.session?.sessionId || created.sessionId; assert.ok(id); sessions.add(id); return id; }
 function text(snapshot) { return (snapshot.transcript || []).filter(entry => entry.type === "assistant").map(entry => contentText(entry.content)).join("\n"); }
 function contentText(value) { return typeof value === "string" ? value : Array.isArray(value) ? value.filter(part => part.type === "text").map(part => part.text).join("\n") : ""; }
 async function until(predicate, description, timeout = 25_000) {
@@ -231,7 +231,7 @@ async function simpleTasks(round) {
   const sent = await sending.finish();
   assert.equal(sent.snapshot.status, "completed"); assert.ok(sent.clientMessageId);
   assert.equal(sent.snapshot.transcript.filter(entry => entry.clientMessageId === sent.clientMessageId).length, 1);
-  assert.ok((await cli(["tasks", "--limit", "100"])).sessions.some(session => session.id === id));
+  assert.ok((await cli(["tasks", "--limit", "100"])).sessions.some(session => session.sessionId === id));
   assert.equal((await cli(["show", id])).sessionId, id);
   assert.equal(fixture.count(tag), 1); assert.equal(fixture.count(follow), 1);
   return { sessionId: id, clientMessageId: sent.clientMessageId };

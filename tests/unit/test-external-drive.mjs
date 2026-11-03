@@ -83,7 +83,7 @@ test("drive titles and request sentences stay on the existing tool", () => {
   });
 });
 
-test("direct-drive run_script stays on the page and script errors keep the engine text", () => {
+test("direct-drive run_script permits explicit pages and no-page orchestration", () => {
   assert.equal(isDriveToolDefault("open_tab"), true);
   assert.equal(isDriveToolDefault("list_skills"), true);
   assert.equal(isDriveToolDefault("use_tab"), false);
@@ -102,57 +102,51 @@ test("direct-drive run_script stays on the page and script errors keep the engin
   assert.equal(isDriveToolForbidden("ask_user"), true);
   const page = prepareDriveToolCall("run_script", { tabRef: " page ", timeout: 5, code: "async () => 1" });
   assert.equal(page.ok, true);
-  assert.equal(page.args.target, "page");
-  assert.equal(page.args.tabRef, "page");
-  const inner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
-  assert.equal(inner.ok, false);
-  assert.equal(inner.error.code, "DRIVE_RUN_SCRIPT_TARGET");
-  assert.equal(inner.error.message, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
-  assert.doesNotMatch(inner.error.message, /\b(?:inner|target)\b/i);
-  withLanguage("en", () => {
-    const enInner = prepareDriveToolCall("run_script", { target: "inner", tabRef: "page", timeout: 1, code: "async () => 1" });
-    assert.equal(enInner.ok, false);
-    assert.equal(enInner.error.message, "Direct drive runs the script in the tab named by tabRef. Orchestrate with calls or execute_tool.");
-    assert.doesNotMatch(enInner.error.message, /\b(?:inner|target)\b/i);
-  });
-  const scoped = prepareDriveToolCall("run_script", { tabRef: "page", scope: "inner", timeout: 1, code: "async () => 1" });
-  assert.equal(scoped.ok, true);
-  assert.equal(scoped.args.target, "page");
-  assert.equal(Object.hasOwn(scoped.args, "scope"), false);
-  const missing = prepareDriveToolCall("run_script", { target: "page", timeout: 1, code: "async () => 1" });
-  assert.equal(missing.ok, false);
-  assert.equal(missing.error.code, "DRIVE_TAB_REF_REQUIRED");
+  assert.equal(page.args.tabRef.trim(), "page");
+  assert.equal(Object.hasOwn(page.args, "target"), false);
+  const orchestration = prepareDriveToolCall("run_script", { timeout: 1, code: "async () => 1" });
+  assert.equal(orchestration.ok, true);
+  assert.equal(Object.hasOwn(orchestration.args, "tabRef"), false);
+  for (const legacy of [{ target: "inner" }, { scope: "inner" }]) {
+    const prepared = prepareDriveToolCall("run_script", { ...legacy, tabRef: "page", timeout: 1, code: "async () => 1" });
+    assert.equal(prepared.ok, true);
+    assert.equal(prepared.args.tabRef, "page");
+    assert.equal(prepared.args.tabRef, "page");
+  }
   withLanguage("zh-CN", () => {
     const zh = prepareDriveToolCall("navigate", {});
     assert.equal(zh.ok, false);
-    assert.equal(zh.error.message, "页面工具必须带 tabRef。它可以是 open_tab 时用 tabAlias 设的别名，也可以是 open_tab 或 list_tabs 返回的 tabRef。别名和 tabRef 都属于本会话。同一任务后续调用带同一个 --session（MCP 带同一个 sessionId）。");
+    assert.equal(zh.error.message, "页面工具必须显式传 tabRef。");
     assert.doesNotMatch(zh.error.message, /省略 tabRef/);
   });
   withLanguage("en", () => {
     const en = prepareDriveToolCall("navigate", {});
     assert.equal(en.ok, false);
-    assert.equal(en.error.message, "Page tools require tabRef. It can be the alias set with tabAlias on open_tab, or the tabRef returned by open_tab or list_tabs. Aliases and tab refs belong to this session. Later calls in the same task use the same --session (MCP: the same sessionId).");
+    assert.equal(en.error.message, "Page tools require an explicit tabRef.");
     assert.doesNotMatch(en.error.message, /omit tabRef/i);
   });
   assert.equal(prepareDriveToolCall("open_tab", { url: "https://example.com" }).ok, true);
-  for (const name of ["navigate", "get_ax_tree", "read_dom", "use_tab", "close_tab", "screenshot", "act_on_element", "wait_for_element"]) {
+  for (const name of ["navigate", "get_ax_tree", "read_dom", "close_tab", "screenshot", "act_on_element", "wait_for_element"]) {
     const rejected = prepareDriveToolCall(name, {});
     assert.equal(rejected.ok, false, name);
-    assert.equal(rejected.error.code, "DRIVE_TAB_REF_REQUIRED", name);
-    const blank = prepareDriveToolCall(name, { tabRef: "  " });
-    assert.equal(blank.ok, false, name);
+    assert.equal(rejected.error.code, "TAB_REF_REQUIRED", name);
+    for (const reference of [null, "  "]) {
+      const invalid = prepareDriveToolCall(name, { tabRef: reference });
+      assert.equal(invalid.ok, true, name);
+      assert.equal(invalid.args.tabRef, typeof reference === 'string' ? '' : reference, 'invalid explicit values reach the shared reference validator');
+    }
     const prefixed = prepareDriveToolCall(`plugin__${name}`, { tabRef: " page " });
     assert.equal(prefixed.ok, true, name);
     assert.equal(prefixed.args.tabRef, "page", name);
   }
   const tabIdOnly = prepareDriveToolCall("screenshot", { tabId: 4 });
   assert.equal(tabIdOnly.ok, false);
-  assert.equal(tabIdOnly.error.code, "DRIVE_TAB_REF_REQUIRED");
+  assert.equal(tabIdOnly.error.code, "TAB_REF_REQUIRED");
   for (const name of ["open_tab", "list_tabs", "list_skills", "load_skill", "wait_until", "wait", "document_fetch", "get_working_tab", "browse_history", "data_store"]) {
     assert.equal(prepareDriveToolCall(name, {}).ok, true, name);
   }
   assert.equal(prepareDriveToolCall("read_image", { url: "https://example.com/a.png" }).ok, true);
-  assert.equal(prepareDriveToolCall("read_image", {}).error.code, "DRIVE_TAB_REF_REQUIRED");
+  assert.equal(prepareDriveToolCall("read_image", {}).error.code, "TAB_REF_REQUIRED");
   const other = prepareDriveToolCall("open_tab", { url: "https://example.com" });
   assert.equal(other.ok, true);
 
@@ -167,49 +161,58 @@ test("drive preserves user data with names that overlap private implementation f
   assert.deepEqual(userValue, before);
 });
 
-test("drive catalog page requirements agree with execution, including URL-only images", () => {
+test("drive signatures follow native required fields and image input variants without catalog repair", () => {
   const schemas = getToolSchemas({ language: "en" });
-  for (const schema of schemas) {
-    const tool = schema.function;
+  for (const { function: tool } of schemas) {
     if (isDriveToolForbidden(tool.name)) continue;
     const advertised = driveToolSignature(tool);
-    const noPage = prepareDriveToolCall(tool.name, {});
-    if (!noPage.ok && noPage.error.code === "DRIVE_TAB_REF_REQUIRED") {
-      assert.match(advertised.signature.split(" | ")[0], /\btabRef:/, tool.name);
-      assert.doesNotMatch(advertised.signature.split(" | ")[0], /\btabRef\?:/, tool.name);
-      assert.equal(prepareDriveToolCall(tool.name, { tabRef: "page" }).ok, true, tool.name);
+    const signatures = advertised.signature.split(" | ");
+    const variants = tool.parameters.anyOf || [{}];
+    assert.equal(signatures.length, variants.length, tool.name);
+    for (const [index, variant] of variants.entries()) {
+      const required = new Set([...(tool.parameters.required || []), ...(variant.required || [])]);
+      for (const key of Object.keys(tool.parameters.properties)) {
+        assert.match(signatures[index], new RegExp(`(?:\\{|, )${key}${required.has(key) ? '' : '\\?'}:`), `${tool.name}.${key}`);
+      }
     }
+    assert.equal(advertised.description, tool.description.split("\n").map(line => line.trim()).find(Boolean)?.slice(0, 240) || "");
   }
   for (const name of ["open_tab", "list_tabs", "wait_until"]) {
     const tool = schemas.find(schema => schema.function.name === name).function;
     assert.equal(prepareDriveToolCall(name, {}).ok, true);
     assert.doesNotMatch(driveToolSignature(tool).signature, /\btabRef:/, name);
   }
-  const image = driveToolSignature(schemas.find(schema => schema.function.name === "read_image").function);
-  const urlVariant = image.signature.split(" | ")[1];
-  assert.match(urlVariant, /\burl:string/);
-  assert.doesNotMatch(urlVariant, /tabRef/);
-  assert.equal(prepareDriveToolCall("read_image", { url: "https://example.com/p.png" }).ok, true);
+  for (const [name, urlField, targetField, targetType] of [
+    ['read_image', 'url', 'target', 'string'], ['collect_images', 'urls', 'targets', 'array'],
+  ]) {
+    const tool = schemas.find(schema => schema.function.name === name).function;
+    const variants = driveToolSignature(tool).signature.split(" | ");
+    const url = variants.find(signature => new RegExp(`\\b${urlField}:`).test(signature));
+    const page = variants.find(signature => /\btabRef:/.test(signature));
+    assert.ok(url, name); assert.ok(page, name);
+    assert.match(url, /\btabRef\?:/, 'the URL variant does not require a page');
+    assert.match(page, new RegExp(`\\b${targetField}:${targetType}`), 'the page variant requires the selected element');
+    assert.equal(prepareDriveToolCall(name, { [urlField]: urlField === 'url' ? 'https://example.com/p.png' : ['https://example.com/p.png'] }).ok, true);
+  }
+  assert.equal(driveToolSignature({ name: 'screenshot', parameters: {
+    type: 'object', properties: { target: { type: 'string' } },
+  } }).signature, 'screenshot({target?:string})', 'a catalog cannot invent missing declaration fields');
 });
 
-test("a calls batch rejects inner run_script before that call runs", async () => {
+test("a calls batch runs no-page scripts without injecting an execution selector", async () => {
   const seen = [];
-  const batch = await runDriveCalls([
-    { id: "open", name: "open_tab", args: { url: "https://example.com" } },
-    { id: "script", name: "run_script", args: { target: "inner", timeout: 1, code: "async () => 1" } },
+  const result = await runDriveCalls([
+    { id: "script", name: "run_script", args: { timeout: 1, code: "async () => 1" } },
   ], {
+    context: { sessionId: "s1", runId: "opaque-run" },
     signal: new AbortController().signal,
-    execute: async (name) => {
-      seen.push(name);
-      return { tabRef: 3 };
-    },
+    execute: async (name, args) => { seen.push({ name, args }); return { ok: true, result: 1 }; },
+    getModelPolicy: () => null,
+    getBatchTabPolicy: () => null,
   });
-  assert.deepEqual(seen, ["open_tab"]);
-  assert.equal(batch.results[0].result.tabRef, 3);
-  assert.equal(batch.results[1].isError, true);
-  assert.equal(batch.results[1].result.code, "DRIVE_RUN_SCRIPT_TARGET");
-  assert.equal(batch.results[1].result.message, "直驱脚本只在 tabRef 所指的标签页里运行。编排用 calls 或 execute_tool。");
-  assert.doesNotMatch(batch.results[1].result.message, /\b(?:inner|target)\b/i);
+  assert.equal(result.results[0].isError, false);
+  assert.deepEqual(seen, [{ name: "run_script", args: { timeout: 1, code: "async () => 1" } }]);
+  assert.deepEqual(result.results[0].result, { ok: true, result: 1 });
 });
 
 test("projection preserves business fields while separating screenshot bytes", () => {
@@ -1065,7 +1068,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     assert.ok(!watched.some(tool => ['use_tab', 'get_working_tab'].includes(tool.name)));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
     const runScript = driveToolSignature(catalog.find(tool => tool.name === "run_script"));
-    assert.equal(runScript.signature, "run_script({timeout:number, tabRef:integer|string, args?:object, mutatesPage?:boolean, code:string})");
+    assert.equal(runScript.signature, "run_script({timeout:number, tabRef?:integer|string, args?:object, mutatesPage?:boolean, code:string})");
     assert.doesNotMatch(runScript.signature, /\b(?:target|scope)\b/);
     const ax = driveToolSignature(catalog.find(tool => tool.name === "get_ax_tree"));
     assert.match(ax.signature, /scope\?:"viewport"\|"full"/);
@@ -1164,7 +1167,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     parameters: schema.function?.parameters || {},
   })).find(tool => tool.name === name));
   assert.match(zhTool("list_tabs").description, /active(?:=true)? 表示用户正在看的标签/);
-  for (const name of ['use_tab', 'get_working_tab']) assert.throws(() => zhTool(name), { code: 'DRIVE_TOOL_FORBIDDEN' });
+  for (const name of ['use_tab', 'get_working_tab']) assert.equal(zhSchemas.some(schema => schema.function.name === name), false);
 
 
 });

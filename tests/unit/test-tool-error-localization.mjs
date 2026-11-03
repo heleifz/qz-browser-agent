@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { isToolFailure } from "../../src/shared/contracts/tool-error.js";
+import { isToolFailure, toolError } from "../../src/shared/contracts/tool-error.js";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { t as skillT } from "../../src/capabilities/skills/i18n.js";
 import { readFileSync, readdirSync } from "node:fs";
@@ -74,6 +74,33 @@ for (const [language, message] of [
   assert.equal(localizeToolFailureError(error).message, message);
   assert.equal(localizeToolFailurePayload({ error: error.message, code: error.code }).error, message,
     "runtime and transport localization must preserve screenshot recovery guidance");
+});
+
+for (const language of ["en", "zh-CN"]) withLanguage(language, () => {
+  for (const code of [undefined, "CUSTOM_FAILURE", "TOOL_EXECUTION_FAILED"]) {
+    const error = Object.assign(new Error("Injected lost touchEnd response"), {
+      ...(code ? { code } : {}), hint: "Inspect the page before retrying.",
+      details: { tabRef: "page", trace: [{ message: "touch started" }], tabId: 7 },
+    });
+    const result = localizeToolFailureError(error);
+    assert.equal(result, error, "native Error identity survives tool boundaries");
+    assert.deepEqual(toolError(result.code, result.message, result), { code: code || "TOOL_EXECUTION_FAILED", message: error.message,
+      hint: error.hint, details: { tabRef: "page", trace: [{ message: "touch started" }] } });
+    assert.equal(localizeToolFailureError(result), result, "another tool boundary preserves canonical recovery data");
+  }
+  for (const error of ["AbortError", "TimeoutError"].flatMap(name => [Object.assign(new Error("The operation was aborted"), { name }), new DOMException("The operation was aborted", name)])) {
+    assert.equal(localizeToolFailureError(error), error, "cancellation keeps its native identity and code");
+    assert.ok(["AbortError", "TimeoutError"].includes(error.name));
+    assert.equal(error.message, "The operation was aborted");
+  }
+  const denied = new DOMException("The browser denied the request", "NotAllowedError");
+  assert.equal(localizeToolFailureError(denied), denied, "read-only native codes do not replace the original exception");
+  assert.deepEqual(toolError(String(denied.code || "TOOL_EXECUTION_FAILED"), denied.message), {
+    code: "TOOL_EXECUTION_FAILED", message: "The browser denied the request",
+  });
+  const mapped = Object.assign(new Error("changed revision 7"), { code: "DATA_ROW_CONFLICT", details: { rowId: "row:abc" } });
+  assert.equal(localizeToolFailureError(mapped), mapped, "known legacy errors retain their identity");
+  assert.equal(mapped.message, localizeToolFailurePayload({ ok: false, error: "changed revision 7", code: "DATA_ROW_CONFLICT", details: mapped.details }).error);
 });
 
 assert.equal(localizeToolFailureCode("TOOL_NOT_EXECUTED"), "工具未执行");
@@ -277,3 +304,39 @@ assert.equal(isToolFailure({ ok: true, result: { code: "BUSINESS_CONFLICT", mess
 assert.equal(isToolFailure({ code: "SUCCESS", message: "done" }), false);
 
 });
+
+// Real execution boundaries preserve the same native failure in both caller modes.
+{
+  const previousChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { local: { get: async () => ({}) } } };
+  try {
+    const { createToolRegistry } = await import("../../src/background/tools/registry.js");
+    const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
+    const registry = createToolRegistry();
+    let injected;
+    registry.forCapability("native-error")({ name: "native_error_probe", parameters: {
+      type: "object", properties: { code: { type: "string" } },
+    }, execute: args => {
+      injected = Object.assign(new Error("Injected lost touchEnd response"), args.code ? { code: args.code } : {});
+      throw injected;
+    } });
+    const runtime = createToolRuntime({ sessions: { isRunCurrent: () => true } });
+    for (const language of ["en", "zh-CN"]) for (const externalDrive of [false, true]) {
+      for (const code of [undefined, "CUSTOM_FAILURE", "TOOL_EXECUTION_FAILED"]) {
+        await assert.rejects(runtime.execute("native_error_probe", code ? { code } : {}, undefined, {
+          sessionId: "native-error", runId: "opaque-native-error", language, externalDrive,
+          toolRegistrySnapshot: registry.snapshot(language),
+        }), error => {
+          assert.equal(error, injected);
+          assert.deepEqual(toolError(error.code, error.message), {
+            code: code || "TOOL_EXECUTION_FAILED", message: "Injected lost touchEnd response",
+          });
+          return true;
+        });
+      }
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+}

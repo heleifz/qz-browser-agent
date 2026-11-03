@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "Требуется tabRef",
+  "backend.toolError.TAB_REF_REQUIRED.message": "Инструментам страницы необходимо явно передать tabRef.",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "Откройте страницу с помощью open_tab или найдите её через list_tabs, затем передайте её tabRef.",
   "backend.toolError.UNSUPPORTED_URL.label": "Неподдерживаемый протокол страницы",
   "backend.toolError.UNSUPPORTED_URL.message": "Используйте URL страницы HTTP, HTTPS или file:// с разрешённым доступом.",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "Требуется доступ к файлам",

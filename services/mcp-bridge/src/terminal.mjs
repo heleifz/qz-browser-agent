@@ -438,13 +438,14 @@ export function renderResult(parsed, result, options = {}) {
     if (action === "list" || !action) taskList(out, result?.sessions || [], client);
     else if (action === "get") snapshotView(out, result || {}, presentation);
     else if (action === "create") {
+      const sessionId = result?.session?.sessionId || result?.sessionId || result?.session?.id;
       if (result?.snapshot) snapshotView(out, result.snapshot, presentation);
       else {
         out.line(result?.started ? "Task queued" : "Task created", "accent");
-        out.field("Task", result?.session?.id);
+        out.field("Task", sessionId);
         out.field("Title", single(result?.session?.title));
       }
-      taskCommands(out, result?.session?.id || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
+      taskCommands(out, sessionId || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
     } else if (action === "stop") {
       out.line(result?.stopped ? "Task stopped" : "Task has no active run", "accent");
       out.field("Task", result?.sessionId || parsed.id);

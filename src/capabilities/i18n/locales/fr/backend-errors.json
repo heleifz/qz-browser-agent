@@ -1,4 +1,7 @@
 {
+  "backend.toolError.TAB_REF_REQUIRED.label": "tabRef requis",
+  "backend.toolError.TAB_REF_REQUIRED.message": "Les outils de page nécessitent un tabRef explicite.",
+  "backend.toolError.TAB_REF_REQUIRED.hint": "Ouvrez une page avec open_tab ou trouvez-la avec list_tabs, puis transmettez son tabRef.",
   "backend.toolError.UNSUPPORTED_URL.label": "Protocole de page non pris en charge",
   "backend.toolError.UNSUPPORTED_URL.message": "Utilisez une URL de page HTTP, HTTPS ou file:// autorisée.",
   "backend.toolError.FILE_ACCESS_REQUIRED.label": "Accès aux fichiers requis",

@@ -15,7 +15,7 @@ const read = key => call(`read-${key}`, '__flow_read', { tabRef: key });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) { for (let i = 0; !predicate() && i < 300; i++) await tick(); assert.ok(predicate(), 'fixture reached expected state'); }
 let fixture;
-defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', workingTab: 'created',
+defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', tabLifecycle: 'created',
   behavior: { parallelOpen: true }, parameters: { type: 'object', properties: { tabAlias: { type: 'string' } } },
   async execute(args, signal, context) {
     const id = args.tabAlias.charCodeAt(0);

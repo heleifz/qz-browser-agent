@@ -225,8 +225,12 @@ const pendingWorking = await sessionTabs.getWorkingTabContext("pending-owner");
 assert.equal(pendingWorking?.id, 13);
 assert.equal(pendingWorking?.url, "https://pending.example/start");
 const implicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner" });
-assert.equal(implicitPendingTarget.ok, true, "an omitted tabId must still resolve to the navigating working tab");
-assert.equal(implicitPendingTarget.tabId, 13);
+assert.equal(implicitPendingTarget.ok, false, "an omitted target never selects a recent or active tab");
+assert.equal(implicitPendingTarget.code, "TAB_REF_REQUIRED");
+assert.equal(implicitPendingTarget.tabId, null);
+const explicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner", tabId: 13 });
+assert.equal(explicitPendingTarget.ok, true, "an explicitly selected navigating tab remains usable");
+assert.equal(explicitPendingTarget.tabId, 13);
 
 tabs.set(14, {
   id: 14,

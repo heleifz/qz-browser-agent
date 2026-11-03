@@ -138,14 +138,13 @@ for (const language of ['en', 'zh-CN']) {
   assert.deepEqual(pageTool.parameters.properties.tabRef.type, ['integer', 'string']);
   assert.equal(pageTool.parameters.properties.tabId, undefined);
   assert.match(workbench.content, /tabRef/);
-  // The one remaining mention explains the host-resolved script runtime value, not call arguments.
-  assert.equal((workbench.content.match(/\btabId\b/g) || []).length, 1);
+  assert.doesNotMatch(workbench.content, /\b(?:tabId|workingTabId)\b|working tab|工作标签页/);
   for (const resource of workbench.resources.filter(resource => resource.type === 'script')) {
     assert.doesNotMatch(resource.content, /\btabId\b/, `${language}: ${resource.path}`);
   }
   const guidance = withLanguage(language, () => modelT('runtimeGuidance'));
   assert.match(guidance, /tabRef/);
-  assert.equal((guidance.match(/\btabId\b/g) || []).length, 1);
+  assert.doesNotMatch(guidance, /\b(?:tabId|workingTabId|inner)\b|working tab|工作标签页/);
   assert.doesNotMatch(findBuiltinSkill(BUILTIN_SITE_SKILL_AUTHOR_SKILL_NAME, language).content, /\btabId\b/);
 }
 
@@ -267,7 +266,8 @@ assert.match(SYSTEM_PROMPT, /为具体网站、网页或域名生成站点 skill
 assert.match(SYSTEM_PROMPT, /探测、搜索、试调用或接入 MCP[\s\S]*先加载当前可用的 MCP 接入技能/);
 assert.doesNotMatch(SYSTEM_PROMPT, /mcp_inspect_server|mcp_list_tools|mcp_search_tools|mcp_call_tool/);
 assert.doesNotMatch(SYSTEM_PROMPT, /Skill 是浏览器操作 SOP|脚本运行在页面上下文/, "kernel prompt must not describe every Skill as page-only");
-assert.match(SYSTEM_PROMPT, /runtime:"page"[\s\S]*runtime:"inner"[\s\S]*\$plugin\.config[\s\S]*network\.allowedOrigins/, "kernel prompt should distinguish page and inner Plugin runtimes");
+assert.match(SYSTEM_PROMPT, /按已加载 Skill 声明的参数和网络权限调用/, "kernel prompt follows each loaded Skill's public contract");
+assert.doesNotMatch(SYSTEM_PROMPT, /runtime:"(?:page|inner)"/, "implementation runtime choices belong in Skill authoring guidance");
 
 const merged = mergeBuiltinSkills(Object.values(storage._skills));
 assert.equal(merged.filter(skill => skill.name === BUILTIN_SKILL_WORKBENCH_NAME).length, 1);
@@ -454,7 +454,7 @@ assert.match(createSkillSchema.function.parameters.properties.timeout.descriptio
 assert.ok(createSkillSchema.function.parameters.required.includes("timeout"));
 assert.ok(updateSkillSchema.function.parameters.required.includes("timeout"));
 assert.ok(listSkillsSchema.function.parameters.required.includes("timeout"));
-assert.deepEqual(importPageZipSchema.function.parameters.required, ["timeout", "url"]);
+assert.deepEqual(importPageZipSchema.function.parameters.required, ["timeout", "url", "tabRef"]);
 assert.match(importPageZipSchema.function.description, /不探测或猜测 URL/);
 assert.equal(Object.hasOwn(importPageZipSchema.function.parameters.properties, "tabId"), false);
 assert.deepEqual(importGitRepositorySchema.function.parameters.required, ["timeout", "repositoryUrl"]);
@@ -491,6 +491,7 @@ const boundGitSources = [];
 const publishedGitSkills = [];
 const distributionToolRuntime = tools.createToolRuntime({
   sessions: {
+    getTabAliases() { return { "zip-source": 73 }; },
     async resolveTargetTab({ tabId }) {
       return { ok: true, tabId, ownedByCurrentTask: true };
     },
@@ -516,11 +517,10 @@ const distributionToolRuntime = tools.createToolRuntime({
 });
 const importedPageZip = await distributionToolRuntime.execute(
   "qingzhou_skill_author__import_page_zip",
-  { timeout: 30, url: "https://skills.example/private.zip" },
+  { timeout: 30, url: "https://skills.example/private.zip", tabRef: "zip-source" },
   null,
   {
     sessionId: "session-skill-import",
-    workingTabId: 73,
     loadedPluginSkillNames: loadedSkillWorkbenchContext.loadedPluginSkillNames,
   },
 );
@@ -561,7 +561,7 @@ const importedGitRepository = await runtime.executeSkillTool(
   loadedSkillWorkbenchContext,
   async (name, args) => {
     gitImportCalls.push({ name, args });
-    if (name === "open_tab") return { id: 81 };
+    if (name === "open_tab") return { tabRef: "repository-import", title: "Repository", url: args.url, active: false };
     if (name === "import_git_skill_repository") return { ok: true, action: "bound", count: 2 };
     assert.fail(`unexpected Git import tool ${name}`);
   },
@@ -573,7 +573,7 @@ assert.deepEqual(gitImportCalls, [
     name: "import_git_skill_repository",
     args: {
       repositoryUrl: "https://github.com/example/skills/tree/main/packages",
-      tabId: 81,
+      tabRef: "repository-import",
       overwrite: false,
     },
   },
@@ -592,8 +592,7 @@ const installedToGit = await runtime.executeSkillTool(
   loadedSkillWorkbenchContext,
   async (name, args) => {
     gitInstallCalls.push({ name, args });
-    if (name === "open_tab") return { id: 82 };
-    if (name === "use_tab") return { id: 82 };
+    if (name === "open_tab") return { tabRef: "repository-install", title: "Repository", url: args.url, active: false };
     if (name === "install_skill_to_git") return { ok: true, skillName: "user-skill", shortId: "abc123" };
     assert.fail(`unexpected Git install tool ${name}`);
   },
@@ -601,10 +600,9 @@ const installedToGit = await runtime.executeSkillTool(
 assert.equal(installedToGit.shortId, "abc123");
 assert.deepEqual(gitInstallCalls, [
   { name: "open_tab", args: { url: "https://gitlab.example.com/example/skills/tree/main/packages" } },
-  { name: "use_tab", args: { tabId: 82 } },
   {
     name: "install_skill_to_git",
-    args: { name: "用户技能", tabId: 82, commitMessage: "feat: install user skill" },
+    args: { name: "用户技能", tabRef: "repository-install", commitMessage: "feat: install user skill" },
   },
 ]);
 
@@ -632,6 +630,9 @@ await assert.rejects(
 const loadedUserViaTool = await tools.executeTool("load_skill", { name: "用户技能", includeResources: true }, null, {});
 assert.equal(loadedUserViaTool.content, "用户技能正文");
 assert.deepEqual(loadedUserViaTool.resources, []);
+const loadedUserViaDrive = await tools.executeTool("load_skill", { name: "用户技能", includeResources: true }, null, { externalDrive: true });
+assert.equal(loadedUserViaDrive.runtime, loadedUserViaTool.runtime, "Skill guidance is shared across callers");
+assert.doesNotMatch(loadedUserViaTool.runtime, /\b(?:inner|tabId|workingTabId)\b/);
 
 await assert.rejects(
   () => runtime.executeSkillTool(

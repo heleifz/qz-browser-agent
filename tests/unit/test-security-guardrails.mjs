@@ -938,7 +938,7 @@ test("builds a concise system prompt section for configured rules", () => {
   assert.doesNotMatch(section, /URL Pattern/);
 });
 
-test("tool metadata APIs keep blocked tabs visible but annotated", async () => {
+test("tab discovery keeps guarded pages visible without exposing execution metadata", async () => {
   resetStorage();
   resetChromeMocks();
   await saveSecurityGuardrails({ rules: [{ action: "block", type: "domain", value: "example.com" }] });
@@ -946,23 +946,13 @@ test("tool metadata APIs keep blocked tabs visible but annotated", async () => {
     { id: 1, windowId: 1, title: "Private", url: "https://example.com/private", active: true, pinned: false },
     { id: 2, windowId: 1, title: "News", url: "https://news.example.org", active: false, pinned: false },
   ];
-
   const tools = await importToolsForGuardrailTests();
   const session = installSessionTabResolver(tools);
   const runtime = session.createRuntime();
-  const active = await runtime.execute("get_working_tab", {}, null, { ...session.context, workingTabId: 1 });
-  assert.equal(active.hasWorkingTab, true);
-  assert.equal(active.tabRef, 1);
-  assert.equal(active.url, "https://example.com/private");
-  assert.equal(active.securityGuardrailBlocked, true);
-  assert.equal(active.contentAccess, "blocked");
-
-  const listed = await runtime.execute("list_tabs", {});
-  assert.deepEqual(listed.map(tab => tab.tabRef), [1, 2]);
-  assert.equal(listed[0].securityGuardrailBlocked, true);
-  assert.equal(listed[1].securityGuardrailBlocked, undefined);
-
-  assert.equal(listed[0].contentAccess, "blocked");
+  const listed = await runtime.execute("list_tabs", { scope: "all" }, null, session.context);
+  assert.deepEqual(listed.tabs, mockTabs.map(({ id, url, title, active }) => ({ tabRef: id, url, title, active })));
+  assert.equal(listed.count, 2);
+  for (const tab of listed.tabs) assert.deepEqual(Object.keys(tab).sort(), ['active', 'tabRef', 'title', 'url']);
 });
 
 test("tool content and navigation APIs are blocked before touching guarded URLs", async () => {
@@ -1099,19 +1089,19 @@ test("navigate uses safety guardrail pattern rate limits without domain fallback
   const toolEvents = [];
   const runtime = session.createRuntime({ emit: event => toolEvents.push(event) });
   try {
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/free/1" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/free/1" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_free",
       spanId: "span_nav_pattern_free",
       toolCallId: "call_nav_pattern_free",
     });
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/rate/a" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/rate/a" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_a",
       spanId: "span_nav_pattern_a",
       toolCallId: "call_nav_pattern_a",
     });
-    await runtime.execute("navigate", { url: "https://pattern-nav.example/rate/b" }, null, {
+    await runtime.execute("navigate", { tabRef: 77, url: "https://pattern-nav.example/rate/b" }, null, {
       ...sessionContext,
       runId: "run_nav_pattern_b",
       spanId: "span_nav_pattern_b",

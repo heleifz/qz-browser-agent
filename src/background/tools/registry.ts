@@ -100,7 +100,7 @@ export function createToolRegistry() {
         const presentation = getCoreToolMetadata(identity.capabilityId);
         return [name, materialize({
           ...runtime,
-          model: Object.freeze({ pageContext: presentation?.pageContext ? "working" : false, ...runtime.model }),
+          model: Object.freeze({ pageContext: presentation?.pageContext ? "explicit" : false, ...runtime.model }),
           behavior: runtime.behavior ? Object.freeze({ ...runtime.behavior }) : undefined,
           ...identity,
           profileFamily: presentation?.profileFamily || "",

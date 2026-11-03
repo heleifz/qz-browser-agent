@@ -133,7 +133,7 @@ async function createHarness(mode, launchOptions = {}) {
         command: (method, params) => chrome.debugger.sendCommand({ tabId }, method, params),
         screen(name, args) { return this.call(name, { tabId, ...args }, "run_script"); },
         async call(name, args, source) {
-          try { return await runtime.execute(name, args, undefined, { ...context, workingTabId: tabId, source }); }
+          try { return await runtime.execute(name, name === 'open_tab' ? args : { tabRef: args.tabId ?? tabId, ...args }, undefined, { ...context, workingTabId: tabId, source }); }
           catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
         async state() {

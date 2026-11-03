@@ -16,6 +16,7 @@ import { qingzhouTabGroupPatch, ensureQingzhouTabGroupForWindow } from "../../sr
 import { formatBeijingDateTime, parseBeijingDateTime } from "../../src/shared/time-utils.js";
 import { t as contentText } from "../../src/content/i18n.js";
 import { appendErrorSection } from "../../src/sidepanel/tools/generic-result-renderer.js";
+import { appendScriptFeedback } from "../../src/capabilities/script/profile.js";
 
 async function inLanguage(language, run) {
   const chrome = globalThis.chrome;
@@ -124,6 +125,45 @@ test("location failures keep stable codes and short recovery text", async () => 
         assert.equal(html.includes(code), false);
       }
     }
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+    else delete globalThis.document;
+  }
+});
+
+test("script error rendering preserves canonical messages, recovery hints and traces while translating legacy errors", async () => {
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: { createElement: () => ({
+      innerHTML: "",
+      set textContent(value) {
+        this.innerHTML = String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      },
+    }) },
+  });
+  try {
+    for (const language of ["en", "zh-CN"]) await inLanguage(language, () => {
+      const native = { code: "SCRIPT_EVALUATION_FAILED", message: "Could not save form <report>.",
+        hint: "Reopen the form before retrying.", details: { trace: [{ level: "debug", message: "filled name" }] } };
+      const original = structuredClone(native);
+      const render = value => {
+        const sections = [], parent = { appendChild: section => sections.push(section) };
+        appendErrorSection(parent, value);
+        appendScriptFeedback(parent, value);
+        return sections.map(section => section.innerHTML).join("");
+      };
+      const html = render(native);
+      assert.match(html, /Could not save form &lt;report&gt;\./);
+      assert.match(html, /Reopen the form before retrying\./);
+      assert.match(html, /filled name/);
+      assert.deepEqual(native, original, "rendering does not rewrite the canonical error or recovery data");
+      const legacy = render({ ok: false, code: "SCRIPT_EVALUATION_FAILED", error: "legacy runtime detail",
+        trace: [{ message: "legacy trace" }] });
+      assert.ok(legacy.includes(backendMessages.messages["toolError.SCRIPT_EVALUATION_FAILED.message"][language]));
+      assert.match(legacy, /legacy trace/);
+      assert.doesNotMatch(legacy, /legacy runtime detail/);
+    });
   } finally {
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else delete globalThis.document;

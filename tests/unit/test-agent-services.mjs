@@ -63,7 +63,8 @@ test('Agent freezes a run config, rebuilds Skill prompts, and adopts successful 
   assert.equal(registryReads, 3);
   assert.equal(requests[0].signal, requests[1].signal);
   assert.notEqual(requests[1].signal, requests[2].signal);
-  assert.ok(contextReasons.some(request => request.reason === 'tool' && request.runId));
+  assert.ok(contextReasons.length > 0, 'run-start context remains available to model requests');
+  assert.ok(contextReasons.every(request => request.reason !== 'tool'), 'tools do not collect an implicit page context');
   assert.ok(requests[0].messages.some(message => String(message.content).includes('Reference only')));
   assert.equal(agent.messages.at(-1).content, 'done');
 });
@@ -265,9 +266,9 @@ function scriptedAgent(id, steps, overrides) {
 test('Agent applies a newly named tool model policy through injected services', async () => {
   const calls = [];
   const snapshots = [];
-  const { agent, requests, events } = scriptedAgent('new-model-policy', [{ name: 'custom_visual', args: { active: true } }], {
+  const { agent, requests, events } = scriptedAgent('new-model-policy', [{ name: 'custom_visual', args: { active: true, tabRef: 42 } }], {
     services: createTestAgentServices({ getSkillToolRegistrySnapshot: () => ({ version: 7 }) }),
-    browserContext: { getTab: async id => ({ id, title: 'Custom page', url: 'https://example.test/custom' }) },
+    browserContext: { getTab: async () => assert.fail('model policies do not infer a page') },
     tools: {
       getSchemas: () => [], getIdentity: () => ({}),
       getModelPolicy(name, { skillToolRegistrySnapshot }) {
@@ -284,7 +285,7 @@ test('Agent applies a newly named tool model policy through injected services', 
   });
   agent.setDynamicContextProvider(async () => ({ workingTab: { id: 42, url: 'https://example.test/custom' } }));
   await agent.prompt('inspect the new tool', {});
-  assert.deepEqual(calls, [{ name: 'custom_visual', args: { tabId: 42, _tabId: 42, _pageTitle: 'Custom page', _pageUrl: 'https://example.test/custom' } }]);
+  assert.deepEqual(calls, [{ name: 'custom_visual', args: { tabRef: 42 } }]);
   assert.ok(snapshots.every(version => version === 7), 'policy lookup uses the frozen run registry');
   assert.equal(requests[1].find(message => message.role === 'tool').content, '{"answer":"visible","_debug":"private"}',
     'the declared model projection preserves its selected business fields');

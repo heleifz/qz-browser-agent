@@ -35,7 +35,7 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
     const created = await callTool(environment.bridge.endpoint, "qingzhou_create_session", {
       title: "Built-in task", firstMessage: "", timeoutSeconds: 20,
     }, { timeoutMs: 25_000 });
-    const builtinId = created.session?.id || created.sessionId;
+    const builtinId = created.session?.sessionId || created.sessionId;
     expect(builtinId).toBeTruthy();
     const before = await callTool(environment.bridge.endpoint, "qingzhou_get_session_state", {
       sessionId: builtinId, timeoutSeconds: 20,

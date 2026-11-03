@@ -21,8 +21,9 @@ export const presentations = (host: RendererServices): readonly ToolPresentation
     return target ? `(${target})` : "";
   },
   timelineBadge: () => ({ label: t("script"), order: 40 }),
-  describeRun: ({ args, surface }) => String(args.target || "").trim().toLowerCase() === "inner"
-    ? surface === "timeline" ? t("executeInternalCode") : t("executeInternalScript")
-    : surface === "timeline" ? t("executeCode") : t("executePageScript"),
-  compactParams: ({ args }) => { const { code: _, ...rest } = args; return rest; },
+  describeRun: ({ surface }) => surface === "timeline" ? t("executeCode") : t("executeScript"),
+  compactParams: ({ args }) => {
+    const { code: _, target: _target, scope: _scope, engine: _engine, execution_world: _world, ...rest } = args;
+    return rest;
+  },
 }));

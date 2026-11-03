@@ -166,12 +166,7 @@ export function createRunScriptBridge({
       if (driveRun && toolName !== "__list_tools__") {
         const prepared = prepareDriveToolCall(toolName, toolArgs);
         if (!prepared.ok) {
-          const failure = prepared.error as Error & { code?: string };
-          return respondFailure({
-            error: failure.message,
-            code: failure.code || "DRIVE_TAB_REF_REQUIRED",
-            details: { toolName },
-          }, { toolName });
+          return respondFailure(prepared.error, { toolName });
         }
         toolArgs = prepared.args;
       }
@@ -242,11 +237,8 @@ export function createRunScriptBridge({
     const externalDrive = (parent?.externalDrive ?? runContext.externalDrive) === true;
     observeMode(externalDrive);
     const snapshotContext = plainObject(runContext.dynamicContext);
-    const workingTab = pageTab(runtime.workingTab) || pageTab(snapshotContext.workingTab);
     const dynamicContext = {
       ...snapshotContext,
-      workingTab,
-      pageUrl: String(runtime.workingUrl || workingTab?.url || snapshotContext.pageUrl || ""),
       taskSiteTabs: Array.isArray(runtime.visitedTaskSites)
         ? runtime.visitedTaskSites.map(pageTab).filter(value => value !== null)
         : (Array.isArray(snapshotContext.taskSiteTabs) ? snapshotContext.taskSiteTabs.map(pageTab).filter(value => value !== null) : []),
@@ -254,8 +246,6 @@ export function createRunScriptBridge({
     const canManage = runContext.runProfile ? undefined : await canManageSessions(sessionId);
     return {
       externalDrive,
-      workingTab,
-      workingTabId: positiveNumber(runtime.workingTabId || workingTab?.id) || null,
       sourceWindowId: positiveNumber(snapshotContext.sourceWindowId) || null,
       dynamicContext,
       loadedPluginSkillNames: mergeStringLists(
@@ -314,8 +304,8 @@ function failureResponse(payload: unknown, { toolName = "" } = {}) {
   }));
   const failure = copyToolResultPresentation(payload, toolError(String(localized.code || input.code || "RUN_SCRIPT_TOOL_CALL_FAILED"),
     String(localized.message || localized.error || input.message || input.error || "Script tool call failed."), {
-      hint: typeof input.hint === "string" ? input.hint : undefined,
-      details: plainObject(input.details),
+      hint: typeof localized.hint === "string" ? localized.hint : typeof input.hint === "string" ? input.hint : undefined,
+      details: plainObject(localized.details || input.details),
     }));
   return { ok: false, ...failure, result: failure, isError: true };
 

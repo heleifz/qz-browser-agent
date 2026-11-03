@@ -77,7 +77,6 @@ test("script timeouts read the last five traces once from the execution environm
     return { ok: true };
   };
   const inner = await runtime.execute("run_script", {
-    target: "inner",
     timeout: 1,
     code: "async () => { await new Promise(() => {}); }",
   }, undefined, context);

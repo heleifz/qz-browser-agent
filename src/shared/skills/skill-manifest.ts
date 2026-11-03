@@ -504,7 +504,7 @@ function normalizeSkillTools(tools: unknown, plugin: SkillManifest, diagnostics:
     const parameters = normalizeToolParameters(item.parameters);
     const capabilityId = normalizeSkillToolCapabilityId(item.capabilityId, runtimeName, plugin, diagnostics, rawName, trusted);
     const capabilityMeta = getCoreToolMetadata(capabilityId);
-    const needsPage = runtime === "page" ? item.needsPage !== false : false;
+    const needsPage = runtime === "page" ? item.needsPage !== false : runtime === "host" && item.needsPage === true;
     const family = resolveSkillToolFamily(plugin, runtime, capabilityMeta);
     out.push({
       id: `${plugin.id}:${localName}`,

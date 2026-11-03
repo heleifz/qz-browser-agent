@@ -10,7 +10,7 @@ export type MessageValue = undefined | null | string | boolean | number | Messag
 export interface ScriptEnvelope {
   __runScriptEnvelope: true; ok: boolean; hasResult: boolean; result: MessageValue; resultType: string;
   engine: 'offscreen_inner'; execution_world: 'inner'; reason?: 'inner'; trace: MessageValue; elapsedMs: number;
-  error?: string; code?: string; details?: MessageValue; diagnostic?: MessageValue; message?: string; artifacts?: MessageValue;
+  error?: string; code?: string; hint?: string; details?: MessageValue; diagnostic?: MessageValue; message?: string; artifacts?: MessageValue;
 }
 export interface WorkerExecute { type: 'execute'; requestId?: string; source?: string; scriptArgs?: Record<string, unknown>; securityGuardrails?: unknown; fetchBridge?: boolean }
 export type InnerWorkerInput = WorkerExecute

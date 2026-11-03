@@ -58,8 +58,8 @@ export interface ToolSessionCommands extends UserWaitRuntime {
   commitTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; reservation: object; tabId: number }): void;
   discardTabAlias(reservation: object): void;
   isRunCurrent(sessionId: string, runId: string): boolean;
-  listSessions(input: { limit: number; excludeSessionId: string }): Promise<unknown>;
-  createSession(input: { title: string; firstMessage: string; parentSessionId: string }): Promise<object>;
+  listSessions(input: { limit: number; excludeSessionId: string; publicView?: boolean }): Promise<unknown>;
+  createSession(input: { title: string; firstMessage: string; parentSessionId: string; publicView?: boolean }): Promise<object>;
   stopSession(id: string, input: { source: string; requestedBy: string }): Promise<unknown>;
   sendMessage(input: { sessionId: string; text: string; deliveryMode: 'follow_up' | 'steer'; clientMessageId: string; swallowErrors: boolean }): Promise<unknown>;
   deleteSession(id: string, input: { source: string; requestedBy: string }): Promise<unknown>;

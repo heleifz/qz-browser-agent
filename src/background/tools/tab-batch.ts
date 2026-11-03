@@ -23,7 +23,6 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   const creators = new Map<string, Entry>(), duplicates = new Set<string>();
   const executed = new Map<Entry, { id: number; result: unknown }>(), published = new Map<Entry, number>();
   const committedCreators = new Set<Entry>();
-  const creatorCount = entries.filter(entry => entry.policy?.kind === "create").length;
   for (const entry of entries) {
     const alias = entry.args.tabAlias;
     if (alias == null) continue;
@@ -47,7 +46,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
         try { targets.set(entry, resolveTabReference(ref, aliases, language)); }
         catch (failure) { entry.error = failure as ToolExecutionError; }
       }
-    } else if (creatorCount > 1 && entry.policy?.kind === "target" && entry.policy.implicit) entry.error = error("ambiguous_target");
+    }
     const target = targets.get(entry);
     if (target != null && (entry.args.tabId != null && entry.args.tabId !== target
       || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== target)) {

@@ -239,7 +239,7 @@ function normalizeQuestionForm({ title = "", message = "", fields = [], submitLa
 
 registerTool({
   name: "wait_for_user",
-  model: { pageContext: "working" },
+  model: { pageContext: "explicit" },
   get description() { return toolT("waitForUserDescription"); },
   get parameters() { return {
     type: "object",
@@ -249,14 +249,14 @@ registerTool({
         type: "string",
         description: toolT("waitForUserMessage"),
       },
-      tabId: {
-        type: "number",
+      tabRef: {
+        type: ["integer", "string"],
         description: toolT("waitForUserTabId"),
       },
     },
     required: ["message"],
   } as const; },
-  page: args => args.tabId == null ? false : "owned",
+  page: args => args.tabRef != null || args.tabId != null ? "owned" : false,
   timeout: 0,
   execute: async ({ message, tabId }, signal, context = {}) => {
     const runtime = getToolRuntimeDependencies(context);
@@ -265,7 +265,7 @@ registerTool({
     const sessionId = normalizeSessionId(context.sessionId);
     const runId = String(context.runId || "").trim();
     const waitId = createWaitId(sessionId);
-    const targetTabId = Number(tabId || context.workingTabId);
+    const targetTabId = Number(tabId);
 
     // Notify the Side Panel to display the waiting state.
     emit({
@@ -292,7 +292,6 @@ registerTool({
       return {
         continued: true,
         reason: waitResult.reason,
-        tabId: Number.isFinite(targetTabId) && targetTabId > 0 ? targetTabId : undefined,
         note: toolT("userContinuedNoImages"),
       };
     }
@@ -304,7 +303,6 @@ registerTool({
           _image: shot.dataUrl,
           continued: true,
           reason: waitResult.reason,
-          tabId: effectiveTabId,
           screenshotMethod: shot.method,
           note: toolT("userContinuedWithImage"),
         };
@@ -430,6 +428,7 @@ registerTool({
       fromUrl: { type: "string", description: toolT("waitForNavigationFromUrl") },
       fromTitle: { type: "string", description: toolT("waitForNavigationFromTitle") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
@@ -437,7 +436,7 @@ registerTool({
     const { tabId, timeout = 10, screenshot = false, fromUrl = "", fromTitle = "" } = input;
     const { timeoutMs } = input as Record<string, unknown>;
     const timeoutMsValue = timeoutMs != null ? Math.max(0, Number(timeoutMs) || 0) : secondsToMs(timeout, 10000);
-    if (!tabId) throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", t("currentTaskHasNoWorkingTab"));
+    if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef for the page to wait for.");
 
     // Wait for loading.
     const tab = await chrome.tabs.get(tabId);
@@ -537,7 +536,7 @@ registerTool({
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       intervalSeconds: { type: "number", description: toolT("waitForElementIntervalSeconds") },
     },
-    required: ["target"],
+    required: ["target", "tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,

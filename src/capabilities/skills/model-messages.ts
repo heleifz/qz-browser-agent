@@ -76,8 +76,8 @@ const messages = defineMessages("skills-model", {
     en: "Skill ZIP download URL from the page.",
   },
   skillPageTabId: {
-    "zh-CN": "当前任务拥有的页面标签页 ID。",
-    en: "Web tab ID owned by the current task.",
+    "zh-CN": "当前任务拥有的页面 tabRef：标签页别名或 open_tab、list_tabs 返回的引用。",
+    en: "Task-owned page tabRef: a tab alias or the reference returned by open_tab or list_tabs.",
   },
   skillZipOverwrite: {
     "zh-CN": "是否覆盖本地同名 Skill，默认 false。",
@@ -92,8 +92,8 @@ const messages = defineMessages("skills-model", {
     en: "Supported Git repository or directory page URL.",
   },
   skillRepositoryTabId: {
-    "zh-CN": "当前任务拥有的仓库标签页 ID。",
-    en: "Repository tab ID owned by the current task.",
+    "zh-CN": "当前任务拥有的仓库页面 tabRef。",
+    en: "Repository-page tabRef owned by the current task.",
   },
   skillGitOverwrite: {
     "zh-CN": "是否覆盖同名或本地修改的 Skill，默认 false。",
@@ -108,8 +108,8 @@ const messages = defineMessages("skills-model", {
     en: "Local Skill name to commit.",
   },
   skillInstallTabId: {
-    "zh-CN": "当前任务拥有的受支持 Git 仓库根页或目录页标签页 ID。",
-    en: "Tab ID of a supported repository root or directory page owned by this task.",
+    "zh-CN": "当前任务拥有的受支持 Git 仓库根页或目录页 tabRef。",
+    en: "Task-owned tabRef for a supported repository root or directory page.",
   },
   skillCommitMessage: {
     "zh-CN": "可选 Git commit message。",
@@ -117,13 +117,13 @@ const messages = defineMessages("skills-model", {
   },
   runtimeGuidance: {
     "zh-CN": `Skill 运行在轻舟浏览器扩展中（非 Node.js 或服务器）：
-- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，截断时加载 qingzhou-documents 用 document_read_chunk 续读）。
-- 页面工具用 tabRef 声明和传入页面目标（当前任务拥有的标签页别名或正整数 ID，也可用数字字符串）；省略时使用当前任务工作标签页，未知别名报错。
-- 脚本采用单个 async () => { ... } 函数表达式：runtime:"page" 可用 document/window/Web APIs、input/args、宿主解析后的数字 tabId、tools/tool；runtime:"inner" 在无 DOM Worker 中运行，可用 $plugin.config 和 manifest 允许来源的 fetch；禁止使用 fs/path/process/require/npm/shell，也不要在页面脚本内直接触发导致当前 frame 卸载的点击或提交。`,
+- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，截断时加载 qingzhou-documents 用 qingzhou_documents__document_read_chunk 续读）。
+- 页面工具必须用 tabRef 声明和传入页面目标，值为当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用；未知别名报错。
+- 脚本采用单个 async () => { ... } 函数表达式，按已加载 Skill 声明的参数和网络权限调用；不支持 fs/path/process/require/npm/shell，也不要在页面脚本内触发导致当前 frame 卸载的点击或提交。`,
     en: `Skills run in the qz browser extension (not Node.js or a server):
-- Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call document_read_chunk if truncated).
-- Declare and pass page targets as tabRef (a task-owned tab alias or positive integer ID; numeric strings also work). Omit it to use the current task's working tab; unknown aliases fail.
-- Write scripts as a single async () => { ... } function expression: runtime:"page" provides document/window/Web APIs, input/args, the host-resolved numeric tabId, and tools/tool; runtime:"inner" runs in a DOM-free Worker with $plugin.config and fetch for manifest-allowed origins. Do not use fs/path/process/require/npm/shell, and do not click or submit inside a page script if it unloads the frame.`,
+- Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call qingzhou_documents__document_read_chunk if truncated).
+- Require and pass page targets as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs. Unknown aliases fail.
+- Write scripts as a single async () => { ... } function expression and follow the loaded Skill's declared arguments and network permissions. Scripts cannot use fs/path/process/require/npm/shell; keep clicks or submissions that unload the frame outside page scripts.`,
   },
 });
 

@@ -70,7 +70,7 @@ export function isDriveToolDefault(name: string) {
   return DRIVE_DEFAULT_TOOLS.has(name) || DRIVE_DEFAULT_TOOLS.has(local);
 }
 
-/** Tools whose schema has tabId. Direct drive must name tabRef so execution does not fill the working tab. */
+/** Page operations require an explicit reference; scripts and URL readers also support page-free calls. */
 const PAGE_TAB_TOOLS = new Set([
   "navigate", "close_tab", "use_tab", "set_page_mode",
   "read_article", "read_dom", "find_elements", "inspect_element", "act_on_element", "scroll_page",
@@ -82,38 +82,25 @@ const PAGE_TAB_TOOLS = new Set([
   "import_skill_from_page_zip", "import_git_skill_repository", "install_skill_to_git",
 ]);
 
-function missingTabRef(value: unknown) {
-  return value == null || (typeof value === "string" && value.trim() === "");
-}
-
 function pageToolNeedsTabRef(name: string, args: Fields) {
   const local = toolLocalName(name);
   if (!PAGE_TAB_TOOLS.has(name) && !PAGE_TAB_TOOLS.has(local)) return false;
+  if (local === "run_script") return false;
   if (local === "read_image" && String(args.url ?? "").trim()) return false;
   if (local === "collect_images" && Array.isArray(args.urls) && args.urls.some(url => String(url || "").trim())
     && !(Array.isArray(args.targets) && args.targets.some(target => String(target || "").trim()))) return false;
   return true;
 }
 
-/** Direct drive rejects a missing tabRef on page tools. run_script stays page-only. Built-in inner batches do not use this. */
+/** Validate explicit page references before admitting a drive batch. */
 export function prepareDriveToolCall(name: string, args: unknown): { ok: true; args: Fields } | { ok: false; error: Error } {
   const input = record(args);
-  const local = toolLocalName(name);
-  if (local === "run_script") {
-    const target = String(input.target ?? "").trim();
-    if (target && target !== "page") {
-      return { ok: false, error: driveError("DRIVE_RUN_SCRIPT_TARGET", t("drive.runScriptPageOnly")) };
-    }
-  }
   if (!pageToolNeedsTabRef(name, input)) return { ok: true, args: input };
-  if (missingTabRef(input.tabRef)) {
-    return { ok: false, error: driveError("DRIVE_TAB_REF_REQUIRED", t("drive.tabRefRequired")) };
+  if (!Object.hasOwn(input, "tabRef")) {
+    return { ok: false, error: Object.assign(driveError("TAB_REF_REQUIRED", t("toolError.TAB_REF_REQUIRED.message")), { hint: t("toolError.TAB_REF_REQUIRED.hint") }) };
   }
   const tabRef = typeof input.tabRef === "string" ? input.tabRef.trim() : input.tabRef;
-  if (local !== "run_script") return { ok: true, args: { ...input, tabRef } };
-  const next: Fields = { ...input, target: "page", tabRef };
-  delete next.scope;
-  return { ok: true, args: next };
+  return { ok: true, args: { ...input, tabRef } };
 }
 
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
@@ -123,7 +110,6 @@ export function driveToolSignature(tool: { name: string; description?: string; p
   const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
   const properties = sourceProperties;
-  if (pageToolNeedsTabRef(tool.name, {})) required.add("tabRef");
   const signature = (fields: Fields, needed: Set<string>) => `${tool.name}({${Object.entries(fields).map(([key, spec]) => {
     const schema = record(spec);
     const type = Array.isArray(schema.enum)
@@ -133,19 +119,14 @@ export function driveToolSignature(tool: { name: string; description?: string; p
         : typeof schema.type === "string" && schema.type ? schema.type : "any";
     return `${key}${needed.has(key) ? "" : "?"}:${type}`;
   }).join(", ")}})`;
-  let callSignature = signature(properties, required);
-  let description = driveCatalogDescription(tool.description);
-  const urlField = toolLocalName(tool.name) === "collect_images" ? "urls" : "url";
-  if (["read_image", "collect_images"].includes(toolLocalName(tool.name)) && properties[urlField]) {
-    // The URL variant needs no page; show both valid shapes rather than a misleading optional ref.
-    const { tabRef: _tabRef, targets: _targets, ...urlProperties } = properties;
-    const urlRequired = new Set(required);
-    urlRequired.delete("tabRef");
-    urlRequired.add(urlField);
-    callSignature += ` | ${signature(urlProperties, urlRequired)}`;
-    description = t(urlField === "urls" ? "drive.collectImagesReference" : "drive.readImageReference");
-  }
-  return { name: tool.name, signature: callSignature, description };
+  const variants = Array.isArray(parameters.anyOf) ? parameters.anyOf : [{}];
+  const signatures = variants.map(variant => {
+    const fields = record(variant);
+    const needed = new Set([...required, ...(Array.isArray(fields.required) ? fields.required.map(String) : [])]);
+    return signature(properties, needed);
+  });
+  return { name: tool.name, signature: [...new Set(signatures)].join(" | "),
+    description: driveCatalogDescription(tool.description) };
 }
 
 /** The declaration owns public vocabulary; the catalog shows its first description line. */

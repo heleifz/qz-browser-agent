@@ -87,15 +87,16 @@ test("read_image on an unclaimed tab leaves the working tab in place", async () 
   // Historical selector-only image UIDs retain their read-only routing semantics.
   f.runtime.element.registerElementRef({ uid: 't8.000001.1', tabId: tabB.id, sessionId: 's', selector: 'img.only', imageIndex: 0, imageSrc: 'https://example.test/b.png' });
   const target = 'uid:t8.000001.1';
-  const read = await f.runtime.execute("read_image", { target }, undefined, { sessionId: "s", runId: "run" });
+  const read = await f.runtime.execute("read_image", { tabRef: tabB.id, target }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(read.code, undefined, JSON.stringify({ code: read.code, error: read.error, message: read.message }));
   assert.equal(read.tabRef, undefined);
   assert.equal(read.tabId, undefined);
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabA.id, "a read-only uid on unclaimed tab B must leave the working tab on A");
+  assert.deepEqual(f.supervisor.getRuntime("s").ownedTabIds, [tabA.id], "the read-only image lookup must not claim B");
 
   const current = f.supervisor.getRuntime("s");
   f.supervisor.setRuntime("s", { ...current, ownedTabIds: [tabA.id, tabB.id], workingTabId: tabA.id });
-  const owned = await f.runtime.execute("read_image", { target }, undefined, { sessionId: "s", runId: "run" });
+  const owned = await f.runtime.execute("read_image", { tabRef: tabB.id, target }, undefined, { sessionId: "s", runId: "run" });
   assert.equal(owned.code, undefined, JSON.stringify({ code: owned.code, error: owned.error, message: owned.message }));
   assert.equal(f.supervisor.getRuntime("s").workingTabId, tabB.id, "a claimed tab still becomes the working tab");
 });

@@ -212,8 +212,12 @@ const messages = defineMessages("skill-workbench", {
     "en": "Skill scope to list (all/global/site/resident). Default: all."
   },
   "zipUrl": {
-    "zh-CN": "必填。当前工作标签页上已确认的 Skill Zip 完整 http(s) 下载地址（复用该页认证态）。",
-    "en": "Required confirmed http(s) Skill ZIP download URL from the current working tab (reuses that tab's authenticated context)."
+    "zh-CN": "必填。来源页面上已确认的 Skill Zip 完整 http(s) 下载地址（复用该页认证态）。",
+    "en": "Required confirmed http(s) Skill ZIP download URL from the source page (reuses that page's authenticated context)."
+  },
+  "zipPage": {
+    "zh-CN": "必填。来源页面的 tabRef：当前任务的标签页别名或 open_tab、list_tabs 返回的引用。",
+    "en": "Required source-page tabRef: a task-owned tab alias or the reference returned by open_tab or list_tabs."
   },
   "zipOverwrite": {
     "zh-CN": "是否覆盖本地同名 Skill，默认 false（仅用户明确确认后传 true）。",
@@ -268,8 +272,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Import Skill ZIP from page"
   },
   "importZipDescription": {
-    "zh-CN": "使用当前任务工作标签页的认证上下文下载并导入已确认的 Skill Zip URL（不探测或猜测 URL，默认不覆盖同名 Skill）。",
-    "en": "Download and import a confirmed Skill ZIP URL using the current working tab's authenticated context (does not scan or guess URLs; refuses to overwrite by default)."
+    "zh-CN": "使用 tabRef 指定页面的认证上下文下载并导入已确认的 Skill Zip URL（不探测或猜测 URL，默认不覆盖同名 Skill）。",
+    "en": "Download and import a confirmed Skill ZIP URL using the page selected by tabRef and its authenticated context (does not scan or guess URLs; refuses to overwrite by default)."
   },
   "importGit": {
     "zh-CN": "探测并导入 Git 仓库",

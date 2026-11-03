@@ -34,7 +34,7 @@ function fixture({ metadataReady = async () => {}, skillToolRegistrySnapshot } =
     ensureTabGroupForWindow: async () => null, loadSecurityGuardrails: async () => ({}), logger: {warn(){}, debug(){}}, };
   sessions = createSessionTabs(options);
   const registry = createToolRegistry(), register = registry.forCapability('ref-fixture');
-  register({ name: 'open_tab', description: 'open', workingTab: 'created', behavior: { parallelOpen: true },
+  register({ name: 'open_tab', description: 'open', tabLifecycle: 'created', behavior: { parallelOpen: true },
     parameters: { type:'object', properties:{tabAlias:{type:'string'}} },
     async execute(args, signal, context) {
       executed.push({ name:'open', ...args });
@@ -108,7 +108,7 @@ for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agr
       assert.deepEqual(schema.parameters.properties.tabRef.type, ['integer', 'string']);
       assert.doesNotMatch(schema.parameters.properties.tabRef.description, /\btabId\b/);
       assert.equal(schema.parameters.properties.tabId, undefined);
-      assert.deepEqual(schema.parameters.required, ['timeout', ...(['authored', 'legacy'].includes(localName) ? ['tabRef'] : [])]);
+      assert.deepEqual(schema.parameters.required, ['timeout', 'tabRef']);
       assert.match(schema.description, /\btabRef\b/);
       assert.doesNotMatch(schema.description, /\btabId\b/);
       const definition = f.runtime.resolveDefinition(schema.name, options);
@@ -117,7 +117,7 @@ for (const language of ['en', 'zh-CN']) test(`Skill author and model schemas agr
       assert.equal(definition.parameters.properties.tabId, undefined);
       assert.equal(definition.behavior.barrier, true);
       assert.deepEqual(f.runtime.getBatchTabPolicy(schema.name, { tabRef: 'dy' }, options),
-        { kind: 'target', implicit: true, observation: false });
+        { kind: 'target', implicit: false, observation: false });
       assert.equal(f.runtime.getParallelReadTab(schema.name, { tabId: 101 }, options), null);
     }
     for (const localName of ['inner', 'host', 'mcp', 'no_page']) {
@@ -148,12 +148,17 @@ test('Legacy selector normalization leaves installed declarations intact and ded
   } }).required, ['timeout', 'tabRef']);
 });
 
-for (const localName of pageSkillNames) test(`Skill ${localName} resolves aliases, numeric refs and the working tab through the script host`, async () => {
+for (const localName of pageSkillNames) test(`Skill ${localName} resolves explicit references and rejects implicit page fallback through the script host`, async () => {
   const f = fixture({ skillToolRegistrySnapshot });
   await f.run([open('dy'), open('other')]);
   const name = `tab_skill__${localName}`;
-  await f.execute(name, { timeout: 5 });
-  assert.equal(f.executed.at(-1).tabId, 102);
+  for (const args of [{ timeout: 5 }, { timeout: 5, tabRef: null }]) {
+    const code = Object.hasOwn(args, 'tabRef') ? 'BATCH_TAB_REFERENCE_ERROR' : 'TAB_REF_REQUIRED';
+    await assert.rejects(f.execute(name, args), { code });
+    await f.run([skillCall(localName, args)]);
+    assert.equal(f.events.filter(event => event.type === 'tool_execution_end').at(-1).result.code, code);
+    assert.equal(f.executed.filter(item => item.name === 'skill').length, 0, 'a legacy working tab cannot dispatch an untargeted Skill');
+  }
   for (const args of [{ tabRef: 'dy' }, { tabRef: 101 }, { tabRef: '101' }, { tabId: 101 }]) {
     await f.execute(name, { timeout: 5, ...args });
     assert.equal(f.executed.at(-1).name, 'skill');
@@ -196,7 +201,7 @@ test('Skill page alias consumers remain commit barriers in an Agent batch', asyn
 
 for (const [localName, tabRef, reason] of [
   ...pageSkillNames.map(name => [name, 'missing', 'unknown_reference']),
-  ...['bad ref', 0, -1, 1.5, null, {}].map(ref => ['page', ref, 'invalid_reference']),
+  ...['bad ref', 0, -1, 1.5, {}].map(ref => ['page', ref, 'invalid_reference']),
 ]) test(`Skill ${localName} rejects ${JSON.stringify(tabRef)} as ${reason} before dispatch`, async () => {
   const f = fixture({ skillToolRegistrySnapshot });
   await f.run([open('dy')]);
@@ -358,8 +363,10 @@ test('group reconciliation prunes closed aliases without overwriting tabs create
 
 test('explicit null tabRef never silently falls back to the working tab',async()=>{
   const f=fixture();await f.run([open('docs')]);
-  await assert.rejects(f.execute('read_ref',{tabRef:null}),e=>e.details.reason==='invalid_reference');
-  await f.run([read(null)]);assert.equal(f.events.filter(e=>e.type==='tool_execution_end').at(-1).result.details.reason,'invalid_reference');
+  await assert.rejects(f.execute('read_ref',{tabRef:null}), { code: 'BATCH_TAB_REFERENCE_ERROR', details: { reason: 'invalid_reference' } });
+  await f.run([read(null)]);assert.equal(f.events.filter(e=>e.type==='tool_execution_end').at(-1).result.code,'BATCH_TAB_REFERENCE_ERROR');
+  assert.equal(f.events.filter(e=>e.type==='tool_execution_end').at(-1).result.details.reason,'invalid_reference');
+  assert.equal(f.executed.some(item=>item.name==='read'),false);
 });
 
 test('alias reservations cannot publish with a foreign Session, stale run, or unowned tab',async()=>{
