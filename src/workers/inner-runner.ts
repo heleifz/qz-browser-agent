@@ -38,9 +38,9 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       return;
     }
     if (!response.ok) {
-      const error: ScriptFailure = new Error(response.error || ("tools." + call.toolName + " bridge failed"));
+      const error: ScriptFailure = new Error(response.message || response.error || ("tools." + call.toolName + " bridge failed"));
       if (response.code) error.code = response.code;
-      if (response.diagnostic) error.diagnostic = response.diagnostic;
+      if (response.hint) error.hint = response.hint;
       if (response.details) error.details = response.details;
       call.reject(error);
       return;
@@ -77,7 +77,7 @@ async function runInnerScript(payload: WorkerExecute) {
   const args = input;
   const tabId = null;
   let seq = 0;
-  pushTrace("inner.start", [{ sourceLength: source.length }]);
+  pushTrace("script.start", [{ sourceLength: source.length }]);
 
   function traceText(value: unknown) {
     try {
@@ -296,7 +296,6 @@ function decorateSyntaxError(error: unknown, source: string) {
   annotated.code = "SCRIPT_SYNTAX_ERROR";
   const hints = findSuspiciousSourceTokens(source);
   annotated.details = {
-    reason: "inner",
     sourcePreview: summarizeSourceForError(source),
     suspiciousTokens: hints,
   };
@@ -367,7 +366,8 @@ function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: 
   if (!ok) {
     out.error = error?.stack || error?.message || String(error || "Script evaluation failed");
     out.code = error?.code || "SCRIPT_EVALUATION_FAILED";
-    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : { reason: "inner" });
+    if (error?.hint) out.hint = error.hint;
+    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : {});
     if (error?.diagnostic && typeof error.diagnostic === "object") out.diagnostic = safeValueForMessage(error.diagnostic);
   } else if (result === undefined) {
     out.message = "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.";

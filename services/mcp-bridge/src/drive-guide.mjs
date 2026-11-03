@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 
+const MARKER_START = "<!-- qz-drive-guide:en -->";
 const MARKER_END = "<!-- qz-drive-guide:end -->";
 const candidates = [
   new URL("./qz-drive-SKILL.md", import.meta.url),
@@ -23,20 +24,13 @@ function loadGuideSource() {
   throw new Error(`direct-drive guide is missing. Looked in ${errors.join(", ")}.`);
 }
 
-function languageTag(value) {
-  return String(value || "").trim().toLowerCase().replaceAll("_", "-");
-}
-
-/** One language slice of skills/qz-browser-agent/SKILL.md. The package copy is a packed mirror, not a second draft. */
-export function driveGuide({ explicit = "", env = process.env } = {}) {
-  const requested = languageTag(explicit || env.QZ_GUIDE_LANG || env.LANG || "");
-  const key = requested.startsWith("zh") ? "zh-CN" : "en";
+/** Read the direct-drive usage guide. */
+export function driveGuide() {
   const text = loadGuideSource();
-  const marker = `<!-- qz-drive-guide:${key} -->`;
-  const start = text.indexOf(marker);
-  const end = text.indexOf(MARKER_END, start + marker.length);
-  if (start < 0 || end < 0) throw new Error(`direct-drive guide is missing the ${key} section.`);
-  return `${text.slice(start + marker.length, end).trim()}\n`;
+  const start = text.indexOf(MARKER_START);
+  const end = text.indexOf(MARKER_END, start + MARKER_START.length);
+  if (start < 0 || end < 0) throw new Error("direct-drive guide content is missing.");
+  return `${text.slice(start + MARKER_START.length, end).trim()}\n`;
 }
 
 export function resetDriveGuideCache() {

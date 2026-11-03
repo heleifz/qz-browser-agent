@@ -71,15 +71,15 @@ try {
   assert.equal(cliConnection.result.connected, true);
   report.afterIdleCliConnect = true;
 
-  const created = await call("qingzhou_create_session", { title: "Resilient browser task" });
-  const sessionId = created.session.id;
+  const created = await call("qingzhou_create_drive_session", { title: "Resilient browser task" });
+  const sessionId = created.sessionId;
   const opened = await execute("open_tab", { url: fixture.url }, sessionId);
-  const tabId = opened.result.id;
-  const article = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const tabRef = opened.result.tabRef;
+  const article = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(article.result.text, /MCP resilience fixture/);
   report.afterIdleTool = true;
 
-  const pending = execute("navigate", { tabId, url: `${fixture.url}mutation` }, sessionId)
+  const pending = execute("navigate", { tabRef, url: `${fixture.url}mutation` }, sessionId)
     .then(result => ({ result }), error => ({ error }));
   await Promise.race([
     until(() => fixture.mutations === 1, "the synthetic navigation did not start"),
@@ -96,7 +96,7 @@ try {
   await environment.bridge.restart();
   await until(async () => (await readHealth(environment.bridge.endpoint)).status.connected,
     "the saved endpoint did not reconnect after a brief service interruption", 75000);
-  const afterRestart = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const afterRestart = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(afterRestart.result.text, /MCP resilience fixture/);
   assert.equal(fixture.mutations, 1, "reconnection must not replay the dispatched navigation");
   report.inflightDisconnect = { rejected: true, mutationCount: 1, samePortRecovery: true };
@@ -121,7 +121,7 @@ try {
   connectionPage = await environment.context.newPage();
   await connect(environment.bridge.endpoint);
   const recoveredAt = Date.now();
-  const afterExplicitConnect = await execute("read_article", { tabId, limit: 1000 }, sessionId);
+  const afterExplicitConnect = await execute("read_article", { tabRef, limit: 1000 }, sessionId);
   assert.match(afterExplicitConnect.result.text, /MCP resilience fixture/);
   assert.equal(fixture.mutations, 1, "explicit reconnection must not replay an interrupted navigation");
   report.boundedRecovery = { failedPolls: environment.failedPollRequests.length,
@@ -135,7 +135,7 @@ try {
     port: Number(new URL(previousEndpoint).port), buildId: "fixture" });
   assert.notEqual(fallback.endpoint, previousEndpoint);
   await connect(fallback.endpoint);
-  const fallbackArticle = await execute("read_article", { tabId, limit: 1000 }, sessionId, fallback.endpoint);
+  const fallbackArticle = await execute("read_article", { tabRef, limit: 1000 }, sessionId, fallback.endpoint);
   assert.match(fallbackArticle.result.text, /MCP resilience fixture/);
   await environment.bridge.close();
   await connectionPage.close();

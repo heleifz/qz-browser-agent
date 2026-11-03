@@ -91,12 +91,12 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
       });
     } catch (cause) {
       const code = typeof cause.code === "string" ? cause.code
-        : cause.name === "TimeoutError" ? "timeout" : cause.name === "AbortError" ? "interrupted" : "task_wait_failed";
+        : cause.name === "TimeoutError" ? "TIMEOUT" : cause.name === "AbortError" ? "INTERRUPTED" : "TASK_WAIT_FAILED";
       const error = Object.assign(new Error(cause.message, { cause }), { code });
       error.details = { ...cause.details, sessionId, clientId: args.clientId,
-        recovery: code === "task_deleted"
+        recovery: code === "TASK_DELETED"
           ? { tool: "qingzhou_list_sessions", arguments: { clientId: args.clientId } }
-          : { tool: code === "task_changed" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
+          : { tool: code === "TASK_CHANGED" ? "qingzhou_get_session_snapshot" : "qingzhou_watch_task",
             arguments: { sessionId, clientId: args.clientId } } };
       throw error;
     }
@@ -107,7 +107,7 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
       sessionId: args.sessionId, name: args.name, timeoutSeconds: args.timeoutSeconds,
     }, options);
     if (!tool || typeof tool !== "object") {
-      throw new BridgeError("tool_not_found", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
+      throw new BridgeError("TOOL_NOT_FOUND", `No browser tool named ${args.name}. Use qingzhou_list_tools to list available tools.`);
     }
     return tool;
   }
@@ -154,14 +154,15 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   result = bindInputClient(name, result, clientId);
   if (observe) {
-    const sessionId = name === "qingzhou_create_session" ? result?.session?.id || result?.sessionId : args.sessionId;
+    const sessionId = name === "qingzhou_create_session"
+      ? result?.session?.sessionId || result?.sessionId || result?.session?.id : args.sessionId;
     if (name === "qingzhou_create_session") {
-      if (!sessionId) throw new BridgeError("invalid_response", "The task was created without an ID. Use qingzhou_list_sessions to find it before retrying.");
+      if (!sessionId) throw new BridgeError("INVALID_RESPONSE", "The task was created without an ID. Use qingzhou_list_sessions to find it before retrying.");
       await onTaskUpdate?.({ type: "created", sessionId, clientId, ...result });
       result = { ...result, snapshot: await watch(sessionId, { allowIdle: !args.firstMessage.trim() }) };
     } else if (name === "qingzhou_send_message" && result?.accepted === true) {
       if (typeof result.clientMessageId !== "string" || !result.clientMessageId.trim()) {
-        throw Object.assign(new BridgeError("invalid_response", "The message was accepted without a tracking ID. Continue watching the same task before sending it again."), {
+        throw Object.assign(new BridgeError("INVALID_RESPONSE", "The message was accepted without a tracking ID. Continue watching the same task before sending it again."), {
           details: { sessionId, clientId, recovery: { tool: "qingzhou_watch_task", arguments: { sessionId, clientId } } },
         });
       }
@@ -177,11 +178,11 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
 /** Validate input against the advertised tool schema and apply its defaults. */
 export function validateMcpToolInput(name, input = {}) {
   const definition = definitions.get(name);
-  if (!definition) throw Object.assign(new Error(`Unknown tool: ${name}. Read the MCP tool list for available names.`), { code: "invalid_arguments" });
+  if (!definition) throw Object.assign(new Error(`Unknown tool: ${name}. Read the MCP tool list for available names.`), { code: "INVALID_ARGUMENTS" });
   try {
     return argumentsWithDefaults(definition, input);
   } catch (error) {
-    error.code = "invalid_arguments";
+    error.code = "INVALID_ARGUMENTS";
     throw error;
   }
 }
@@ -249,18 +250,17 @@ export function resultToContent(result) {
   ];
 }
 
-const DRIVE_SESSION_TOOLS = new Set(["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]);
 const DRIVE_TOOL_NAMES = ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"];
 const GUIDE_TOOL = {
   name: "qingzhou_guide",
-  description: "先读说明书。返回直驱说明书全文。一条新连接调用一次。Read the guide first. Call this once on a new connection before other tools.",
+  description: "Return the qz CLI direct-drive guide as an optional reference.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
-    properties: { lang: { type: "string", description: "zh-CN or en. Omit to follow QZ_GUIDE_LANG or LANG." } },
+    properties: {},
   },
 };
-const DRIVE_INSTRUCTIONS = "先调用 qingzhou_guide 读取直驱说明书，再操作浏览器。先 qingzhou_create_drive_session 或 qz session create，之后每次调用都带返回的 sessionId。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Call qingzhou_guide once. Create a session with qingzhou_create_drive_session or qz session create, then pass that sessionId on every call. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
+const DRIVE_INSTRUCTIONS = "先带可读 title 调用 qingzhou_create_drive_session，或 qz session create --title TITLE，之后每次执行工具都带返回的 sessionId；list_tools/get_tool 查询基础目录无需会话。CLI 用 --session，漏掉就退出码 2，不会自动建会话。页面工具必须带 tabRef（别名或 open_tab / list_tabs 返回的 tabRef）。open_tab 的 tabAlias 建议写，不是必填。编排用 calls 或 execute_tool。Create a session with a readable title using qingzhou_create_drive_session or qz session create --title TITLE, then pass that sessionId on every tool execution. list_tools/get_tool can inspect the base catalog without a session. CLI calls pass --session. Omitting it exits 2 and does not create a session. Page tools require tabRef (an alias or the tabRef returned by open_tab or list_tabs). open_tab tabAlias is recommended, not required. Orchestrate with calls or execute_tool.";
 
 export function mcpCatalogProfile({ clientName = "", profile = "" } = {}) {
   const explicit = String(profile || "").trim().toLowerCase();
@@ -288,12 +288,12 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
       const progressToken = request.params._meta?.progressToken;
       const input = { ...(request.params.arguments || {}) };
       if (request.params.name === "qingzhou_guide") {
-        return { content: [{ type: "text", text: driveGuide({ explicit: input.lang }) }] };
+        return { content: [{ type: "text", text: driveGuide() }] };
       }
       if (catalogProfile === "drive" && request.params.name === "qingzhou_list_sessions") {
         if (!String(input.scope || "").trim()) input.scope = "session";
       }
-      if (DRIVE_SESSION_TOOLS.has(request.params.name) && !String(input.sessionId || "").trim()) {
+      if (request.params.name === "qingzhou_execute_tool" && !String(input.sessionId || "").trim()) {
         throw new BridgeError("DRIVE_SESSION_REQUIRED", "Pass sessionId from qz session create (MCP: qingzhou_create_drive_session). CLI calls require --session. This call does not create a session.");
       }
       const result = await executeMcpTool(state, request.params.name, input, { signal: extra.signal, clientName,
@@ -305,11 +305,9 @@ export function createMcpServer(state, { clientName = "", profile = "" } = {}) {
       });
       return { content: resultToContent(result) };
     } catch (error) {
-      const message = error.message || String(error);
-      const value = typeof error.code === "string" && error.code ? {
-        code: error.code, message,
-        ...(error.details && Object.keys(error.details).length ? { details: error.details } : {}),
-      } : message;
+      const value = { code: String(error.code || "TOOL_EXECUTION_FAILED").toUpperCase(), message: error.message || String(error),
+        ...(error.hint ? { hint: error.hint } : {}),
+        ...(error.details && Object.keys(error.details).length ? { details: error.details } : {}) };
       return { isError: true, content: resultToContent(value) };
     }
   });

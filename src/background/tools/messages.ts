@@ -28,16 +28,16 @@ const messages = defineMessages("tool-runtime", {
     en: "tabAlias \"{tabRef}\" has an invalid format. Use 1\u201364 letters, digits, underscores, or hyphens; aliases cannot be entirely numeric.",
   },
   batchTabReferenceInvalidReference: {
-    "zh-CN": "tabRef「{tabRef}」无效或不适用于该调用。请使用浏览器正整数 ID 或当前任务的有效页面别名。",
-    en: "tabRef \"{tabRef}\" is invalid or not allowed on this call. Use a positive integer browser ID or a valid page alias in this Session.",
+    "zh-CN": "tabRef「{tabRef}」格式无效。请使用 open_tab / list_tabs 返回的 tabRef，或本会话的页面别名。",
+    en: "tabRef \"{tabRef}\" has an invalid format. Use a tabRef returned by open_tab / list_tabs, or a page alias in this session.",
   },
   batchTabReferenceAmbiguousTarget: {
     "zh-CN": "本批包含多个 open_tab，无法确定目标页面。请在页面调用中通过 tabRef 明确指定。",
     en: "This batch contains more than one open_tab, so the target page is ambiguous. Specify tabRef in the page call.",
   },
   tabReferenceConflict: {
-    "zh-CN": "tabRef「{tabRef}」与同时提供的 tabId 或元素 UID 指向不同页面。请只指定一个目标，或让两者指向同一页。",
-    en: "tabRef \"{tabRef}\" conflicts with the supplied tabId or element UID. Select one target, or make both refer to the same page.",
+    "zh-CN": "tabRef「{tabRef}」与同时提供的页面引用或元素 target 指向不同页面。请只指定一个目标，或让两者指向同一页。",
+    en: "tabRef \"{tabRef}\" conflicts with the supplied page reference or element target. Select one target, or make both refer to the same page.",
   },
   batchTabReferenceOutsideBatch: {
     "zh-CN": "tabRef「{tabRef}」只能与对应的 open_tab 在同一批调用中使用。请改用 open_tab 返回的 tabRef。",

@@ -14,18 +14,18 @@ export default `# 技能工作台
 7. 创建新 skill 时调用本 skill 暴露的“创建技能”Skill 工具；写入或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时调用“编辑技能资源”，一次只改一个资源且一次只做一个动作；修改已有 skill 正文或元信息时调用“更新技能”；删除时调用“删除技能”。
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
-10. Skill 脚本默认使用 \`runtime:"page"\` 注入当前任务网页，页面工具会自动获得可选参数 \`tabRef\`：传当前任务拥有的标签页别名或正整数 ID（也可用数字字符串），省略时使用当前任务工作标签页。在 \`plugin.json\` 中声明时，使用 \`tabRef\` 和 \`type:["integer","string"]\`。未知别名会报错，不会回退到工作标签页。与页面无关、需要自身设置或网络 API 的脚本使用 \`runtime:"inner"\`：通过 \`$plugin.config\` 读取 manifest 设置，通过标准 \`fetch\` 访问 \`network.allowedOrigins\` 声明的来源。不要给用户自定义 Skill 配置 \`runtime:"host"\`；host 只用于轻舟 core 显式注册的受控后台动作。
+10. Skill 脚本默认使用 \`runtime:"page"\` 注入当前任务网页，页面工具会自动获得必填参数 \`tabRef\`：传当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用。在 \`plugin.json\` 中声明时，使用 \`tabRef\` 和 \`type:["integer","string"]\`。未知别名会报错。与页面无关、需要自身设置或网络 API 的脚本使用 \`runtime:"inner"\`：通过 \`$plugin.config\` 读取 manifest 设置，通过标准 \`fetch\` 访问 \`network.allowedOrigins\` 声明的来源。不要给用户自定义 Skill 配置 \`runtime:"host"\`；host 只用于轻舟 core 显式注册的受控后台动作。
 11. Skill 脚本工具会自动拥有必填的 \`timeout\` 调用参数；不要把超时写进业务 schema。单位是秒，\`timeout <= 0\` 表示无限等待，\`timeout > 0\` 表示最多等待对应秒数；调用 Skill 工具、\`run_script\` 或 \`run_skill_script\` 时由模型按任务复杂度主动选择。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
-14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，先确保来源页面是当前任务的工作标签页，再把该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。
+14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，把来源页面的 tabRef 和该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。
 15. 用户给出支持的 GitHub 或 GitLab 仓库/目录页时，调用“探测并导入 Git 仓库”。它会打开仓库页面、等待必要登录、探测分支与 Zip，并绑定为可更新的 Skill 来源；发生同名或本地修改冲突时，不得未经用户确认传 \`overwrite:true\`。
 16. 用户明确要求把某个本地 Skill 安装到 Git 仓库时，调用“安装 Skill 到 Git”。目标 URL 必须由当前产品的 Git 发布适配器支持；目录决定安装位置，工具会创建或更新 \`<目录>/<skill-name>/SKILL.md\` 及其资源并生成一次 commit。未安装对应发布适配器时，先导出 Skill 再由用户提交。
 17. Skill 包可以携带 DOCX、XLSX、PDF 参考资源。调用 \`load_skill_resource(name,path)\` 时会自动通过 document pipeline 返回首块预览和 \`docModelId\`；需要继续读取时先 \`load_skill("qingzhou-documents")\`，再调用 \`document_read_chunk\`。这些二进制资源不能使用文本 replace/append/set 编辑。
 
 ## 页面模式前置条件
 
-- 基于网页创建或更新 Skill 时，先从当前任务的页面上下文或 \`list_tabs\` 返回的 \`pageMode\` 确认目标页模式，不凭窗口宽度或 URL 猜测；模式缺失或正在切换时，先重新观察确认。
+- 基于网页创建或更新 Skill 时，先从当前任务的页面上下文 确认目标页模式，不凭窗口宽度或 URL 猜测；模式缺失或正在切换时，先重新观察确认。
 - 如果流程是在 \`pageMode:"mobile"\` 下采集或验证的，必须在生成的 \`SKILL.md\` / content 的前置条件中写明“在移动模式下验证”，并写清复用步骤：新页面用 \`open_tab\` 的 \`mode:"mobile"\` 打开；已有任务所属页面用 \`set_page_mode\` 的 \`mode:"mobile"\` 切换。切换会刷新页面，操作前重新读取页面或截图，不复用旧元素引用和坐标。
 - 记录实际验证过的模式；只验证移动模式时，不宣称桌面模式也适用。两种模式流程不同则分别说明。模式要求放在 Skill 正文中，不新增 manifest 字段，也不固化创建时的 tabRef。
 
@@ -39,7 +39,7 @@ export default `# 技能工作台
 
 ## Skill 包导入与 Git 分发
 
-- “导入页面 Zip”只接收 Agent 已经发现的完整 http(s) 下载地址，默认使用当前任务 workingTabId 的页面登录态下载，不扫描 DOM、Network 或猜测 URL。它可以一次导入一个或多个标准 Skill；默认不覆盖同名项，只有用户确认后才传 \`overwrite:true\`。
+- “导入页面 Zip”只接收 Agent 已经发现的完整 http(s) 下载地址，显式传入来源页面的 tabRef 以复用该页登录态，不扫描 DOM、Network 或猜测 URL。它可以一次导入一个或多个标准 Skill；默认不覆盖同名项，只有用户确认后才传 \`overwrite:true\`。
 - “探测并导入 Git 仓库”接收支持的 GitHub 或 GitLab 的仓库根页/目录页 URL。它复用技能页的 Git 来源能力，保留仓库、分支、目录和更新摘要，后续仍可在技能页检查更新或解除绑定。
 - “安装 Skill 到 Git”接收本地 Skill 名称和已支持的 Git 发布目标 URL。调用本身会产生外部 Git commit，必须以用户的明确安装/提交要求为前提；成功后核对返回的 \`targetPath\`、\`fileCount\` 和 \`commitId\`。
 - 页面 Zip 导入和 Git 导入都是 package 级操作，不要先拆成 \`create_skill\` + 多次 \`edit_skill_resource\`；Skill 正文、资源、manifest 和来源元数据必须作为一个包校验并写入。
@@ -117,7 +117,7 @@ export default `# 技能工作台
       "parameters": {
         "type": "object",
         "properties": {
-          "tabRef": { "type": ["integer", "string"], "description": "当前任务拥有的标签页别名或正整数 ID；省略时使用工作标签页" },
+          "tabRef": { "type": ["integer", "string"], "description": "必填，当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用" },
           "limit": { "type": "integer", "description": "最多返回多少条链接" }
         }
       }
@@ -187,7 +187,7 @@ export default `# 技能工作台
 
 ## 脚本约定
 
-Skill 脚本与 \`run_script.code\` 使用同一种源码形态：默认写成单个 \`async () => { ... }\` 函数表达式，由轻舟自动调用。不要写顶层 \`return\`、IIFE、\`main();\` 或把结果包在 \`result\` 字段里。\`runtime:"page"\` 在当前任务工作标签页或用 \`tabRef\` 指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab，可用标准 Web APIs、\`$plugin.config\`、\`fetch\` 和 \`tools/tool\`。
+Skill 脚本与 \`run_script.code\` 使用同一种源码形态：默认写成单个 \`async () => { ... }\` 函数表达式，由轻舟自动调用。不要写顶层 \`return\`、IIFE、\`main();\` 或把结果包在 \`result\` 字段里。\`runtime:"page"\` 在用 \`tabRef\` 显式指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab，可用标准 Web APIs、\`$plugin.config\`、\`fetch\` 和 \`tools/tool\`。
 
 \`\`\`js
 async () => {
@@ -206,7 +206,7 @@ async () => {
 }
 \`\`\`
 
-两种脚本都可用 \`args/input\`、\`$plugin\`、\`tools/tool\` 和 Web APIs；page 额外可用 \`window/document\` 和宿主解析后的数字 \`tabId\`。该运行时值不是作者声明的页面目标参数；调用页面工具时使用 \`tabRef\`。inner 没有 DOM，网络来源和 method 必须在 manifest \`network\` 中声明。不要使用 Node.js、\`fs/path/process/require\`、npm 包、本地 shell 或服务器文件系统。
+两种脚本都可用 \`args/input\`、\`$plugin\`、\`tools/tool\` 和 Web APIs；page 额外可用 \`window/document\`；调用页面工具时传入 \`tabRef\`。inner 没有 DOM，网络来源和 method 必须在 manifest \`network\` 中声明。不要使用 Node.js、\`fs/path/process/require\`、npm 包、本地 shell 或服务器文件系统。
 
 ### 页面 state 与安全返回规范
 

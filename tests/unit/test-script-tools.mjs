@@ -37,14 +37,17 @@ test('a deferred tab-local invocation cannot escalate to the tool bridge', async
   assert.equal(evaluations, 0);
 });
 
-test('page results preserve large structured values and diagnostic envelopes', async () => {
+test('page results preserve large structured values and public error feedback', async () => {
   const value = { text: 'large'.repeat(20000), rows: Array.from({ length: 1200 }, (_, id) => ({ id })) };
   assert.equal((await fixture(async () => ({ result: { type: 'object', value } }))()).result, value);
   const run = fixture(async () => ({ result: { type: 'object', value: { __runScriptEnvelope: true, ok: false,
     error: 'querySelector returned null', trace: [{ message: 'selected 0' }], __lastObservation: { _image: 'data:image/png;base64,eA==' } } } }));
   const result = await run();
-  assert.equal(result.diagnostic.category, 'selector_or_timing');
-  assert.deepEqual(result.diagnostic.lastTrace, ['trace: selected 0']);
+  assert.equal(result.code, 'SCRIPT_EVALUATION_FAILED');
+  assert.equal(result.message, 'querySelector returned null');
+  assert.ok(result.hint);
+  assert.deepEqual(result.details.trace.map(row => [row.level, row.message]), [['trace', 'selected 0']]);
+  for (const field of ['diagnostic', 'engine', 'execution_world', 'hasResult']) assert.equal(Object.hasOwn(result, field), false);
   assert.equal(result._image, 'data:image/png;base64,eA==');
   assert.equal(result.__runScriptEnvelope, undefined);
 });
@@ -67,7 +70,7 @@ test('missing-tool errors from the debugger return guidance without retrying', a
     const result = await run();
     assert.equal(result.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(result.details.automaticReplay, false); assert.equal(calls, 1);
-    assert.match(result.diagnostic.suggestedNextStep, /tools\.name/);
+    assert.match(result.hint, /tools\.name/);
   }
 });
 
@@ -86,7 +89,11 @@ test('native runtime exceptions are not mistaken for compile-only shape recovery
   ]) {
     let calls = 0;
     const run = fixture(async () => { calls++; return { exceptionDetails }; });
-    assert.equal((await run()).ok, false); assert.equal(calls, 1);
+    const result = await run();
+    assert.equal(result.code, 'SCRIPT_EVALUATION_FAILED');
+    assert.equal(result.message, exceptionDetails.text);
+    assert.ok(result.hint);
+    assert.equal(calls, 1);
   }
 });
 

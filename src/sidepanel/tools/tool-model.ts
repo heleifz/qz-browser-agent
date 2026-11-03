@@ -1,3 +1,4 @@
+import { isToolFailure } from "../../shared/contracts/tool-error.js";
 import { t } from "../i18n/index.js";
 import {
   getToolMetadataCatalog,
@@ -111,7 +112,7 @@ export function resolveToolState(tool: ToolEvent | null | undefined, ...values: 
 
 export function isToolResultErrorLike(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  if (record(value).ok === false || record(value).isError === true || record(value).error) return true;
+  if (isToolFailure(value)) return true;
   const code = String(record(value).code || "").trim().toUpperCase();
   return Boolean(code && !TOOL_SUCCESS_CODES.has(code) && TOOL_FAILURE_CODE_PATTERN.test(code));
 }

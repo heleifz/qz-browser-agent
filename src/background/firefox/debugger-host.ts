@@ -132,6 +132,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
         arguments: callArgs, awaitPromise: params.awaitPromise !== false,
       });
     }
+    if (method === "Runtime.getProperties") return run(tabId, frameId, { op: "properties", objectId: String(params.objectId || "") });
     if (method === "Runtime.releaseObjectGroup") return run(tabId, frameId, { op: "release", objectGroup: String(params.objectGroup || "") });
     if (method === "Runtime.awaitPromise") return { result: { type: "undefined" } };
     if (method === "Input.dispatchMouseEvent") {

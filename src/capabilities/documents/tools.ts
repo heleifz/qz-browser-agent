@@ -743,7 +743,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
   aborted.catch(() => {});
   const onAbort = () => {
     void chrome.tabs.remove(tabId).catch(() => {});
-    rejectAbort(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled", { tabId }));
+    rejectAbort(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled"));
   };
   signal?.addEventListener("abort", onAbort, { once: true });
   const command = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -754,7 +754,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
     if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled");
     await waitForTabComplete(tabId, 30000, signal);
     if (typeof withTemporaryDebugger !== "function") {
-      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", t("temporaryPdfRenderingRequiresTheChromeDebuggerRuntime"), { tabId });
+      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", t("temporaryPdfRenderingRequiresTheChromeDebuggerRuntime"));
     }
     const result = await withTemporaryDebugger(tabId, async (_target, send) => {
       await command(() => send("Page.enable", {}));
@@ -768,7 +768,7 @@ async function createPdfBase64FromDocument({ title = "", blocks = [], sheets = [
       }));
     }, "document_pdf");
     if (!result || typeof result !== "object" || !("data" in result) || typeof result.data !== "string" || !result.data) {
-      throw new ToolExecutionError("PDF_PRINT_FAILED", t("chromePagePrinttopdfReturnedEmptyData"), { tabId });
+      throw new ToolExecutionError("PDF_PRINT_FAILED", t("chromePagePrinttopdfReturnedEmptyData"));
     }
     return result.data;
   } finally {
@@ -798,7 +798,7 @@ function waitForTabComplete(tabId: number, timeoutMs = 30000, signal?: DocumentS
     };
     const onAbort = () => {
       cleanup();
-      reject(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled", { tabId }));
+      reject(new ToolExecutionError("OPERATION_ABORTED", "PDF generation was cancelled"));
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     const complete = () => {
@@ -810,7 +810,7 @@ function waitForTabComplete(tabId: number, timeoutMs = 30000, signal?: DocumentS
     };
     timer = setTimeout(() => {
       cleanup();
-      reject(new ToolExecutionError("TAB_LOAD_TIMEOUT", t("temporaryTabDidNotFinishLoading", { tabId: String(tabId) }), { tabId, timeoutMs }));
+      reject(new ToolExecutionError("TAB_LOAD_TIMEOUT", t("temporaryTabDidNotFinishLoading"), { timeoutMs }));
     }, timeoutMs);
     chrome.tabs.onUpdated.addListener(onUpdated);
     chrome.tabs.get(tabId).then(tab => {

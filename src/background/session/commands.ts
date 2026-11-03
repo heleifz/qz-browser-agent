@@ -1,5 +1,5 @@
 import { t } from "../../shared/i18n/backend.js";
-import { externalDriveLeaseActive, noteExternalDriveStopped } from "../mcp/external-drive.js";
+import { externalDriveLeaseActive, forgetExternalDriveSession, noteExternalDriveStopped, protectExternalDriveSession } from "../mcp/external-drive.js";
 import type { Agent, AgentEvent, DynamicContext } from "../agent/agent.js";
 import type { createSessionSupervisor, SessionTask } from "./supervisor.js";
 import type { createSessionRepository } from "./repository.js";
@@ -11,6 +11,8 @@ import type { createSessionAgentHost } from "./agent-host.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { TranscriptEntry } from "../../shared/contracts/session.js";
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
+import { publicSessionObservation, type SessionStopReceipt } from "../../shared/contracts/session-observation.js";
+import { toolError } from "../../shared/contracts/tool-error.js";
 import type { chat as llmChat } from "../llm/index.js";
 import type { getCurrentRuntimeConfig } from "../runtime-config.js";
 import type { normalizeSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
@@ -53,7 +55,7 @@ interface SessionCommandsDependencies {
     "clearListSummaryPatch" | "clearSummaryRefresh" | "buildListSummary" | "collect" | "empty"
   >>;
   tabs: Readonly<Pick<Tabs, "getOwnedTabContexts" | "closeOwnedTabsAfterTerminal" | "settleStoppedDriveTabs">
-    & Partial<Pick<Tabs, "restoreOwnedTabs">>>;
+    & Partial<Pick<Tabs, "restoreOwnedTabs" | "syncGroup">>>;
   sessionRuntimeReady: Promise<unknown>;
   sessionSupervisor: ReturnType<typeof createSessionSupervisor<Agent>>;
   sessionRepository: Repository;
@@ -72,6 +74,8 @@ interface SessionCommandsDependencies {
   copyChatMessageDocuments?: Documents["copyMessageDocuments"];
   removeChatSessionDocuments?(id: string): Promise<unknown>;
   removeSessionObservations?(id: string): Promise<unknown>;
+  removeSessionResources?(id: string): Promise<unknown>;
+  onDriveSettled?(): Promise<unknown>;
   blockChatDocumentParsing?(id: string): Promise<(() => void) | void>;
   observeAgentEvent?: ((id: string, event: AgentEvent) => unknown) | null;
   getAutomationRuntime(): { syncSessionOutcome(id: string): unknown };
@@ -151,6 +155,8 @@ export function createSessionCommands(deps: SessionCommandsDependencies) {
     copyChatMessageDocuments,
     removeChatSessionDocuments = async () => {},
     removeSessionObservations = async () => {},
+    removeSessionResources,
+    onDriveSettled = async () => {},
     blockChatDocumentParsing = async () => {},
     observeAgentEvent = null,
     getAutomationRuntime,
@@ -207,11 +213,12 @@ function normalizeCanManageSessionId(value: unknown = "") {
 
 
 async function listSessionsRuntime({
+  publicView = false,
   limit = 100,
   excludeSessionId = "",
   sessionId = "",
   scope = "",
-}: { limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
+}: { publicView?: boolean; limit?: number; excludeSessionId?: string; sessionId?: string; scope?: string } = {}) {
   await sessionRuntimeReady;
   const excluded = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
   const requestedId = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -223,18 +230,20 @@ async function listSessionsRuntime({
     const match = requestedId ? sessions.find((session) => session.id === requestedId) : undefined;
     return {
       scope: "session",
-      session: match ? compactSessionRecord(match) : null,
+      session: match ? (publicView ? publicSessionRecord(match) : compactSessionRecord(match)) : null,
       otherCount: sessions.filter((session) => session.id !== requestedId).length,
     };
   }
   const max = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
   return {
-    sessions: sessions.slice(0, max).map((session) => formatSessionRuntimeRecord(session)),
+    sessions: sessions.slice(0, max).map((session) => publicView
+      ? publicSessionRecord(session) : formatSessionRuntimeRecord(session)),
   };
 }
 
 
-async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID }: Fields = {}, signal?: AbortSignal) {
+async function createSessionRuntime({ title = "", firstMessage = "", parentSessionId = ROOT_SESSION_ID,
+  publicView = false }: Fields = {}, signal?: AbortSignal) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const message = String(firstMessage || "").trim();
@@ -250,7 +259,7 @@ async function createSessionRuntime({ title = "", firstMessage = "", parentSessi
   broadcast({ type: "session_created", session, firstMessage: message });
   broadcast({ type: "sessions_changed", action: "create", sessionId: session.id, session });
   const started = launchSessionPrompt(session.id, message, signal);
-  return { session, started };
+  return { session: publicView ? publicSessionRecord(session) : session, started };
 }
 
 async function createSessionMetadataRuntime({
@@ -928,6 +937,7 @@ function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
     title: params.title || "",
     firstMessage: params.firstMessage || params.text || "",
     parentSessionId: params.parentSessionId || ROOT_SESSION_ID,
+    publicView: true,
   }, signal);
 }
 
@@ -1325,10 +1335,9 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   const artifacts = await sessionArtifacts.collect(id, transcript);
   return {
     sessionId: id,
-    session: sessions[id] || null,
+    session: sessions[id] ? publicSessionRecord(sessions[id]) : null,
     running: runtime.running,
     pendingStart: runtime.pendingStart,
-    runId: runtime.runId,
     source,
     count: tail.length,
     messages: tail,
@@ -1382,18 +1391,17 @@ async function waitSessionsRuntime({
   const ids = normalizeWaitSessionIds(sessionIds);
   const caller = typeof excludeSessionId === "string" ? excludeSessionId.trim() : "";
   if (ids.length === 0) {
-    return localizeToolFailurePayload({
-      error: "manage_sessions wait requires sessionIds",
-      code: "MISSING_SESSION_IDS",
+    return localizeToolFailurePayload(toolError("MISSING_SESSION_IDS", "manage_sessions wait requires sessionIds", {
+      hint: "Pass sessionIds returned by manage_sessions create or list.",
       details: { action: "wait" },
-    }, { toolName: "manage_sessions" });
+    }), { toolName: "manage_sessions" });
   }
   if (caller && ids.includes(caller)) {
-    return localizeToolFailurePayload({
-      error: "Cannot wait for the session currently executing this tool",
-      code: "CANNOT_WAIT_CALLER_SESSION",
-      details: { sessionId: caller, sessionIds: ids },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("CANNOT_WAIT_CALLER_SESSION",
+      "Cannot wait for the session currently executing this tool", {
+        hint: "Choose other sessionIds to wait for.",
+        details: { action: "wait" },
+      }), { toolName: "manage_sessions" });
   }
 
   const mode = waitFor === "any" ? "any" : "all";
@@ -1402,11 +1410,10 @@ async function waitSessionsRuntime({
   const sessions = await getSessions();
   const missingIds = ids.filter((id) => !sessions[id] && !sessionSupervisor.has(id));
   if (missingIds.length > 0) {
-    return localizeToolFailurePayload({
-      error: "Some sessions do not exist",
-      code: "SESSION_NOT_FOUND",
-      details: { sessionIds: ids, missingIds },
-    }, { toolName: "manage_sessions" });
+    return localizeToolFailurePayload(toolError("SESSION_NOT_FOUND", "Some sessions do not exist", {
+      hint: "Call manage_sessions with action list, then retry with existing sessionIds.",
+      details: { missing: missingIds },
+    }), { toolName: "manage_sessions" });
   }
 
   const startedAt = nowBeijingDateTime();
@@ -1689,6 +1696,10 @@ function compactSessionRecord(session: Partial<SessionMetadata> & { id: string }
   };
 }
 
+function publicSessionRecord(session: Partial<SessionMetadata> & { id: string }) {
+  return publicSessionObservation(session.id, session.title?.trim() || t("session.new"), getSessionRuntimeState(session.id).status);
+}
+
 function formatSessionRuntimeRecord(session: Partial<SessionMetadata> & { id: string }, { compact = false } = {}) {
   const runtime = getSessionRuntimeState(session.id);
   const base = compact
@@ -1794,15 +1805,12 @@ async function collectWaitSessionSummaries(sessionIds: string[], num: number) {
       });
     }
     const session = sessions[id] || { id, title: tail?.session?.title || "", updatedAt: "" };
-    const runtimeRecord = formatSessionRuntimeRecord(session, { compact: true });
+    const runtime = getSessionRuntimeState(id);
     summaries.push({
-      sessionId: id,
-      title: runtimeRecord.title,
-      status: runtimeRecord.status,
-      running: runtimeRecord.running,
-      pendingStart: runtimeRecord.pendingStart,
-      runId: runtimeRecord.runId,
-      updatedAt: runtimeRecord.updatedAt,
+      ...publicSessionObservation(id, session.title?.trim() || t("session.new"), runtime.status),
+      running: runtime.running,
+      pendingStart: runtime.pendingStart,
+      updatedAt: session.updatedAt || session.createdAt || "",
       lastMessages: tail?.messages || [],
       lastMessagesSource: tail?.source || "",
       artifactCount: artifacts?.total || 0,
@@ -1879,7 +1887,7 @@ function clipText(value: unknown, maxChars: number) {
   return `${text.slice(0, maxChars)}\n[truncated: ${text.length - maxChars} chars omitted]`;
 }
 
-async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, canDelete?: () => Promise<boolean>) {
   await sessionRuntimeReady;
   signal?.throwIfAborted();
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
@@ -1889,7 +1897,19 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
   const snapshot = await sessionSupervisor.remove(id, {
     admissionSignal: signal,
     reason: "delete_session",
+    canRemove: canDelete,
     beforeRelease: async (revoked) => {
+      noteExternalDriveStopped(id, meta);
+      if (canDelete) {
+        await sessionRepository.patchMetadata(id, { driveRetentionPending: true });
+        const runtime = sessionSupervisor.getRuntime(id) || {};
+        const tabs = snapshotStoppedTabs(runtime);
+        if (tabs.ownedTabIds.length || tabs.createdTabIds.length || tabs.driveHandoffTabIds.length) {
+          await sessionTabs.settleStoppedDriveTabs(id, { ...tabs, keepTabs: runtime.driveKeepTabs === true, source: "drive_retention" });
+        }
+        await sessionTabs.syncGroup?.(id);
+        sessionRepository.beginDeletion(id);
+      }
       await releaseTerminalRunResources(
         id,
         revoked?.activeRunId || revoked?.liveState?.runId,
@@ -1897,30 +1917,39 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
       );
       const releaseDocumentParsing = await blockChatDocumentParsing(id);
       try {
-        stored = await deleteStoredSession(id);
-        await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
-        await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        if (canDelete) {
+          if (!removeSessionResources) throw new Error("Session resource cleanup is unavailable");
+          await removeSessionResources(id);
+          await removeSessionObservations(id);
+          stored = await sessionRepository.deleteSession(id, { strict: true });
+        } else {
+          stored = await deleteStoredSession(id);
+          await removeChatSessionDocuments(id).catch(error => console.warn("[轻舟] deleted Session document cleanup failed", error));
+          await removeSessionObservations(id).catch(error => console.warn("[轻舟] deleted Session observation cleanup failed", error));
+        }
       } finally {
         releaseDocumentParsing?.();
       }
     },
   });
+  if (!snapshot) return { sessionId: id, deleted: false };
   const stopped = Boolean(snapshot.hadTask || object(snapshot.liveState).isStreaming);
   const hadRuntime = Boolean(snapshot.hadAgent || snapshot.hadTask);
 
-  await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
+  if (!canDelete) await sessionTabs.closeOwnedTabsAfterTerminal(id, "delete_session").catch((err) => {
     console.debug("[轻舟] close deleted session owned tabs failed:", errorMessage(err));
   });
   sessionArtifacts.clearListSummaryPatch(id);
   sessionArtifacts.clearSummaryRefresh(id);
   sessionTranscript.remove(id);
   runtimeState.remove(id);
+  forgetExternalDriveSession(id);
   const result = {
     ...object(stored),
+    sessionId: id,
+    deleted: true,
     stopped,
     hadRuntime,
-    requestedBy: meta.requestedBy || "",
-    source: meta.source || "",
   };
   broadcast({ type: "session_deleted", ...result });
   broadcast({ type: "sessions_changed", action: "delete", sessionId: id });
@@ -1936,6 +1965,12 @@ function snapshotStoppedTabs(runtime: Fields) {
 }
 
 async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
+  const release = protectExternalDriveSession(sessionId);
+  try { return await stopSessionWithChildren(sessionId, meta, signal); }
+  finally { release(); void onDriveSettled(); }
+}
+
+async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
   const driveRunId = meta.driveRunCaptured === true
@@ -1994,6 +2029,9 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     if (extra && !driveRunIds.includes(extra)) driveRunIds.push(extra);
   }
 
+  const session = (await getSessions())[id];
+  const externalDrive = session?.source === "external-drive";
+  let keepDriveTabs = meta.keepTabs === true;
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
   let runId = before.runId || null;
@@ -2008,10 +2046,12 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};
       const checkpoint = sessionSupervisor.getRuntime(id) || before;
+      if (externalDrive && checkpoint.status === "aborted") keepDriveTabs = object(checkpoint).driveKeepTabs === true;
       pendingFollowUpMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingFollowUpMessages);
       pendingSteeringMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingSteeringMessages);
       hadRuntime = Boolean(
-        snapshot.hadTask
+        externalDrive
+        || snapshot.hadTask
         || checkpoint.running
         || isActiveSessionRuntimeStatus(checkpoint.status)
         || checkpoint.waitId
@@ -2024,6 +2064,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
       if (checkpoint.waitId) sessionSupervisor.rejectUserWait({ sessionId: id, waitId: String(checkpoint.waitId) });
       runtimeState.set(id, {
+        ...(externalDrive ? { driveKeepTabs: keepDriveTabs } : {}),
         status: "aborted",
         running: false,
         pendingStart: false,
@@ -2077,8 +2118,8 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     queueFollowUpResume("stop");
   }
 
-  const closeStoppedTabs = () => {
-    void (async () => {
+  const closeStoppedTabs = async () => {
+    await (async () => {
       for (const runId of driveRunIds) {
         try {
           await releaseRunResources({ sessionId: id, runId, eventType: "aborted" });
@@ -2093,7 +2134,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
       if (!external && !hadRuntime) return;
       if (external) {
         await sessionTabs.settleStoppedDriveTabs(id, {
-          keepTabs: meta.keepTabs === true,
+          keepTabs: keepDriveTabs,
           source: "stop_session",
           runIds: driveRunIds,
           blocked: () => externalDriveLeaseActive(id),
@@ -2108,20 +2149,15 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   };
 
   if (!hadRuntime) {
-    closeStoppedTabs();
+    void closeStoppedTabs();
     return {
-      sessionId: id,
+      ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), before.status),
       stopped: false,
-      hadRuntime: false,
-      runId,
-      status: before.status || "idle",
-      runtime: before,
-      source: meta.source || "",
-      parentSessionId: meta.parentSessionId || "",
-    };
+    } satisfies SessionStopReceipt;
   }
 
-  closeStoppedTabs();
+  if (externalDrive) await closeStoppedTabs();
+  else void closeStoppedTabs();
   const stateEvent = {
     type: "state",
     sessionId: id,
@@ -2135,15 +2171,9 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   broadcast({ type: "sessions_changed", action: "run_state", sessionId: id });
 
   return {
-    sessionId: id,
+    ...publicSessionObservation(id, session?.title?.trim() || t("session.new"), runtime.status),
     stopped: true,
-    hadRuntime,
-    runId,
-    status: runtime.status,
-    runtime,
-    source: meta.source || "",
-    parentSessionId: meta.parentSessionId || "",
-  };
+  } satisfies SessionStopReceipt;
 }
 
 async function releaseTerminalRunResources(sessionId: string, runId: unknown, eventType: string) {

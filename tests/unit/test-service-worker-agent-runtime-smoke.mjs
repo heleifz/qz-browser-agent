@@ -148,11 +148,11 @@ globalThis.fetch = createFetchMock([
           role: "assistant",
           tool_calls: [{
             index: 0,
-            id: "call_use_tab",
+            id: "call_page_mode",
             type: "function",
             function: {
-              name: "use_tab",
-              arguments: "{\"tabId\":3}",
+              name: "set_page_mode",
+              arguments: "{\"tabRef\":3,\"mode\":\"desktop\"}",
             },
           }],
         },
@@ -604,7 +604,7 @@ try {
   const agentEndPromise = sendPortMessage(port, {
     type: "prompt",
     sessionId,
-    text: "Use tab 3, then finish.",
+    text: "Set tab 3 to desktop mode, then finish.",
     clientMessageId: "user-smoke",
   }, msg => msg.type === "agent_end" && msg.sessionId === sessionId);
   let nestedToolListBeforeLoad;
@@ -679,22 +679,23 @@ try {
     "agent_start should be broadcast for the smoke run",
   );
   assert.ok(
-    postedMessages.some(msg => msg.type === "tool_execution_start" && msg.sessionId === sessionId && msg.toolName === "use_tab"),
-    "agent should execute the mocked use_tab tool call",
+    postedMessages.some(msg => msg.type === "tool_execution_start" && msg.sessionId === sessionId && msg.toolName === "set_page_mode"),
+    "agent should execute the mocked explicit-page tool call",
   );
   assert.ok(
-    postedMessages.some(msg => msg.type === "tool_execution_end" && msg.sessionId === sessionId && msg.toolName === "use_tab" && msg.isError === false),
-    "use_tab tool execution should finish successfully",
+    postedMessages.some(msg => msg.type === "tool_execution_end" && msg.sessionId === sessionId && msg.toolName === "set_page_mode" && msg.isError === false),
+    "the explicit-page tool call should claim the existing page and finish successfully",
   );
+  assert.equal(state.tabUpdates.some(({ patch }) => patch.active === true), false,
+    "an explicit task page must not activate the user's tab");
 
   const runtimeState = await sendPortMessage(port, {
     type: "get_state",
     sessionId,
   }, msg => msg.type === "state" && msg.sessionId === sessionId);
-  assert.equal(runtimeState.runtime?.workingTabId, 3, "service worker runtime should record the working tab");
-  assert.equal(runtimeState.runtime?.workingUrl, "https://smoke.example/page");
-  assert.equal(runtimeState.runtime?.workingTitle, "Smoke Page");
-  assert.equal(runtimeState.runtime?.ownedTabIds?.includes(3), true, "use_tab should claim the tab for the session");
+  assert.equal(runtimeState.runtime?.status, "completed", "the public runtime should report task progress");
+  assert.doesNotMatch(JSON.stringify(runtimeState.runtime), /workingTab|workingUrl|workingTitle|ownedTabIds|sessionTabIds/,
+    "the public runtime observation excludes private page ownership");
 
   const stoppedState = await sendPortMessage(port, {
     type: "stop_session", sessionId, requestId: "stop-runtime-route",
@@ -702,6 +703,11 @@ try {
   assert.equal(stoppedState.type, "state", "the public stop route must resolve its business command");
   assert.equal(stoppedState.sessionId, sessionId);
   assert.equal(stoppedState.isStreaming, false);
+  assert.equal(stoppedState.runtime.status, stoppedState.status, 'the UI response reads current Session progress');
+  assert.equal(stoppedState.runtime.runId, stoppedState.runId);
+  assert.ok(Array.isArray(stoppedState.runtime.pendingFollowUpMessages), 'the UI state retains queued message recovery');
+  assert.doesNotMatch(JSON.stringify(stoppedState.runtime), /workingTab|workingUrl|workingTitle|ownedTabIds|sessionTabIds/,
+    'reading UI progress does not put private page ownership in the public stop receipt');
 
   state.bridgeListToolsSessionId = sessionId;
   await setMcpBridgeEnabled(true);

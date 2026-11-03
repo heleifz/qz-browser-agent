@@ -71,13 +71,18 @@ function installChromeMock({ tabs = [], groups = [] } = {}) {
   return state;
 }
 
-function assertToolExposure() {
+async function assertToolExposure() {
   const tools = readProjectFile("src/background/tools/runtime.js");
   assert.doesNotMatch(tools, /registerTool\(\s*\{\s*name:\s*"group_tabs"/, "group_tabs should not be registered as a model-visible tool");
   assert.doesNotMatch(tools, /["']group_tabs["']\s*,?\s*\]/, "group_tabs should not remain in direct tool lists");
+  const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
+  const registeredNames = getToolSchemas().map(tool => tool.function.name);
+  for (const name of ["group_tabs", "use_tab", "get_working_tab"]) {
+    assert.equal(registeredNames.includes(name), false, `${name} must not be registered as a public tool`);
+  }
   for (const [name, title] of [["list_tabs", "查看标签页"], ["get_working_tab", "查看工作页"]]) {
     const metadata = getCoreToolMetadata(name);
-    assert.equal(metadata?.title, title, `${name} should keep its localized tab label`);
+    assert.equal(metadata?.title, title, `${name} should keep its localized label for saved results`);
     assert.deepEqual(metadata?.sets, ["tab"], `${name} should be a tab UI tool`);
   }
   assert.equal(getCoreToolMetadata("search_tabs"), null, "removed tab search tool should not remain in UI metadata");
@@ -206,7 +211,7 @@ async function assertTitleFallbackJoinsTheMatchingDriveGroup() {
   assert.equal(state.groups.get(3).title, "轻舟任务");
 }
 
-assertToolExposure();
+await assertToolExposure();
 await assertDuplicateGroupsMerge();
 await assertCreatesGroupWhenMissing();
 await assertManagedGroupSurvivesLanguageSwitch();

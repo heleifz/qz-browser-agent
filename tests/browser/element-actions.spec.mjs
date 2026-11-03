@@ -133,8 +133,8 @@ async function createHarness(mode, launchOptions = {}) {
         command: (method, params) => chrome.debugger.sendCommand({ tabId }, method, params),
         screen(name, args) { return this.call(name, { tabId, ...args }, "run_script"); },
         async call(name, args, source) {
-          try { return await runtime.execute(name, args, undefined, { ...context, workingTabId: tabId, source }); }
-          catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+          try { return await runtime.execute(name, name === 'open_tab' ? args : { tabRef: args.tabId ?? tabId, ...args }, undefined, { ...context, workingTabId: tabId, source }); }
+          catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
         async state() {
           return (await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", func: () => ({
@@ -150,7 +150,7 @@ async function createHarness(mode, launchOptions = {}) {
     const call = (name, args) => worker.evaluate(({ name, args }) => elementHarness.call(name, args), { name, args });
     const state = () => worker.evaluate(() => elementHarness.state());
     const opened = await call("open_tab", { url: `http://127.0.0.1:${server.address().port}/`, mode });
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
     await expect.poll(async () => { try { return (await state()).ready; } catch { return "loading"; } }).toBe("complete");
     return { state, close, worker, submissions, navigationRequests, page: browser.pages().find(page => page.url().startsWith('http://127.0.0.1:')),
       command: (method, params) => worker.evaluate(({ method, params }) => elementHarness.command(method, params), { method, params }),
@@ -168,14 +168,14 @@ test('first screenshot stays actionable after the debugger infobar expands', asy
   try {
     await h.page.setContent(`<style>body{margin:0;overflow:hidden}input{position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);width:200px;height:36px}</style><input>`);
     const shot = await h.screen('screenshot', { actionable: true });
-    expect(shot).not.toHaveProperty('error');
+    expect(shot).not.toHaveProperty('message');
     // Let the real browser chrome finish any remaining animation before using the original image.
     await h.page.waitForTimeout(300);
     const typed = await h.worker.evaluate(args => elementHarness.call('act_on_screen', args), {
       action: 'type', x: shot.coordinateSpace.width / 2, y: shot.coordinateSpace.height * 0.3,
       text: 'whale', returnScreenshot: true,
     });
-    expect(typed).not.toHaveProperty('error');
+    expect(typed).not.toHaveProperty('message');
     await expect(h.page.locator('input')).toHaveValue('whale');
   } finally { await h.close(); }
 });
@@ -216,12 +216,12 @@ for (const mode of ["desktop", "mobile"]) {
         };
       });
       const first = await h.screen('screenshot', { actionable: true });
-      expect(first).not.toHaveProperty('error');
+      expect(first).not.toHaveProperty('message');
       if (mode === 'desktop') {
         expect(await h.worker.evaluate(() => firstCaptures)).toBe(2);
         const size = await h.page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
         expect(await h.screen('act_on_screen', { action: 'click', x: 604 * first.coordinateSpace.width / size.width,
-          y: 204 * first.coordinateSpace.height / size.height, returnScreenshot: false })).not.toHaveProperty('error');
+          y: 204 * first.coordinateSpace.height / size.height, returnScreenshot: false })).not.toHaveProperty('message');
         expect(await h.page.evaluate(() => window.hits)).toBe(1);
         await h.worker.evaluate(() => { chrome.debugger.sendCommand = originalSend; });
       }
@@ -237,7 +237,7 @@ for (const mode of ["desktop", "mobile"]) {
           await h.command('Emulation.setPageScaleFactor', { pageScaleFactor: scale });
           await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           const shot = await h.screen('screenshot', { actionable: true, format: 'png' });
-          expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty('error');
+          expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty('message');
           expect(shot.method.startsWith(native ? 'visible_tab' : 'cdp')).toBe(true);
           if (!native) expect(shot.coordinateSpace.width).toBe(2048);
           const points = await h.worker.evaluate(async dataUrl => {
@@ -256,10 +256,10 @@ for (const mode of ["desktop", "mobile"]) {
           }, shot._image);
           const before = await h.page.evaluate(() => window.hits);
           const click = await h.screen('act_on_screen', { action: 'click', ...points[0], returnScreenshot: false });
-          expect(click).not.toHaveProperty('error');
+          expect(click).not.toHaveProperty('message');
           expect(await h.page.evaluate(() => window.hits), JSON.stringify({ native, scale, space: shot.coordinateSpace, pixel: points[0], resolved: click.resolvedPoint })).toBe(before + 1);
           if (mode === 'desktop') {
-            expect(await h.screen('act_on_screen', { action: 'drag', ...points[1], endX: points[2].x, endY: points[2].y, returnScreenshot: false })).not.toHaveProperty('error');
+            expect(await h.screen('act_on_screen', { action: 'drag', ...points[1], endX: points[2].x, endY: points[2].y, returnScreenshot: false })).not.toHaveProperty('message');
             expect(await h.page.evaluate(() => String(getSelection()))).toBe('BCDE');
           }
         }
@@ -294,9 +294,10 @@ for (const mode of ["desktop", "mobile"]) {
       expect((await h.state()).values.rich.split(/\n+/)).toEqual(["第一段", "第二段"]);
 
       const mismatch = await h.act("uppercase", "fill", { value: "mixed", submit: true });
-      expect(mismatch).toMatchObject({ code: "ELEMENT_VALUE_MISMATCH", value: "MIXED" });
+      expect(mismatch).toMatchObject({ code: "ELEMENT_VALUE_MISMATCH" });
       let state = await h.state();
       expect(state.submits).toBe(0);
+      expect(state.values.uppercase).toBe("MIXED");
       expect(events(state, "uppercase", "keydown").some(event => event.key === "Enter")).toBe(false);
       expect(await h.act("text", "fill", { value: "submit", submit: true })).toMatchObject({ filled: true, submitDispatched: true });
       state = await h.state();
@@ -314,7 +315,7 @@ for (const mode of ["desktop", "mobile"]) {
 
       for (const id of ["readonly", "disabled", "refuses"]) {
         const result = await h.act(id, "fill", { value: "must not appear", submit: true });
-        expect(result, JSON.stringify(result)).toHaveProperty("error");
+        expect(result, JSON.stringify(result)).toHaveProperty("message");
         state = await h.state();
         expect(state.values[id]).toBe(id);
         expect(state.values.sink).toBe("untouched");
@@ -345,13 +346,13 @@ for (const mode of ["desktop", "mobile"]) {
       await h.page.bringToFront();
       await h.page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
       for (const id of ["rollback", "cancelled"]) {
-        expect(await h.act(id, "check")).toMatchObject({ code: "ELEMENT_CHECK_STATE_MISMATCH", checked: false });
+        expect(await h.act(id, "check")).toMatchObject({ code: "ELEMENT_CHECK_STATE_MISMATCH" });
         state = await h.state();
         expect(state.checks[id]).toBe(false);
         expect(events(state, id, "click")).toHaveLength(1);
       }
-      expect(await h.act("disabled-check", "check")).toHaveProperty("error");
-      expect(await h.act("radio", "uncheck")).toHaveProperty("error");
+      expect(await h.act("disabled-check", "check")).toHaveProperty("message");
+      expect(await h.act("radio", "uncheck")).toHaveProperty("message");
       state = await h.state();
       expect(state.checks["disabled-check"]).toBe(false);
       expect(state.checks.radio).toBe(true);
@@ -365,7 +366,7 @@ for (const mode of ["desktop", "mobile"]) {
       expect(events(state, "hidden-check", "click").every(event => event.trusted)).toBe(true);
       const safeUrl = state.url;
       for (const [id, labelTarget] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
-        expect(await h.act(id, "check")).toHaveProperty("error");
+        expect(await h.act(id, "check")).toHaveProperty("message");
         state = await h.state();
         expect(state.checks[id]).toBe(false);
         expect(events(state, labelTarget, "click")).toEqual([]);
@@ -427,7 +428,11 @@ for (const scenario of [
       const execute = chrome.scripting.executeScript.bind(chrome.scripting);
       chrome.scripting.executeScript = async options => {
         if (options.injectImmediately && String(options.func).includes("=> null")) {
-          await execute({ target: options.target, world: "MAIN", func: () => { window.finishMount?.(); } });
+          await execute({ target: options.target, world: "MAIN", func: () => {
+            // UID observation also reads document identity before editing. Only the
+            // post-fill observer is the intended trigger for this replacement.
+            if (window.original?.value === '灵隐寺') window.finishMount?.();
+          } });
         }
         return execute(options);
       };
@@ -488,17 +493,17 @@ test("httpbin pizza radios check through the wrapped label", async () => {
     expect(checks).toMatchObject({ small: false, medium: false, large: true });
     const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
     const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
-    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("error");
+    expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("message");
     expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
     const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
     expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
     const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
-    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.id);
-    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
+    const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.tabRef);
+    expect(shot, JSON.stringify({ ...shot, _image: undefined })).not.toHaveProperty("message");
     const acted = await h.worker.evaluate((tabId) => elementHarness.call("act_on_screen", {
       tabId, action: "click", x: 20, y: 20, returnScreenshot: false,
-    }, "run_script"), opened.id);
+    }, "run_script"), opened.tabRef);
     expect(acted, JSON.stringify(acted)).not.toHaveProperty("code", "SCREENSHOT_CONTEXT_STALE");
   } finally { await h.close(); }
 });
@@ -615,7 +620,6 @@ test("form submission navigation waits for delayed responses without submitting 
         urlChanged: afterUrl !== beforeUrl,
         pageBefore: { url: beforeUrl },
         pageAfter: { url: afterUrl, title: "Submission completed" },
-        _pageUrl: afterUrl, _pageTitle: "Submission completed",
       });
       expect(h.submissions.length - beforeSubmissions).toBe(1);
       expect(await h.page.evaluate(() => Number(sessionStorage.navigationClicks))).toBe(1);
@@ -632,7 +636,7 @@ test("form submission navigation waits for delayed responses without submitting 
     const prevented = await h.act("prevented", "click");
     expect(prevented, JSON.stringify(prevented)).toMatchObject({
       clickDispatched: true, inputDelivered: true, navigated: false, urlChanged: false,
-      pageAfter: { url }, _pageUrl: url,
+      pageAfter: { url },
     });
     expect(h.submissions).toHaveLength(beforeSubmissions);
     expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
@@ -659,7 +663,7 @@ for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift"
       await testInfo.attach("press-navigation-result", { body: JSON.stringify({ scenario, result, elapsedMs }, null, 2), contentType: "application/json" });
       expect(result, JSON.stringify(result)).toMatchObject({ pressed: true, key: args.key || args.value, method: "cdp", inputDelivered: true });
       expect(result).not.toHaveProperty("submitDispatched");
-      expect(result).not.toHaveProperty("error");
+      expect(result).not.toHaveProperty("message");
       if (otherKey) {
         for (const field of ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "observedNavigation"]) {
           expect(result).not.toHaveProperty(field);
@@ -675,9 +679,9 @@ for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift"
         expect(result).toMatchObject({
           pageBefore: { url: beforeUrl, title: "Before press" }, pageAfter: { url: afterUrl, title },
           urlChanged: changedUrl, titleChanged: title !== "Before press", navigationPending: scenario === "slow",
-          navigated: scenario === "slow" ? null : navigated, _pageUrl: afterUrl, _pageTitle: title,
+          navigated: scenario === "slow" ? null : navigated,
         });
-        if (changedUrl) expect(result.observedNavigation).toMatchObject({ url: afterUrl, rateLimitRecorded: false });
+        if (changedUrl) expect(result.observedNavigation).toMatchObject({ url: afterUrl });
         else expect(result).not.toHaveProperty("observedNavigation");
         expect(h.page.url()).toBe(afterUrl);
       }
@@ -789,11 +793,11 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
     });
     const missed = await h.act("once", "click");
     expect(missed, JSON.stringify(missed)).toMatchObject({
-      code: "INPUT_NOT_DELIVERED", clickDispatched: true, inputDelivered: false,
+      code: "INPUT_NOT_DELIVERED", details: { clickDispatched: true, inputDelivered: false },
     });
     expect(await h.page.evaluate(() => window.clicks)).toBe(1);
     const skipped = await h.act("keys", "press", { key: "a" });
-    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", clickDispatched: true });
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", details: { clickDispatched: true } });
     expect(await h.page.evaluate(() => window.keys)).toEqual([]);
 
     await h.worker.evaluate(() => { receiptMode = "unknown"; });

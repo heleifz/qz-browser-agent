@@ -12,8 +12,8 @@ const messages = defineMessages("wait-tools", {
     en: "Instructions shown to the user explaining what to do on the page.",
   },
   waitForUserTabId: {
-    "zh-CN": "恢复后观测的标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Tab ID to observe after resuming. Defaults to the current task's working tab.",
+    "zh-CN": "可选。恢复后观测的标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
+    en: "Optional tabRef to observe after resuming: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   askUserDescription: {
     "zh-CN": "向用户展示结构化表单并返回提交的 answers。用于澄清需求、提供选项、收集字段，或在向外部系统执行发送/提交/发布/创建/修改/删除动作前请求确认。",
@@ -88,16 +88,16 @@ const messages = defineMessages("wait-tools", {
     en: "Card source HTTP(S) URL.",
   },
   waitForNavigationNoImages: {
-    "zh-CN": "等待标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。当前模型不支持图片，加载后用 get_ax_tree/read_article/find_elements 确认状态。",
-    en: "Wait for a tab to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. The current model does not support images; verify state with get_ax_tree/read_article/find_elements.",
+    "zh-CN": "等待 tabRef 指定的标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。当前模型不支持图片，加载后用 get_ax_tree/read_article/find_elements 确认状态。",
+    en: "Wait for the tab specified by tabRef to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. The current model does not support images; verify state with get_ax_tree/read_article/find_elements.",
   },
   waitForNavigationDescription: {
-    "zh-CN": "等待标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。仅需视觉确认弹窗或验证码时传 screenshot:true。",
-    en: "Wait for a tab to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. Pass screenshot:true only for visual checks such as dialogs or CAPTCHAs.",
+    "zh-CN": "等待 tabRef 指定的标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。仅需视觉确认弹窗或验证码时传 screenshot:true。",
+    en: "Wait for the tab specified by tabRef to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. Pass screenshot:true only for visual checks such as dialogs or CAPTCHAs.",
   },
   waitForNavigationTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
+    en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   waitForNavigationTimeout: {
     "zh-CN": "超时秒数，默认 10。",
@@ -116,16 +116,16 @@ const messages = defineMessages("wait-tools", {
     en: "Optional pre-action title to compute titleChanged.",
   },
   waitForElementDescription: {
-    "zh-CN": "等待页面出现指定元素（或 absent:true 等待其消失）。",
-    en: "Wait for a matching element to appear on the page (or disappear when absent:true).",
+    "zh-CN": "等待 tabRef 指定页面出现指定元素（或 absent:true 等待其消失）。",
+    en: "Wait for a matching element to appear on the page specified by tabRef (or disappear when absent:true).",
   },
   waitForElementTabId: {
-    "zh-CN": "目标标签页 ID；省略时使用当前任务工作标签页。",
-    en: "Target tab ID. Defaults to the current task's working tab.",
+    "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
+    en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   waitForElementSelector: {
-    "zh-CN": "目标 CSS 选择器（支持原始 CSS 或 css:...，不支持 uid:... 快照引用）。",
-    en: "Target CSS selector (accepts raw CSS or css:...; uid:... is not supported).",
+    "zh-CN": "元素 target，优先 uid:，css: 兜底；uid 的 absent 表示原节点已移除或不可见。",
+    en: "Element target: prefer uid:, with css: as fallback; absent for a uid means the original node was removed or is invisible.",
   },
   waitForElementAbsent: {
     "zh-CN": "是否等待元素消失，默认 false。",
@@ -152,20 +152,20 @@ const messages = defineMessages("wait-tools", {
     en: "Target date and time (max 2 hours). Prefer ISO 8601 with time zone (e.g. 2026-07-17T12:00:00+08:00); also accepts YYYY-MM-DD HH:mm:ss in Beijing time.",
   },
   userContinuedNoImages: {
-    "zh-CN": "用户已继续。当前模型不支持图片输入，请确认当前页面状态后继续任务。",
-    en: "The user continued. The current model does not support image input. Check the current page state before continuing the task.",
+    "zh-CN": "用户已继续。当前模型不支持图片输入，请确认用户操作的结果后继续任务。",
+    en: "The user continued. The current model does not support image input. Check the result of the user’s action before continuing the task.",
   },
   userContinuedWithImage: {
-    "zh-CN": "用户已继续，这是当前页面状态截图，请确认并继续任务。",
-    en: "The user continued. Check this screenshot of the current page, then continue the task.",
+    "zh-CN": "用户已继续，这是 tabRef 指定页面的状态截图，请确认并继续任务。",
+    en: "The user continued. Check this screenshot of the page specified by tabRef, then continue the task.",
   },
   userContinued: {
-    "zh-CN": "用户已继续，请确认当前页面状态后继续任务。",
-    en: "The user continued. Check the current page state before continuing the task.",
+    "zh-CN": "用户已继续，请确认用户操作的结果后继续任务。",
+    en: "The user continued. Check the result of the user’s action before continuing the task.",
   },
   navigationScreenshotFailed: {
-    "zh-CN": "加载完成但截图失败，请手动 screenshot 确认页面状态",
-    en: "Loading finished, but the screenshot failed. Call screenshot to check the page state.",
+    "zh-CN": "加载完成但截图失败，请调用 screenshot({tabRef}) 确认页面状态",
+    en: "Loading finished, but the screenshot failed. Call screenshot({tabRef}) to check the page state.",
   },
 });
 

@@ -1,3 +1,4 @@
+import type { ToolErrorDetails } from "../shared/contracts/tool-error.js";
 /** Background extension API. Runtime services are supplied by the owning host. */
 import type { SkillActivationContext } from "../shared/skills/skill-manifest.js";
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
@@ -10,6 +11,10 @@ export interface ToolContext extends SkillActivationContext {
   skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
   sessionId?: string;
   runId?: string | null;
+  /** Execution mode supplied by the owning Session, inherited by nested calls. */
+  externalDrive?: boolean;
+  /** The caller's page reference, before resolving it to a browser tab. */
+  requestedTabRef?: string | number;
   /** Call-scoped cancellation, including the tool deadline. */
   signal?: AbortSignal;
   /** Observation execution preserves the working tab; ordered commit may select the observed tab. */
@@ -44,7 +49,7 @@ export interface RegisterTool {
   <const S extends ToolSchema, R>(definition: ToolDefinition<S, R, ToolContext, AbortSignal>): void;
 }
 
-export type ToolErrorConstructor = new (code: string, message: string, details?: Record<string, unknown>) => Error & { code: string; details: Record<string, unknown> };
+export type ToolErrorConstructor = new (code: string, message: string, details?: unknown) => Error & { code: string; details: ToolErrorDetails };
 
 export interface ToolRunProfile {
   platform?: { os?: string } | null; features?: { imageInput?: boolean; toolImages?: boolean; screenshots?: boolean };

@@ -53,7 +53,7 @@ test("invalid settings and MCP input fail before discovery and never echo suppli
     ["mcp", "call", "qingzhou_get_skill", "{}"], ["mcp", "call", "qingzhou_get_settings", "[]"],
     ["mcp", "call", "qingzhou_get_settings", '{"clientId":"one"}', "--client", "two"]]) {
     await assert.rejects(runCli(argv, { findDaemon: () => assert.fail("validate before discovery") }), error => {
-      assert.equal(error.code, "invalid_arguments"); assert.doesNotMatch(error.message, /bad-json-secret/); return true;
+      assert.equal(error.code, "INVALID_ARGUMENTS"); assert.doesNotMatch(error.message, /bad-json-secret/); return true;
     });
   }
   const patch = { apiKey: "fixture-credential", model: "model-id" };
@@ -68,7 +68,7 @@ test("removed commands fail before discovery; MCP has no command passthrough", a
     ["downloads"], ["downloads", "list"], ["downloads", "show", "42"],
     ["mcp", "tools"], ["mcp", "call", "qingzhou_get_settings", "{}"]]) {
     await assert.rejects(runCli(argv, { findDaemon: () => assert.fail("syntax fails before discovery"),
-      readStdin: () => assert.fail("removed commands cannot consume stdin") }), error => error.code === "invalid_arguments");
+      readStdin: () => assert.fail("removed commands cannot consume stdin") }), error => error.code === "INVALID_ARGUMENTS");
   }
 });
 
@@ -134,7 +134,7 @@ test("send interruption after acceptance reports the same task and never sends t
       if (name === "qingzhou_send_message") { sends++; controller.abort(new DOMException("Stopped", "AbortError")); return { accepted: true, clientMessageId: "message", runtime: { runId: "new" } }; }
       return { sessionId: "task", status: "completed", runId: "old" };
     },
-  }), error => error.code === "interrupted" && error.details.sessionId === "task");
+  }), error => error.code === "INTERRUPTED" && error.details.sessionId === "task");
   assert.equal(sends, 1);
 });
 
@@ -142,7 +142,7 @@ test("a send accepted without a tracking identity fails with recovery guidance a
   let calls = 0;
   await assert.rejects(runCli(["send", "task", "Continue.", "--wait"], { ...dependencies,
     callTool: async (_endpoint, name) => { calls++; assert.equal(name, "qingzhou_send_message"); return { accepted: true }; },
-  }), error => error.code === "invalid_response" && /qz watch task/.test(error.details.command));
+  }), error => error.code === "INVALID_RESPONSE" && /qz watch task/.test(error.details.command));
   assert.equal(calls, 1);
 });
 

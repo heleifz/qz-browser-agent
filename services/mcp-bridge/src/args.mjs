@@ -4,7 +4,7 @@ import { browserName } from "./browser-registry.mjs";
 import { COMMANDS, DRIVE_SESSION_REQUIRED, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
-  throw new QzError("invalid_arguments", message);
+  throw new QzError("INVALID_ARGUMENTS", message);
 }
 
 function requireDriveSession(command, options) {
@@ -76,7 +76,7 @@ export function parseCommand(argv) {
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
   if (options.profile !== undefined && !["full", "drive"].includes(options.profile)) invalid("--profile must be full or drive.");
-  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a language, such as zh-CN or en.");
+  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a value.");
   if (options.client !== undefined) {
     options["client-id"] = options.client;
     delete options.client;
@@ -163,7 +163,8 @@ export function parseCommand(argv) {
     id = words[0];
   } else if (command === "session") {
     action = words[0] || "";
-    if (action !== "create" || words.length !== 1) invalid("Use qz session create.");
+    if (action !== "create" || words.length !== 1) invalid("Use qz session create --title TITLE.");
+    if (!String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
   } else if (command === "skill") {
     if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {

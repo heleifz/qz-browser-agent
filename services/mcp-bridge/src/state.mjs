@@ -11,20 +11,24 @@ const bounded = (value, fallback, min, max) => Number.isFinite(Number(value))
 
 export class BridgeError extends Error {
   constructor(code, message, details) {
-    super(`${code}: ${message}`);
-    this.code = code;
-    const fields = code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
-      : ["SKILL_NOT_FOUND", "SKILL_NAME_AMBIGUOUS"].includes(code) ? ["name"] : code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
-    this.details = Object.fromEntries(fields.filter(key => typeof details?.[key] === "string" || typeof details?.[key] === "number")
-      .map(key => [key, details[key]]));
-    if (code === "SKILL_NAME_AMBIGUOUS" && Array.isArray(details?.candidates)) {
-      this.details.candidates = details.candidates.map(candidate => ({
-        name: String(candidate?.name || ""), displayName: String(candidate?.displayName || ""),
-      }));
+    super(message);
+    this.code = String(code || "BRIDGE_TOOL_ERROR").toUpperCase();
+    const fields = ["tabRef", "target", "line", "column", "trace",
+      ...(this.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
+        : ["SKILL_NOT_FOUND", "SKILL_NAME_AMBIGUOUS"].includes(this.code) ? ["name"]
+          : this.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [])];
+    this.details = Object.fromEntries(fields.filter(key => details?.[key] !== undefined).map(key => [key, details[key]]));
+    if (this.code === "SKILL_NAME_AMBIGUOUS" && Array.isArray(details?.candidates)) {
+      this.details.candidates = details.candidates.map(({ name, displayName }) => ({ name: String(name || ""), displayName: String(displayName || "") }));
     }
-    if (["SKILL_NOT_FOUND", "SKILL_RESOURCE_NOT_FOUND"].includes(code) && Array.isArray(details?.available)) {
+    if (["SKILL_NOT_FOUND", "SKILL_RESOURCE_NOT_FOUND"].includes(this.code) && Array.isArray(details?.available)) {
       this.details.available = details.available.filter(value => typeof value === "string");
     }
+  }
+
+  toJSON() {
+    return { code: this.code, message: this.message,
+      ...(this.hint ? { hint: this.hint } : {}), ...(Object.keys(this.details).length ? { details: this.details } : {}) };
   }
 }
 
@@ -273,7 +277,12 @@ export class BridgeState {
     let client;
     try { client = this.authenticatedClient(payload); } catch { return false; }
     if (client !== request.client) return false;
-    if (payload.ok === false) request.finish(new BridgeError(payload.code || "BRIDGE_TOOL_ERROR", String(payload.error || "qz bridge request failed"), payload.details));
+    if (payload.ok === false) {
+      const failure = typeof payload.error === "object" && payload.error ? payload.error : payload;
+      request.finish(Object.assign(new BridgeError(failure.code || "BRIDGE_TOOL_ERROR",
+        String(failure.message || payload.error || "qz bridge request failed"), failure.details),
+        failure.hint ? { hint: failure.hint } : {}));
+    }
     else request.finish(null, payload.result);
     return true;
   }
@@ -294,7 +303,7 @@ export class BridgeState {
         job.result = await this.callExtension(method, params, { ...options, signal: options.connectionSignal });
         job.status = "completed";
       } catch (error) {
-        job.error = error.message || String(error);
+        job.error = Object.assign(new BridgeError(error.code || "BRIDGE_TOOL_ERROR", error.message || String(error), error.details), { hint: error.hint }).toJSON();
         job.status = "failed";
       }
       job.completedAt = now();

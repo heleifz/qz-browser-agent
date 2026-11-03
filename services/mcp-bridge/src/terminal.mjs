@@ -438,13 +438,14 @@ export function renderResult(parsed, result, options = {}) {
     if (action === "list" || !action) taskList(out, result?.sessions || [], client);
     else if (action === "get") snapshotView(out, result || {}, presentation);
     else if (action === "create") {
+      const sessionId = result?.session?.sessionId || result?.sessionId || result?.session?.id;
       if (result?.snapshot) snapshotView(out, result.snapshot, presentation);
       else {
         out.line(result?.started ? "Task queued" : "Task created", "accent");
-        out.field("Task", result?.session?.id);
+        out.field("Task", sessionId);
         out.field("Title", single(result?.session?.title));
       }
-      taskCommands(out, result?.session?.id || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
+      taskCommands(out, sessionId || result?.snapshot?.sessionId, { client, cancel: !result?.snapshot || ["pending", "running", "waiting_user", "waitingUser", "paused"].includes(taskStatus(result.snapshot)) });
     } else if (action === "stop") {
       out.line(result?.stopped ? "Task stopped" : "Task has no active run", "accent");
       out.field("Task", result?.sessionId || parsed.id);
@@ -531,15 +532,16 @@ export function renderHelp(topic = "", options = {}) {
   out.shellNote();
   if (!topic) {
     out.line();
-    out.line(driveGuide({ explicit: options.lang, env: options.env || process.env }));
+    out.line(driveGuide());
   }
   return out.finish();
 }
 
 export function renderError(payload, options = {}) {
   const out = output(options);
-  const error = payload?.error || payload || {};
-  const waiting = error.code === "connection_pending";
+  const value = payload?.error || payload || {};
+  const error = { ...value.details, ...value };
+  const waiting = error.code === "CONNECTION_PENDING";
   out.line(waiting ? "Waiting for Chrome" : "qz error", waiting ? "waiting" : "error");
   out.line(error.message || "The command could not be completed.");
   if (error.url) { out.line(); out.line(error.url, "accent"); }

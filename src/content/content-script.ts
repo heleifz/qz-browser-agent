@@ -18,7 +18,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
-  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRef?: string; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -33,7 +33,7 @@ interface PickerState {
 }
 type ContentMessageListener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
 interface ContentGlobals {
-  __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; QingzhouArticleExtractor?: ArticleExtractor;
+  __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; __qzElementRefVersion?: number; QingzhouArticleExtractor?: ArticleExtractor;
   __QZ_CONTENT_MESSAGE_LISTENER?: ContentMessageListener;
   __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
 }
@@ -43,10 +43,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-10-31-fill-target";
-  const findElementRefs = new Map<string, WeakRef<Element>>();
-  const findElementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  let findElementRefSequence = 0;
+  const QZ_CONTENT_VERSION = "2026-11-02-element-references";
+  const elementRefs = new Map<string, WeakRef<Element>>();
+  const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let elementRefSequence = 0;
   const imageSourceIdentities = new WeakMap<HTMLImageElement, { source: string; identity: string }>();
   const imageSourceScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let imageSourceSequence = 0;
@@ -62,6 +62,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   if (host.__QZ_CONTENT_VERSION === QZ_CONTENT_VERSION && typeof host.__qzInvoke === "function") return;
   host.__QZ_CONTENT_READY = true;
   host.__QZ_CONTENT_VERSION = QZ_CONTENT_VERSION;
+  host.__qzElementRefVersion = 1;
 
   // Content actions share one reply channel; asynchronous handlers must keep it open.
 
@@ -70,7 +71,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const handler = handlers[msg.action];
     if (!handler) {
       if (msg.action === "ping") {
-        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness() });
+        sendResponse({ ok: true, contentVersion: QZ_CONTENT_VERSION, documentReady: documentReadiness(),
+          contentType: document.contentType, url: document.URL, elementRefs: 1 });
         return;
       }
       sendResponse(toolError("UNKNOWN_ACTION", `Unknown content action: ${msg.action}`, { action: msg.action }));
@@ -793,7 +795,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
-        error: toolError("MISSING_SELECTOR", "selector is required", { selector }),
+        error: toolError("MISSING_SELECTOR", "target is required", { target: selector }),
         elements: [],
       };
     }
@@ -805,10 +807,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return { elements: [...document.querySelectorAll(selector)] };
     } catch (err) {
       return {
-        error: toolError("INVALID_SELECTOR", `Invalid CSS selector or locator: ${selector}`, {
-          selector,
-          message: errorMessage(err),
-          supportedLocators: ["CSS selector", "text='可见文字'"],
+        error: toolError("INVALID_SELECTOR", `Invalid CSS target or locator: ${selector}`, {
+          target: selector,
+          supportedLocators: ["CSS target", "text='可见文字'"],
         }),
         elements: [],
       };
@@ -821,8 +822,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
-        ...toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-          selector,
+        ...toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+          target: selector,
           index,
           matched: query.elements.length,
         }),
@@ -915,7 +916,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const element = result.elements[0] || null;
     if (!element) {
       return {
-        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { selector }),
+        error: toolError("ELEMENT_NOT_FOUND", `Element not found: ${selector}`, { target: selector }),
         element: null,
       };
     }
@@ -948,16 +949,16 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const requested: unknown = selector;
     const matched = requested instanceof Element ? query.elements[0] : query.elements[Math.max(0, Math.floor(Number(index) || 0))];
     if (!matched) {
-      return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${index}]`, {
-        selector,
+      return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${index}]`, {
+        target: selector,
         index,
         matched: query.elements.length,
       });
     }
     const img = pickImageElement(matched);
     if (!img) {
-      return toolError("NO_IMAGE_ELEMENT", "Selector did not resolve to an img element or an element containing img", {
-        selector,
+      return toolError("NO_IMAGE_ELEMENT", "Target did not resolve to an img element or an element containing img", {
+        target: selector,
         index,
         tag: matched.tagName?.toLowerCase() || "",
       });
@@ -1040,6 +1041,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           ...meta,
           context: getImageTextContext(img),
           currentSrc: meta.src,
+          _elementRef: rememberElement(img),
           hasSrcset: Boolean(img.getAttribute("srcset")),
         });
         if (images.length >= max) break;
@@ -1663,16 +1665,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const text = fullText.slice(start, end);
       const linkCount = countArticleLinks(article.content);
       // Display-only projection for the side panel's formatted preview.
-      // _display is stripped before the result reaches the model, and the
-      // live-layout measurement is skipped when this slice carries no image
-      // Markdown at all.
+      // Background binds these hints to the article's presentation metadata.
+      // Skip live-layout measurement when this slice carries no image Markdown.
       const imageDisplayHints = text.includes("![") ? articleCompactImageHints(article) : [];
 
       return {
         title: article.title || document.title,
         url: location.href,
-        mode: article.mode || "article",
-        sourceSelector: article.sourceSelector || "",
+        mode: article.mode === 'selector' ? 'target' : article.mode || "article",
+        target: article.sourceSelector ? `css:${article.sourceSelector}` : undefined,
         byline: article.byline || "",
         siteName: article.siteName || "",
         publishedTime: article.publishedTime || "",
@@ -1768,7 +1769,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         .slice(0, maxResults)
         .map(({ el, summary, match = "", matchKind = "none", score = 0 }) => ({
           ...summary,
-          ...(el.getRootNode() instanceof ShadowRoot ? { _elementRef: rememberFindElement(el) } : {}),
+          _elementRef: rememberElement(el),
           ...getElementDomLocation(el, selector),
           match,
           matchKind,
@@ -1791,12 +1792,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
-      return getElementInspection(el, {
-        selector,
-        index,
-        matched,
-        ...getElementDomLocation(el),
-      });
+      const inspection = getElementInspection(el, { selector, index, matched, ...getElementDomLocation(el) });
+      return { ...inspection, _elementRef: rememberElement(el),
+        parent: el.parentElement ? { ...inspection.parent, _elementRef: rememberElement(el.parentElement) } : null };
     },
 
     scrollElementIntoView({ selector, index = 0, block = "center" }) {
@@ -1819,8 +1817,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const normalizedIndex = Math.max(0, Math.floor(Number(index) || 0));
       const el = query.elements[normalizedIndex];
       if (!el) {
-        return toolError("ELEMENT_NOT_FOUND", `Element not found at selector/index: ${selector}[${normalizedIndex}]`, {
-          selector,
+        return toolError("ELEMENT_NOT_FOUND", `Element not found at target/index: ${selector}[${normalizedIndex}]`, {
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
         });
@@ -1828,7 +1826,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return toolError("ELEMENT_HAS_NO_RENDERED_BOX", "Element has no rendered box to screenshot", {
-          selector,
+          target: selector,
           index: normalizedIndex,
           matched: query.elements.length,
           rect: {
@@ -1913,9 +1911,10 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           return (a.rect.y - b.rect.y) || (a.rect.x - b.rect.x);
         })
         .slice(0, max)
-        .map(({ el }) => getElementSummary(el))
+        .map(({ el }) => ({ ...getElementSummary(el), _elementRef: rememberElement(el) }))
         .map((item, i) => ({
           i,
+          _elementRef: item._elementRef,
           selector: item.selector,
           role: item.role || item.tag,
           type: item.type,
@@ -1971,6 +1970,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           };
           return {
             name,
+            element: canvas,
             rect: summaryRect,
             inViewport: isRectInViewport(summaryRect),
             bitmapSize: {
@@ -1990,7 +1990,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
             || (a.rect.x - b.rect.x);
         })
         .slice(0, 8)
-        .map(({ renderedArea: _renderedArea, ...canvas }) => canvas);
+        .map(({ renderedArea: _renderedArea, element, ...canvas }) => ({
+          ...canvas, selector: getAbsoluteSelector(element), _elementRef: rememberElement(element),
+        }));
 
       return {
         title: document.title,
@@ -2196,6 +2198,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         element: summary,
         originalElement: getElementSummary(el),
       };
+    },
+
+    elementPresence({ selector, visibleOnly = false }) {
+      const query = queryAll(selector);
+      if (query.error) return query.error;
+      return elementPresence(query.elements[0] || null, Boolean(visibleOnly));
     },
 
     querySelector({ selector, limit = 10 }) {
@@ -2704,11 +2712,17 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return depth;
   }
 
-  function rememberFindElement(el: Element) {
-    const token = `${findElementRefScope}:${++findElementRefSequence}`;
-    findElementRefs.set(token, new WeakRef(el));
-    while (findElementRefs.size > 5000) findElementRefs.delete(findElementRefs.keys().next().value!);
+  function rememberElement(el: Element) {
+    const token = `${elementRefScope}:${++elementRefSequence}`;
+    elementRefs.set(token, new WeakRef(el));
+    while (elementRefs.size > 5000) elementRefs.delete(elementRefs.keys().next().value!);
     return token;
+  }
+
+  function elementPresence(element: Element | null, visibleOnly = true) {
+    const found = Boolean(element?.isConnected && (!visibleOnly || isVisible(element)
+      && (!element.checkVisibility || element.checkVisibility({ opacityProperty: true, visibilityProperty: true }))));
+    return { found, element: found && element ? { ...getElementSummary(element), _elementRef: rememberElement(element) } : null };
   }
 
   function getElementDomLocation(el: Element, rootSelector = "body") {
@@ -3048,20 +3062,25 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   host.__qzInvoke = async (node, payload) => {
     // Background consumes this isolated-world reference once to bind a backend
     // node UID. It never rematches a selector or exposes a DOM node in a reply.
-    if (payload?.action === "resolveFindElement") {
-      const token = String(payload.elementRef || "");
-      const element = findElementRefs.get(token)?.deref();
-      findElementRefs.delete(token);
-      return element?.isConnected && element.ownerDocument === document ? element : null;
+    if (payload?.action === "resolveElementRefs") {
+      const tokens = Array.isArray(payload.elementRefs) ? payload.elementRefs.map(String) : [];
+      if (tokens.some(token => !token.startsWith(`${elementRefScope}:`))) throw new Error("Element reference document changed");
+      return tokens.map(token => {
+        const element = elementRefs.get(token)?.deref();
+        elementRefs.delete(token);
+        return element?.isConnected && element.ownerDocument === document ? element : null;
+      });
     }
+    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) return elementPresence(node);
     const token = String(payload?.fillToken || "");
     if (payload?.action === "releaseFillRoot") {
       if (token) fillRoots.delete(token);
       return { ok: true };
     }
     let element = elementFromNode(node);
-    // RootWebArea resolves to the Document. Overview reads from the page element.
-    if (!element && payload?.action === "pageOverview" && node instanceof Document) {
+    // A RootWebArea UID scopes document readers to that document, including iframe documents.
+    if (!element && node instanceof Document && ["pageOverview", "readArticle", "readDom", "findElements",
+      "inspectElement", "listImageElements", "getElementScreenshotBounds", "elementPresence"].includes(payload?.action)) {
       element = node.body || node.documentElement;
     }
     const saved = token ? fillRoots.get(token) : undefined;

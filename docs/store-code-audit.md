@@ -78,7 +78,7 @@ Changes to a reviewed function require a new review and fingerprint. Three CDP f
 fingerprints: only esbuild's shorthand-property expansion after renaming differs between the forms.
 This is a source-change gate, not a whole-program data-flow proof. Regression tests audit real
 production builds (unbundled Chrome, bundled Chrome and Firefox) in temporary directories, then
-mutate those artifacts to verify identity-source, extra-sink and output-path rejection. Standalone
+mutate those artifacts to verify identity-source, implicit-target, extra-sink and output-path rejection. Standalone
 TypeScript transforms do not substitute for the production pipeline when reviewing fingerprints.
 
 | Sink | Reason |
@@ -86,16 +86,16 @@ TypeScript transforms do not substitute for the production pipeline when reviewi
 | `renderSessionExchangeScript` | An inert `application/json` element, with JSON escaping; not executable code. |
 | `renderSessionExportRuntime` | Offline HTML contains only escaped localized messages and the recursively audited, build-time export UI runtime. |
 | `loadMathRuntime` | The script source is the literal packaged `vendor/mathjax/startup.js`; browser fixtures use a same-origin test-server URL. |
-| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. A timeout asks that worker for its trace once. The reply is forwarded and the worker keeps running until the existing cancel path. |
+| `startWorkerRun` | Creates a sandbox Blob Worker from the exact packaged inner-runner; the embedded source is scanned separately. Infrastructure failures use the public script-context code; Worker identity, cancellation and message routing remain unchanged. Bridge failures carry ToolError message, hint and details as data. A timeout asks that worker for its trace once. The reply is forwarded and the worker keeps running until the existing cancel path. |
 | Inner-runner's execution function | Existing user/Agent JavaScript execution in a manifest-declared sandbox Worker. Its code is readable and its extension/service access is through validated host messages. Trace rows stay in the worker. A timeout message returns the last five. Nothing is posted on each `trace()` call. |
-| `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. This is a second intentional user/Agent execution environment, not sandbox execution. When a page script times out, one fixed `Runtime.callFunctionOn` reads `__qzTrace` from the promise object CDP is already awaiting, then `Runtime.terminateExecution` runs. The declaration is a literal in this function. It does not compile page or model text. |
-| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity and target ownership remain required. Parent invocation IDs are JSON-serialized into the existing bridge messages; they are resolved against live Background calls and do not supply executable source. Page trace rows stay in the script closure, on a property of the promise CDP holds. They are not posted to the page. |
+| `evaluateCdpScript` | Run-owned CDP evaluation, with cancellation and stale-owner rejection. Error details include the caller's page reference only when supplied, and omit raw CDP parameters. This is a second intentional user/Agent execution environment, not sandbox execution. When a page script times out, one fixed `Runtime.callFunctionOn` reads `__qzTrace` from the promise object CDP is already awaiting, then `Runtime.terminateExecution` runs. The declaration is a literal in this function. It does not compile page or model text. |
+| `createScriptTools`, `runScriptWithCdpToolBridgeUnlocked`, `runScriptAsFunctionBody` | Existing page-script entry, message bridge and explicit-return fallback. An explicit page reference selects the run-owned CDP executor; scripts without a page reference use the existing sandbox Worker. Nested tools require their own explicit page references. The entire factory fingerprint includes the builders that combine packaged trace/guard code with user/Agent source; Session/run identity, target ownership and cancellation remain required. Parent invocation IDs are JSON-serialized data and are resolved against live Background calls. Page messages cannot choose the host execution context. Both environments construct the same caller DTO, with ToolError location and trace in details. Cancellation errors include only the caller's page reference when supplied. Page trace rows stay in the script closure, on a property of the promise CDP holds. They are not posted to the page. |
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
-| `contentContextId`, `invokeBound` | Static isolated-world identity probe and literal bridge function; arguments travel as CDP values rather than code. |
-| Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. It compiles the declaration with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
-| `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element. |
+| `contentContextId`, `invokeBound` | Static isolated-world identity/protocol-version probe and literal bridge function; arguments travel as CDP values rather than code. Caller context is used only to build public failure details; probe source and frame selection are unchanged. |
+| Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. Native exception names are retained as data. Node-array references and `Runtime.getProperties` remain structured data in the isolated world. It compiles declarations only with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
+| `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element; public geometry uses the shared Rect contract. |
 | `clearStaleOptionDisabled` | Calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code. |
-| `bindFindElementRefs` | Resolves find_elements tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveFindElement`; token/action values travel as CDP arguments, not code. |
+| `bindContentElementRefs` | Resolves bounded batches of original-node tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveElementRefs`; token arrays are CDP values, not code. It validates the frame/document and bounds concurrent node descriptions. |
 
 On the Firefox-integrated branch, `contentContextId` and `invokeBound` read their probe and bridge
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
@@ -103,7 +103,7 @@ fingerprints do not cover those constants, so changes to that module need the sa
 
 The eleven CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
-`run_script target:"page"` deliberately executes user/Agent source in a page through CDP; it is not
+`run_script` with an explicit page reference deliberately executes user/Agent source in a page through CDP; it is not
 made static or policy-safe merely because there is no `eval` token. This capability has the same
 submission-policy review obligation as the sandbox executor.
 

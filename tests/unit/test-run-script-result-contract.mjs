@@ -69,8 +69,8 @@ assert.match(source, /QZ_SCRIPT_RUNTIME\.installSecurityGuards\(__qzSecurityGuar
 assert.match(source, /const safeInput = __qzSafeValueForMessage\(input \|\| \{\}\)/, "page runtime should sanitize tool args before window.postMessage");
 assert.match(source, /const __qzSafeResult = ok && result !== undefined \? __qzSafeValueForMessage\(result\) : null/, "page runtime should sanitize returned script results before CDP serialization");
 assert.match(runScriptBridge, /function failureResponse\(/, "run_script tool bridge should have one failure response contract");
-assert.match(runScriptBridge, /const respondFailure[\s\S]*withLanguage\(language, \(\) => failureResponse\(payload, options\)\)/, "run language scopes must retain the shared failure response contract");
-assert.match(runScriptBridge, /const isError = output.ok === false \|\| output.isError === true \|\| output.error != null[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
+assert.match(runScriptBridge, /const respondFailure[\s\S]*withLanguage\(language, \(\) => failureResponse\(payload, options\)/, "run language scopes must retain the shared failure response contract");
+assert.match(runScriptBridge, /const isError = isToolFailure\(output\)[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
 assert.match(runScriptBridge, /catch \(error\)[\s\S]*return respondFailure\(/, "run_script tool bridge should reject thrown tool errors");
 assert.doesNotMatch(serviceWorker, /ok:\s*true,\s*[\r\n\s]*result:\s*localizeToolFailurePayload\(\{[\s\S]*RUN_SCRIPT_TOOL_CALL_FAILED/, "run_script tool bridge must not wrap failed tool calls as successful responses");
 assert.match(source, /if \(!response\.ok\)[\s\S]*reject\(bridgeError\)/, "page run_script tools should reject failed bridge responses");

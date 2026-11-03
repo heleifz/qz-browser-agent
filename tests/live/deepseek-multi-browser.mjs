@@ -210,7 +210,7 @@ async function runCase(spec) {
     : observeMcp(browser, "qingzhou_create_session", { firstMessage: entry.prompt, title: `Live ${entry.id}` });
   try {
     const created = await until(() => { if (observer.error) throw observer.error; return observer.created; }, `${entry.id} admission`, 45000);
-    entry.sessionId = created.session?.id || created.sessionId; assert.ok(entry.sessionId); browser.sessions.add(entry.sessionId);
+    entry.sessionId = created.session?.sessionId || created.sessionId; assert.ok(entry.sessionId); browser.sessions.add(entry.sessionId);
     const deadline = Date.now() + taskTimeout * 1000, answered = new Set();
     while (!observer.settled) {
       if (interrupted || Date.now() > deadline) throw new Error("Bounded live observation ended");
@@ -333,7 +333,7 @@ try {
         await snapshot(other, task.sessionId).then(outside => {
           assert.equal(outside.session, null); assert.equal(outside.transcript.length, 0); assert.equal(outside.hasHistory, false);
         }, error => assert.match(error.message, /not.found|unknown|missing|不存在/i));
-        const listed = await mcp(other, "qingzhou_list_sessions", { limit: 100 }); assert.ok(!listed.sessions.some(session => session.id === task.sessionId));
+        const listed = await mcp(other, "qingzhou_list_sessions", { limit: 100 }); assert.ok(!listed.sessions.some(session => session.sessionId === task.sessionId));
       }
       entry.checked.push({ sessionId: task.sessionId, clientId: owner.uuid });
     }

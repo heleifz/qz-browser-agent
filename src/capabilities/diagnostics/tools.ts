@@ -1,3 +1,4 @@
+import { toolError } from "#sdk/background/tools";
 import { toolT } from "./tool-messages.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
@@ -133,7 +134,7 @@ async function enableConsoleMonitor(tabId: number | undefined, { reset = false, 
   await sendCdp(tabId, "Runtime.enable", {}, context);
   const monitor = getConsoleMonitor(tabId);
   if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
-    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection", { tabId });
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection");
   }
   if (reset) monitor.records = [];
   monitor.maxRecords = clampNumber(maxRecords, 20, 1000, monitor.maxRecords);
@@ -285,7 +286,6 @@ async function enablePreNavigationNetworkWatch(tabId: number, {
   return {
     watching: true,
     startedBeforeNavigation: true,
-    tabId: monitor.tabId,
     maxRecords: monitor.maxRecords,
     records: monitor.order.length,
     inFlight: monitor.inFlight.size,
@@ -465,7 +465,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       reset: { type: "boolean", description: toolT("readConsoleMessagesReset") },
       limit: { type: "number", description: toolT("readConsoleMessagesLimit") },
       maxRecords: { type: "number", description: toolT("readConsoleMessagesMaxRecords") },
@@ -475,6 +475,7 @@ registerTool({
       urlPattern: { type: "string", description: toolT("readConsoleMessagesUrlPattern") },
       flags: { type: "string", description: toolT("readConsoleMessagesFlags") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -482,11 +483,9 @@ registerTool({
     const monitor = await enableConsoleMonitor(tabId, { reset, maxRecords }, context);
     const filtered = filterConsoleRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -495,7 +494,6 @@ registerTool({
       .reverse();
     return {
       watching: true,
-      tabId: monitor.tabId,
       records: rows.length,
       totalBuffered: monitor.records.length,
       results: rows,
@@ -509,10 +507,11 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       reset: { type: "boolean", description: toolT("networkWatchReset") },
       maxRecords: { type: "number", description: toolT("networkWatchMaxRecords") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -520,7 +519,6 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords }, context);
     return {
       watching: true,
-      tabId: monitor.tabId,
       maxRecords: monitor.maxRecords,
       records: monitor.order.length,
       inFlight: monitor.inFlight.size,
@@ -534,7 +532,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       limit: { type: "number", description: toolT("networkRecentLimit") },
       urlPattern: { type: "string", description: toolT("networkRecentUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
@@ -544,6 +542,7 @@ registerTool({
       resourceType: { type: "string", description: toolT("networkRecentResourceType") },
       mimePattern: { type: "string", description: toolT("networkRecentMimePattern") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
@@ -551,11 +550,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
     const guardrails = await getSecurityGuardrails();
     const rows = filtered.records
@@ -564,7 +561,6 @@ registerTool({
       .reverse()
       .map(networkRecordSummary);
     return {
-      tabId: monitor.tabId,
       records: rows.length,
       inFlight: monitor.inFlight.size,
       results: rows,
@@ -578,25 +574,21 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       requestId: { type: "string", description: toolT("networkBodyRequestId") },
       maxBytes: { type: "number", description: toolT("networkBodyMaxBytes") },
     },
-    required: ["requestId"],
+    required: ["requestId", "tabRef"],
   } as const; },
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, requestId, maxBytes = DEFAULT_BODY_LIMIT }, _signal, context = {}) => {
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const record = monitor.records.get(requestId);
-    if (!record) {
-      return {
-        error: `Network request not found: ${requestId}`,
-        code: "NETWORK_REQUEST_NOT_FOUND",
-        details: { tabId: monitor.tabId, requestId },
-      };
-    }
-    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url", tabId: monitor.tabId });
+    if (!record) return toolError("NETWORK_REQUEST_NOT_FOUND", `Network request not found: ${requestId}`, {
+      hint: "Use network_recent to choose a captured requestId, then retry network_body.", details: { requestId },
+    });
+    assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url" });
     const body = await getNetworkBody(monitor.tabId, requestId, clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT), context);
     return { ...networkRecordSummary(record), ...body };
   },
@@ -608,7 +600,7 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       urlPattern: { type: "string", description: toolT("waitForResponseUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
       method: { type: "string", description: toolT("networkRecentMethod") },
@@ -618,7 +610,7 @@ registerTool({
       includeBody: { type: "boolean", description: toolT("waitForResponseIncludeBody") },
       maxBytes: { type: "number", description: toolT("waitForResponseMaxBytes") },
     },
-    required: ["urlPattern"],
+    required: ["urlPattern", "tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
@@ -626,11 +618,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
-      return {
-        error: `Invalid regular expression: ${filtered.message}`,
-        code: filtered.code,
-        details: { pattern: filtered.pattern, flags: filtered.flags },
-      };
+      return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: filtered.pattern, flags: filtered.flags },
+      });
     }
 
     const guardrails = await getSecurityGuardrails();
@@ -652,22 +642,21 @@ registerTool({
         cleanup();
         const summary = networkRecordSummary(record);
         if (!includeBody) {
-          resolve({ tabId: monitor.tabId, matched: true, response: summary });
+          resolve({ matched: true, response: summary });
           return;
         }
         try {
           const body = await getNetworkBody(monitor.tabId, record.requestId, bodyLimit, context);
-          resolve({ tabId: monitor.tabId, matched: true, response: summary, body });
+          resolve({ matched: true, response: summary, body });
         } catch (err) {
           resolve({
-            tabId: monitor.tabId,
             matched: true,
             response: summary,
-            bodyError: {
-              error: err instanceof Error ? err.message : String(err),
-              code: err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
-              details: err instanceof ToolExecutionError ? err.details : {},
-            },
+            bodyError: toolError(err instanceof ToolExecutionError ? err.code : "NETWORK_BODY_UNAVAILABLE",
+              err instanceof Error ? err.message : String(err), {
+                hint: "Use network_recent to choose another captured requestId, then retry network_body.",
+                details: { requestId: record.requestId },
+              }),
           });
         }
       };
@@ -682,7 +671,6 @@ registerTool({
       timer = setTimeout(() => {
         cleanup();
         resolve({
-          tabId: monitor.tabId,
           matched: false,
           timedOut: true,
           timeoutSeconds: timeoutMsValue / 1000,
@@ -702,12 +690,13 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("readConsoleMessagesTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
       idleSeconds: { type: "number", description: toolT("waitForNetworkIdleIdleSeconds") },
       timeout: { type: "number", description: toolT("waitForNetworkIdleTimeout") },
       urlPattern: { type: "string", description: toolT("waitForNetworkIdleUrlPattern") },
       flags: { type: "string", description: toolT("networkRecentFlags") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
@@ -716,11 +705,9 @@ registerTool({
     const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
     const pattern = urlPattern ? safeRegExp(urlPattern, flags) : null;
     if (pattern?.error) {
-      return {
-        error: `Invalid regular expression: ${pattern.message}`,
-        code: pattern.code,
-        details: { pattern: pattern.pattern, flags: pattern.flags },
-      };
+      return toolError(pattern.code, `Invalid regular expression: ${pattern.message}`, {
+        hint: "Fix the pattern or flags and retry the call.", details: { pattern: pattern.pattern, flags: pattern.flags },
+      });
     }
     const idle = clampNumber(idleMs != null ? idleMs : secondsToMs(idleSeconds, 800), 100, 10000, 800);
     const timeoutMsValue = clampNumber(timeoutMs != null ? timeoutMs : secondsToMs(timeout, 10000), 100, 120000, 10000);
@@ -750,7 +737,7 @@ registerTool({
       };
       const complete = () => {
         cleanup();
-        resolve({ tabId: monitor.tabId, idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
+        resolve({ idle: true, idleSeconds: idle / 1000, inFlight: monitor.inFlight.size });
       };
       const scheduleIdle = () => {
         clearTimeout(idleTimer);
@@ -765,7 +752,6 @@ registerTool({
       timeoutTimer = setTimeout(() => {
         cleanup();
         resolve({
-          tabId: monitor.tabId,
           idle: false,
           timedOut: true,
           timeoutSeconds: timeoutMsValue / 1000,

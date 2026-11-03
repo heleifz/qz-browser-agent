@@ -111,13 +111,13 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
         async call(name, args) {
           controller = new AbortController();
           try { return await runtime.execute(name, { tabId, ...args }, controller.signal, { ...context, workingTabId: tabId, source: "run_script" }); }
-          catch (error) { return { error: error.message, code: error.code, details: error.details }; }
+          catch (error) { return { message: error.message, code: error.code, hint: error.hint, details: error.details }; }
         },
       };
     });
     const call = (name, args) => worker.evaluate(({ name, args }) => elementHarness.call(name, args), { name, args });
     const opened = await call("open_tab", { url: `http://127.0.0.1:${parent.address().port}/` });
-    expect(opened, JSON.stringify(opened)).not.toHaveProperty("error");
+    expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
     const page = browser.pages().find(item => item.url().startsWith("http://127.0.0.1:"));
     const nativeDialogs = [];
     page.on('dialog', dialog => { nativeDialogs.push(dialog); });
@@ -165,7 +165,11 @@ test("off-screen iframe clicks scroll into the page viewport or fail", async () 
     expect(fixedClick, JSON.stringify(fixedClick)).toMatchObject({ code: "CLICK_POINT_OUT_OF_VIEWPORT" });
     expect(fixedClick.inputDelivered).not.toBe(true);
     expect(fixedClick.clickDispatched).not.toBe(true);
-    expect(fixedClick.element?.state?.clickablePointInViewport).toBe(false);
+    expect(fixedClick.details.target).toMatch(/^uid:t\d+\.[0-9a-z]{6}\.\d+$/);
+    const fixedState = await call("inspect_element", { target: fixedClick.details.target });
+    expect(fixedState.state?.clickablePointInViewport).toBe(false);
+    expect(fixedClick.hint).toBeTruthy();
+    expect(Object.keys(fixedClick).every(key => ["code", "message", "hint", "details"].includes(key))).toBe(true);
     expect(await page.frame({ name: "fixed" }).evaluate(() => window.clicks || 0)).toBe(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
 

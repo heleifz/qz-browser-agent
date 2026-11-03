@@ -68,17 +68,17 @@ test("built-in timeline labels retain precedence, first-result counts and histor
   ]);
 });
 
-test("script page summaries still prefer returned context and hide code when no page metadata exists", async ({ page }) => {
+test("script page summaries use explicit references or host context and keep returned titles as business data", async ({ page }) => {
   const results = await page.evaluate(() => {
     const { card } = window.__timelinePresentation;
     return [
-      card({ name: "run_script", args: { code: "return 1", tabId: 17 }, result: { ok: true } }),
-      card({ name: "run_script", args: { code: "return 1", _pageTitle: "Old title" }, result: { pageTitle: "Current title" } }),
-      card({ name: "run_script", args: { code: "return 1", target: "inner" } }),
+      card({ name: "run_script", args: { code: "return 1", tabRef: "report" }, result: { ok: true, result: 1 } }),
+      card({ name: "run_script", args: { code: "return 1", tabRef: "report" }, result: { _pageTitle: "Host page", ok: true, result: { pageTitle: "Business title" } } }),
+      card({ name: "run_script", args: { code: "return 1" }, result: { ok: true, result: { pageTitle: "Business title", _pageTitle: "Returned user data" } } }),
       card({ name: "third_party_script", profileFamily: "script", pageContext: true, args: { code: "return 1" } }),
     ];
   });
-  expect(results).toEqual(["(当前页面)", "(Current title)", "(当前页面)", "(当前页面)"]);
+  expect(results).toEqual(["(标签页 report)", "(Host page)", "", ""]);
 });
 
 test("malformed and asynchronous timeline declarations fall back without poisoning other contributions", async ({ page }) => {

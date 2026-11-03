@@ -1,5 +1,6 @@
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
 import type { ToolDependencies } from "./tool-scheduler.js";
+import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { ToolExecutionError } from "./arguments.js";
 import { isTabAlias, tabReferenceId } from "../../shared/tab-reference.js";
@@ -22,7 +23,6 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   const creators = new Map<string, Entry>(), duplicates = new Set<string>();
   const executed = new Map<Entry, { id: number; result: unknown }>(), published = new Map<Entry, number>();
   const committedCreators = new Set<Entry>();
-  const creatorCount = entries.filter(entry => entry.policy?.kind === "create").length;
   for (const entry of entries) {
     const alias = entry.args.tabAlias;
     if (alias == null) continue;
@@ -36,7 +36,6 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   for (const entry of entries) {
     const ref = entry.args.tabRef;
     if (Object.hasOwn(entry.args, "tabRef")) {
-      if (entry.policy?.kind !== "target") { entry.error = error("invalid_reference", ref); continue; }
       // Existing bindings win over an attempted duplicate open; its failure must not redirect readers.
       const producer = tabReferenceId(ref) === null && !Object.hasOwn(aliases, String(ref)) ? creators.get(String(ref)) : undefined;
       if (producer) {
@@ -47,7 +46,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
         try { targets.set(entry, resolveTabReference(ref, aliases, language)); }
         catch (failure) { entry.error = failure as ToolExecutionError; }
       }
-    } else if (creatorCount > 1 && entry.policy?.kind === "target" && entry.policy.implicit) entry.error = error("ambiguous_target");
+    }
     const target = targets.get(entry);
     if (target != null && (entry.args.tabId != null && entry.args.tabId !== target
       || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== target)) {
@@ -82,7 +81,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   }
   const parent = (entry: Entry) => parents.get(entry);
   const validResult = (entry: Entry, result: unknown, isError: boolean) => {
-    const value = record(result), id = value.tabId ?? value.id;
+    const value = record(result), id = createdTabResultId(result) ?? value.tabRef ?? value.tabId ?? value.id;
     return entry.policy?.kind === "create" && !entry.error && !isError && !value.error
       && value.ok !== false && value.isError !== true && typeof id === "number" && Number.isInteger(id) && id > 0 ? id : null;
   };
@@ -106,8 +105,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
       if (!tabId) throw error("dependency_failed", entry.args.tabRef);
       if (entry.args.tabId != null && entry.args.tabId !== tabId
         || entry.policy?.kind === "target" && entry.policy.tabId != null && entry.policy.tabId !== tabId) throw error("conflicting_target", entry.args.tabRef);
-      const { tabRef: _ref, ...args } = entry.args;
-      return { ...args, tabId };
+      return entry.policy?.kind === "target" ? { ...entry.args, tabId } : entry.args;
     },
     complete(item: T, result: unknown, isError: boolean) {
       const entry = byItem.get(item)!, id = validResult(entry, result, isError);

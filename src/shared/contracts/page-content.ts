@@ -1,11 +1,12 @@
 /** Content replies cross as unknown data; these guards validate shape, not Session/tab authority. */
 export interface PageAction {
-  uid?: string; target?: string; i?: number; selector?: string; role?: string; type?: string; name?: string;
+  uid?: string; target?: string; _elementRef?: string; i?: number; selector?: string; role?: string; type?: string; name?: string;
   text?: string; textLength?: number; value?: string; placeholder?: string; href?: string; disabled?: boolean;
   editable?: boolean; checked?: boolean; accept?: string; multiple?: boolean; selectedFileCount?: number;
   inViewport?: boolean; rect?: object;
 }
 export interface PageCanvas {
+  uid?: string; target?: string; selector?: string; _elementRef?: string;
   name?: string; rect?: { x?: number; y?: number; w?: number; h?: number }; inViewport?: boolean;
   bitmapSize?: { width?: number; height?: number };
 }

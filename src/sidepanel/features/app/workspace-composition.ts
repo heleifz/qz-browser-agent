@@ -217,6 +217,8 @@ export function createWorkspaceComposition(options: WorkspaceOptions) {
     onUiEvent: extensions.notify,
     onStableViewChange: notifyStableViewChange,
     syncExternalDriveChrome: chat.syncExternalDriveChrome,
+    mergeSessionRecord: record => sessionState.mergeRecord(record),
+    getSessionSource: id => sessionState.getRecord(id)?.source,
   });
 
   function captureWorkspaceView(): WorkspaceView {

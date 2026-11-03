@@ -91,7 +91,7 @@ try {
   assert.equal(result.snapshot.status, "completed", JSON.stringify(result));
   assert.ok(JSON.stringify(result.snapshot.transcript).includes(marker));
   assert.ok(fixture.pages.some(request => request.marker === marker), "real browser must load the fixture page");
-  report.task = { sessionId: result.sessionId || result.session?.id, status: result.snapshot.status, marker };
+  report.task = { sessionId: result.sessionId || result.session?.sessionId, status: result.snapshot.status, marker };
 
   await page.locator("#cli-toggle").click();
   await until(async () => (await runtime("mcp_connection_status")).result.state === "disconnected", "settings disconnects immediately");

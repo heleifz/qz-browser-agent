@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
+import { bindCreatedTabResult } from '../../src/shared/contracts/page-observation.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = {};
 const { getParallelReadTab, getBatchTabPolicy, createToolRuntime } = await import('../../src/background/tools/runtime.js');
@@ -20,7 +21,11 @@ function fixture(execute = null) {
     async execute(name, args, signal, context) {
       calls.push({ name, args, signal, context });
       if (execute) return execute(name, args, signal, context);
-      return name === 'open_tab' ? { id: ++nextTab } : { tabId: args.tabId, text: `page ${args.tabId}` };
+      if (name === 'open_tab') {
+        const id = ++nextTab;
+        return bindCreatedTabResult({ tabRef: args.tabAlias || id }, id);
+      }
+      return { text: `page ${args.tabId}` };
     },
   } }));
   agent._emit = event => events.push(event);
@@ -43,7 +48,7 @@ test('direct runtime calls reject unresolved references and publish the unified 
     assert.doesNotMatch(read.parameters.properties.tabRef.description, /\btabId\b/);
     const close = schemas.find(schema => schema.function.name === 'close_tab').function;
     assert.equal(close.parameters.required.includes('tabId'), false);
-    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabId'), true);
+    assert.equal(runtime.resolveDefinition('close_tab').parameters.required.includes('tabRef'), true);
   }
   assert.equal(getBatchTabPolicy('plugin_open', { tabAlias: 'a' }), null);
 });
@@ -53,17 +58,26 @@ test('resolved targets, final events and messages retain original call order', a
   const messages = await f.run(input);
   assert.deepEqual(f.calls.map(c => c.context.toolCallId), input.map(c => c.id));
   assert.deepEqual(f.calls.slice(2).map(c => c.args.tabId), [101, 102]);
-  assert.ok(f.calls.slice(2).every(c => !('tabRef' in c.args)));
+  assert.deepEqual(f.calls.slice(2).map(c => c.args.tabRef), ['a', 'b']);
   assert.deepEqual(messages.map(m => m.tool_call_id), input.map(c => c.id));
   assert.deepEqual(f.ends().map(e => e.toolCallId), input.map(c => c.id));
   for (const call of input) assert.deepEqual(f.events.filter(e => e.toolCallId === call.id).map(e => e.type),
     ['tool_execution_start', 'tool_execution_end']);
 });
 
-test('multiple new pages require an explicit target', async () => {
-  const f = fixture(); await f.run([open('oa'), open('ob'), read('ra'), read('rb')]);
-  assert.deepEqual(f.calls.map(c => c.name), ['open_tab', 'open_tab']);
-  assert.ok(f.ends().slice(2).every(e => e.isError && e.result.details.reason === 'ambiguous_target'));
+test('multiple new pages never supply an implicit target to a later page call', async () => {
+  const runtime = createToolRuntime();
+  let nextTab = 100;
+  const f = fixture((name, args, signal, context) => {
+    if (name === 'open_tab') {
+      const id = ++nextTab;
+      return bindCreatedTabResult({ tabRef: id, url: args.url, title: 'Page', active: false }, id);
+    }
+    return runtime.execute(name, args, signal, context);
+  });
+  await f.run([open('oa'), open('ob'), read('ra'), read('rb')]);
+  assert.ok(f.ends().slice(2).every(event => event.isError && event.result.code === 'TAB_REF_REQUIRED'));
+  assert.ok(f.ends().slice(2).every(event => !event.result.details?.tabRef));
 });
 
 for (const [name, input, reason] of [
@@ -96,17 +110,15 @@ for (const outcome of ['failed', 'effects', 'error-flag', 'not-ok']) test(`a ${o
 });
 
 test('creators wait for an earlier numeric target to publish their window anchor', async () => {
-  let release, workingTabId = 1;
+  let release;
   const f = fixture(async (name, args) => {
     if (name === 'read_article') { await new Promise(resolve => { release = resolve; }); return { tabId: args.tabId }; }
     return { id: args.tabAlias === 'a' ? 101 : 102 };
   });
-  f.agent._collectToolRuntimeContext = async () => ({ workingTabId });
-  f.agent._tools.commitToolResult = async result => { workingTabId = result.tabId || result.id; };
   const pending = f.run([read('existing', undefined, { tabId: 9 }), open('oa', 'a'), open('ob', 'b')]);
   await tick(); assert.deepEqual(f.calls.map(c => c.name), ['read_article']);
   release(); await pending;
-  assert.deepEqual(f.calls.slice(1).map(c => c.context.workingTabId), [9, 9]);
+  assert.ok(f.calls.slice(1).every(c => !Object.hasOwn(c.context, 'workingTabId')));
 });
 
 test('bindings expire at the response boundary', async () => {
@@ -183,12 +195,12 @@ test('dependency and reference failure messages name the tabRef', async () => {
   await f.run([open('o', 'a'), read('r', 'a'), read('u', 'missing')]);
   const dependency = f.ends().find(e => e.toolCallId === 'r');
   assert.equal(dependency.result.code, 'BATCH_TAB_DEPENDENCY_FAILED');
-  assert.match(dependency.result.error, /「a」|"a"/);
-  assert.ok(!dependency.result.error.includes('{tabRef}'));
+  assert.match(dependency.result.message, /「a」|"a"/);
+  assert.ok(!dependency.result.message.includes('{tabRef}'));
   const reference = f.ends().find(e => e.toolCallId === 'u');
   assert.equal(reference.result.code, 'BATCH_TAB_REFERENCE_ERROR');
   assert.equal(reference.result.details.reason, 'no_alias');
-  assert.match(reference.result.error, /还没有页面别名|no page alias yet/);
+  assert.match(reference.result.message, /还没有页面别名|no page alias yet/);
 });
 
 test('batch tab messages interpolate tabRef and differ by reference reason', () => {

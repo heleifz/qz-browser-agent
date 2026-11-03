@@ -35,8 +35,6 @@ for (const tool of ['wait', 'run_script']) test(`Stop counts admission, not the 
     async commitToolResult() {}, async discardToolResult() {},
   } }));
   agent._currentRunId = 'run';
-  agent._collectToolRuntimeContext = async () => ({ workingTabId: 7 });
-  agent._enrichToolCallArgsWithPageContext = async (_name, args) => args;
   agent._applyToolResultEffects = async () => [];
   agent._emit = project;
   const pending = agent._executeToolCalls(calls, controller.signal);

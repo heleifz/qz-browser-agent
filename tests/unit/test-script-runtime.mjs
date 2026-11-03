@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createContext, runInContext } from 'node:vm';
 import { compileScriptToolHost } from '../support/script-runtime-fixture.mjs';
+import { compileInnerWorker } from '../../scripts/build-extension.mjs';
+import { runInnerWorker } from '../support/inner-runner-fixture.mjs';
 import { safeValueForMessage, installSecurityGuards } from '../../src/shared/script-runtime.js';
 
 const rules = [
@@ -23,15 +25,15 @@ async function fixture(mode) {
   runInContext(await compileScriptToolHost(mode), context);
   const definitions = new Map();
   const { createScriptTools, ToolExecutionError } = context.QZ_SCRIPT_TEST;
-  createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
+  const runtime = createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
     skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript: async (_tab, { expression }) => {
       return { result: { type: 'object', value: await runInContext(expression, context) } };
     },
   });
   const originals = { fetch, open: XMLHttpRequest.prototype.open, beacon: navigator.sendBeacon, console: { ...console } };
   return {
-    context, calls,
-    run: (code, options = {}) => definitions.get('run_script').execute({ code, target: 'page', tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run', toolExecutionId: 'parent-call' }),
+    context, calls, runtime, definitions,
+    run: (code, options = {}, context = {}) => definitions.get('run_script').execute({ code, tabId: 7, timeout: 5, ...options }, undefined, { sessionId: 'task', runId: 'run', toolExecutionId: 'parent-call', ...context }),
     restored() {
       assert.equal(context.fetch, originals.fetch);
       assert.equal(XMLHttpRequest.prototype.open, originals.open);
@@ -42,6 +44,21 @@ async function fixture(mode) {
 }
 
 for (const mode of ['development', 'production']) {
+  test(`${mode}: unavailable page scripts expose the recovery explanation, not a private marker`, async () => {
+    const f = await fixture(mode);
+    f.context.chrome.scripting.executeScript = async () => { throw new Error('bridge unavailable'); };
+    const result = await f.run('async () => tools.$list()', {}, { runId: 'opaque-unavailable-run', externalDrive: true });
+    assert.equal(result.code, 'PAGE_CONTEXT_UNAVAILABLE');
+    assert.equal(result.message, 'Page JavaScript context is unavailable; script was not executed.');
+    assert.ok(result.hint);
+    assert.deepEqual(Object.keys(result).sort(), ['code', 'details', 'hint', 'message']);
+    assert.equal(result.details.browserMessage, 'bridge unavailable');
+    const unavailable = await f.run('async () => 1', { tabId: undefined });
+    assert.equal(unavailable.code, 'SCRIPT_CONTEXT_UNAVAILABLE');
+    assert.match(unavailable.hint, /Reload/);
+    assert.doesNotMatch(JSON.stringify(unavailable), /\binner\b|execution_world|engine/);
+  });
+
   test(`${mode}: input-only scripts use the no-bridge path and missing tools never replay side effects`, async () => {
     const f = await fixture(mode);
     const result = await f.run('async () => input.value + args.extra', { args: { value: 4, extra: 8 } });
@@ -52,11 +69,11 @@ for (const mode of ['development', 'production']) {
     assert.equal(failed.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(failed.details.automaticReplay, false);
     assert.equal(failed.details.mayHaveTakenEffect, true);
-    assert.match(failed.diagnostic.suggestedNextStep, /tools\.name/);
+    assert.match(failed.hint, /tools\.name/);
     assert.equal(f.context.attempts, 1);
     assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
     const shape = await f.run('async () => { globalThis.shapeAttempts = (globalThis.shapeAttempts || 0) + 1; throw new Error("Illegal return statement"); }');
-    assert.equal(shape.ok, false); assert.equal(f.context.shapeAttempts, 1, 'a runtime error is not a compile-time shape retry');
+    assert.equal(shape.code, 'SCRIPT_EVALUATION_FAILED'); assert.equal(f.context.shapeAttempts, 1, 'a runtime error is not a compile-time shape retry');
     const bridged = await f.run('async () => typeof tools.$list');
     assert.equal(bridged.result, 'function');
     assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 1);
@@ -78,6 +95,16 @@ for (const mode of ['development', 'production']) {
     `, f.context);
     assert.equal((await f.run('async () => await tools.read_article({})')).result, 42);
     assert.equal(f.context.lastToolMessage.parentCallId, 'parent-call');
+    assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'page scripts never choose a nested page implicitly');
+    await f.run('async () => await tools.read_article({})', {}, { runId: 'drive-native-identifier', externalDrive: false });
+    assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'native scripts require the same explicit page references');
+    await f.run('async () => await tools.read_article({tabRef:"other"})');
+    assert.equal(f.context.lastToolMessage.args.tabRef, 'other');
+    assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'explicit references are never overwritten by the source page');
+    for (const code of ['async () => await tools.read_article({tabRef:"other"})', 'async () => await tools.read_article({})']) {
+      await f.run(code, {}, { runId: 'opaque-tool-run', externalDrive: true });
+      assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'direct drive never injects an implicit page');
+    }
   });
 
   test(`${mode}: actual page expression serializes cyclic, exceptional and binary values`, async () => {
@@ -128,6 +155,50 @@ for (const mode of ['development', 'production']) {
     f.restored();
   });
 
+  test(`${mode}: no-page computations and tools use the same public script contract`, async () => {
+    const f = await fixture(mode);
+    const workerSource = await compileInnerWorker({ mode });
+    const nested = [];
+    f.context.chrome.offscreen = { hasDocument: async () => true, createDocument: async () => {} };
+    f.context.chrome.runtime = { getURL: path => `chrome-extension://test/${path}`, sendMessage: async message => {
+      if (message.type === 'run_script_inner_ping') return { ok: true, ready: true };
+      assert.equal(message.type, 'run_script_inner_execute');
+      void runInnerWorker(workerSource, message.source, {
+        scriptArgs: message.scriptArgs,
+        onMessage(message, reply) {
+          if (message.type !== 'tool_call') return;
+          nested.push({ name: message.toolName, args: message.args });
+          reply({ type: 'tool_response', callId: message.callId, response: message.toolName === 'fail'
+            ? { ok: false, code: 'TEST_FAILURE', message: 'Could not save.', hint: 'Choose another value.', details: { action: 'save' } }
+            : { ok: true, result: { saved: message.args.value } } });
+        },
+      }).then(({ result }) => f.runtime.handleRunScriptInnerRuntimeMessage({ type: 'run_script_inner_result', requestId: message.requestId, result }));
+      return { ok: true, accepted: true };
+    } };
+    const code = `async () => ({ dom: [typeof document, typeof window], saved: await tools.data_store({ value: input.value }) })`;
+    const native = structuredClone(await f.run(code, { tabId: undefined, args: { value: 8 } }));
+    const drive = structuredClone(await f.run(code, { tabId: undefined, args: { value: 8 } }, { externalDrive: true }));
+    assert.deepEqual(native.result, { dom: ['undefined', 'undefined'], saved: { saved: 8 } });
+    assert.deepEqual(Object.keys(native).sort(), ['ok', 'result', 'trace']);
+    const withoutTimes = value => ({ ...value, trace: value.trace.map(({ time, ...row }) => row) });
+    assert.deepEqual(withoutTimes(drive), withoutTimes(native));
+    assert.deepEqual(nested, [{ name: 'data_store', args: { value: 8 } }, { name: 'data_store', args: { value: 8 } }]);
+    assert.equal(f.calls.length, 0, 'no page is inspected or selected for orchestration');
+    const empty = await f.run('async () => { await Promise.resolve(); }', { tabId: undefined });
+    assert.equal(empty.ok, true);
+    assert.match(empty.hint, /undefined/);
+    const failed = await f.run('async () => await tools.fail({})', { tabId: undefined });
+    assert.equal(failed.code, 'TEST_FAILURE');
+    assert.match(failed.message, /Could not save/);
+    assert.equal(failed.hint, 'Choose another value.');
+    assert.equal(failed.details.action, 'save');
+    assert.ok(failed.details.trace.some(row => row.level === 'tool.error'));
+    assert.deepEqual(Object.keys(failed).sort(), ['code', 'details', 'hint', 'message']);
+    const schema = f.definitions.get('run_script').parameters;
+    assert.equal(schema.required.includes('tabRef'), false);
+    for (const key of ['target', 'scope']) assert.equal(Object.hasOwn(schema.properties, key), false);
+  });
+
   test(`${mode}: page guards block each request surface, honor allow patterns and restore originals`, async () => {
     const f = await fixture(mode);
     const blocked = [
@@ -140,10 +211,10 @@ for (const mode of ['development', 'production']) {
     ];
     for (const [source, call] of blocked) {
       const result = await f.run(`async () => { ${call}; return 'escaped'; }`);
-      assert.equal(result.ok, false, call);
+      assert.equal(Object.hasOwn(result, 'ok'), false, call);
       assert.equal(result.code, 'SECURITY_GUARDRAIL_BLOCKED', call);
-      assert.match(result.error, /安全护栏已阻止 run_script 访问 blocked\.test 及其子域名。/);
-      assert.equal(result.details.source, source);
+      assert.match(result.message, /安全护栏已阻止 run_script 访问 blocked\.test 及其子域名。/);
+      assert.equal(result.details.action, source);
       assert.equal(f.calls.length, 0, 'blocked requests must not invoke the original transport');
       f.restored();
     }
@@ -164,7 +235,7 @@ for (const mode of ['development', 'production']) {
     assert.equal(f.calls[2].receiver, f.context.navigator);
     assert.deepEqual(f.calls[2].args, ['https://blocked.test/allowed/beacon', 'payload']);
     f.restored();
-    assert.equal((await f.run(`async () => { throw new Error('application failure'); }`)).ok, false);
+    assert.equal((await f.run(`async () => { throw new Error('application failure'); }`)).code, 'SCRIPT_EVALUATION_FAILED');
     f.restored();
   });
 }
@@ -195,7 +266,7 @@ test('shared runtime preserves page and inner compatibility differences', async 
     const originalBeacon = navigator.sendBeacon;
     restore = installSecurityGuards({ rules });
     for (const request of [() => globalThis.fetch('/private'), () => new XMLHttpRequest().open('GET', '/private')]) {
-      assert.throws(request, error => error.code === 'SECURITY_GUARDRAIL_BLOCKED' && /run_script inner/.test(error.message));
+      assert.throws(request, error => error.code === 'SECURITY_GUARDRAIL_BLOCKED' && /run_script 访问/.test(error.message));
     }
     assert.equal(calls.length, 0);
     assert.equal(navigator.sendBeacon, originalBeacon, 'inner has no page beacon hook');

@@ -266,7 +266,7 @@
   },
   {
     "name": "qingzhou_stop_session",
-    "description": "停止轻舟会话运行。外部直驱会话默认关掉它打开的标签；要留下这些标签就传 keepTabs: true。",
+    "description": "结束会话。直驱会话结束后不能再执行工具，无需再 close_tab；默认关闭它创建的标签，用户原有或接管的标签保留。显式 keepTabs:true 保留全部标签。",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
@@ -282,14 +282,13 @@
   },
   {
     "name": "qingzhou_list_tools",
-    "description": "List tools for an existing session. Direct-drive sessions return compact signatures. Pass sessionId from qingzhou_create_drive_session; this call never creates a session.",
+    "description": "List default direct-drive tool signatures; sessionId is optional. Inspect loaded Skill tools by name with qingzhou_get_tool and sessionId. This call never creates a session.",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
-      "required": ["sessionId"],
       "title": "qingzhou_list_toolsArguments",
       "type": "object"
     }
@@ -343,9 +342,11 @@
   },
   {
     "name": "qingzhou_create_drive_session",
-    "description": "Create one direct-drive session and return sessionId. Pass that id on every later call. This does not start a model.",
+    "description": "Create one direct-drive session with a readable title and return sessionId, title, and status. Pass that id on every tool execution. This does not start a model.",
     "inputSchema": {
+      "required": ["title"],
       "properties": {
+        "title": {"type": "string", "minLength": 1, "pattern": "\\S", "description": "Readable task title."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -408,7 +409,7 @@
   },
   {
     "name": "qingzhou_get_tool",
-    "description": "Read a tool by exact name in an existing session. Direct drive returns a compact signature and description. Pass sessionId from qingzhou_create_drive_session; this call never creates a session.",
+    "description": "Read a tool by exact name without a session. Pass sessionId for a loaded Skill tool. Direct drive returns a compact signature and description; this call never creates a session.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -417,7 +418,7 @@
         "timeoutSeconds": {"type": ["number", "null"], "default": null},
         "clientId": {"type": "string", "default": ""}
       },
-      "required": ["name", "sessionId"]
+      "required": ["name"]
     }
   },
   {

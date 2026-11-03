@@ -1,19 +1,22 @@
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
+import { parseBeijingDateTime } from "../../shared/time-utils.js";
+import { driveToolText } from "./tool-messages.js";
+import { publicSessionObservation, type SessionRuntimeObservation } from "../../shared/contracts/session-observation.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
   createExternalDriveCoordinator,
   driveGroupTitle,
-  driveNoAliasText,
   driveToolSignature,
   isDriveToolDefault,
   isDriveToolForbidden,
   parseDriveRequest,
   prepareDriveToolCall,
-  projectNamedDriveResult,
-  projectDriveScriptDiagnostic,
+  projectDriveResult,
   runDriveCalls,
+  type DriveToolObservation,
 } from "./external-drive.js";
 import { summarizeSessionUsage } from "../../shared/session/session-usage.js";
 import type { createSessionCommands } from "../session/commands.js";
@@ -61,6 +64,7 @@ interface McpToolsPort {
     getModelPolicy?(name: string): { projectResult?(result: unknown): unknown } | null | undefined;
     getBatchTabPolicy?(name: string, args: unknown): ToolBatchTabPolicy | null;
     getTabAliases?(sessionId: string): Record<string, number>;
+    getToolResultPageContext?(result: unknown): Fields;
     commitToolResult?(result: unknown, signal: AbortSignal, context: ToolContext): Promise<unknown>;
     discardToolResult?(result: unknown, context: ToolContext): Promise<unknown>;
   };
@@ -76,6 +80,7 @@ interface McpOptions {
   dispatchSidepanel(message: Fields, port: ResponsePort): Promise<unknown>;
   storageKey?(): string;
   driveIdleMs?: number;
+  onDriveSettled?(): Promise<unknown>;
   userInputPermissions: Pick<Parameters<typeof createSessionUserInput>[0], "hasBrowserPermission" | "locationConsent">;
 }
 import {
@@ -105,6 +110,7 @@ export function createMcpRuntime({
   userInputPermissions,
   storageKey = () => "",
   driveIdleMs,
+  onDriveSettled = async () => {},
 }: McpOptions) {
   if (typeof dispatchSidepanel !== "function") throw new TypeError("dispatchSidepanel is required");
 
@@ -256,7 +262,7 @@ export function createMcpRuntime({
       disposition: taskInfo.disposition,
       wait: params.wait === true && started,
       waitForStart: started && params.wait !== true && params.waitForStart !== false,
-      runtime,
+      runtime: describeSessionRuntime(runtime),
       input: userInput.get({ sessionId }),
     }));
   }
@@ -272,7 +278,7 @@ export function createMcpRuntime({
         runId: runtime.runId,
         hasHistory: false,
         status: runtime.status,
-        runtime,
+        runtime: describeSessionRuntime(runtime),
         input: userInput.get({ sessionId: id }),
       }));
     }
@@ -290,7 +296,7 @@ export function createMcpRuntime({
         ...liveState,
         runId: runtime.runId || liveState.runId || null,
         status: runtime.status,
-        runtime,
+        runtime: describeSessionRuntime(runtime),
         input: userInput.get({ sessionId: id }),
       };
     });
@@ -326,7 +332,8 @@ export function createMcpRuntime({
     const runtime = state.runtime || (await sessions.getRuntimeOutput(id));
     const snapshot: Fields = {
       sessionId: id,
-      session: metadata[id] || null,
+      session: metadata[id] ? publicSessionObservation(id, metadata[id].title?.trim() || t("session.new"),
+        String(state.status || state.runtime?.status || "idle")) : null,
       state,
       runtime,
       input: state.input,
@@ -358,19 +365,21 @@ export function createMcpRuntime({
 
   async function toolCatalog(params: Fields, reason: string) {
     await waitForToolsReady(reason);
-    const { sessionId, metadata } = await requireToolSession(params.sessionId);
-    const canManageSessions = await tools.canManageSessions(sessionId);
-    const externalDrive = metadata.source === "external-drive";
+    const selected = params.sessionId == null ? null : await requireToolSession(params.sessionId);
+    const sessionId = selected?.sessionId || "";
+    const canManageSessions = selected ? await tools.canManageSessions(sessionId) : false;
+    const externalDrive = !selected || selected.metadata.source === "external-drive";
     const runProfile = await tools.buildRunProfile({ sessionId, canManageSessions, externalDrive });
-    const runtime = sessions.getRuntime(sessionId);
-    const loadedNames = tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []);
+    const runtime = selected ? sessions.getRuntime(sessionId) : null;
+    const loadedNames = selected ? tools.loadedSkillNames(sessionId, params.loadedPluginSkillNames || []) : [];
     const schemas = tools.runtime.getSchemas({
       runProfile,
       context: {
+        externalDrive,
         dynamicContext: plainObject(params.dynamicContext),
-        workingTab: runtime.workingTab || null,
-        pageUrl: String(runtime.workingUrl || ""),
-        taskSiteTabs: runtime.visitedTaskSites || [],
+        workingTab: runtime?.workingTab || null,
+        pageUrl: String(runtime?.workingUrl || ""),
+        taskSiteTabs: runtime?.visitedTaskSites || [],
         loadedPluginSkillNames: loadedNames,
       },
       loadedPluginSkillNames: loadedNames,
@@ -398,7 +407,7 @@ export function createMcpRuntime({
     const name = String(params.name || params.toolName || "").trim();
     const catalog = await toolCatalog(params, "mcp_get_tool");
     if (catalog.externalDrive && isDriveToolForbidden(name)) {
-      throw Object.assign(new Error(t("drive.toolForbidden", { name })), { code: "DRIVE_TOOL_FORBIDDEN" });
+      throw Object.assign(new Error(driveToolText("unavailable")), { code: "DRIVE_TOOL_FORBIDDEN" });
     }
     const found = catalog.tools.find(tool => tool.name === name) || null;
     return found && catalog.externalDrive ? driveToolSignature(found) : found;
@@ -410,7 +419,7 @@ export function createMcpRuntime({
     tools.recordLoadedSkillNames(sessionId, [value.name, value.displayName]);
   }
 
-  async function ensureDriveSession(sessionId: string, clientName: unknown) {
+  async function ensureDriveSession(sessionId: string, title: string, clientName: unknown) {
     if (!sessionId) return "";
     const metadata = await sessions.listMetadata();
     const existing = metadata[sessionId];
@@ -418,24 +427,15 @@ export function createMcpRuntime({
       if (String(existing.source || "") !== "external-drive") {
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
+      if (existing.driveRetentionPending === true) throw Object.assign(new Error(t("drive.sessionEnded")), { code: "DRIVE_SESSION_ENDED" });
+      drive.assertActive(sessionId);
       return "external-drive";
     }
     if (!sessions.createMetadata) return "";
-    const title = driveGroupTitle(clientName);
-    try {
-      await sessions.createMetadata({
-        id: sessionId,
-        title,
-        titleSource: "fixed",
-        source: "external-drive",
-        driveGroupTitle: title,
-        firstMessage: "",
-      });
-    } catch (error) {
-      const code = error && typeof error === "object" ? String((error as { code?: unknown }).code || "") : "";
-      if (code === "DRIVE_SESSION_OCCUPIED") throw error;
-      throw error;
-    }
+    await sessions.createMetadata({
+      id: sessionId, title, titleSource: "fixed", source: "external-drive",
+      driveGroupTitle: driveGroupTitle(clientName), firstMessage: "",
+    });
     const created = await sessions.listMetadata();
     if (String(created[sessionId]?.source || "") !== "external-drive") {
       throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
@@ -453,20 +453,67 @@ export function createMcpRuntime({
     if (!metadata) {
       throw Object.assign(new Error(t("drive.sessionNotFound")), { code: "DRIVE_SESSION_NOT_FOUND" });
     }
+    if (metadata.driveRetentionPending === true) {
+      throw Object.assign(new Error(t("drive.sessionEnded")), { code: "DRIVE_SESSION_ENDED" });
+    }
     return { sessionId, metadata };
   }
 
   async function createDriveSession(params: Fields = {}) {
+    const title = typeof params.title === "string" ? params.title.replace(/\s+/gu, " ").trim() : "";
+    if (!title) throw Object.assign(new Error(t("session.titleRequired")), {
+      code: "SESSION_TITLE_REQUIRED", hint: 'Run qz session create --title "Task title".',
+    });
     const requested = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
     const sessionId = requested || crypto.randomUUID().replaceAll("-", "");
-    const source = await ensureDriveSession(sessionId, params.clientName);
-    if (source !== "external-drive") {
-      throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+    const release = drive.protect(sessionId);
+    try {
+      const source = await ensureDriveSession(sessionId, title, params.clientName);
+      if (source !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
+      drive.restore(sessionId, Date.now());
+      const created = (await sessions.listMetadata())[sessionId];
+      return publicSessionObservation(sessionId, String(created?.title || title), String(readRuntime(sessionId).status || "idle"));
+    } finally { release(); void onDriveSettled(); }
+  }
+
+  async function restoreDriveSessions() {
+    for (const [sessionId, metadata] of Object.entries(await sessions.listMetadata())) {
+      if (metadata.source !== "external-drive" || metadata.driveRetentionPending === true) continue;
+      const runtime = readRuntime(sessionId);
+      drive.restore(sessionId, Number(runtime.driveLastActivityAt)
+        || parseBeijingDateTime(runtime.updatedAt || metadata.createdAt) || Date.now());
     }
-    return { sessionId };
+  }
+
+  function recordDriveTool(input: DriveToolObservation, images: { mimeType: string; data: string }[] = [], rawResult: unknown = input.result) {
+    const { sessionId, runId, name, args, result, isError } = input;
+    if (!sessions.recordToolEvent || !drive.hasActiveLease(sessionId) || !sessions.supervisor.isRunCurrent(sessionId, runId)) return false;
+    // Client call IDs correlate a response within one request, never transcript identity.
+    const toolCallId = crypto.randomUUID();
+    sessions.recordToolEvent({
+      type: "tool_execution_end", sessionId, runId, toolCallId, spanId: `tool:${toolCallId}`,
+      toolName: name, args, result: driveTranscriptResult(result, images, tools.runtime.getToolResultPageContext?.(rawResult) || {}), isError,
+    });
+    return true;
+  }
+
+  async function recordNestedTool(input: DriveToolObservation) {
+    const projected = projectDriveResult(input.result, tools.runtime.getModelPolicy?.(input.name));
+    if (!recordDriveTool({ ...input, result: projected.value }, projected.images, input.result)) return;
+    if (!input.isError) rememberLoadedSkill(input.sessionId, input.name, input.result);
+    await sessions.persistTranscript?.(input.sessionId);
   }
 
   async function executeTool(params: Fields = {}, signal?: AbortSignal) {
+    const release = drive.protect(typeof params.sessionId === "string" ? params.sessionId.trim() : "");
+    try { return await executeToolRequest(params, signal); }
+    finally { release(); void onDriveSettled(); }
+  }
+
+  async function executeToolRequest(params: Fields = {}, signal?: AbortSignal) {
     const language = getLanguage();
     const parsed = parseDriveRequest(params);
     if (!parsed.ok) throw parsed.error;
@@ -475,6 +522,7 @@ export function createMcpRuntime({
     if (metadata.source !== "external-drive") {
       throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
     }
+    drive.assertActive(sessionId);
     const source = metadata.source;
     signal?.throwIfAborted();
     await waitForToolsReady("mcp_execute_tool");
@@ -488,27 +536,14 @@ export function createMcpRuntime({
     let timeoutSignal: AbortSignal | null = null;
     let notedDriveTools = false;
     let runId = "";
-    const noteDriveTool = (name: string, args: unknown, result: unknown, isError: boolean, images: { mimeType: string; data: string }[] = [], toolCallId = "") => {
-      if (!leased || !sessionId || typeof sessions.recordToolEvent !== "function") return;
-      const id = String(toolCallId || "").trim() || crypto.randomUUID();
-      sessions.recordToolEvent({
-        type: "tool_execution_end",
-        sessionId,
-        runId,
-        toolCallId: id,
-        spanId: `tool:${id}`,
-        toolName: name,
-        args: plainObject(args),
-        result: driveTranscriptResult(result, images),
-        isError,
-      });
-      notedDriveTools = true;
+    const noteDriveTool = (name: string, args: unknown, result: unknown, isError: boolean, images: { mimeType: string; data: string }[] = [], rawResult: unknown = result) => {
+      if (recordDriveTool({ sessionId, runId, name, args: plainObject(args), result, isError }, images, rawResult)) notedDriveTools = true;
     };
     try {
       lease = leased ? drive.begin(sessionId, signal) : null;
       const runtime = readRuntime(sessionId);
       runId = leased ? String(lease?.driveRunId || "") : "";
-      const context = toolContext(sessionId, runId, runProfile, params, runtime);
+      const context = { ...toolContext(sessionId, runId, runProfile, params, runtime), language, externalDrive: source === "external-drive" };
       timeoutSignal = parsed.timeoutSeconds
         ? AbortSignal.timeout(parsed.timeoutSeconds * 1000)
         : null;
@@ -526,21 +561,12 @@ export function createMcpRuntime({
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectNamedDriveResult(name, prepared.args, result, tools.runtime.getModelPolicy?.(name) ?? null, { aliases });
-          noteDriveTool(name, prepared.args, projected.value, plainObject(projected.value).ok === false, projected.images);
+          const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null);
+          noteDriveTool(name, prepared.args, projected.value, isToolFailure(projected.value), projected.images, result);
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value };
           return projected.images.length ? { ...body, images: projected.images } : body;
         } catch (error) {
-          if (error instanceof Error) {
-            if (name === "run_script") {
-              Object.assign(error, withLanguage(language, () => projectDriveScriptDiagnostic({
-                message: error.message, details: plainObject(error).details,
-              })));
-            }
-            const next = withLanguage(language, () => driveNoAliasText(error, error.message));
-            if (next !== error.message) error.message = next;
-          }
-          noteDriveTool(name, params.args, driveToolFailure(error), true);
+          noteDriveTool(name, params.args, driveToolFailure(error), true, [], error);
           throw error;
         }
       }
@@ -557,7 +583,7 @@ export function createMcpRuntime({
         aliases: tools.runtime.getTabAliases?.(sessionId) || {},
         context,
         refreshContext: refreshDriveContext,
-        onSettled: call => noteDriveTool(call.name, call.args, call.result, call.isError, call.images, call.id),
+        onSettled: call => noteDriveTool(call.name, call.args, call.result, call.isError, call.images, call.rawResult),
         signal: callSignal ?? new AbortController().signal,
         maxInFlight: parsed.maxCalls,
       }), callSignal);
@@ -681,6 +707,8 @@ export function createMcpRuntime({
     listTools,
     getTool,
     createDriveSession,
+    restoreDriveSessions,
+    recordNestedTool,
     executeTool,
     drive,
     listSkills: listAvailableSkills,
@@ -800,12 +828,13 @@ function plainObject(value: unknown, fallback: Fields = {}): Fields {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Fields : fallback;
 }
 
-function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[] = []) {
+function driveTranscriptResult(result: unknown, images: { mimeType: string; data: string }[], metadata: Fields) {
+  const page = { ...metadata };
   const image = images[0];
-  if (!image?.mimeType || !image.data) return result ?? null;
-  const dataUrl = `data:${image.mimeType};base64,${image.data}`;
-  if (result && typeof result === "object" && !Array.isArray(result)) return { ...(result as Fields), _image: dataUrl };
-  return { value: result ?? null, _image: dataUrl };
+  if (image?.mimeType && image.data) page._image = `data:${image.mimeType};base64,${image.data}`;
+  if (!Object.keys(page).length) return result ?? null;
+  const body = result && typeof result === "object" && !Array.isArray(result) ? result : { value: result ?? null };
+  return { ...body, ...page };
 }
 
 function driveToolFailure(error: unknown) {
@@ -813,9 +842,21 @@ function driveToolFailure(error: unknown) {
   const name = error instanceof Error ? error.name : "";
   const aborted = name === "AbortError" || name === "TimeoutError";
   const message = error instanceof Error && error.message ? error.message : String(error ?? "");
+  return toolError(aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"), message, {
+    hint: typeof err.hint === "string" ? err.hint : undefined,
+    details: plainObject(err.details),
+  });
+}
+
+function describeSessionRuntime(state: Fields): SessionRuntimeObservation {
   return {
-    error: message,
-    code: aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED"),
+    status: state.status, running: Boolean(state.running), pendingStart: Boolean(state.pendingStart), runId: state.runId,
+    waitId: state.waitId, waitMessage: state.waitMessage, waitTitle: state.waitTitle, waitForm: state.waitForm,
+    interrupted: Boolean(state.interrupted), reason: state.reason, startedAt: state.startedAt, endedAt: state.endedAt, updatedAt: state.updatedAt,
+    currentToolName: state.currentToolName, currentToolStartedAt: state.currentToolStartedAt,
+    contextUsage: state.contextUsage, contextWindow: state.contextWindow, inputTokensEstimate: state.inputTokensEstimate,
+    tracker: state.tracker, goal: state.goal, pendingSteerings: state.pendingSteerings, pendingSteeringMessages: state.pendingSteeringMessages,
+    pendingFollowUps: state.pendingFollowUps, pendingFollowUpMessages: state.pendingFollowUpMessages,
   };
 }
 

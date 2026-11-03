@@ -87,7 +87,7 @@ test("CLI recovery commands preserve shell-sensitive IDs and option-like values"
           ? { accepted: true, ...(tracked ? { clientMessageId: "requested-message" } : {}) }
           : passed,
       }), error => {
-        assert.equal(error.code, tracked ? "task_changed" : "invalid_response");
+        assert.equal(error.code, tracked ? "TASK_CHANGED" : "INVALID_RESPONSE");
         const shell = spawnSync("/bin/sh", ["-c", `qz() { printf '%s\\n' "$@"; }\n${error.details.command}`], { encoding: "utf8" });
         assert.equal(shell.status, 0, shell.stderr);
         const parsed = parseCommand(shell.stdout.trimEnd().split("\n"));
@@ -127,7 +127,7 @@ test("executing the CLI timeout recovery command follows the original task witho
     },
   };
   await assert.rejects(runCli(["send", "task", "Requested message", "--wait", "--timeout", "0.01"], deps), error => {
-    assert.equal(error.code, "timeout");
+    assert.equal(error.code, "TIMEOUT");
     recovery = error.details.command;
     assert.equal(recovery, `qz watch task --client ${browserA} --stream`);
     return true;
@@ -159,16 +159,16 @@ for (const deleted of [false, true]) test(`CLI missing-task feedback handles ${d
     });
     assert.equal(exitCode, 1);
     const envelope = JSON.parse(output);
-    assert.equal(envelope.ok, false);
-    const error = envelope.error;
-    assert.equal(error.code, command === "show" ? "task_not_found" : "task_deleted");
+    assert.deepEqual(Object.keys(envelope).sort(), ["code", "details", "hint", "message"]);
+    const error = envelope;
+    assert.equal(error.code, command === "show" ? "TASK_NOT_FOUND" : "TASK_DELETED");
     assert.match(error.message, /not found in the selected browser/);
     assert.doesNotMatch(error.message, /was deleted/);
-    assert.equal(error.sessionId, sessionId);
-    assert.equal(error.clientId, browserA);
+    assert.equal(error.details.sessionId, sessionId);
+    assert.equal(error.details.clientId, browserA);
     assert.match(error.hint, /task ID and selected browser.*qz browsers/);
-    assert.equal(error.command, `qz tasks --client ${browserA}`);
-    assert.doesNotMatch(error.hint + error.command, /Continue watching|qz watch/);
+    assert.equal(error.details.command, `qz tasks --client ${browserA}`);
+    assert.doesNotMatch(error.hint + error.details.command, /Continue watching|qz watch/);
     assert.equal(reads.length, deleted && command === "watch" ? 2 : 1);
   }
 });
@@ -190,7 +190,7 @@ test("CLI wrong-browser recovery stays on the resolved UUID and leaves the ownin
     let failure;
     await assert.rejects(runCli([command, "task", "--client", "work"], deps), error => {
       failure = error;
-      assert.equal(error.code, command === "show" ? "task_not_found" : "task_deleted");
+      assert.equal(error.code, command === "show" ? "TASK_NOT_FOUND" : "TASK_DELETED");
       assert.equal(error.details.clientId, browserB);
       assert.equal(error.details.command, `qz tasks --client ${browserB}`);
       return true;

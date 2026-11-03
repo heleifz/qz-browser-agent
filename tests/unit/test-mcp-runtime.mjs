@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { localizeToolFailureError } from "../../src/shared/tools/tool-error-localization.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 import { createMcpRuntime } from "../../src/background/mcp/mcp-runtime.js";
 
 const executed = [];
@@ -34,7 +36,7 @@ const skillItems = [{
   ],
 }];
 
-const metadata = { s1: { id: "s1", title: "Session" } };
+const metadata = { s1: { id: "s1", title: "Session", parentSessionId: "0", titleSource: "manual" } };
 const sessions = {
   normalizeId: value => String(value || "").trim(),
   requireId(value, operation) {
@@ -45,9 +47,9 @@ const sessions = {
   supervisor: {
     getUserWait: sessionId => sessionId === "s1" && waits.has(runtimeState.waitId) ? { sessionId, waitId: runtimeState.waitId, runId: activeRunId } : null,
     isRunCurrent(sessionId, runId) {
-      return sessionId === "s1" && runId === activeRunId || String(runId || "").startsWith("drive-");
+      return sessionId === "s1" && runId === activeRunId || runId === `opaque-${sessionId}`;
     },
-    mintDriveRunId(sessionId) { return `drive-${sessionId}`; },
+    mintDriveRunId(sessionId) { return `opaque-${sessionId}`; },
     takeDriveRunForRelease() { return ""; },
     clearDriveRunId() {},
     resolveUserWait({ waitId }) {
@@ -175,6 +177,8 @@ assert.equal((await runtime.cancelUserWait({ sessionId: "s1", waitId: "missing" 
 runtimeState.waitId = "wait-2";
 runtimeState.waitForm = { fields: [{ id: "choice", type: "text" }] };
 const pending = await runtime.getSnapshot("s1");
+assert.deepEqual(pending.session, { sessionId: "s1", title: "Session", status: runtimeState.status });
+assert.equal(metadata.s1.titleSource, "manual", "public Session observations leave stored metadata unchanged");
 assert.deepEqual(pending.input, runtime.getUserInput({ sessionId: "s1" }));
 assert.equal(pending.input.responseTemplate.answers.choice, "<text>");
 assert.deepEqual((await runtime.getState("s1")).input, pending.input);
@@ -233,13 +237,11 @@ assert.equal((await runtime.getMessages("s1", { tail: true, num: 1 })).num, 1);
 const listedTools = await runtime.listTools({ sessionId: "s1", loadedPluginSkillNames: ["extra"] });
 assert.deepEqual(listedTools.tools.map(tool => tool.name), [...driveToolNames, ...blockedToolNames]);
 assert.equal(runProfiles.at(-1).externalDrive, false);
-const blankTools = await runtime.listTools({ sessionId: "" });
+const blankTools = await runtime.listTools();
 assert.equal(runProfiles.at(-1).externalDrive, true);
 assert.deepEqual(blankTools.tools.map(tool => tool.name), defaultDriveNames);
-const missingTools = await runtime.listTools({ sessionId: "not-created" });
-assert.equal(runProfiles.at(-1).externalDrive, true);
+await assert.rejects(runtime.listTools({ sessionId: "not-created" }), { code: "DRIVE_SESSION_NOT_FOUND" });
 assert.equal(Object.hasOwn(metadata, "not-created"), false);
-assert.deepEqual(missingTools.tools.map(tool => tool.name), defaultDriveNames);
 metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
 const driveTools = await runtime.listTools({ sessionId: "drive-listed" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
@@ -257,10 +259,15 @@ await assert.rejects(
   runtime.executeTool({ sessionId: "s1", calls: [{ id: "dom", name: "read_dom", args: {} }] }),
   error => error.code === "DRIVE_SESSION_OCCUPIED",
 );
+await assert.rejects(runtime.createDriveSession({ sessionId: "missing-title" }), { code: "SESSION_TITLE_REQUIRED" });
+assert.deepEqual(await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-s" }), {
+  sessionId: "drive-s", title: "Inspect example page", status: "completed",
+});
 const driveTool = await runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" }, runId: "public-run" });
 assert.equal(executed.at(-1).context.source, "mcp_bridge");
-assert.equal(executed.at(-1).context.runId, "drive-drive-s", "a client runId is not the drive execution identity");
-assert.equal(driveTool.runId, "drive-drive-s");
+assert.equal(executed.at(-1).context.externalDrive, true, "trusted Session metadata determines mode even when its runId is opaque");
+assert.equal(executed.at(-1).context.runId, "opaque-drive-s", "a client runId is not the drive execution identity");
+assert.equal(driveTool.runId, "opaque-drive-s");
 assert.notEqual(driveTool.runId, "public-run");
 const loadedBeforeDrive = loadedNames.length;
 await assert.rejects(
@@ -273,14 +280,14 @@ assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp
 assert.equal((await runtime.getTool({ sessionId: "s1", name: "manage_bookmarks" })).name, "manage_bookmarks");
 assert.equal((await runtime.getTool({ sessionId: "drive-listed", name: "browse_history" })).name, "browse_history");
 assert.equal(await runtime.getTool({ sessionId: "drive-listed", name: "not_a_tool" }), null);
-for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "qingzhou_skill_author__delete_skill", "mcp_call_tool"]) {
+for (const name of ["manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user", "use_tab", "get_working_tab", "qingzhou_skill_author__delete_skill", "mcp_call_tool"])  {
   await assert.rejects(
     () => runtime.getTool({ sessionId: "drive-listed", name }),
-    error => error.code === "DRIVE_TOOL_FORBIDDEN" && error.message === `不能通过直驱调用 ${name}。`,
+    error => error.code === "DRIVE_TOOL_FORBIDDEN" && /tabRef/.test(error.message),
   );
 }
 await assert.rejects(
-  () => runtime.getTool({ sessionId: "", name: "ask_user" }),
+  () => runtime.getTool({ name: "ask_user" }),
   error => error.code === "DRIVE_TOOL_FORBIDDEN",
 );
 
@@ -290,8 +297,9 @@ sessions.recordToolEvent = event => { driveNotes.push(event); };
 sessions.persistTranscript = async sessionId => { persistedDriveSessions.push(sessionId); };
 {
   const notedBefore = driveNotes.length;
-  await runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main", tabRef: "page" } });
-  assert.equal(driveNotes.length, notedBefore, "a legacy empty session does not record a drive transcript");
+  await assert.rejects(runtime.executeTool({ sessionId: "", name: "read_dom", args: { selector: "main", tabRef: "page" } }),
+    { code: "DRIVE_SESSION_REQUIRED" });
+  assert.equal(driveNotes.length, notedBefore, "an empty session does not execute or record a drive transcript");
   assert.equal(executed.at(-1).context.toolCallId || "", "");
 }
 const batchNotes = await runtime.executeTool({
@@ -302,22 +310,24 @@ const batchNotes = await runtime.executeTool({
   ],
 });
 assert.equal(batchNotes.results.length, 2);
-assert.deepEqual(driveNotes.map(event => [event.toolCallId, event.toolName, event.isError, event.type]), [
-  ["tree", "get_ax_tree", false, "tool_execution_end"],
-  ["shot", "screenshot", false, "tool_execution_end"],
+assert.deepEqual(driveNotes.map(event => [event.toolName, event.isError, event.type]), [
+  ["get_ax_tree", false, "tool_execution_end"],
+  ["screenshot", false, "tool_execution_end"],
 ]);
-assert.equal(driveNotes.every(event => event.runId === "drive-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
+assert.equal(new Set(driveNotes.map(event => event.toolCallId)).size, 2);
+assert.ok(driveNotes.every(event => !["tree", "shot"].includes(event.toolCallId)));
+assert.equal(driveNotes.every(event => event.runId === "opaque-drive-s" && event.spanId === `tool:${event.toolCallId}`), true);
 assert.deepEqual(persistedDriveSessions, ["drive-s"]);
 {
   const previous = toolRuntime.execute;
-  toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "drop-me" });
+  toolRuntime.execute = async () => ({ ok: true, _image: "data:image/png;base64,aaaa", _debug: "business-debug" });
   try {
     driveNotes.length = 0;
     const shot = await runtime.executeTool({ sessionId: "drive-s", name: "screenshot", args: { tabRef: 4 } });
     assert.equal(Object.hasOwn(shot.result, "_image"), false);
-    assert.equal(Object.hasOwn(shot.result, "_debug"), false);
+    assert.equal(shot.result._debug, "business-debug");
     assert.equal(driveNotes[0].result._image, "data:image/png;base64,aaaa");
-    assert.equal(Object.hasOwn(driveNotes[0].result, "_debug"), false);
+    assert.equal(driveNotes[0].result._debug, "business-debug");
     assert.equal(executed.at(-1).context.toolCallId || "", "", "drive recording stays off the execution context");
   } finally {
     toolRuntime.execute = previous;
@@ -337,6 +347,25 @@ assert.deepEqual(persistedDriveSessions, ["drive-s"]);
     assert.equal(driveNotes[0].isError, true);
     assert.equal(driveNotes[0].result.code, "TOOL_FAILED");
     assert.deepEqual(persistedDriveSessions, ["drive-s"]);
+  } finally {
+    toolRuntime.execute = previous;
+  }
+}
+
+{
+  const previous = toolRuntime.execute;
+  try {
+    for (const language of ["en", "zh-CN"]) for (const name of ["Error", "AbortError", "TimeoutError"]) {
+      const failure = Object.assign(new Error("Injected lost touchEnd response"), { name });
+      toolRuntime.execute = async () => { throw withLanguage(language, () => localizeToolFailureError(failure)); };
+      driveNotes.length = 0;
+      await assert.rejects(runtime.executeTool({ sessionId: "drive-s", name: "read_dom", args: { tabRef: "page" } }), error => error === failure);
+      assert.equal(driveNotes.length, 1, "each failure produces exactly one card");
+      assert.deepEqual(driveNotes[0].result, {
+        code: name === "Error" ? "TOOL_EXECUTION_FAILED" : "OPERATION_ABORTED",
+        message: "Injected lost touchEnd response",
+      }, "MCP keeps the concrete Error message and recognizes cancellation by native name");
+    }
   } finally {
     toolRuntime.execute = previous;
   }
@@ -395,6 +424,7 @@ const snapshot = await runtime.getSnapshot("s1", {
   includeTrace: true,
   traceLimit: 5,
 });
+assert.deepEqual(snapshot.session, { sessionId: "s1", title: "Session", status: snapshot.status });
 assert.equal(snapshot.artifacts.total, 0);
 assert.deepEqual(snapshot.usage, {
   inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0,
@@ -404,6 +434,8 @@ assert.equal(snapshot.toolCount, driveToolNames.length + blockedToolNames.length
 assert.deepEqual(snapshot.trace, ["s1 trace"]);
 assert.equal(snapshot.tail[0].compact, true);
 
+await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-abort" });
+await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-lease" });
 for (const stage of ["ready", "canManageSessions", "buildRunProfile"]) {
   const original = tools[stage], controller = new AbortController();
   let release, entered;

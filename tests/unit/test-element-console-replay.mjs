@@ -79,7 +79,7 @@ function session(tabId, contexts) {
     if (method === "Runtime.evaluate") {
       const context = contexts.find(item => item.id === params.contextId);
       if (!context) throw new Error("Cannot find context with specified id");
-      return { result: { value: { extensionId: context.extensionId, bridge: context.bridge } } };
+      return { result: { value: { extensionId: context.extensionId, bridge: context.bridge, elementRefs: true } } };
     }
     if (method === "DOM.resolveNode") return { object: { objectId: "node" } };
     if (method === "Runtime.callFunctionOn") return { result: { value: { ok: true } } };

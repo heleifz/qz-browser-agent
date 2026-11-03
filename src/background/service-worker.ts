@@ -75,6 +75,8 @@ import {
   subscribeSkillToolRegistry,
 } from "./skills/skill-tool-runtime.js";
 import { createSerialQueue } from "./internal/serial-queue.js";
+import { createDriveSessionRetention } from "./session/drive-retention.js";
+import { removeOwnedSessionResources } from "./session/resource-cleanup.js";
 import {
   getLastTranscriptToolName,
 } from "../shared/session/session-codec.js";
@@ -525,6 +527,8 @@ sessionCommands = createSessionCommands({
   copyChatMessageDocuments: chatDocumentAttachments.copyMessageDocuments,
   removeChatSessionDocuments: chatDocumentAttachments.removeSessionDocuments,
   removeSessionObservations: async id => productRuntime.removeSession(id),
+  removeSessionResources: removeOwnedSessionResources,
+  onDriveSettled: () => driveRetention.request(),
   blockChatDocumentParsing: chatDocumentAttachments.blockSession,
   observeAgentEvent: (sessionId, event) => lifecycle.emit(sessionId, event, "committed"),
   getAutomationRuntime: () => automationRuntime,
@@ -760,9 +764,10 @@ const runScriptBridge = createRunScriptBridge({
   canManageSessions: sessionCommands.canManageSessionTools,
   buildRunProfile,
   getRunToolContext: async (sessionId, runId) => {
-    const entry = await sessionAgentHost.getLiveEntry(sessionId);
-    return entry?.agent?.getRunToolContext(runId) || null;
+    const [entry, metadata] = await Promise.all([sessionAgentHost.getLiveEntry(sessionId), sessionRepository.getMetadata(sessionId)]);
+    return { ...entry?.agent?.getRunToolContext(runId), externalDrive: metadata?.source === "external-drive" };
   },
+  recordDriveTool: observation => mcpRuntime.recordNestedTool(observation),
   applyNestedToolResult: async ({ sessionId, ...payload }) => {
     const entry = await sessionAgentHost.getLiveEntry(sessionId);
     return entry?.agent?.applyNestedToolResult(payload) || false;
@@ -829,6 +834,25 @@ const mcpRuntime = createMcpRuntime({
   },
   dispatchSidepanel: (message, port) => sidepanelTransport.dispatch(message, port),
   storageKey: qingzhouMcpBridgeStorageKey,
+  onDriveSettled: () => driveRetention.request(),
+});
+
+const driveRetention = createDriveSessionRetention({
+  listMetadata: sessionRepository.listMetadata,
+  getRuntime: sessionSupervisor.getRuntime,
+  isActive: sessionSupervisor.isActive,
+  retire: mcpRuntime.drive.retireForRetention,
+  remove: async (id, canRemove) => {
+    const result = await sessionCommands.deleteSessionRuntime(id, { source: "drive_retention" }, undefined, canRemove);
+    return result.deleted === true;
+  },
+});
+
+sessionRuntimeReady.then(async () => {
+  await mcpRuntime.restoreDriveSessions();
+  await driveRetention.request();
+}).catch(error => {
+  console.warn("[轻舟] restore drive cleanup failed:", error);
 });
 
 const mcpResources = createMcpResourceRuntime();

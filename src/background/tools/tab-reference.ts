@@ -2,6 +2,7 @@ import { isTabAlias, tabReferenceId } from "../../shared/tab-reference.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { ToolExecutionError } from "./arguments.js";
 import { t } from "./messages.js";
+import { t as backendT } from "../../shared/i18n/backend.js";
 
 const keys: Readonly<Record<string, Parameters<typeof t>[0]>> = {
   invalid_alias: "batchTabReferenceInvalidAlias", duplicate_alias: "batchTabReferenceDuplicateAlias",
@@ -13,7 +14,7 @@ const keys: Readonly<Record<string, Parameters<typeof t>[0]>> = {
 export function tabReferenceError(reason: string, reference?: unknown, language = getLanguage()) {
   const dependency = reason === "dependency_failed";
   return new ToolExecutionError(dependency ? "BATCH_TAB_DEPENDENCY_FAILED" : "BATCH_TAB_REFERENCE_ERROR",
-    withLanguage(language, () => t(dependency ? "batchTabDependencyFailed" : keys[reason] || "batchTabReferenceError",
+    withLanguage(language, () => reason === "no_alias" ? backendT("drive.noAlias") : t(dependency ? "batchTabDependencyFailed" : keys[reason] || "batchTabReferenceError",
       { tabRef: reference == null ? (language === "zh-CN" ? "（未知）" : "unknown") : String(reference) })),
     { reason, ...(reference == null ? {} : { tabRef: reference }) });
 }

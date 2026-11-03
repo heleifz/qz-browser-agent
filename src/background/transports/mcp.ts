@@ -74,7 +74,7 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "get_bridge_config": return bridge.getConfig?.() || {};
       case "save_bridge_config": return bridge.saveConfig?.(params.config || params);
       case "runtime_message": return call("system.runtimeMessage", params.message || {}, params, signal);
-      case "list_sessions": return call("sessions.list", params);
+      case "list_sessions": return call("sessions.list", { ...params, publicView: true });
       case "create_session": return call("sessions.create", params, signal);
       case "create_drive_session": return call("sessions.createDrive", params, signal);
       case "send_message": return call("sessions.send", params, signal);

@@ -1,4 +1,3 @@
-import { productText } from "#sdk/shared/product-text";
 import { toolT } from "./tool-messages.js";
 import { mayUseTools } from "./tool-access.js";
 import { t } from "./i18n.js";
@@ -15,7 +14,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { publishTimeoutTrace, scriptTimeout } from "#sdk/background/tools";
+import { publishTimeoutTrace, scriptTimeout, toolError } from "#sdk/background/tools";
 import { ensureOffscreenDocument } from "#sdk/background/browser";
 import { wrapRunScriptSource } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -137,26 +136,10 @@ function normalizeRunScriptObservation(input: unknown) {
 }
 
 function enrichRunScriptResult(result: Fields): Fields {
-  if (!result || typeof result !== "object" || result.ok !== false) return result;
-  if (result.diagnostic && typeof result.diagnostic === "object") return result;
-  return {
-    ...result,
-    diagnostic: buildRunScriptDiagnostic(result),
-  };
-}
-
-function buildRunScriptDiagnostic(result: Fields = {}) {
-  const error = normalizeRunScriptErrorText(result.error || result.message || "");
-  const code = String(result.code || "").trim();
-  const category = classifyRunScriptFailure(error, code);
-  return {
-    category,
-    likelyCause: describeRunScriptFailure(category),
-    suggestedNextStep: suggestRunScriptNextStep(category),
-    lastTrace: summarizeRunScriptTraceTail(result.trace),
-    engine: result.engine || record(result.details).engine || record(result.details).reason || "",
-    code: code || undefined,
-  };
+  if (result.ok !== false || result.hint) return result;
+  return { ...result, hint: suggestRunScriptNextStep(classifyRunScriptFailure(
+    normalizeRunScriptErrorText(result.error || result.message), String(result.code || ''),
+  )) };
 }
 
 function normalizeRunScriptErrorText(error: unknown = "") {
@@ -165,6 +148,7 @@ function normalizeRunScriptErrorText(error: unknown = "") {
 
 function classifyRunScriptFailure(error: string, code = "") {
   const text = `${code} ${error}`.toLowerCase();
+  if (/script_context_unavailable/.test(text)) return "script_context";
   if (/page_context_unavailable|page javascript context is unavailable/.test(text)) return "page_context";
   if (/self_unloading|may unload|blocked .*own tab/.test(text)) return "page_lifecycle";
   if (/timed out|timeout/.test(text)) return "timeout";
@@ -176,31 +160,10 @@ function classifyRunScriptFailure(error: string, code = "") {
   return "script_error";
 }
 
-function describeRunScriptFailure(category: string) {
-  switch (category) {
-    case "page_context":
-      return t("thePageJavascriptContextIsUnavailableRunScriptRuns");
-    case "page_lifecycle":
-      return t("theScriptClickedSubmittedNavigatedOrClosedTheCurrent");
-    case "timeout":
-      return t("theScriptPageWaitOrNestedToolCallTimed");
-    case "script_shape":
-      return t("theScriptHasAnUnsupportedShapeOrInvalidSyntax");
-    case "wrong_runtime":
-      return t("theExecutionEnvironmentDoesNotMatchTheScriptPage");
-    case "selector_or_timing":
-      return t("theTargetDomIsEmptyOrThePageHas");
-    case "tool_bridge":
-      return t("aToolsCallInsideRunScriptFailedCheckBridge");
-    case "restricted_page":
-      return t("theBrowserBlocksScriptInjectionOnThisPageThis");
-    default:
-      return t("scriptExecutionFailedUseTheErrorAndTraceTo");
-  }
-}
-
 function suggestRunScriptNextStep(category: string) {
   switch (category) {
+    case "script_context":
+      return toolT("scriptContextRecovery");
     case "page_context":
       return t("useARegularHttpHttpsPageRefreshOrReopen");
     case "page_lifecycle":
@@ -210,7 +173,7 @@ function suggestRunScriptNextStep(category: string) {
     case "script_shape":
       return toolT("scriptShapeRecovery");
     case "wrong_runtime":
-      return t("useTargetPageWithAWorkingTabForPage");
+      return toolT("pageScriptRecovery");
     case "selector_or_timing":
       return t("returnTheCandidateCountAndASampleFirstOr");
     case "tool_bridge":
@@ -218,16 +181,8 @@ function suggestRunScriptNextStep(category: string) {
     case "restricted_page":
       return t("runOnARegularHttpHttpsPageOrUse");
     default:
-      return t("inspectDiagnosticLasttraceAndTheErrorAddStageTrace");
+      return toolT("pageScriptRecovery");
   }
-}
-
-function summarizeRunScriptTraceTail(trace: unknown) {
-  const rows: unknown[] = Array.isArray(trace) ? trace : [];
-  return rows.slice(-5).map((row) => {
-    if (!row || typeof row !== "object") return String(row ?? "");
-    return [record(row).level || "trace", record(row).message || record(row).text || ""].filter(Boolean).join(": ");
-  }).filter(Boolean);
 }
 
 function compactScriptTrace(trace: unknown) {
@@ -273,34 +228,13 @@ function normalizeRunScriptTarget(value: unknown) {
   const target = String(value || "page").trim().toLowerCase();
   if (!target || target === "page") return "page";
   if (target === "inner") return "inner";
-  throw new ToolExecutionError("INVALID_RUN_SCRIPT_TARGET", "run_script target must be page or inner.", {
-    target: value,
-    allowed: ["page", "inner"],
-  });
+  throw new ToolExecutionError("SCRIPT_REQUEST_INVALID", "The script execution request is invalid.");
 }
 
-function makeRunScriptTargetRequiredError({ code, skill, script, context = {} }: { code?: unknown; skill?: unknown; script?: unknown; context?: ToolContext } = {}) {
-  const workingTabId = Number(context?.workingTabId);
-  const sessionId = String(context?.sessionId || "").trim();
-  return new ToolExecutionError(
-    "RUN_SCRIPT_TARGET_TAB_REQUIRED",
-    "run_script requires an explicit tabId or the current session workingTabId; it will not fall back to the active browser tab.",
-    {
-      reason: "run_script_strict_target_policy",
-      codeLength: String(code || "").length,
-      skill: String(skill || ""),
-      script: String(script || ""),
-      sessionId,
-      workingTabId: Number.isFinite(workingTabId) && workingTabId > 0 ? workingTabId : null,
-      suggestedNextStep: toolT("workingTabRecovery"),
-      examples: [
-        t("callOpenTabForTheTargetUrlFirstThen"),
-        t("ifTheTargetPageIsKnownPassTabidTo"),
-        t("useListTabsToInspectActiveIsworkingtabUsableThen"),
-        t("forDataStoreProcessingFileGenerationOrPureJs"),
-      ],
-    },
-  );
+function makeRunScriptTargetRequiredError({ skill, script }: { code?: unknown; skill?: unknown; script?: unknown; context?: ToolContext } = {}) {
+  return Object.assign(new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef to run code that uses a page.", {
+    ...(skill ? { skill: String(skill) } : {}), ...(script ? { script: String(script) } : {}),
+  }), { hint: toolT("workingTabRecovery") });
 }
 
 registerTool({
@@ -314,7 +248,7 @@ registerTool({
     properties: {
       timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
       target: { type: "string", enum: ["page", "inner"], description: toolT("runSkillScriptTarget") },
-      tabId: { type: "number", description: toolT("runSkillScriptTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("runSkillScriptTabId") },
       skill: { type: "string", description: toolT("runSkillScriptSkill") },
       script: { type: "string", description: toolT("runSkillScriptScript") },
       args: { type: "object", description: toolT("runSkillScriptArgs") },
@@ -335,43 +269,40 @@ registerTool({
     const securityGuardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
     const code = (await loadSkillScript(skill, script, context.language)) || "";
     if (executionTarget === "inner") {
-      return runScriptWithOffscreenInnerRunner(code, context, "skill_script", scriptArgs, securityGuardrails, signal);
+      return describeScriptExecution(record(await runScriptWithOffscreenInnerRunner(code, context, "skill_script", scriptArgs, securityGuardrails, signal)));
     }
-    const resolvedTabId = resolveRunScriptTargetTabId(tabId, context);
+    const resolvedTabId = resolveRunScriptTargetTabId(tabId);
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ skill, script, context });
-    return runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal);
+    return describeScriptExecution(record(await runScriptWithCdpToolBridge(resolvedTabId, code, context, "skill_script", scriptArgs, securityGuardrails, signal)));
   },
 });
 
 registerTool({
   name: "run_script",
   behavior: {
-    barrier: args => isRunScriptInnerTargetArgs(args) || mayUseTools(args.code),
+    barrier: args => args.tabRef == null && args.tabId == null || mayUseTools(args.code),
     parallelTab: true,
     timeoutResult: { kind: "action", pending: "script outcome confirmation" },
   },
-  workingTab: args => args.mutatesPage === true ? "claim" : "update",
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return getRunScriptDescription(); },
   get parameters() { return {
     type: "object",
     properties: {
       timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
-      target: { type: "string", enum: ["page", "inner"], description: toolT("runScriptTarget") },
-      tabId: { type: "number", description: toolT("runSkillScriptTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("runSkillScriptTabId") },
       args: { type: "object", description: toolT("runScriptArgs") },
       mutatesPage: { type: "boolean", description: toolT("runSkillScriptMutatesPage") },
       code: { type: "string", description: toolT("runScriptCode") },
     },
     required: ["timeout", "code"],
   } as const; },
-  page: args => isRunScriptInnerTargetArgs(args) ? false : "owned",
+  page: args => args.tabRef != null || args.tabId != null ? "owned" : false,
   timeout: scriptTimeout,
   validateArgs: args => { scriptTimeout(args, "run_script"); },
   execute: async (input, signal, context = {}) => {
-    const { target, tabId, code, args = {}, mutatesPage } = input;
+    const { tabId, code, args = {}, mutatesPage } = input;
     const { skill, script } = input as typeof input & { skill?: unknown; script?: unknown };
-    const executionTarget = normalizeRunScriptTarget(target);
     const hasInlineCode = String(code || "").trim().length > 0;
     const hasSkillScript = String(skill || "").trim() || String(script || "").trim();
     if (hasSkillScript) {
@@ -386,18 +317,11 @@ registerTool({
     }
     const scriptArgs = args && typeof args === "object" && !Array.isArray(args) ? args : {};
     const securityGuardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
-    if (executionTarget === "inner") {
-      if (mutatesPage === true) {
-        throw new ToolExecutionError("INVALID_RUN_SCRIPT_TARGET", "run_script target:\"inner\" cannot mutate a page.", {
-          target: executionTarget,
-          mutatesPage,
-        });
-      }
-      return runScriptWithOffscreenInnerRunner(code, context, "inner", scriptArgs, securityGuardrails, signal);
+    const resolvedTabId = resolveRunScriptTargetTabId(tabId);
+    if (!resolvedTabId) {
+      if (mutatesPage === true) throw makeRunScriptTargetRequiredError({ code });
+      return describeScriptExecution(record(await runScriptWithOffscreenInnerRunner(code, context, "orchestration", scriptArgs, securityGuardrails, signal)));
     }
-
-    const resolvedTabId = resolveRunScriptTargetTabId(tabId, context);
-    if (!resolvedTabId) throw makeRunScriptTargetRequiredError({ code, skill, script, context });
 
     const run = async () => {
       if (mayUseTools(code)) {
@@ -425,9 +349,34 @@ registerTool({
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
     };
-    return isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run);
+    const execution = await (isNestedRunScriptContext(context) ? run() : runPageScriptExclusive(resolvedTabId, signal, run, context));
+    return describeScriptExecution(record(execution));
   },
 });
+
+/** Both execution environments construct the same caller result here. */
+function describeScriptExecution(execution: Fields) {
+  const image = normalizeRunScriptObservation(execution);
+  const trace = compactScriptTrace(execution.trace);
+  if (execution.ok !== false) return {
+    ok: true, result: execution.result,
+    ...(trace.length ? { trace } : {}),
+    ...(execution.hasResult === false || execution.resultType === 'undefined'
+      ? { hint: String(execution.message || 'The script returned undefined. Return a value to inspect the result.') } : {}),
+    ...(image || {}),
+  };
+  const details = record(execution.details);
+  return { ...toolError(String(execution.code || 'SCRIPT_EVALUATION_FAILED'),
+    String(details.originalError || execution.message || execution.error || 'Script failed.'), {
+      hint: String(execution.hint || toolT('pageScriptRecovery')),
+      details: {
+        ...details,
+        ...(details.lineNumber != null ? { line: details.lineNumber } : {}),
+        ...(details.columnNumber != null ? { column: details.columnNumber } : {}),
+        ...(trace.length ? { trace: trace.slice(-5) } : {}),
+      },
+    }), ...(image || {}) };
+}
 
 function isToolApiReferenceError(error: unknown) {
   return /\b(?:tools|tool) is not defined\b|can't find variable:\s*(?:tools|tool)\b/i.test(String(error || ""));
@@ -437,9 +386,8 @@ function withoutToolAccess(result: Fields): Fields {
   if (result.ok !== false || !isToolApiReferenceError(result.error)) return result;
   return { ...result,
     code: "RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE", error: t("scriptToolAccessUnavailable"),
-    details: { ...record(result.details), originalError: result.error, toolAccess: false, automaticReplay: false, mayHaveTakenEffect: true },
-    diagnostic: { ...record(result.diagnostic), category: "tool_access",
-      likelyCause: t("scriptToolAccessUnavailable"), suggestedNextStep: t("scriptToolAccessRecovery") },
+    hint: t("scriptToolAccessRecovery"),
+    details: { ...record(result.details), toolAccess: false, automaticReplay: false, mayHaveTakenEffect: true },
   };
 }
 
@@ -447,23 +395,21 @@ const pageScriptQueuesByTabId = new Map<number, Promise<void>>();
 const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknown): void; reject(error: unknown): void }>();
 const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
-function makeRunScriptAbortedError(tabId: number, phase = "run") {
-  return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
-    tabId,
-    engine: "cdp",
-    phase,
-  });
+function makeRunScriptAbortedError(context: ToolContext, phase = "run") {
+  return Object.assign(new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
+    ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }), phase,
+  }), { hint: "Inspect the page before retrying the script." });
 }
 
-async function waitForPageScriptTurn(tabId: number, previous: Promise<void>, signal?: AbortSignal) {
+async function waitForPageScriptTurn(previous: Promise<void>, signal: AbortSignal | undefined, context: ToolContext) {
   if (!signal) {
     await previous.catch(() => {});
     return;
   }
-  if (signal.aborted) throw makeRunScriptAbortedError(tabId, "queue");
+  if (signal.aborted) throw makeRunScriptAbortedError(context, "queue");
   let abortHandler: (() => void) | null = null;
   const abortPromise = new Promise((_, reject) => {
-    abortHandler = () => reject(makeRunScriptAbortedError(tabId, "queue"));
+    abortHandler = () => reject(makeRunScriptAbortedError(context, "queue"));
     signal.addEventListener("abort", abortHandler, { once: true });
   });
   try {
@@ -473,7 +419,7 @@ async function waitForPageScriptTurn(tabId: number, previous: Promise<void>, sig
   }
 }
 
-async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | undefined, fn: () => Promise<T>, context: ToolContext = {}): Promise<T> {
   const key = Number(tabId);
   if (!Number.isFinite(key) || key <= 0) return fn();
 
@@ -484,8 +430,8 @@ async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | un
   pageScriptQueuesByTabId.set(key, current);
 
   try {
-    await waitForPageScriptTurn(key, previous, signal);
-    if (signal?.aborted) throw makeRunScriptAbortedError(key, "run");
+    await waitForPageScriptTurn(previous, signal, context);
+    if (signal?.aborted) throw makeRunScriptAbortedError(context, "run");
     return await fn();
   } finally {
     releaseTurn?.();
@@ -497,7 +443,7 @@ async function runPageScriptExclusive<T>(tabId: number, signal: AbortSignal | un
 
 async function ensureRunScriptOffscreenDocument() {
   if (!chrome.offscreen?.createDocument) {
-    throw new ToolExecutionError("INNER_RUNNER_UNAVAILABLE", productText("Chrome offscreen documents are not available.", "Firefox offscreen documents are not available."), {
+    throw new ToolExecutionError("SCRIPT_CONTEXT_UNAVAILABLE", "Script execution is unavailable in this browser.", {
       engine: "offscreen_inner",
     });
   }
@@ -527,7 +473,7 @@ async function waitForRunScriptOffscreenReady({ existed = false } = {}) {
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  throw new ToolExecutionError("INNER_RUNNER_OFFSCREEN_NOT_READY", "run_script inner offscreen document did not become ready.", {
+  throw new ToolExecutionError("SCRIPT_CONTEXT_UNAVAILABLE", "The script context did not become ready.", {
     existed,
     elapsedMs: Date.now() - startedAt,
     lastError,
@@ -548,7 +494,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
     const fetchBridge = Boolean(skillExecution?.plugin);
     if (skillExecution?.plugin) {
       if (typeof skillNetwork?.registerExecution !== "function") {
-        throw new ToolExecutionError("SKILL_NETWORK_UNAVAILABLE", "Skill inner fetch runtime is unavailable", {
+        throw new ToolExecutionError("SKILL_NETWORK_UNAVAILABLE", "Skill network access is unavailable", {
           pluginId: skillExecution.plugin?.id || "",
           skillName: skillExecution.plugin?.skillName || "",
         });
@@ -597,14 +543,11 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       ok: false,
       hasResult: false,
       result: null,
-      error: errorMessage(err) || "inner_runner_unavailable",
-      code: errorCode(err) || "INNER_RUNNER_UNAVAILABLE",
+      error: errorMessage(err) || "The script context is unavailable.",
+      code: errorCode(err) || "SCRIPT_CONTEXT_UNAVAILABLE",
       engine: "offscreen_inner",
       execution_world: "inner",
-      details: {
-        requestId,
-        reason,
-      },
+      details: {},
     });
   } finally {
     unregisterNetworkExecution?.();
@@ -614,12 +557,12 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
 async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) {
   const requestId = String(message?.requestId || "");
   if (!requestId) {
-    throw new ToolExecutionError("INNER_RUNNER_INVALID_REQUEST", "run_script inner requires requestId.", {
+    throw new ToolExecutionError("SCRIPT_REQUEST_INVALID", "The script execution request is missing its identifier.", {
       engine: "offscreen_inner",
     });
   }
   if (signal?.aborted) {
-    throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running inner script", {
+    throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running the script", {
       engine: "offscreen_inner",
       requestId,
     });
@@ -649,7 +592,7 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) 
     } else {
       chrome.runtime.sendMessage({ type: "run_script_inner_cancel", requestId }).catch(() => {});
     }
-    pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running inner script", {
+    pending.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running the script", {
       engine: "offscreen_inner",
       requestId,
     }));
@@ -661,7 +604,7 @@ async function sendRunScriptInnerMessage(message: Fields, signal?: AbortSignal) 
     const ack = record(await chrome.runtime.sendMessage<Fields, unknown>(message));
     if (!ack?.ok) {
       const pending = runScriptInnerPendingByRequestId.get(requestId);
-      pending?.reject(new ToolExecutionError(String(ack.code || "INNER_RUNNER_SEND_FAILED"), String(ack.error || "run_script inner request was not accepted."), {
+      pending?.reject(new ToolExecutionError(String(ack.code || "SCRIPT_CONTEXT_UNAVAILABLE"), String(ack.error || "The script execution request was not accepted."), {
         engine: "offscreen_inner",
         requestId,
       }));
@@ -718,7 +661,7 @@ async function runScriptWithCdpToolBridge(tabId: number, code: string, context: 
   }
   return runPageScriptExclusive(tabId, signal, () => (
     runScriptWithCdpToolBridgeUnlocked(tabId, code, context, reason, scriptArgs, securityGuardrails, signal)
-  ));
+  ), context);
 }
 
 async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, context: ToolContext = {}, reason = "tool_api", scriptArgs: Fields = {}, securityGuardrails: Guardrails = {}, signal?: AbortSignal) {
@@ -758,14 +701,7 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
     code: "PAGE_CONTEXT_UNAVAILABLE",
     engine: "cdp",
     execution_world: "page",
-    details: {
-      tabId,
-      reason,
-      phase,
-      cdp: cause,
-      engine: "cdp",
-      execution_world: "page",
-    },
+    details: { browserMessage: cause },
   });
 }
 
@@ -819,9 +755,6 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
     } catch (_e) {
       input = args;
     }
-    try {
-      if (input && typeof input === "object" && input.tabId == null && __qzSourceTabId) input.tabId = __qzSourceTabId;
-    } catch (_e) {}
     const safeInput = __qzSafeValueForMessage(input || {});
     __qzPushTrace("tool.start", [toolName, safeInput]);
     const id = "qz_tool_" + Date.now() + "_" + (++__qzSeq);
@@ -838,10 +771,10 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
           return;
         }
         if (!response.ok) {
-          __qzPushTrace("tool.error", [toolName, response.error || "bridge failed"]);
-          const bridgeError = new Error(response.error || ("tools." + toolName + " bridge failed"));
+          __qzPushTrace("tool.error", [toolName, response.message || response.error || "bridge failed"]);
+          const bridgeError = new Error(response.message || response.error || ("tools." + toolName + " bridge failed"));
           if (response.code) bridgeError.code = response.code;
-          if (response.diagnostic) bridgeError.diagnostic = response.diagnostic;
+          if (response.hint) bridgeError.hint = response.hint;
           if (response.details) bridgeError.details = response.details;
           reject(bridgeError);
           return;
@@ -958,10 +891,8 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs = {}, source, w
     if (!ok) {
       out.error = error?.stack || error?.message || String(error || "Script evaluation failed");
       out.code = error?.code || "SCRIPT_EVALUATION_FAILED";
-      out.details = __qzSafeValueForMessage({
-        reason: ${JSON.stringify(reason || "cdp")},
-        ...(error?.details && typeof error.details === "object" ? error.details : {}),
-      });
+      if (error?.hint) out.hint = String(error.hint);
+      out.details = __qzSafeValueForMessage(error?.details && typeof error.details === "object" ? error.details : {});
       if (error?.diagnostic && typeof error.diagnostic === "object") out.diagnostic = __qzSafeValueForMessage(error.diagnostic);
     } else if (result === undefined) {
       out.message = "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.";

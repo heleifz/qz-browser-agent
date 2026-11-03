@@ -225,8 +225,12 @@ const pendingWorking = await sessionTabs.getWorkingTabContext("pending-owner");
 assert.equal(pendingWorking?.id, 13);
 assert.equal(pendingWorking?.url, "https://pending.example/start");
 const implicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner" });
-assert.equal(implicitPendingTarget.ok, true, "an omitted tabId must still resolve to the navigating working tab");
-assert.equal(implicitPendingTarget.tabId, 13);
+assert.equal(implicitPendingTarget.ok, false, "an omitted target never selects a recent or active tab");
+assert.equal(implicitPendingTarget.code, "TAB_REF_REQUIRED");
+assert.equal(implicitPendingTarget.tabId, null);
+const explicitPendingTarget = await sessionTabs.resolveTargetTab({ sessionId: "pending-owner", tabId: 13 });
+assert.equal(explicitPendingTarget.ok, true, "an explicitly selected navigating tab remains usable");
+assert.equal(explicitPendingTarget.tabId, 13);
 
 tabs.set(14, {
   id: 14,
@@ -247,11 +251,12 @@ tabs.set(15, {
   groupId: -1,
 });
 runtimes.get("blank-owner").ownedTabIds.push(14, 15);
-const embeddedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 14, checkOnly: true });
-assert.equal(embeddedPdf.ok, true, "an owned Chrome PDF viewer with an embedded https URL is a page tab");
-assert.equal(embeddedPdf.tab.url, "https://example.test/file.pdf");
-const bareOwnedPdf = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId: 15, checkOnly: true });
-assert.equal(bareOwnedPdf.ok, true, "an owned bare Chrome PDF viewer is not SESSION_TAB_NOT_WEB");
+for (const tabId of [14, 15]) {
+  await assert.rejects(sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, checkOnly: true }),
+    { code: "PDF_PAGE_UNSUPPORTED" });
+  const tabOnly = await sessionTabs.resolveTargetTab({ sessionId: "blank-owner", tabId, tabOnly: true, checkOnly: true });
+  assert.equal(tabOnly.ok, true, "PDF tabs still support navigation and closing");
+}
 const bareForeignPdf = await sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 15, checkOnly: true });
 assert.equal(bareForeignPdf.ok, false);
 assert.equal(bareForeignPdf.code, "SESSION_TAB_NOT_WEB");

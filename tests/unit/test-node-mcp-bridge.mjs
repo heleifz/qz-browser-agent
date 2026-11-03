@@ -55,13 +55,14 @@ test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catal
   assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
   const names = driveToolCatalog().map(tool => tool.name);
   assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
-  assert.match(driveToolCatalog()[0].description, /先读说明书/);
+  assert.match(driveToolCatalog()[0].description, /qz CLI.*optional reference/);
   const execute = driveToolCatalog().find(tool => tool.name === "qingzhou_execute_tool");
   assert.doesNotMatch(execute.description, /先读说明书/);
   assert.match(execute.description, /在已连接的浏览器里执行现有工具/);
   assert.match(driveToolCatalog()[1].description, /sessionId/);
   for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
-    assert.ok(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required.includes("sessionId"), name);
+    assert.equal(TOOL_CATALOG.find(tool => tool.name === name).inputSchema.required?.includes("sessionId") || false,
+      name === "qingzhou_execute_tool", name);
   }
 });
 
@@ -244,8 +245,8 @@ test("live-client leases include the advertised idle interval and require explic
   state.clients.get(browserId(state, "browser-a")).lastSeenAt -= 40;
   assert.equal(state.status().clientCount, 1);
   await pairBrowser(state, { id: "browser-b" });
-  await assert.rejects(state.callExtension("create_session"), /BRIDGE_CLIENT_REQUIRED/);
-  await assert.rejects(state.callExtension("create_session", {}, { clientId: "missing" }), /BRIDGE_CLIENT_NOT_FOUND/);
+  await assert.rejects(state.callExtension("create_session"), { code: "BRIDGE_CLIENT_REQUIRED" });
+  await assert.rejects(state.callExtension("create_session", {}, { clientId: "missing" }), { code: "BRIDGE_CLIENT_NOT_FOUND" });
   const result = state.callExtension("ping", {}, { clientId: "browser-b" });
   assert.deepEqual(await pollBrowser(state, { id: "browser-a" }, { timeoutMs: 1 }), []);
   const [request] = await pollBrowser(state, { id: "browser-b" }, { timeoutMs: 1 });
@@ -300,7 +301,7 @@ test("async execute_tool jobs survive their initial MCP response and expose succ
   const [second] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   completeBrowser(bridge.state, second.id, { ok: false, code: "TAB_MISSING", error: "The tab is gone" });
   await waitUntil(() => bridge.state.getJob(failed.jobId).done);
-  assert.match(bridge.state.getJob(failed.jobId).error, /TAB_MISSING.*tab is gone/);
+  assert.deepEqual(bridge.state.getJob(failed.jobId).error, { code: "TAB_MISSING", message: "The tab is gone" });
 });
 
 test("Skill wrappers dispatch current methods with default arguments and do not retry missing methods", async () => {
@@ -437,7 +438,7 @@ test("shutdown rejects pending work and closes long polls", async () => {
   const closing = bridge.close();
   await polling.catch(() => undefined);
   await closing;
-  await assert.rejects(bridge.state.callExtension("create_session"), /BRIDGE_CLOSED/);
+  await assert.rejects(bridge.state.callExtension("create_session"), { code: "BRIDGE_CLOSED" });
   assert.equal(bridge.server.listening, false);
 });
 
@@ -460,7 +461,7 @@ test("request timeout clears delivery state and rejects late completion", async 
   const state = new BridgeState({ connectWaitMs: 0 });
   await pairBrowser(state, { id: "browser" });
   const waiting = state.callExtension("ping", {}, { timeoutSeconds: 1 });
-  const rejected = assert.rejects(waiting, /BRIDGE_REQUEST_TIMEOUT/);
+  const rejected = assert.rejects(waiting, { code: "BRIDGE_REQUEST_TIMEOUT" });
   const [request] = await pollBrowser(state, { id: "browser" }, { timeoutMs: 1 });
   await rejected;
   assert.equal(completeBrowser(state, request.id, { ok: true, result: "late" }), false);
@@ -525,11 +526,19 @@ test("drive calls require an explicit session id and do not invent one", async t
   await pairBrowser(bridge.state, { id: "browser" });
   const client = await withClient(t, bridge);
   for (const name of ["qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool"]) {
-    const missing = await client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
-    assert.equal(missing.isError, true);
-    assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
-    assert.match(missing.content[0].text, /qz session create/);
-    assert.match(missing.content[0].text, /qingzhou_create_drive_session/);
+    const pending = client.callTool({ name, arguments: name === "qingzhou_list_tools" ? {} : { name: "list_tabs" } });
+    if (name === "qingzhou_execute_tool") {
+      const missing = await pending;
+      assert.equal(missing.isError, true);
+      assert.match(missing.content[0].text, /DRIVE_SESSION_REQUIRED/);
+      assert.match(missing.content[0].text, /qz session create/);
+    } else {
+      const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
+      assert.equal(request.method, name.slice("qingzhou_".length));
+      assert.equal(request.params.sessionId, undefined);
+      completeBrowser(bridge.state, request.id, { ok: true, result: { name: "list_tabs", signature: "list_tabs({})" } });
+      assert.notEqual((await pending).isError, true);
+    }
     assert.equal(bridge.state.pending.size, 0);
     const unknown = client.callTool({ name, arguments: { sessionId: "missing", ...(name === "qingzhou_list_tools" ? {} : { name: "list_tabs" }) } });
     const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
@@ -543,10 +552,11 @@ test("drive calls require an explicit session id and do not invent one", async t
     assert.equal(unpack(failed).code, "DRIVE_SESSION_NOT_FOUND");
     assert.equal(bridge.state.pending.size, 0);
   }
-  const created = client.callTool({ name: "qingzhou_create_drive_session", arguments: {} });
+  const created = client.callTool({ name: "qingzhou_create_drive_session", arguments: { title: "Inspect page" } });
   const [createRequest] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(createRequest.method, "create_drive_session");
   assert.equal(createRequest.params.clientName, "bridge-test");
+  assert.equal(createRequest.params.title, "Inspect page");
   completeBrowser(bridge.state, createRequest.id, { ok: true, result: { sessionId: "kept-id" } });
   assert.equal(unpack(await created).sessionId, "kept-id");
   async function driveCall(name, args) {
@@ -602,7 +612,7 @@ test("stopping the bridge settles an in-flight MCP operation without replay", as
   await bridge.close();
   const result = await settled;
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /BRIDGE_CLOSED/);
+  assert.equal(JSON.parse(result.content[0].text).code, "BRIDGE_CLOSED");
   assert.equal(bridge.state.pending.size, 0);
   assert.equal(bridge.state.inflight.size, 0);
   assert.equal(completeBrowser(bridge.state, request.id, { ok: true, result: "late" }), false);

@@ -4,7 +4,7 @@ import { createSessionTabs } from "../../src/background/session/tabs.js";
 
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
-let contentReady = true;
+let contentReady = true, contentType = "text/html", injectionError;
 let documentReady = true, completeDocument;
 let ackDelay = 0;
 let completeInjection;
@@ -18,7 +18,7 @@ globalThis.chrome = {
     async sendMessage(_tabId, message) {
       if (message.action === "ping") {
         if (contentReady && ackDelay) await pause(ackDelay);
-        return { ok: contentReady, documentReady };
+        return { ok: contentReady, documentReady, contentType, url: tab.url, elementRefs: 1 };
       }
       if (message.action === 'awaitDocument') return new Promise(resolve => { completeDocument = () => { documentReady = true; resolve({ ok: true }); }; });
       reads++;
@@ -28,9 +28,11 @@ globalThis.chrome = {
   },
   scripting: { async executeScript(options) {
     if (!options.files) return [];
+    if (injectionError) throw injectionError;
     injections.push(options);
     await new Promise(resolve => { completeInjection = resolve; });
     contentReady = true;
+    contentType = 'text/html';
   } },
 };
 const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
@@ -108,6 +110,40 @@ for (const name of ["read_article", "list_images"]) for (const pendingUrl of [ta
   }
 }
 
+test('a pre-upgrade content bridge is replaced before reading', async () => {
+  load(); closed = denied = false; contentReady = documentReady = true;
+  contentType = undefined; completeInjection = undefined;
+  const before = injections.length;
+  const pending = runtime.execute('read_article', { tabId: 1, limit: 1200 }, undefined, context);
+  for (let i = 0; !completeInjection && i < 100; i++) await pause(2);
+  assert.equal(injections.length, before + 1);
+  completeInjection();
+  assert.equal((await pending).text, 'Loaded article');
+});
+
+test('PDF content cannot succeed as an empty HTML article; injection denial has recovery', async () => {
+  load(); closed = denied = false; contentReady = documentReady = true; reads = 0;
+  try {
+    contentType = 'application/pdf';
+    await assert.rejects(runtime.execute('read_article', { tabId: 1, limit: 1200 }, undefined, context), error => {
+      assert.equal(error.code, 'PDF_PAGE_UNSUPPORTED');
+      assert.match(error.message, /qingzhou-documents/);
+      assert.match(error.message, /qingzhou_documents__document_fetch/);
+      return true;
+    });
+    assert.equal(reads, 0);
+    contentType = 'text/html'; contentReady = false;
+    injectionError = new Error('Cannot access contents of the page.');
+    await assert.rejects(runtime.execute('read_article', { tabId: 1, limit: 1200 }, undefined, context), error => {
+      assert.equal(error.code, 'PAGE_CONTENT_UNAVAILABLE');
+      assert.match(error.message, /qingzhou-documents/);
+      return true;
+    });
+    assert.equal(reads, 0);
+  } finally { contentType = 'text/html'; contentReady = true; injectionError = undefined; }
+  assert.equal((await runtime.execute('read_article', { tabId: 1, limit: 1200 }, undefined, context)).text, 'Loaded article');
+});
+
 const pageReaders = [
   ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", {}],
   ["inspect_element", { target: "css:body" }], ["list_images", {}],
@@ -133,7 +169,7 @@ for (const finalUrl of ["about:blank", "chrome://settings", "https://blocked.tes
   test(`reader rechecks a page that settles before its first readiness poll: ${finalUrl}`, async () => {
     tab = { id: 1, url: "about:blank", status: "loading" }; closed = denied = false; reads = 0;
     afterResolve = () => { tab = { id: 1, url: finalUrl, status: "complete" }; };
-    await assert.rejects(runtime.execute("read_article", { limit: 1200 }, undefined, context), {
+    await assert.rejects(runtime.execute("read_article", { tabRef: 1, limit: 1200 }, undefined, context), {
       code: finalUrl.startsWith("https:") ? "SECURITY_GUARDRAIL_BLOCKED" : "SESSION_TAB_NOT_WEB",
     });
     assert.equal(reads, 0);
@@ -166,7 +202,7 @@ for (const outcome of ['ready', 'cancelled', 'timeout']) test(`a parsed-document
 test("ordinary Content initialization immediately targets the main frame and reuses its bridge", async () => {
   closed = denied = false;
   reads = 0;
-  contentReady = false;
+  contentReady = false; completeInjection = undefined; injections.length = 0;
   load();
   const pending = runtime.execute("read_article", { tabId: 1, limit: 1200 }, undefined, context);
   try {

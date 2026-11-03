@@ -47,6 +47,13 @@ try {
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
     assert.notEqual(mutatedScriptCode, scriptCode);
     assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+    const implicitTarget = scriptCode.replaceAll(/const resolvedTabId(\d*) = resolveRunScriptTargetTabId(\d*)\(tabId\d*\);/gu,
+      'const resolvedTabId$1 = resolveRunScriptTargetTabId$2(context.workingTabId);');
+    assert.notEqual(implicitTarget, scriptCode);
+    const implicitTargetFindings = inspectJavaScript(implicitTarget, scriptPath).findings;
+    assert.equal(implicitTargetFindings.some(item => item.rule === 'syntax'), false);
+    assert.equal(implicitTargetFindings.filter(item => item.rule === 'cdp-execution' && !item.reviewed).length, 1,
+      'introducing an implicit page target requires a new factory review');
     assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
 
     if (!bundle) {

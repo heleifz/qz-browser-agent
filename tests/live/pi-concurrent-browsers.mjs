@@ -184,7 +184,7 @@ async function validateAgent(browser, spec) {
   const created = commands.filter(item => item.args[0] === "create" && item.code === 0);
   const sent = commands.filter(item => item.args[0] === "send" && item.code === 0);
   assert.equal(created.length, 1, "one created task per Pi"); assert.equal(sent.length, 1, "one follow-up per Pi");
-  const id = JSON.parse(created[0].stdout).result.session.id;
+  const id = JSON.parse(created[0].stdout).result.session.sessionId;
   entry.initialTaskInterval = { createdAt: created[0].startedAt, followupStartedAt: sent[0].startedAt };
   assert.equal(sent[0].args[1], id, "follow-up uses the original task ID");
   for (const item of commands.filter(item => ["create", "show", "watch", "send", "settings"].includes(item.args[0]))) {
@@ -294,7 +294,7 @@ finally {
     for (const line of readFileSync(path, "utf8").trim().split("\n")) {
       try {
         const item = JSON.parse(line); if (item.args[0] !== "create" || item.code !== 0) continue;
-        const id = JSON.parse(item.stdout).result.session.id;
+        const id = JSON.parse(item.stdout).result.session.sessionId;
         save(`${entry.name}/cleanup-snapshot-${id}.json`, await fullSnapshot(entry.expectedUuid, id));
       } catch (error) { entry.cleanupSnapshotError = clean(error.message); }
     }

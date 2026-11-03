@@ -48,7 +48,7 @@ test("concurrent sandbox startup shares one deadline and all callers recover aft
   f.send(execute("two"));
   assert.equal(f.frames.length, 1);
   f.expire(); await tick();
-  assert.deepEqual(results(f).map(message => [message.requestId, message.result.code]), [["one", "INNER_RUNNER_SANDBOX_NOT_READY"], ["two", "INNER_RUNNER_SANDBOX_NOT_READY"]]);
+  assert.deepEqual(results(f).map(message => [message.requestId, message.result.code]), [["one", "SCRIPT_CONTEXT_UNAVAILABLE"], ["two", "SCRIPT_CONTEXT_UNAVAILABLE"]]);
   assert.equal(f.frames[0].removed, true);
   f.send(execute("retry")); f.sandbox({ type: "ready" }); await tick();
   assert.equal(f.frames.length, 2);
@@ -107,7 +107,7 @@ test("foreign windows cannot mark the owned sandbox ready or complete a run", as
   f.sandbox({ type: "result", requestId: "owned", result: { ok: true } }, {}); await tick();
   assert.equal(results(f).length, 0);
   f.expire(); await tick();
-  assert.equal(results(f)[0].result.code, "INNER_RUNNER_SANDBOX_NOT_READY");
+  assert.equal(results(f)[0].result.code, "SCRIPT_CONTEXT_UNAVAILABLE");
 });
 
 test("native script results retain the original payload above the Port chunk threshold", async () => {

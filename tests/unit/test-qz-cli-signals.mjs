@@ -36,7 +36,7 @@ for (const firstSignal of ["SIGINT", "SIGTERM"]) {
     });
     assert.equal(code, firstSignal === "SIGINT" ? 130 : 143);
     assert.equal(aborts, 1);
-    assert.equal(JSON.parse(output).error.code, "interrupted");
+    assert.equal(JSON.parse(output).code, "INTERRUPTED");
     assert.deepEqual(["SIGINT", "SIGTERM"].map(signal => process.listenerCount(signal)), before);
   });
 }
@@ -167,11 +167,11 @@ test("real process signals stop CLI observation without stopping its service or 
         const exited = await waitForExit(command);
         // npm may re-emit the signal after its child exits. Its child's JSON must survive either way.
         assert.ok(exited.code === (signal === "SIGINT" ? 130 : 143) || exited.signal === signal, JSON.stringify(exited));
-        const payload = command.stdout.split("\n").filter(line => line.startsWith('{"ok":')).map(line => JSON.parse(line)).at(-1);
-        assert.equal(payload?.error?.code, "interrupted", `${command.stdout}\n${command.stderr}`);
+        const payload = command.stdout.split("\n").filter(line => line.startsWith('{"code":')).map(line => JSON.parse(line)).at(-1);
+        assert.equal(payload?.code, "INTERRUPTED", `${command.stdout}\n${command.stderr}`);
         if (request) {
-          assert.equal(payload.error.sessionId, taskId);
-          assert.equal(payload.error.clientId, proof.clientId);
+          assert.equal(payload.details.sessionId, taskId);
+          assert.equal(payload.details.clientId, proof.clientId);
           assert.equal((await post("result", { ...proof, requestId: request.id, ok: true, result: { status: "completed" } })).ok, false,
             "an abandoned observation cannot consume a late result");
         }
