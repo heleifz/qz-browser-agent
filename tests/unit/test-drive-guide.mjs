@@ -66,7 +66,7 @@ test("the packed drive guide is the only discoverable skill, localized and bound
   assert.match(instructions, /open_tab \/ list_tabs 返回的 tabRef/);
   assert.match(instructions, /the tabRef returned by open_tab or list_tabs/);
   assert.match(zh, /一个任务一个会话/);
-  assert.match(zh, /先 `qz session create --title "查看示例页"`，标题必填；stdout 打出 `sessionId <id>`/);
+  assert.match(zh, /先 `qz session create --title "查看示例页"`，标题必填，缺失退出码 2；stdout 打出 `sessionId <id>`/);
   assert.doesNotMatch(zh, /第一次调用创建会话/);
   assert.match(zh, /缺失时返回 DRIVE_TAB_REF_REQUIRED/);
   assert.match(zh, /no_alias 仅在已经传入别名/);

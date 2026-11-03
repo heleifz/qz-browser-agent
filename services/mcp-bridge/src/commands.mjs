@@ -124,7 +124,7 @@ export const COMMANDS = {
       "--tab takes an alias or a tabRef returned by open_tab/list_tabs. qz script --session ID --tab TABREF - reads stdin.",
       "--timeout sets the script timeout in seconds (0 < seconds <= 3600) and defaults to 120. The request waits 60 seconds longer.",
       "For page changes use qz exec --session ID with run_script and args.mutatesPage:true.",
-      "Script failures print {code,error,trace?}; thrown/transport failures use {ok:false,error:{code,message}} with --json, or stderr on a terminal.",
+      "Failures use {code,message,hint?,details?}; script locations and trace are in details. Thrown/transport failures print JSON with --json, or stderr on a terminal.",
       "qz script --session ID --tab page page.js", "qz script --session ID --tab page - <<'JS'"],
   },
   tools: { options: [...request, "session"], summary: "List browser tool signatures",
