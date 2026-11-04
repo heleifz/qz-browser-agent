@@ -44,9 +44,9 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 `qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
 
-Call tools directly when their arguments are known from this guide or an earlier schema lookup. For unfamiliar arguments, query only the needed schemas with `tools.list_tools({names:["inspect_element","wait_for_response"]})`; batch names and reuse schemas across scripts in the same task. Use `tools.list_tools()` only for a broader overview of common tools. Recheck the schema after an argument error or a CLI/extension update.
+When arguments are unclear, query only the needed schemas with `tools.list_tools({names:["inspect_element","wait_for_response"]})` and reuse them across scripts in the same task.
 
-Use these browser tools in scripts. Loaded Skills can add tools; follow their instructions and query list_tools by name for their schemas.
+Use these browser tools in scripts. Loaded Skills can add tools.
 
 <!-- qz-drive-tools:start -->
 - **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward.
@@ -59,13 +59,6 @@ Use these browser tools in scripts. Loaded Skills can add tools; follow their in
 - **Skills**: `list_skills`, `load_skill`, `load_skill_resource`. Find and load Skills and their packaged resources.
 - **Browser utilities**: `browse_history`, `get_location`, `send_alert`. Search browsing history, request location, and notify the user.
 <!-- qz-drive-tools:end -->
-
-```sh
-qz script --session "$SID" - <<'JS'
-// Look up unfamiliar arguments for the next step, then reuse these schemas.
-return await tools.list_tools({ names: ["inspect_element", "wait_for_response"] });
-JS
-```
 
 For DOM access, call evaluate with an explicit tabRef. Its code is a self-contained function; pass outer values through args. It returns the function's value. Function closures, browser nodes and functions cannot be carried across pages as arguments or results.
 
