@@ -10,6 +10,35 @@ import { createTestAgentOptions } from '../support/agent-services.mjs';
 const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.stringify({ tabId, limit: 10 }) } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('native and nested ready results share one commit gate without holding it during execution', async () => {
+  const nested = createNestedToolScheduler(), events = [];
+  let releaseHead, releaseChild;
+  const run = scheduleToolCalls(['head', 'parent'], {
+    tab: item => item === 'head' ? 1 : 2,
+    signal: new AbortController().signal,
+    execute: async (item, signal, _parallel, parent) => {
+      if (item === 'head') await new Promise(resolve => { releaseHead = resolve; });
+      else await nested.run({ parent, group: 'child', lane: 2, policy: { kind: 'target', implicit: false, parallel: true }, signal,
+        execute: async () => 'child',
+        commit: async value => {
+          events.push('child:commit');
+          await new Promise(resolve => { releaseChild = resolve; });
+          events.push('child:committed'); return value;
+        },
+      });
+      return item;
+    },
+    commit: async item => { events.push(`${item}:committed`); },
+  });
+  await tick();
+  assert.deepEqual(events, ['child:commit']);
+  releaseHead(); await tick();
+  assert.deepEqual(events, ['child:commit'], 'native publication cannot overlap a descendant state commit');
+  releaseChild(); await run;
+  assert.deepEqual(events, ['child:commit', 'child:committed', 'head:committed', 'parent:committed']);
+  assert.equal(nested.pending, 0);
+});
+
 test('a blocked tool publishes its start and flow-control progress before completing', async () => {
   const events = [];
   let release, update, effects = 0;

@@ -186,7 +186,9 @@ export function createRunScriptBridge({
       try { return await scheduler.run<unknown>({
         parent: parent?.nestedToolScope,
         group: String(message.parentCallId || "legacy"),
-        lane,
+        // Pending aliases acquire their physical page lane when the creator commits.
+        lane: () => typeof ref === "string" && lane === `alias:${ref}`
+          ? toolRuntime.getTabAliases?.(sessionId)?.[ref] ?? lane : lane,
         produces: policy?.kind === "create" && typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? toolArgs.tabAlias : undefined,
         targetAlias: typeof ref === "string" && tabReferenceId(ref) === null && !Object.hasOwn(aliases, ref) ? ref : undefined,
         dependencyFailure: () => tabReferenceError("dependency_failed", ref, language), isError: isToolFailure,

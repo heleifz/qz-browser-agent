@@ -5,7 +5,8 @@ import { openFirefoxSidebar } from './launch.mjs';
 import { connectFirefoxCli } from '../support/firefox-isolated-cli.mjs';
 import { exerciseOuterScripts } from '../support/outer-script-acceptance.mjs';
 
-test('Firefox outer script coordinates actual navigation, AJAX, queues and popup cancellation', async ({}, testInfo) => {
+for (const interleavings of [false, true]) test(interleavings ? 'Firefox outer script interleaved branches preserve lanes across navigation and caught errors'
+  : 'Firefox outer script coordinates actual navigation, AJAX, queues and popup cancellation', async ({}, testInfo) => {
   test.setTimeout(180_000);
   const extensionDir=testInfo.outputPath('extension');
   await mkdir(extensionDir,{recursive:true});
@@ -19,6 +20,6 @@ test('Firefox outer script coordinates actual navigation, AJAX, queues and popup
   await writeFile(html,instrumented);
   const firefoxSidebar=await openFirefoxSidebar({extensionDir});
   let environment;
-  try { environment=await connectFirefoxCli(firefoxSidebar); await exerciseOuterScripts({ ...environment, expect, step: test.step, testInfo }); }
+  try { environment=await connectFirefoxCli(firefoxSidebar); await exerciseOuterScripts({ ...environment, expect, step: test.step, testInfo, interleavings }); }
   finally { await environment?.close(); await firefoxSidebar.close(); }
 });

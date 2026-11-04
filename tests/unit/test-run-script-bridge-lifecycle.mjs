@@ -4,6 +4,7 @@ import { createRunScriptBridge } from "../../src/background/tools/run-script-bri
 import { markToolValue, isToolValue } from "../../src/shared/contracts/tool-error.js";
 import { bindCreatedTabResult } from "../../src/shared/contracts/page-observation.js";
 import { runDriveCalls } from "../../src/background/mcp/external-drive.js";
+import { updateTranscriptWithAgentEvent } from "../../src/shared/session/session-codec.js";
 
 for (const stage of ["context", "execute", "apply"]) {
   for (const stop of ["revoke", "abort"]) {
@@ -77,20 +78,38 @@ tools.defineTool({ name: '__nested_lane_probe', description: 'Controlled page op
   execute: async ({ tabId, fixture, label }, signal) => {
     const state = probes.get(fixture);
     state.started.push(label);
+    assert.ok(!state.pages.has(tabId), `page ${tabId} has overlapping actions`);
+    state.pages.add(tabId);
     state.peak = Math.max(state.peak, ++state.active);
     try {
       if (state.hold) await new Promise(resolve => {
-        state.release.set(label, resolve);
-        signal.addEventListener('abort', resolve, { once: true });
+        const release = () => { state.release.delete(label); signal.removeEventListener('abort', release); resolve(); };
+        state.release.set(label, release);
+        signal.addEventListener('abort', release, { once: true });
       });
+      if (label.endsWith(':execute-fail')) throw Object.assign(new Error('Injected execution failure'), { code: 'FIXTURE_EXECUTION_FAILED' });
       return { label, page: tabId };
-    } finally { state.active--; }
+    } finally { state.active--; state.pages.delete(tabId); }
   },
 });
 tools.defineTool({ name: '__nested_container', description: 'Await a descendant on the same page.',
   page: 'owned', behavior: { parallelTab: true },
   parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' } }, required: ['tabRef', 'fixture'] },
   execute: async ({ fixture }, _signal, context) => context.invokeTool('__nested_lane_probe', { tabRef: 'page', fixture, label: 'child' }),
+});
+tools.defineTool({ name: '__nested_create', description: 'Controlled tab creation.',
+  tabLifecycle: 'created', behavior: { parallelOpen: true },
+  parameters: { type: 'object', properties: { tabAlias: { type: 'string' }, fixture: { type: 'string' }, id: { type: 'integer' } }, required: ['tabAlias', 'fixture', 'id'] },
+  execute: async ({ fixture, tabAlias, id }, signal, context) => {
+    const state = probes.get(fixture);
+    await context.prepareCreatedTab({ id, url: `https://example.test/${id}`, title: tabAlias });
+    state.started.push(`open:${tabAlias}`);
+    await new Promise(resolve => {
+      const release = () => { state.release.delete(tabAlias); signal.removeEventListener('abort', release); resolve(); };
+      state.release.set(tabAlias, release); signal.addEventListener('abort', release, { once: true });
+    });
+    return bindCreatedTabResult({ tabRef: tabAlias, url: `https://example.test/${id}`, title: tabAlias, active: false }, id);
+  },
 });
 tools.defineTool({ name: '__nested_barrier', description: 'Outer orchestration can await page work.',
   behavior: { barrier: true },
@@ -102,6 +121,31 @@ tools.defineTool({ name: '__nested_fanout', description: 'Await parallel descend
   parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' } }, required: ['tabRef', 'fixture'] },
   execute: ({ fixture }, _signal, context) => Promise.all(Array.from({ length: 12 }, (_, index) =>
     context.invokeTool('__nested_lane_probe', { tabRef: index + 20, fixture, label: `child-${index}` }))),
+});
+tools.defineTool({ name: '__nested_steps', description: 'Two dependent descendants on one page.',
+  page: 'owned', behavior: { parallelTab: true },
+  parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' }, label: { type: 'string' } }, required: ['tabRef', 'fixture', 'label'] },
+  execute: async ({ tabId, fixture, label }, _signal, context) => {
+    await context.invokeTool('__nested_lane_probe', { tabRef: tabId, fixture, label: `${label}:first` });
+    return context.invokeTool('__nested_lane_probe', { tabRef: tabId, fixture, label });
+  },
+});
+tools.defineTool({ name: '__nested_braid', description: 'Interleaved creation, pending aliases and nested actions.',
+  page: 'owned', behavior: { parallelTab: true },
+  parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' }, prefix: { type: 'string' }, base: { type: 'integer' } }, required: ['tabRef', 'fixture', 'prefix', 'base'] },
+  execute: ({ fixture, prefix, base }, _signal, context) => Promise.allSettled(Array.from({ length: 4 }, async (_, branch) => {
+    const tabAlias = `${prefix}-${branch}`;
+    await Promise.all([
+      context.invokeTool('__nested_create', { fixture, tabAlias, id: base + branch }),
+      context.invokeTool('__nested_lane_probe', { fixture, tabRef: tabAlias, label: `${tabAlias}:read` }),
+    ]);
+    for (let step = 0; step < 3; step++) {
+      const tabRef = step === 1 ? (branch % 2 ? 7 : 'page') : 20 + branch % 2;
+      const suffix = step === 2 && branch === 1 ? ':execute-fail' : step === 2 && branch === 2 ? ':commit-fail' : '';
+      await context.invokeTool('__nested_steps', { fixture, tabRef, label: `${tabAlias}:${step}${suffix}` });
+    }
+    return tabAlias;
+  })),
 });
 tools.defineTool({ name: '__nested_business_value', description: 'Return caller-authored data.',
   model: { preserveResult: true }, parameters: { type: 'object', properties: {} },
@@ -119,10 +163,13 @@ tools.defineTool({ name: '__nested_popup_creator', description: 'A page action p
 tools.defineTool({ name: '__nested_observer', description: 'Passive event observation.',
   page: 'owned', behavior: { passiveWait: true, parallelTab: true },
   parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' } }, required: ['tabRef', 'fixture'] },
-  execute: async ({ fixture }) => {
+  execute: async ({ fixture }, signal) => {
     const state = probes.get(fixture);
     state.started.push('observer');
-    await new Promise(resolve => { state.event = resolve; });
+    await new Promise(resolve => {
+      const release = () => { signal.removeEventListener('abort', release); resolve(); };
+      state.event = release; signal.addEventListener('abort', release, { once: true });
+    });
     return { observed: true };
   },
 });
@@ -134,7 +181,7 @@ tools.defineTool({ name: '__nested_signal_event', description: 'Trigger the cont
 
 function fixture(hold = true, budget = 10, externalDrive = true) {
   const id = String(++nextFixture), controller = new AbortController();
-  const state = { hold, started: [], release: new Map(), cards: [], events: [], applied: [], active: 0, peak: 0 };
+  const state = { hold, started: [], release: new Map(), pages: new Set(), cards: [], events: [], applied: [], owned: [], discarded: [], active: 0, peak: 0 };
   probes.set(id, state);
   const aliases = { page: 7 };
   let bridge;
@@ -145,6 +192,9 @@ function fixture(hold = true, budget = 10, externalDrive = true) {
       reserveTabAlias: async ({ alias }) => ({ alias }),
       commitTabAlias: ({ reservation, tabId }) => { aliases[reservation.alias] = tabId; },
       discardTabAlias: () => undefined,
+      reserveCreatedTab: async ({ tab }) => ({ ok: true, reservation: tab }),
+      commitCreatedTab: async ({ reservation }) => { state.owned.push(reservation.id); return { ok: true }; },
+      discardCreatedTab: async reservation => { if (!state.owned.includes(reservation.id)) state.discarded.push(reservation.id); },
       resolveTargetTab: async ({ tabId }) => ({ ok: true, tabId, ownedByCurrentTask: true }),
       updateWorkingTab: async () => undefined,
     },
@@ -159,42 +209,233 @@ function fixture(hold = true, budget = 10, externalDrive = true) {
         ? state.evaluate(args, signal, context) : runtime.execute(name, args, signal, context),
     },
     recordNestedTool: async event => { state.events.push(event); if (event.phase === 'end') state.cards.push(event); },
-    applyNestedToolResult: async event => { state.applied.push(event); },
+    applyNestedToolResult: async event => { state.applied.push(event); await state.apply?.(event); },
     collectArtifacts: () => [],
   });
-  return { id, state, controller, runtime, bridge,
+  return { id, state, controller, runtime, bridge, aliases,
     call: (name, args) => bridge.handleToolCall({ sessionId: id, runId: `run-${id}`, toolName: name, args: { fixture: id, ...args } }),
   };
 }
 
-test('actual nested runtime overlaps page lanes, serializes conflicts and commits cards in sibling order', async () => {
-  const f = fixture();
+for (const externalDrive of [false, true]) test(`a fast ${externalDrive ? 'drive' : 'native'} branch continues while same-page calls and card identities remain ordered`, async () => {
+  const f = fixture(true, 10, externalDrive);
   const a = f.call('__nested_lane_probe', { tabRef: 1, label: 'a' });
-  const b = f.call('__nested_lane_probe', { tabRef: 2, label: 'b' });
+  const b = f.call('__nested_lane_probe', { tabRef: 2, label: 'b' }).then(async first => {
+    assert.equal(first.ok, true);
+    return f.call('__nested_lane_probe', { tabRef: 2, label: 'b-next' });
+  });
   const c = f.call('__nested_lane_probe', { tabRef: 1, label: 'c' });
   await tick();
   assert.deepEqual(f.state.started, ['a', 'b']);
   f.state.release.get('b')(); await tick();
-  assert.deepEqual(f.state.cards, [], 'completion cannot publish ahead of an earlier sibling');
+  assert.deepEqual(f.state.cards.map(card => card.result.label), ['b']);
+  assert.deepEqual(f.state.started, ['a', 'b', 'b-next']);
+  f.state.release.get('b-next')(); await tick();
+  assert.equal((await b).ok, true);
   f.state.release.get('a')(); await tick();
-  assert.deepEqual(f.state.started, ['a', 'b', 'c']);
+  assert.deepEqual(f.state.started, ['a', 'b', 'b-next', 'c']);
   f.state.release.get('c')();
   assert.ok((await Promise.all([a, b, c])).every(result => result.ok));
-  assert.deepEqual(f.state.cards.map(card => card.result.label), ['a', 'b', 'c']);
-  assert.deepEqual(f.state.applied.map(event => event.result.label), ['a', 'b', 'c']);
+  assert.deepEqual(f.state.cards.map(card => card.result.label), ['b', 'b-next', 'a', 'c']);
+  assert.deepEqual(f.state.applied.map(event => event.result.label), ['b', 'b-next', 'a', 'c']);
+  let transcript = [];
+  for (const [eventSeq, event] of f.state.events.entries()) transcript = updateTranscriptWithAgentEvent(transcript, {
+    ...event, eventSeq, type: `tool_execution_${event.phase}`, toolName: event.name,
+  }).transcript;
+  assert.deepEqual(transcript.map(row => row.args.label), ['a', 'b', 'b-next', 'c']);
+  assert.ok(transcript.every(row => !row.isRunning && row.result.label === row.args.label));
+  assert.equal(new Set(transcript.map(row => row.toolCallId)).size, 4);
 });
 
-test('nested runtime keeps the shared ten-leaf budget and refills before ordered commit', async () => {
+test('nested runtime keeps the shared ten-leaf budget and publishes completed calls while refilling', async () => {
   const f = fixture();
   const calls = Array.from({ length: 12 }, (_, index) => f.call('__nested_lane_probe', { tabRef: index + 1, label: String(index) }));
   await tick(); assert.equal(f.state.started.length, 10);
   f.state.release.get('9')(); await tick();
   assert.equal(f.state.started.length, 11);
-  assert.equal(f.state.cards.length, 0);
-  for (let index = 0; index < 11; index++) f.state.release.get(String(index))();
+  assert.deepEqual(f.state.cards.map(card => card.result.label), ['9']);
+  for (const release of [...f.state.release.values()]) release();
   await tick(); f.state.release.get('11')();
   assert.ok((await Promise.all(calls)).every(result => result.ok));
   assert.equal(f.state.cards.length, 12);
+});
+
+test('ready state commits serialize without waiting for an unrelated page execution', async t => {
+  const f = fixture(); t.after(() => f.controller.abort());
+  let releaseCommit;
+  f.state.apply = event => event.result.label === 'fast'
+    ? new Promise(resolve => { releaseCommit = resolve; }) : undefined;
+  const slow = f.call('__nested_lane_probe', { tabRef: 1, label: 'slow' });
+  let returned = false;
+  const fast = f.call('__nested_lane_probe', { tabRef: 2, label: 'fast' }).then(value => { returned = true; return value; });
+  const other = f.call('__nested_lane_probe', { tabRef: 3, label: 'other' });
+  await tick();
+  f.state.release.get('fast')(); await tick();
+  f.state.release.get('other')(); await tick();
+  assert.equal(returned, false, 'a successful Promise includes the state commit');
+  assert.deepEqual(f.state.applied.map(event => event.result.label), ['fast']);
+  releaseCommit();
+  assert.ok((await Promise.all([fast, other])).every(result => result.ok));
+  assert.deepEqual(f.state.cards.map(card => card.result.label), ['fast', 'other']);
+  f.state.release.get('slow')();
+  assert.equal((await slow).ok, true);
+});
+
+test('a fast creator publishes ownership and its alias before consumers enter the same physical lane', async t => {
+  const f = fixture(); t.after(() => f.controller.abort());
+  const slow = f.call('__nested_create', { tabAlias: 'slow', id: 11 });
+  const fast = f.call('__nested_create', { tabAlias: 'fast', id: 12 });
+  const read = f.call('__nested_lane_probe', { tabRef: 'fast', label: 'alias-reader' });
+  await tick();
+  assert.deepEqual(f.state.started, ['open:slow', 'open:fast']);
+  assert.deepEqual(f.state.owned, []);
+  f.state.release.get('fast')(); await tick();
+  assert.deepEqual(f.state.owned, [12]);
+  assert.equal((await fast).result.tabRef, 'fast');
+  assert.equal(f.aliases.fast, 12);
+  assert.equal(f.state.started.at(-1), 'alias-reader');
+  const numeric = f.call('__nested_lane_probe', { tabRef: 12, label: 'numeric-reader' });
+  await tick();
+  assert.equal(f.state.started.at(-1), 'alias-reader', 'the pending alias must rebind to the actual page lane');
+  f.state.release.get('alias-reader')(); await tick();
+  assert.equal((await read).result.page, 12);
+  assert.equal(f.state.started.at(-1), 'numeric-reader');
+  f.state.release.get('numeric-reader')();
+  assert.equal((await numeric).result.page, 12);
+  f.state.release.get('slow')();
+  assert.equal((await slow).result.tabRef, 'slow');
+});
+
+test('cancellation discards a late creator without undoing its completed sibling', async () => {
+  const f = fixture(false);
+  const slow = f.call('__nested_create', { tabAlias: 'slow', id: 11 });
+  const fast = f.call('__nested_create', { tabAlias: 'fast', id: 12 });
+  const queued = f.call('__nested_lane_probe', { tabRef: 'slow', label: 'never' });
+  await tick(); f.state.release.get('fast')(); await tick();
+  assert.equal((await fast).ok, true);
+  f.controller.abort();
+  assert.ok((await Promise.all([slow, queued])).every(result => result.code === 'RUN_STOPPED'));
+  assert.deepEqual(f.state.owned, [12]);
+  assert.deepEqual(f.state.discarded, [11]);
+  assert.equal(f.aliases.slow, undefined);
+  assert.equal(f.aliases.fast, 12);
+  assert.deepEqual(f.state.started, ['open:slow', 'open:fast']);
+});
+
+test('seeded dynamic workflows keep physical lanes, finite budgets and exactly one result per call', async t => {
+  for (const seed of [1, 7, 29, 83]) {
+    const f = fixture(true, seed % 3 + 1, seed % 2 === 1); t.after(() => f.controller.abort());
+    let random = seed;
+    const next = () => (random = (Math.imul(random, 1664525) + 1013904223) >>> 0);
+    const branches = Array.from({ length: 12 }, (_, branch) => (async () => {
+      const tabRef = branch % 4 === 0 ? 'page' : 7 + branch % 3;
+      for (let step = 0; step < 3; step++) {
+        const result = await f.call('__nested_lane_probe', { tabRef, label: `${branch}:${step}` });
+        assert.equal(result.ok, true, JSON.stringify(result));
+        assert.equal(result.result.page, f.aliases[tabRef] ?? tabRef);
+      }
+    })());
+    const done = Promise.all(branches); void done.catch(() => {});
+    for (let step = 0; step < 36; step++) {
+      await tick();
+      const available = [...f.state.release];
+      assert.ok(available.length, `seed ${seed}, step ${step}: stalled dynamic workflow`);
+      const [label, release] = available[next() % available.length];
+      f.state.release.delete(label); release();
+    }
+    await done;
+    assert.equal(f.state.cards.length, 36);
+    assert.equal(new Set(f.state.cards.map(event => event.toolCallId)).size, 36);
+    assert.equal(f.state.pages.size, 0);
+    assert.ok(f.state.peak <= seed % 3 + 1);
+  }
+});
+
+test('adversarial interleavings mix native batches, nested branches, aliases, events, failures and cancellation', { timeout: 60_000 }, async t => {
+  let histories = 0, executions = 0, commits = 0;
+  for (const budget of [1, 2, 10]) for (const seed of [1, 7, 19, 29, 43, 61, 83, 101]) for (const cancel of [false, true]) {
+    const f = fixture(true, budget, seed % 3 === 1), settled = [], writes = [];
+    let random = seed, finished = false, outcome, rejection, writing = 0, commitId = 0, stopped;
+    const next = () => (random = (Math.imul(random, 1664525) + 1013904223) >>> 0);
+    f.state.apply = async event => {
+      if (event.isError) return;
+      assert.equal(++writing, 1, 'ready state commits cannot overlap across nesting groups');
+      const key = `commit:${++commitId}`;
+      try {
+        await new Promise(resolve => {
+          const release = () => { f.state.release.delete(key); f.controller.signal.removeEventListener('abort', release); resolve(); };
+          f.state.release.set(key, release); f.controller.signal.addEventListener('abort', release, { once: true });
+        });
+        f.controller.signal.throwIfAborted();
+        if (event.args.label?.endsWith(':commit-fail')) throw Object.assign(new Error('Injected commit failure'), { code: 'FIXTURE_COMMIT_FAILED' });
+        writes.push(event.toolName);
+      } finally { writing--; }
+    };
+    const items = [
+      { id: 'watch', name: '__nested_observer', args: { tabRef: 'page' } },
+      { id: 'a', name: '__nested_braid', args: { tabRef: 100, prefix: 'a', base: 200 } },
+      { id: 'native-a', name: '__nested_lane_probe', args: { tabRef: 20, label: 'native-a' } },
+      { id: 'b', name: '__nested_braid', args: { tabRef: 101, prefix: 'b', base: 300 } },
+      { id: 'trigger', name: '__nested_signal_event', args: { tabRef: 7 } },
+      { id: 'native-b', name: '__nested_lane_probe', args: { tabRef: 21, label: 'native-b' } },
+      { id: 'barrier', name: '__nested_barrier', args: {} },
+      { id: 'after', name: '__nested_lane_probe', args: { tabRef: 22, label: 'after' } },
+    ].map(item => ({ ...item, args: { ...item.args, fixture: f.id } }));
+    const pending = runDriveCalls(items, {
+      maxInFlight: budget, signal: f.controller.signal, aliases: f.aliases,
+      context: { sessionId: f.id, runId: `run-${f.id}`, externalDrive: seed % 3 === 1 },
+      getBatchTabPolicy: f.runtime.getBatchTabPolicy,
+      execute: f.runtime.execute, commitToolResult: f.runtime.commitToolResult, discardToolResult: f.runtime.discardToolResult,
+      onSettled: event => settled.push(event),
+    }).then(result => { finished = true; outcome = result; }, error => { finished = true; rejection = error; });
+    try {
+      for (let round = 0; round < 1000 && !finished; round++) {
+        await tick();
+        if (cancel && round === 5 + seed % 31) {
+          stopped = { started: f.state.started.length, writes: writes.length, owned: [...f.state.owned] };
+          f.controller.abort();
+        }
+        const available = [...f.state.release];
+        if (available.length) available[next() % available.length][1]();
+        else {
+          await tick(); // Cancellation settles queued calls through Promise continuations.
+          assert.ok(finished || f.state.release.size, `deadlock: budget=${budget}, seed=${seed}, cancel=${cancel}, round=${round}`);
+        }
+      }
+      assert.ok(finished, `history did not settle: budget=${budget}, seed=${seed}`);
+      await pending;
+      assert.equal(rejection, undefined);
+      assert.ok(f.state.peak <= budget);
+      assert.equal(f.state.pages.size, 0);
+      assert.equal(writing, 0);
+      assert.deepEqual(settled.map(event => event.id), items.map(item => item.id));
+      assert.equal(new Set(f.state.started).size, f.state.started.length, 'no leaf action is replayed');
+      for (const event of f.state.cards) assert.equal(f.state.events.filter(start => start.phase === 'start' && start.toolCallId === event.toolCallId).length, 1);
+      assert.equal(new Set(f.state.cards.map(event => event.toolCallId)).size, f.state.cards.length);
+      if (cancel) {
+        assert.ok(stopped);
+        assert.equal(f.state.started.length, stopped.started);
+        assert.equal(writes.length, stopped.writes);
+        assert.deepEqual(f.state.owned, stopped.owned);
+        assert.ok(outcome.results.some(result => result.isError));
+      } else {
+        assert.ok(outcome.results.every(result => !result.isError), JSON.stringify(outcome));
+        for (const id of ['a', 'b']) {
+          const rows = outcome.results.find(result => result.id === id).result;
+          assert.deepEqual(rows.map(row => row.status), ['fulfilled', 'rejected', 'rejected', 'fulfilled']);
+          assert.equal(rows[1].reason.code, 'FIXTURE_EXECUTION_FAILED');
+          assert.equal(rows[2].reason.code, 'FIXTURE_COMMIT_FAILED');
+        }
+        assert.equal(f.state.owned.length, 8);
+        assert.equal(f.state.started.at(-1), 'after');
+      }
+      histories++; executions += f.state.started.length; commits += writes.length;
+    } finally {
+      f.controller.abort(); f.state.event?.();
+      for (const release of [...f.state.release.values()]) release();
+    }
+  }
+  t.diagnostic(`${histories} deterministic histories; ${executions} executions; ${commits} successful nested commits`);
 });
 
 test('a live parent reenters its page lane while later conflicting siblings stay queued', async () => {
