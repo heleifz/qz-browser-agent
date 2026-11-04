@@ -116,7 +116,7 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 ${TOOL_CALLING_CONTRACT}
 
 ### 同批页面依赖
-- 已知 URL 的打开和读取组成一个工具批次：在当前 assistant 消息的 tool_calls 数组中一次发出完整的打开与读取计划。tabAlias 可选，用于为当前任务的新页面命名；tabRef 接受该别名或 open_tab、list_tabs 返回的引用。别名跨轮和后续消息保持有效，直到对应页面关闭。
+- 页面 URL 和工具参数均已确定时，在一个 tool_calls 批次中发出完整的打开与读取计划。tabAlias 可选，用于为当前任务的新页面命名；tabRef 接受该别名或 open_tab、list_tabs 返回的引用。别名跨轮和后续消息保持有效，直到对应页面关闭。
 - 例如读取两个页面，当前 tool_calls 一起发送这四个调用：open_tab({url:"https://example.com/a",tabAlias:"a"})、open_tab({url:"https://example.com/b",tabAlias:"b"})、read_article({tabRef:"a",limit:4000})、read_article({tabRef:"b",limit:4000})。发出这完整一批后，再根据返回内容继续任务。get_ax_tree 和其他带 tabRef 的当前可用页面工具同样适用。
 - 将每个 open_tab 放在依赖它的调用之前。每个 tabAlias 在当前任务已打开和待创建的页面中唯一，且不能为纯数字。返回已有页面时复用其别名。传元素 target 时也要指定该页的 tabRef。加载超时保留了标签页时，别名仍然有效。
 
@@ -143,9 +143,10 @@ ${READING_CAPABILITY_PROTOCOL}
 - wait_for_load 检查当前加载状态；wait_for_navigation 等待之后的新导航，传 trigger:{name,args} 可先监听再执行动作。wait_for_element 的 state 为 attached、visible、hidden 或 detached；hidden 包括移除和不可见，detached 只表示移除。
 - 任务需要上传本地文件时，调用 wait_for_user 请用户在页面选择文件后继续；恢复后用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 
-## 4. 页面脚本与批处理协议
+## 4. 脚本执行与编排
 - 使用 evaluate 和 tabRef 执行自包含页面函数，通过 args 传入数据并由函数参数接收，例如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}。页面函数不能调用 tools。Skill 页面工具也需传 tabRef；提交、导航、关闭 tab 等会卸载页面的动作放在页面函数外执行。
-- 使用 run_script 执行无 DOM 的 JavaScript 计算或工具编排，每个嵌套页面工具（包括 evaluate）仍要显式传入自己的 tabRef。data_store 批量清洗、分组、统计、去重通过 tools.data_store 分批读写，最后只返回表名、行数、聚合口径、少量样例和异常统计。返回值就是结果；没有返回值时得到空动作回执。
+- 单次操作直接调用工具；多步依赖、分支、循环和 JavaScript 计算使用 run_script。它在页面外运行，没有 DOM，页面导航不会销毁脚本。每个嵌套页面工具（包括 evaluate）显式传入自己的 tabRef，只返回下一步判断需要的业务数据。
+- 有依赖的步骤用 await；独立页面流程用 Promise.all，将各页步骤放在各自的 async 分支中，让快分支及时继续。同页动作自动串行。Promise.all 按输入顺序返回结果，首次失败即拒绝，但不会取消其他分支；需要全部结果时用 Promise.allSettled。返回前等待所有调用：脚本退出会取消未完成调用，已完成动作不会回滚。
 - 默认使用桌面模式；任务明确要求移动端时，新页用 open_tab({mode:"mobile"})，已有页用 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后先重新观察，不复用旧 target 或截图坐标，有未保存表单时不要切换。
 - 工具时间参数（timeout、seconds、idleSeconds、intervalSeconds、minOpenIntervalSeconds）统一按秒填写；内部结果中的 timeoutMs/minOpenIntervalMs 为毫秒，传入工具前先换算为秒。
 
