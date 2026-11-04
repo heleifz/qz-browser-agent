@@ -1,6 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
 import { COMMANDS, commandOptions } from "./commands.mjs";
-import { driveGuide } from "./drive-guide.mjs";
 import { defaultShell, optionTerminator, shellArgument, shellQuote } from "./shell.mjs";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -533,7 +532,7 @@ export function renderHelp(topic = "", options = {}) {
   out.shellNote();
   if (!topic) {
     out.line();
-    out.line(driveGuide());
+    out.line("Full browser guide: qz skill", "muted");
   }
   return out.finish();
 }
