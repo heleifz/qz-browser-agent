@@ -312,11 +312,11 @@ def run():
                   const scriptTools = new Proxy(Object.create(null), {
                     get(_target, prop) {
                       if (prop === "then") return undefined;
-                      if (prop === "$list") return async () => (await callFromScript("__list_tools__", {})).tools;
+                      if (prop === "$list") return async (args = {}) => (await callFromScript("__list_tools__", args)).tools;
                       return args => callFromScript(String(prop), args);
                     },
                   });
-                  const listedFromScript = await scriptTools.$list();
+                  const listedFromScript = await scriptTools.$list({ names: ["qingzhou_documents__document_create"] });
                   const documentCreateFromScriptSchema = listedFromScript.find(item => item.name === "qingzhou_documents__document_create");
                   const executeSyntheticInnerScript = new Function("tools", `
                     return (async () => tools.qingzhou_documents__document_create({

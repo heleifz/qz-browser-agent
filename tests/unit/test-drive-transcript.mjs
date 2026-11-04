@@ -9,6 +9,7 @@ import { createSessionNavigationFeature } from '../../src/sidepanel/features/ses
 import { createSessionState } from '../../src/sidepanel/features/sessions/session-state.js';
 import { createTranscriptProjection } from '../../src/sidepanel/features/chat/transcript/projection.js';
 import { toolPresentationRegistry } from '../../src/sidepanel/tools/tool-presentation.js';
+import { createToolArgsPreview } from '../../src/sidepanel/tools/tool-args-preview.js';
 
 function fixture() {
   const metadata = {}, runtimes = {}, stored = {}, aliases = {}, pages = new Map(), events = [];
@@ -130,6 +131,7 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
 });
 
 test('evaluate labels use host page metadata or explicit tabRef independently of run identity', () => {
+  const preview = createToolArgsPreview({});
   for (const runId of ['opaque-script-run', 'drive-native-identifier']) {
     const tool = { name: 'evaluate', runId };
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, { tabRef: 'a' }, { _pageTitle: 'Actual page', result: { title: 'Other' } }), '(Actual page)');
@@ -139,8 +141,12 @@ test('evaluate labels use host page metadata or explicit tabRef independently of
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, {}), '');
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { details: { _pageTitle: 'Historical page' } }), '(Historical page)');
     assert.equal(toolPresentationRegistry.project('argsSummary', tool, {}, { title: 'User title', url: 'https://user-data.test/' }), '');
-    assert.equal(toolPresentationRegistry.project('argsSummary', { name: 'run_script', runId }, {}, { _pageTitle: 'Nested page' }), undefined,
+    assert.equal(toolPresentationRegistry.project('argsSummary', { name: 'run_script', runId }, {}, { _pageTitle: 'Nested page' }), '',
       'outer orchestration has no execution page label');
+    for (const result of [null, { _pageTitle: 'Nested page' }]) {
+      assert.equal(preview.format({ timeout: 10, code: 'return 42;' }, '', { name: 'run_script', runId }, result), '',
+        'outer scripts suppress generic argument previews, including their source code');
+    }
   }
 });
 
