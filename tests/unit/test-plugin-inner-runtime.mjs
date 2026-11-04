@@ -45,6 +45,13 @@ const manifest = {
       script: "scripts/runtime.js",
       parameters: { type: "object", properties: {} },
     },
+    {
+      name: "script_query",
+      runtime: "script",
+      script: "scripts/runtime.js",
+      parameters: { type: "object", properties: { tabRef: { type: ["integer", "string"] } }, required: ["tabRef"] },
+    },
+    { name: "legacy_page", script: "scripts/runtime.js" },
   ],
 };
 
@@ -66,7 +73,7 @@ const innerSchema = schemas.find(item => item.function.name === "runtime_example
 assert.ok(innerSchema);
 assert.deepEqual(innerSchema.function.parameters.properties.tabId, manifest.tools[0].parameters.properties.tabId);
 assert.equal(Object.hasOwn(innerSchema.function.parameters.properties, "tabRef"), false);
-assert.match(innerSchema.function.description, /无需网页，可读取 Skill 设置并请求其允许的网络来源/);
+assert.match(innerSchema.function.description, /脚本在页面外运行/);
 assert.doesNotMatch(innerSchema.function.description, /内部 Worker|\$plugin|runtime:/);
 const pageSchema = schemas.find(item => item.function.name === "runtime_example__page_check");
 assert.ok(pageSchema.function.parameters.required.includes("tabRef"), "page Skill tools require an explicit public page reference");
@@ -122,6 +129,25 @@ assert.equal(dispatches[1].args.tabId, 42);
 assert.equal(Object.hasOwn(dispatches[1].args, "target"), false);
 assert.deepEqual(dispatches[1].args.args.$plugin.config, { endpoint: "https://api.example.test" });
 assert.equal(Object.hasOwn(dispatches[1].context, "skillExecution"), false);
+
+const scriptSchema = schemas.find(item => item.function.name === "runtime_example__script_query");
+assert.deepEqual(scriptSchema.function.parameters.required, ["timeout", "tabRef"]);
+await executeSkillTool("runtime_example__script_query", { timeout: 10, tabRef: "research" }, null,
+  { sessionId: "session-1" }, dispatch, { skillSettings });
+assert.equal(configCalls[2].includeSecrets, true);
+assert.equal(dispatches[2].args.target, "inner", "script reuses the existing outer runner");
+assert.equal(dispatches[2].args.tabId, undefined, "outer scripts do not inherit a page execution context");
+assert.equal(dispatches[2].args.args.tabRef, "research", "the caller's alias reaches the script unchanged");
+assert.equal(dispatches[2].context.skillExecution.config.token, "private-token");
+
+const legacySchema = schemas.find(item => item.function.name === "runtime_example__legacy_page");
+assert.ok(legacySchema.function.parameters.required.includes("tabRef"));
+await executeSkillTool("runtime_example__legacy_page", { timeout: 10, tabId: 42 }, null,
+  { sessionId: "session-1" }, dispatch, { skillSettings });
+assert.equal(configCalls[3].includeSecrets, false);
+assert.equal(dispatches[3].args.target, undefined, "an omitted runtime keeps installed page scripts on their original runner");
+assert.equal(dispatches[3].args.tabId, 42);
+assert.equal(dispatches[3].context.skillExecution, undefined);
 
 await assert.rejects(
   executeSkillTool(

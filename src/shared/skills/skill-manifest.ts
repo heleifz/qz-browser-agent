@@ -575,7 +575,8 @@ function normalizeSkillToolRuntime(value: unknown = "", item: Data = {}): SkillT
   const raw = String(input?.type || value || "").trim().toLowerCase();
   if (raw === "mcp" || item?.mcp || item?.mcpTool) return "mcp";
   if (raw === "host") return "host";
-  if (raw === "inner") return "inner";
+  if (raw === "script" || raw === "inner") return "inner";
+  // Installed Skills without a runtime still use their original page execution ABI.
   return "page";
 }
 
