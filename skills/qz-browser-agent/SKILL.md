@@ -44,9 +44,16 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 `qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
 
-When arguments are unclear, query only the needed schemas with `tools.list_tools({names:["inspect_element","wait_for_response"]})` and reuse them across scripts in the same task.
+Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools.
 
-Use these browser tools in scripts. Loaded Skills can add tools.
+```sh
+qz script --session "$SID" - <<'JS'
+// Discover browser tools before choosing a more specialized operation.
+return await tools.list_tools();
+JS
+```
+
+Use these browser tools in scripts.
 
 <!-- qz-drive-tools:start -->
 - **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward.
