@@ -92,7 +92,21 @@ return await tools.wait_for_navigation({
 
 wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element defaults to visible; use attached when only DOM presence is needed. A body with zero height can contain visible children, so waiting for body visibility is not a page-readiness check. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
 
-Use await for dependent steps and Promise.all for independent page workflows; each branch continues when its own calls complete. Use Promise.allSettled to collect every outcome. Await tool calls before returning: script exit cancels unfinished calls. Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
+Use await for dependent steps and Promise.all for independent page workflows. Each branch can open and read its page without waiting for slower branches; same-page actions stay serialized. Promise.all returns results in input order and rejects on the first failure without cancelling siblings. Use Promise.allSettled when every outcome matters. Await all tool calls before returning: script exit cancels unfinished calls.
+
+```sh
+qz script --session "$SID" - <<'JS'
+// Open and read each page independently.
+return await Promise.all(
+  ["https://example.com", "https://example.org"].map(async url => {
+    const { tabRef } = await tools.open_tab({ url });
+    return await tools.read_article({ tabRef, limit: 1500 });
+  })
+);
+JS
+```
+
+Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
 
 ## Documents and larger results
 

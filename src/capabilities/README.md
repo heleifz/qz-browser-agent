@@ -92,8 +92,9 @@ Same-tab work follows execution dependencies. UID-targeted calls use their regis
 all targets are known UIDs on one tab and the definition grants a parallel role. Declare additional
 target fields through `behavior.uidTargets`; the extractor extends `target`, `selector`, and `root`.
 Return every target, including non-UID values, so mixed or cross-tab calls retain commit barriers.
-Implicit targets and undeclared/global tools also retain commit barriers. Runtime-owned Session writes, effects, final events and results publish in
-original call order, independently of execution completion order. Start and progress events publish
+Implicit targets and undeclared/global tools also retain commit barriers. Native model batches publish
+Session writes, effects, final events and results in original call order, independently of execution
+completion order. Start and progress events publish
 during execution, including flow-control waits. A `parallelOpen` handler obtains
 its new tab's execution context from `context.prepareCreatedTab` before page preparation. Declared
 parallel handlers leave Session ownership and selection writes to the runtime's ordered commit.
@@ -105,12 +106,12 @@ payloads cannot grant scheduling authority; the selected definition must come fr
 snapshot. Any build-time capability can use these fields through `qz.registerTool`; there is no tool-name
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
 marks a tool that may touch global resources. Skill/plugin tools (`source: "plugin"`) are always barriers;
-manifest fields cannot opt them into parallel execution. `run_skill_script` remains a barrier.
-`run_script` declares `parallelTab: true` and a barrier predicate: execution without `tabRef` or code
-that may use host tools is a barrier; no-tools page code uses the normal tab lane. Supplying `tabRef`
-selects page execution, and `mutatesPage` controls effects rather than classification. The capability's conservative static
-classifier also selects bridge installation. Input/args-only code needs no bridge. Unknown syntax
-stays a barrier; missing tool access in a no-bridge invocation returns an error without replay.
+manifest fields cannot opt them into parallel execution. The hidden `run_skill_script` host remains
+a barrier for packaged Skill scripts. Public `run_script` runs orchestration outside pages and is
+a barrier in a native model batch. Its nested calls share execution lanes and the concurrency budget;
+ready results commit one at a time and resolve their Promises without waiting for unrelated executions.
+`evaluate` declares `parallelTab: true` and runs a self-contained function on an explicit `tabRef`,
+with data passed through `args`. Page functions have DOM access; orchestration uses `tools`.
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 
