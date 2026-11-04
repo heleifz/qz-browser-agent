@@ -43,7 +43,7 @@ function releaseExecution(scope: object) {
 
 /** Trusted declarations grant concurrency; an explicit page is still required. */
 export function independentToolPolicy(policy: ToolBatchTabPolicy | null | undefined, explicit = true): boolean {
-  return policy?.kind === "observe" || (policy?.kind === "create" ? policy.parallel === true && (!policy.targeted || explicit)
+  return policy?.kind === "script" || policy?.kind === "observe" || (policy?.kind === "create" ? policy.parallel === true && (!policy.targeted || explicit)
     : policy?.kind === "target" && (policy.observation || policy.parallel === true) && explicit);
 }
 

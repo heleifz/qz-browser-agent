@@ -119,11 +119,11 @@ const messages = defineMessages("skills-model", {
     "zh-CN": `Skill 运行在轻舟浏览器扩展中（非 Node.js 或服务器）：
 - content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，截断时加载 qingzhou-documents 用 qingzhou_documents__document_read_chunk 续读）。
 - 页面工具必须用 tabRef 声明和传入页面目标，值为当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用；未知别名报错。
-- 新脚本使用 run_script 外层模式，支持顶层 await/return，通过 tools.evaluate 执行页面函数；按已加载 Skill 声明的参数和网络权限调用，保留已有脚本的执行模式。不支持 fs/path/process/require/npm/shell；导航和点击放在外层工具执行。`,
+- 新脚本使用 run_script 外层模式，使用 args、tools、trace() 和顶层 await/return，通过 tools.evaluate 执行页面函数；按已加载 Skill 声明的参数和网络权限调用，保留已有脚本的执行模式。不支持 fs/path/process/require/npm/shell；导航和点击放在外层工具执行。`,
     en: `Skills run in the qz browser extension (not Node.js or a server):
 - Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call qingzhou_documents__document_read_chunk if truncated).
 - Require and pass page targets as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs. Unknown aliases fail.
-- New scripts use the outer run_script mode with top-level await/return and tools.evaluate for page functions. Follow the loaded Skill's declared arguments and network permissions; preserve existing scripts' execution modes. Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through outer tools.`,
+- New scripts use the outer run_script mode with args, tools, trace(), top-level await/return and tools.evaluate for page functions. Follow the loaded Skill's declared arguments and network permissions; preserve existing scripts' execution modes. Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through outer tools.`,
   },
 });
 

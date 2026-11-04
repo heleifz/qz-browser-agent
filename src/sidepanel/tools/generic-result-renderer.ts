@@ -591,13 +591,14 @@ export function normalizeFriendlyValue(value: unknown) {
 
 export function unwrapResultValue(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { value, envelope: null };
-  const hasEnvelopeShape = Object.prototype.hasOwnProperty.call(value, "ok")
+  const valueOnly = record(record(record(value)._display).script).valueOnly === true;
+  const hasEnvelopeShape = valueOnly || Object.prototype.hasOwnProperty.call(value, "ok")
     && (Object.prototype.hasOwnProperty.call(value, "result")
       || Object.prototype.hasOwnProperty.call(value, "hasResult")
       || Object.prototype.hasOwnProperty.call(value, "resultType"));
   if (!hasEnvelopeShape) return { value, envelope: null };
   return {
-    value: normalizeFriendlyValue(record(value).result),
+    value: valueOnly ? record(value).result : normalizeFriendlyValue(record(value).result),
     envelope: record(value),
   };
 }

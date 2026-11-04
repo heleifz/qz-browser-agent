@@ -9,6 +9,7 @@ import { parseSkillManifest } from '../../src/shared/skills/skill-manifest.js';
 import { QINGZHOU_SKILL_SCHEMA_VERSION } from '../../src/shared/skills/skill-utils.js';
 import { withLanguage } from '../../src/shared/i18n/index.js';
 import { issueToolEffects, consumeToolEffects } from '../../src/background/tools/effects.js';
+import { markToolValue, isToolValue, toolError } from '../../src/shared/contracts/tool-error.js';
 
 const renderer = { type: 'selection', title: 'Choose opportunities', itemsPath: 'jobs', itemIdPath: 'key',
   itemTitlePath: 'company', itemSubtitlePath: 'role', itemMeta: [{ label: 'Location', path: 'location' }],
@@ -20,6 +21,19 @@ const context = { sessionId: 'selection-session', runId: 'selection-run', toolCa
 const metadata = { id: 'selection-example', runtime: 'inner', renderer };
 const result = () => bindToolResultPresentation({ ok: true, hasResult: true, result: { jobs: structuredClone(jobs) } }, { _plugin: metadata });
 const selected = ids => ({ submitted: true, answers: { selectedIds: ids } });
+
+test('direct script values keep business envelope keys; actual failures never open a chooser', async () => {
+  const value = bindToolResultPresentation(markToolValue({ jobs, ok: false, error: 'business data',
+    result: { jobs: [] }, trace: ['business'] }), { _plugin: { ...metadata, runtime: 'script' },
+    _display: { script: { valueOnly: true, trace: [{ level: 'trace', message: 'collected' }] } } });
+  const chosen = await selectSkillResults(renderer, value, undefined, context, async () => selected(['job-a']));
+  assert.deepEqual(chosen, { selectedIds: ['job-a'], selectedItems: [jobs[0]], totalItems: 2 });
+  assert.ok(isToolValue(chosen));
+  assert.equal(getToolResultPresentation(chosen)._plugin.runtime, 'script');
+  assert.equal(getToolResultPresentation(chosen)._display.script.trace[0].message, 'collected');
+  const failed = toolError('SCRIPT_EVALUATION_FAILED', 'Script failed');
+  assert.equal(await selectSkillResults(renderer, failed, undefined, context, () => assert.fail('failure cannot become candidates')), failed);
+});
 
 test('maps declared paths to cards, preserves provenance and effects, returns only chosen source rows', async () => {
   const input = result();

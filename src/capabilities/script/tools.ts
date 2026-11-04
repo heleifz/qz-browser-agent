@@ -13,7 +13,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { publishTimeoutTrace, scriptTimeout, toolError, markToolValue, bindToolResultPresentation } from "#sdk/background/tools";
+import { publishTimeoutTrace, scriptTimeout, orchestrationTimeout, toolError, markToolValue, bindToolResultPresentation } from "#sdk/background/tools";
 import { ensureOffscreenDocument, waitForParsedDocument, waitForPageCommit } from "#sdk/background/browser";
 import { wrapRunScriptSource, isRunScriptCallableExpression } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -147,6 +147,9 @@ function compactScriptTrace(trace: unknown) {
       break;
     }
     clipped.push({
+      ...(typeof item.sequence === "number" ? { sequence: item.sequence } : {}),
+      ...(typeof item.tabRef === "string" || typeof item.tabRef === "number" ? { tabRef: item.tabRef } : {}),
+      ...(typeof item.toolCallId === "string" ? { toolCallId: item.toolCallId } : {}),
       time: item.time || "",
       level: item.level || "trace",
       message,
@@ -225,7 +228,7 @@ registerTool({
 
 registerTool({
   name: "run_script",
-  behavior: { barrier: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
+  behavior: { orchestration: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
   model: { preserveResult: true },
   get description() { return getRunScriptDescription(); },
   get parameters() { return {
@@ -238,11 +241,11 @@ registerTool({
     required: ["code"],
   } as const; },
   page: false,
-  timeout: (args, name) => scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, name),
+  timeout: orchestrationTimeout,
   validateArgs: args => {
     if (args.tabRef != null || args.tabId != null) throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
       "run_script executes outside the page and does not accept a page reference.");
-    scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, "run_script");
+    orchestrationTimeout(args, "run_script");
   },
   execute: async (input, signal, context = {}) => {
     if (context.requestedTabRef != null) throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
@@ -284,7 +287,7 @@ registerTool({
     required: ["tabRef", "code"],
   } as const; },
   page: "owned",
-  timeout: (args, name) => scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, name),
+  timeout: orchestrationTimeout,
   validateArgs: args => {
     if (!isRunScriptCallableExpression(String(args.code || ""))) throw new ToolExecutionError(
       "INVALID_SCRIPT_FUNCTION", "evaluate code is not a function expression.");

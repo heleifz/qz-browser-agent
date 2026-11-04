@@ -10,6 +10,25 @@ import { createTestAgentOptions } from '../support/agent-services.mjs';
 const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.stringify({ tabId, limit: 10 }) } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('native script calls share the leaf budget and reach their own descendants without a batch barrier', async () => {
+  const items = [1, 2].map(id => ({ id, args: { code: 'return await tools.evaluate(args);', args: { tabRef: id } } }));
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy('run_script', item.args) }));
+  const nested = createNestedToolScheduler(), started = [], releases = new Map();
+  const run = scheduleToolCalls(items, {
+    tab: () => null, lane: plan.lane, independent: plan.independent, dependencies: plan.dependencies,
+    signal: new AbortController().signal,
+    execute: async (item, signal, _parallel, parent) => nested.run({ parent, group: 'children', lane: item.id,
+      policy: { kind: 'target', implicit: false, parallel: true }, signal,
+      execute: async () => { started.push(item.id); await new Promise(resolve => releases.set(item.id, resolve)); return item.id; },
+    }),
+    commit: async () => {},
+  });
+  await tick();
+  assert.deepEqual(started, [1, 2]);
+  releases.get(2)(); releases.get(1)();
+  await run;
+});
+
 test('native and nested ready results share one commit gate without holding it during execution', async () => {
   const nested = createNestedToolScheduler(), events = [];
   let releaseHead, releaseChild;

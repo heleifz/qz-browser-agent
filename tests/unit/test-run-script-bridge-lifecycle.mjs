@@ -130,6 +130,14 @@ tools.defineTool({ name: '__nested_steps', description: 'Two dependent descendan
     return context.invokeTool('__nested_lane_probe', { tabRef: tabId, fixture, label });
   },
 });
+tools.defineTool({ name: '__script_steps', description: 'Outer script with business arguments and page descendants.',
+  behavior: { orchestration: true },
+  parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' }, label: { type: 'string' } }, required: ['tabRef', 'fixture', 'label'] },
+  execute: async ({ tabRef, fixture, label }, _signal, context) => {
+    await context.invokeTool('__nested_lane_probe', { tabRef, fixture, label: `${label}:first` });
+    return context.invokeTool('__nested_lane_probe', { tabRef, fixture, label });
+  },
+});
 tools.defineTool({ name: '__nested_braid', description: 'Interleaved creation, pending aliases and nested actions.',
   page: 'owned', behavior: { parallelTab: true },
   parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] }, fixture: { type: 'string' }, prefix: { type: 'string' }, base: { type: 'integer' } }, required: ['tabRef', 'fixture', 'prefix', 'base'] },
@@ -610,11 +618,40 @@ test('native and direct descendants record one paired call identity and their tr
     const [parent, child, childEnd, parentEnd] = f.state.events;
     assert.notEqual(parent.toolCallId, child.toolCallId);
     assert.equal(parentEnd.toolCallId, parent.toolCallId);
+    assert.equal(result.toolCallId, parent.toolCallId, 'Worker trace receives the authoritative sidebar identity');
     assert.equal(childEnd.toolCallId, child.toolCallId);
     assert.equal(child.parentCallId, parent.toolCallId);
     assert.equal(child.parentSpanId, `tool:${parent.toolCallId}`);
     assert.equal(childEnd.parentCallId, parent.toolCallId);
     assert.ok(f.state.events.every(event => event.externalDrive === mode));
     assert.equal(f.state.applied.length, 2, 'recording never applies effects a second time');
+  }
+});
+
+test('script containers overlap across pages and serialize actual descendants on the same page', async () => {
+  for (const budget of [1, 10]) {
+    const f = fixture(true, budget);
+    const promises = [f.call('__script_steps', { tabRef: 'page', label: 'slow' }),
+      f.call('__script_steps', { tabRef: 8, label: 'fast' }),
+      f.call('__script_steps', { tabRef: 7, label: 'same' })];
+    await tick();
+    assert.deepEqual(f.state.started, budget === 1 ? ['slow:first'] : ['slow:first', 'fast:first']);
+    if (budget === 10) {
+      f.state.release.get('fast:first')(); await tick();
+      assert.ok(f.state.started.includes('fast'), 'a fast packaged workflow can continue before a slow sibling');
+      f.state.release.get('fast')(); await tick();
+      assert.ok(f.state.cards.some(card => card.name === '__script_steps' && card.args.label === 'fast'));
+    }
+    let complete = false;
+    const all = Promise.all(promises).then(value => { complete = true; return value; });
+    for (let i = 0; i < 100 && !complete; i++) {
+      for (const release of [...f.state.release.values()]) release();
+      await tick();
+    }
+    assert.equal(complete, true, 'containers must not consume the leaf budget or block their own descendants');
+    assert.ok((await all).every(result => result.ok));
+    assert.ok(f.state.peak <= budget);
+    assert.equal(f.state.cards.length, 9);
+    assert.equal(new Set(f.state.cards.map(card => card.toolCallId)).size, 9);
   }
 });

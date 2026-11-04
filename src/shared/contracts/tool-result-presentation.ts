@@ -37,7 +37,10 @@ export function traceMessages(rows: unknown): readonly string[] {
     if (row.level === "script.start") return ["Script started."];
     const action = row.level === "tool.start" ? "started" : row.level === "tool.end" ? "completed" : row.level === "tool.error" ? "failed" : "";
     const match = action && /^(\S+)(?:\s+([\s\S]*))?$/.exec(row.message);
-    return [match ? `${match[1]} ${action}${match[2] ? `: ${match[2]}` : ""}` : row.message];
+    const identity = [typeof row.sequence === "number" ? `#${row.sequence}` : "",
+      typeof row.tabRef === "string" || typeof row.tabRef === "number" ? `tabRef=${JSON.stringify(row.tabRef)}` : "",
+      typeof row.toolCallId === "string" ? `call=${row.toolCallId}` : ""].filter(Boolean).join(" ");
+    return [match ? `${match[1]} ${action}${identity ? ` [${identity}]` : ""}${match[2] ? `: ${match[2]}` : ""}` : row.message];
   });
 }
 

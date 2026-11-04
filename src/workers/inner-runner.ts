@@ -1,7 +1,7 @@
 import { safeValueForMessage, scriptValue, scriptToolArguments, installSecurityGuards } from "../shared/script-runtime.js";
 import type { FetchResult, InnerWorkerInput, InnerWorkerOutput, ScriptEnvelope, ScriptFailure, ToolBridgeResponse, TraceRow, WorkerExecute } from '../shared/contracts/inner-runner.js';
 
-type ToolCall = { toolName: string; resolve(response: Extract<ToolBridgeResponse, {ok: true}>): void; reject(error: unknown): void };
+type ToolCall = { toolName: string; resolve(response: Extract<ToolBridgeResponse, {ok: true}>): void; reject(error: unknown, toolCallId?: string): void };
 type FetchCall = { resolve(response: FetchResult): void; reject(error: unknown): void; cleanup(): void };
 type PushTrace = (level: string, items: unknown[]) => void;
 const failure = (value: unknown): ScriptFailure => value instanceof Error ? value : Object.assign(new Error(String(value)), value && typeof value === 'object' ? value : {});
@@ -42,7 +42,7 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       if (response.code) error.code = response.code;
       if (response.hint) error.hint = response.hint;
       if (response.details) error.details = response.details;
-      call.reject(error);
+      call.reject(error, response.toolCallId);
       return;
     }
     call.resolve(response);
@@ -91,14 +91,17 @@ async function runInnerScript(payload: WorkerExecute) {
     }
   }
 
-  function pushTrace(level: string, items: unknown[]) {
+  function pushTrace(level: string, items: unknown[], call: Partial<TraceRow> = {}) {
     const message = Array.from(items || []).map(traceText).join(" ");
-    traceRows.push({
+    const row = {
+      ...call,
       time: new Date().toISOString(),
       level: String(level || "trace"),
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
-    });
+    };
+    traceRows.push(row);
     if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
+    return row;
   }
 
   function trace(...items: unknown[]) { pushTrace("trace", items); }
@@ -114,10 +117,11 @@ async function runInnerScript(payload: WorkerExecute) {
   function callTool(name: string, args: unknown = {}) {
     const toolName = String(name || "").trim();
     if (!toolName) throw new Error("tools call requires a tool name");
-    const toolArgs = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
+    const toolArgs: Record<string, unknown> = isRecord(args) && !Array.isArray(args) ? { ...args } : {};
     const safeToolArgs = scriptToolArguments(toolName, toolArgs);
-    pushTrace("tool.start", [toolName]);
     const callId = "inner_tool_" + Date.now() + "_" + (++seq);
+    const identity = { sequence: seq, ...(typeof toolArgs.tabRef === "string" || typeof toolArgs.tabRef === "number" ? { tabRef: toolArgs.tabRef } : {}) };
+    const start = pushTrace("tool.start", [toolName], identity);
     send({
       type: "tool_call",
       callId,
@@ -128,15 +132,17 @@ async function runInnerScript(payload: WorkerExecute) {
       pendingToolCalls.set(callId, {
         toolName,
         resolve(response) {
-          pushTrace("tool.end", [toolName]);
+          start.toolCallId = response.toolCallId;
+          pushTrace("tool.end", [toolName], { ...identity, toolCallId: response.toolCallId });
           addToolArtifacts(response.artifacts || response.artifact);
           if (response.result && typeof response.result === "object" && response.observation) {
             observations.set(response.result, response.observation);
           }
           resolve(response.result);
         },
-        reject(error) {
-          pushTrace("tool.error", [toolName, failure(error).message || error]);
+        reject(error, toolCallId) {
+          start.toolCallId = toolCallId;
+          pushTrace("tool.error", [toolName, failure(error).message || error], { ...identity, toolCallId });
           reject(error);
         },
       });

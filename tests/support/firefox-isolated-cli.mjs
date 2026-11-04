@@ -13,7 +13,7 @@ export async function connectFirefoxCli(session) {
   const evaluate = (fn, arg) => {
     // Resolve the test callback's imports to modules loaded by the copied package.
     const source = fn.toString().replace(/import\('\/shared\/(?:transport\/port-transport|session\/session-recovery)\.js'\)/g,
-      'globalThis.__qzOuterScriptModules');
+      'globalThis.__qzOuterScriptModules').replace(/import\('\/sidepanel\/tools\/tool-renderer\.js'\)/g, 'globalThis.__qzOuterScriptModules');
     return session.extension('sidebar', `
       const globalThis=view, document=content.document, chrome=view.chrome;
       const argument=${arg === undefined ? 'undefined' : `view.JSON.parse(${JSON.stringify(JSON.stringify(arg))})`};

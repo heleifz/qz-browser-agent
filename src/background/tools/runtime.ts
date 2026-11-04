@@ -52,7 +52,7 @@ import { toolSignature, isDriveToolDefault, isDriveToolDiscoverable } from "../m
  */
 
 import { ToolExecutionError, isMissingRequiredValue, validateToolSchema } from "./arguments.js";
-import { DEFAULT_TOOL_TIMEOUT, documentHostTimeout, resolveTimeout, scriptTimeout } from "./timing.js";
+import { DEFAULT_TOOL_TIMEOUT, documentHostTimeout, orchestrationTimeout, resolveTimeout, scriptTimeout } from "./timing.js";
 import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import { getSecurityGuardrails, matchBlockedUrl } from "../../shared/security-guardrails.js";
 import {
@@ -378,6 +378,7 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
   const entry = getSkillToolDefinition(runtimeName, options);
   if (!entry) return null;
   const hostDefinition = snapshot.get(getHostCoreToolTarget(entry.plugin, entry.tool));
+  const scriptDefinition = entry.tool.runtime === "script" ? snapshot.get("run_script") : undefined;
   const renderer = entry.tool.renderer || entry.plugin.renderers.tools[entry.tool.name];
   const identity = normalizeToolIdentity({
     name: entry.tool.name,
@@ -392,18 +393,19 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     ...identity,
     parameters: getSkillToolParameters(entry.tool),
     page: isSkillPageTool(entry.tool) ? "owned" : undefined,
-    model: hostDefinition?.model,
-    // Skill execution may invoke arbitrary tools; manifests cannot opt out of this boundary.
-    behavior: { ...hostDefinition?.behavior, barrier: true },
+    model: scriptDefinition?.model || hostDefinition?.model,
+    // Only the host-selected script runner grants orchestration; old/privileged Skills retain their barrier.
+    behavior: scriptDefinition?.behavior || { ...hostDefinition?.behavior, barrier: true },
     source: "plugin",
     plugin: entry.plugin,
     ...(renderer?.type === "selection" ? { selectionRenderer: renderer } : {}),
     validateArgs: args => {
       if (isDocumentHostTool(entry.tool)) documentHostTimeout(args, runtimeName);
+      else if (scriptDefinition) orchestrationTimeout(args, runtimeName);
       else if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
       return hostDefinition?.validateArgs?.(args);
     },
-    timeout: isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
+    timeout: scriptDefinition ? orchestrationTimeout : isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
     legacyTimeoutMs: !isSkillScriptTool(entry.tool),
     execute: (args, signal, context) => executeSkillTool(name, args, signal, context,
       (nestedName, nestedArgs, nestedSignal, nestedContext = {}) => executeTool(
@@ -443,6 +445,7 @@ function canonicalToolArgs(definition: RuntimeTool, input: Fields): Fields {
 
 /** Keep non-uid targets too: mixed calls cannot safely use a single uid's tab lane. */
 function elementTargetsOf(definition: RuntimeTool, input: Fields): unknown[] {
+  if (definition.behavior?.orchestration) return [];
   input = canonicalToolArgs(definition, input);
   const values = ["target", "selector", "root"]
     .filter(key => definition.parameters.properties[key])
@@ -477,6 +480,7 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
   const definition = resolveToolDefinition(name, options);
   if (!definition) return null;
   const input = canonicalToolArgs(definition, record(args)), barrier = isToolBarrier(definition, input);
+  if (!barrier && definition.behavior?.orchestration) return { kind: "script" };
   const pageAccess = resolvePageAccess(definition, input);
   const passive = !barrier && toolBehaviorEnabled(definition.behavior?.passiveWait, input);
   if (definition.tabLifecycle === "created") return { kind: "create",
@@ -616,7 +620,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       throw makeSessionTabTargetError("TAB_REF_REQUIRED", { toolName: name }, context);
     }
     parameters = resolvedPageParameters(definition);
-    if (Object.hasOwn(record(args), "tabRef")) {
+    if (!definition.behavior?.orchestration && Object.hasOwn(record(args), "tabRef")) {
       const { tabRef, ...input } = record(args);
       const tabId = parent?.reservation && parent.tabId === input.tabId && record(context.createdTabResult).tabRef === tabRef
         ? parent.tabId : resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
@@ -632,12 +636,12 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     })) {
       throw tabReferenceError("conflicting_target", context.requestedTabRef, language);
     }
-    if (record(args).tabAlias != null && (definition.tabLifecycle !== "created" || !isTabAlias(record(args).tabAlias))) {
+    if (!definition.behavior?.orchestration && record(args).tabAlias != null && (definition.tabLifecycle !== "created" || !isTabAlias(record(args).tabAlias))) {
       throw tabReferenceError("invalid_alias", record(args).tabAlias, language);
     }
     effectiveArgs = record(args);
     effectiveArgs = record(withTimeoutAliases(effectiveArgs, definition));
-    const validationArgs = definition.parameters.properties.tabRef && effectiveArgs.tabId != null
+    const validationArgs = !definition.behavior?.orchestration && definition.parameters.properties.tabRef && effectiveArgs.tabId != null
       ? { ...effectiveArgs, tabRef: requestedTabRef ?? effectiveArgs.tabId } : effectiveArgs;
     validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
     if (typeof definition.validateArgs === "function") definition.validateArgs(effectiveArgs);
@@ -649,7 +653,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     assertScriptPageLifecycle(definition, executionArgs, context);
     const securityGuardrails = await getSecurityGuardrails();
     await assertToolTargetAllowedBySecurityGuardrails(definition, executionArgs, context, securityGuardrails);
-    if (executionArgs.tabAlias != null) {
+    if (definition.tabLifecycle === "created" && executionArgs.tabAlias != null) {
       if (!authority.sessions?.reserveTabAlias || !authority.sessions.commitTabAlias || !authority.sessions.discardTabAlias) {
         throw makeSessionTabTargetError("CDP_SESSION_RUNTIME_UNAVAILABLE", { toolName: name }, context);
       }

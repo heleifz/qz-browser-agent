@@ -5,7 +5,7 @@ import { openFirefoxSidebar } from './launch.mjs';
 import { connectFirefoxCli } from '../support/firefox-isolated-cli.mjs';
 import { exerciseOuterScripts } from '../support/outer-script-acceptance.mjs';
 
-for (const interleavings of [false, true]) test(interleavings ? 'Firefox outer script interleaved branches preserve lanes across navigation and caught errors'
+for (const mode of ['navigation', 'interleavings', 'skills']) test(mode === 'skills' ? 'installed script Skills share inline semantics, concurrent lanes and trace identity' : mode === 'interleavings' ? 'Firefox outer script interleaved branches preserve lanes across navigation and caught errors'
   : 'Firefox outer script coordinates actual navigation, AJAX, queues and popup cancellation', async ({}, testInfo) => {
   test.setTimeout(180_000);
   const extensionDir=testInfo.outputPath('extension');
@@ -20,6 +20,6 @@ for (const interleavings of [false, true]) test(interleavings ? 'Firefox outer s
   await writeFile(html,instrumented);
   const firefoxSidebar=await openFirefoxSidebar({extensionDir});
   let environment;
-  try { environment=await connectFirefoxCli(firefoxSidebar); await exerciseOuterScripts({ ...environment, expect, step: test.step, testInfo, interleavings }); }
+  try { environment=await connectFirefoxCli(firefoxSidebar); await exerciseOuterScripts({ ...environment, expect, step: test.step, testInfo, interleavings: mode === 'interleavings', skillScripts: mode === 'skills' }); }
   finally { await environment?.close(); await firefoxSidebar.close(); }
 });

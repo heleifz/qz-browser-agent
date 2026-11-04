@@ -79,7 +79,7 @@ export function createRunScriptBridge({
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
   const schedulers = new Map<string, ReturnType<typeof createNestedToolScheduler>>();
 
-  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, invocationSignal?: AbortSignal) {
+  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, invocationSignal?: AbortSignal): Promise<Fields> {
     // The old transport spelling is a hidden alias for the registered catalog tool.
     if (message.toolName === "__list_tools__") message = { ...message, toolName: "list_tools" };
     let rawResult: unknown, resultPresentation: ToolResultPresentation | undefined, observed = false, externalDrive = false;
@@ -110,7 +110,7 @@ export function createRunScriptBridge({
       await start(false);
       await record("end", observed && response.isError !== true ? rawResult : response.result ?? response, response.isError === true);
     }
-    return response;
+    return { ...response, toolCallId };
   }
 
   async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown, presentation?: ToolResultPresentation) => void, observeMode: (externalDrive: boolean) => void, invocationSignal: AbortSignal | undefined, toolCallId: string, start: (executed: boolean) => Promise<void>) {
@@ -173,13 +173,13 @@ export function createRunScriptBridge({
       let scheduler = schedulers.get(key);
       if (!scheduler) { scheduler = createNestedToolScheduler(toolRuntime.maxInFlight); schedulers.set(key, scheduler); }
       const policy = toolRuntime.getBatchTabPolicy?.(toolName, toolArgs, toolContext);
-      const staged = Boolean(toolRuntime.commitToolResult && toolRuntime.discardToolResult)
+      const staged = policy?.kind !== "script" && Boolean(toolRuntime.commitToolResult && toolRuntime.discardToolResult)
         && independentToolPolicy(policy, toolArgs.tabId != null || Object.hasOwn(toolArgs, "tabRef"));
       const aliases = toolRuntime.getTabAliases?.(sessionId) || {};
-      const ref = toolArgs.tabRef;
+      const ref = policy?.kind === "script" ? undefined : toolArgs.tabRef;
       const lane = policy?.kind === "target" && policy.tabId != null ? policy.tabId
         : policy?.kind === "create" && !policy.targeted ? typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? `alias:${toolArgs.tabAlias}` : `create:${crypto.randomUUID()}`
-        : tabReferenceId(ref) ?? (typeof ref === "string" ? aliases[ref] ?? `alias:${ref}` : Number(toolArgs.tabId) || null);
+        : policy?.kind === "script" ? null : tabReferenceId(ref) ?? (typeof ref === "string" ? aliases[ref] ?? `alias:${ref}` : Number(toolArgs.tabId) || null);
       let definition: ReturnType<BridgeHost["toolRuntime"]["resolveDefinition"]>;
       let executionResult: unknown;
       let executionContext: ToolContext = toolContext;

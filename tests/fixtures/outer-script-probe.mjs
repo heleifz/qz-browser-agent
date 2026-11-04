@@ -1,4 +1,5 @@
 import { readSessionSnapshot } from '../shared/session/session-recovery.js';
+import { renderToolEvent, disposeRendererTree } from '../sidepanel/tools/tool-renderer.js';
 
 // Loaded only by the copied Firefox acceptance package, in its actual sidebar realm.
 globalThis.__qzOuterScriptEvents=[];
@@ -15,4 +16,4 @@ function observe() {
   globalThis.__qzOuterScriptEvents=[];
   globalThis.__qzOuterScriptTabs=[];
 }
-globalThis.__qzOuterScriptModules = { readSessionSnapshot, observe };
+globalThis.__qzOuterScriptModules = { readSessionSnapshot, observe, renderToolEvent, disposeRendererTree };

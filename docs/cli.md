@@ -420,7 +420,7 @@ the session and clean up its created tabs, including while a script is running. 
 preserved. Further execution returns `DRIVE_SESSION_ENDED`.
 
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
-file or stdin; --args accepts a JSON value exposed as input/args. The script can await tools
+file or stdin; --args accepts a JSON value exposed as args. The script can await tools
 using the same names as the native Agent. Discover compact signatures with
 `tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`.
 Each page tool passes its own explicit tabRef. `tools.evaluate` runs a
@@ -439,7 +439,8 @@ qz session cancel SESSION_ID
 ```
 
 stdout is JSON `{traces,result}` on success and failure. traces is an ordered string array
-without levels; result is the returned business value, null for undefined, or a failure in
+without levels. Tool traces carry sequence numbers and supplied tabRef values; settled calls include
+the call ID used by the sidebar. result is the returned business value, null for undefined, or a failure in
 `{code,message,hint?,details?}` form. Business trace/traces fields stay inside result. Script
 locations are in details. Exit codes are 0 for success, 1 for execution or connection failure,
 and 2 for invalid arguments. --timeout defaults to 120

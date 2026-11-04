@@ -55,7 +55,7 @@ const manifest = {
   ],
 };
 
-commitSkillToolRegistryCandidate(prepareSkillToolRegistryFromSkills([{
+const storedSkill = {
   name: "runtime-example-skill",
   displayName: "Runtime Example Skill",
   description: "runtime contract",
@@ -66,7 +66,9 @@ commitSkillToolRegistryCandidate(prepareSkillToolRegistryFromSkills([{
     { path: "plugin.json", type: "json", content: JSON.stringify(manifest) },
     { path: "scripts/runtime.js", type: "script", content: "async () => ({ ok: true })" },
   ],
-}]));
+};
+globalThis.chrome = { storage: { local: { async get() { return { _skills: { "runtime-example-skill": storedSkill } }; }, async set() {} } } };
+commitSkillToolRegistryCandidate(prepareSkillToolRegistryFromSkills([storedSkill]));
 
 const schemas = getActiveSkillToolSchemasSync({ language: "zh-CN" });
 const innerSchema = schemas.find(item => item.function.name === "runtime_example__inner_query");
@@ -131,11 +133,12 @@ assert.deepEqual(dispatches[1].args.args.$plugin.config, { endpoint: "https://ap
 assert.equal(Object.hasOwn(dispatches[1].context, "skillExecution"), false);
 
 const scriptSchema = schemas.find(item => item.function.name === "runtime_example__script_query");
-assert.deepEqual(scriptSchema.function.parameters.required, ["timeout", "tabRef"]);
+assert.deepEqual(scriptSchema.function.parameters.required, ["tabRef"]);
 await executeSkillTool("runtime_example__script_query", { timeout: 10, tabRef: "research" }, null,
   { sessionId: "session-1" }, dispatch, { skillSettings });
 assert.equal(configCalls[2].includeSecrets, true);
-assert.equal(dispatches[2].args.target, "inner", "script reuses the existing outer runner");
+assert.equal(dispatches[2].name, "run_script", "new Skill scripts use the public execution contract");
+assert.equal(dispatches[2].args.target, undefined);
 assert.equal(dispatches[2].args.tabId, undefined, "outer scripts do not inherit a page execution context");
 assert.equal(dispatches[2].args.args.tabRef, "research", "the caller's alias reaches the script unchanged");
 assert.equal(dispatches[2].context.skillExecution.config.token, "private-token");

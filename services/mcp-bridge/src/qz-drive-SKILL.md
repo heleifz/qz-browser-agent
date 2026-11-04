@@ -42,7 +42,7 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 ## Scripts and tool discovery
 
-`qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
+`qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools and trace(), but no document/window, Node.js, fs, process, require or import.
 
 Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools.
 
@@ -61,7 +61,7 @@ qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
-  args: input
+  args
 });
 JS
 ```
@@ -106,7 +106,7 @@ return await Promise.all(
 JS
 ```
 
-Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
+Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace() and console diagnostics are returned as ordered strings in traces. Tool traces include a call sequence and the supplied tabRef when present; settled calls also include the call ID used by the sidebar.
 
 ## Documents and larger results
 

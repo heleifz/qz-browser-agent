@@ -24,6 +24,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   const executed = new Map<Entry, { id: number; result: unknown }>(), published = new Map<Entry, number>();
   const committedCreators = new Set<Entry>();
   for (const entry of entries) {
+    if (entry.policy?.kind === "script") continue;
     const alias = entry.args.tabAlias;
     if (alias == null) continue;
     if (entry.policy?.kind !== "create" || !isTabAlias(alias)) { entry.error = error("invalid_alias", alias); continue; }
@@ -34,6 +35,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   const parents = new Map<Entry, Entry>();
   const targets = new Map<Entry, number>();
   for (const entry of entries) {
+    if (entry.policy?.kind === "script") continue;
     const ref = entry.args.tabRef;
     if (Object.hasOwn(entry.args, "tabRef")) {
       // Existing bindings win over an attempted duplicate open; its failure must not redirect readers.
@@ -64,7 +66,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
     const producer = parents.get(entry);
     // A uid-targeted policy carries its registered tab; everything else uses the requested tab.
     const policyTab = entry.policy?.kind === "target" ? entry.policy.tabId : undefined;
-    const lane = entry.policy?.kind === "create" && !entry.policy.targeted ? entry : producer || policyTab || targets.get(entry) || entry.args.tabId;
+    const lane = entry.policy?.kind === "script" ? entry : entry.policy?.kind === "create" && !entry.policy.targeted ? entry : producer || policyTab || targets.get(entry) || entry.args.tabId;
     executionLanes.set(entry.item, typeof lane === "number" || typeof lane === "string" || lane && typeof lane === "object" ? lane : null);
     const local = independent(entry);
     edges.set(entry.item, {
@@ -107,7 +109,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
     args(item: T): unknown {
       const entry = byItem.get(item)!;
       if (entry.error) throw entry.error;
-      if (entry.args.tabRef == null) return entry.originalArgs;
+      if (entry.policy?.kind === "script" || entry.args.tabRef == null) return entry.originalArgs;
       const producer = parent(entry)!;
       if (committedCreators.has(producer) && !published.has(producer)) throw error("dependency_failed", entry.args.tabRef);
       const tabId = targets.get(entry) ?? executed.get(producer)?.id;

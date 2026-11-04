@@ -448,12 +448,15 @@ a parallel role. `behavior.uidTargets` extends the singular target fields; mixed
 target sets retain commit barriers, as do implicit targets and undeclared/global operations.
 Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
 The runtime evaluates it once per call during planning; true or a thrown predicate overrides
-`parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
+`parallelOpen`, `parallelTab`, `parallelRead` and `orchestration`. The Agent reuses this decision for execution.
 Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
 and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 
-`run_script` runs orchestration outside pages and remains a barrier at the Agent call level.
-Its tools proxy invokes the current catalog through the same Session authority and scheduler.
+`run_script` runs orchestration outside pages. Native batches and nested calls schedule it as a
+container; its tools proxy invokes the catalog through the same Session authority, page lanes and
+shared concurrency budget. New Skill tools with `runtime: "script"` delegate to this runner and inherit
+its direct JSON result and optional 120-second timeout. Their arguments remain business data until
+a descendant invokes a page tool. Legacy Skill runtimes keep their original contracts and barriers.
 `evaluate` declares tab-local parallel execution: independent pages can advance together while
 calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
 state effects rather than selecting a page or execution environment.

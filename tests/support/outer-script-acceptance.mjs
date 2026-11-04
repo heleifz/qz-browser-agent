@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { main } from '../../services/mcp-bridge/src/cli.mjs';
 import { readHealth } from '../../services/mcp-bridge/src/client.mjs';
+import { exerciseSkillScripts } from './script-skill-acceptance.mjs';
 import { startOuterScriptPage } from './outer-script-page.mjs';
 
 /** The same public CLI acceptance runs against the loaded Chrome and Firefox packages. */
-export async function exerciseOuterScripts({ endpoint, page, context, ui, observe, expect, step, testInfo, interleavings = false }) {
+export async function exerciseOuterScripts({ endpoint, page, context, ui, observe, expect, step, testInfo, interleavings = false, skillScripts = false }) {
   const fixture = await startOuterScriptPage(), transcript = [];
   let sessionId, stopped = false;
   const observeTools = observe || (() => page.evaluate(async () => {
@@ -50,6 +51,10 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     const created = await cli(['session', 'create', '--title', 'Outer script browser acceptance', '--json']);
     expect(created.exitCode, JSON.stringify(created)).toBe(0);
     sessionId = created.value.result.sessionId;
+    if (skillScripts) {
+      await exerciseSkillScripts({ page, script, cli, sessionId, events, fixture, expect });
+      return;
+    }
     if (interleavings) {
       await exerciseInterleavedBranches({ script, fixture, expect });
       return;
