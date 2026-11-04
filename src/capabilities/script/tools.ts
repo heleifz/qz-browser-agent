@@ -13,7 +13,7 @@ interface ScriptOptions { tabId?: number; sessionId?: string; runId?: string; pa
 const record = (value: unknown): Fields => value && typeof value === "object" && !Array.isArray(value) ? value as Fields : {};
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
-import { publishTimeoutTrace, scriptTimeout, orchestrationTimeout, toolError, markToolValue, bindToolResultPresentation } from "#sdk/background/tools";
+import { publishTimeoutTrace, beginScriptTrace, acceptScriptTrace, scriptTimeout, orchestrationTimeout, toolError, markToolValue, bindToolResultPresentation } from "#sdk/background/tools";
 import { ensureOffscreenDocument, waitForParsedDocument, waitForPageCommit } from "#sdk/background/browser";
 import { wrapRunScriptSource, isRunScriptCallableExpression } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
@@ -150,6 +150,7 @@ function compactScriptTrace(trace: unknown) {
       ...(typeof item.sequence === "number" ? { sequence: item.sequence } : {}),
       ...(typeof item.tabRef === "string" || typeof item.tabRef === "number" ? { tabRef: item.tabRef } : {}),
       ...(typeof item.toolCallId === "string" ? { toolCallId: item.toolCallId } : {}),
+      ...(typeof item.parentCallId === "string" ? { parentCallId: item.parentCallId } : {}),
       time: item.time || "",
       level: item.level || "trace",
       message,
@@ -229,7 +230,7 @@ registerTool({
 registerTool({
   name: "run_script",
   behavior: { orchestration: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
-  model: { preserveResult: true },
+  model: { preserveResult: true, scriptResult: "value" },
   get description() { return getRunScriptDescription(); },
   get parameters() { return {
     type: "object",
@@ -265,14 +266,15 @@ registerTool({
       throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT", "run_script requires inline code", {});
     }
     const securityGuardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
-    return scriptExecutionValue(record(await runScriptWithOffscreenInnerRunner(code, context, "orchestration", args, securityGuardrails, signal)), context);
+    return scriptExecutionValue(record(await runScriptWithOffscreenInnerRunner(code, context, "orchestration", args, securityGuardrails, signal)),
+      context, context.skillExecution?.resultMode === "receipt");
   },
 });
 
 registerTool({
   name: "evaluate",
   behavior: { parallelTab: true, mayOpenPopup: true, timeoutResult: { kind: "action", pending: "page evaluation outcome confirmation" } },
-  model: { preserveResult: true },
+  model: { preserveResult: true, scriptResult: "value" },
   effects: () => [{ type: "context.siteChanged" }],
   get description() { return toolT("evaluateDescription"); },
   get parameters() { return {
@@ -336,15 +338,15 @@ registerTool({
   },
 });
 
-function scriptExecutionValue(execution: Fields, context: ToolContext): unknown {
+function scriptExecutionValue(execution: Fields, context: ToolContext, receipt = false): unknown {
   const failed = execution.ok === false;
-  const value = failed ? describeScriptExecution(execution) : markToolValue(execution.resultType === "undefined" ? undefined : execution.result);
+  const value = failed || receipt ? describeScriptExecution(execution) : markToolValue(execution.resultType === "undefined" ? undefined : execution.result);
   const images = (Array.isArray(execution.observations) ? execution.observations : []).flatMap(item => {
     const image = normalizeRunScriptObservation(item)?._image;
     const match = typeof image === 'string' ? /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(image) : null;
     return match ? [{ mimeType: match[1]!, data: match[2]!.replace(/\s/g, '') }] : [];
   });
-  const presentation = { _display: { script: { ...(!failed ? { valueOnly: true } : {}), trace: compactScriptTrace(execution.trace) } },
+  const presentation = { _display: { script: { ...(!failed && !receipt ? { valueOnly: true } : {}), trace: compactScriptTrace(execution.trace) } },
     ...(images.length ? { _images: images } : {}) };
   Object.assign(context.resultPresentation ?? {}, presentation);
   return bindToolResultPresentation(value, presentation);
@@ -481,6 +483,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
   const runId = typeof context.runId === "string" ? context.runId : "";
   const depth = Math.max(0, Math.floor(Number(context.runScriptToolDepth) || 0));
   const source = wrapRunScriptSource(String(code || ""));
+  const scriptTrace = beginScriptTrace(context, requestId);
   let unregisterNetworkExecution: (() => void) | null = null;
   try {
     await ensureRunScriptOffscreenDocument();
@@ -515,12 +518,15 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       fetchBridge,
     }, signal);
     const envelope = record(response);
+    const trace = scriptTrace.finish(envelope.__runScriptEnvelope === true ? envelope.trace : []);
     if (envelope && typeof envelope === "object" && envelope.__runScriptEnvelope === true) {
+      envelope.trace = trace;
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
     }
     if (envelope && typeof envelope === "object" && envelope.ok === false) {
       return {
         ...envelope,
+        trace,
         engine: envelope.engine || "offscreen_inner",
         execution_world: envelope.execution_world || "inner",
       };
@@ -529,11 +535,13 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       ok: true,
       hasResult: true,
       result: response,
+      trace,
       resultType: response === null ? "null" : Array.isArray(response) ? "array" : typeof response,
       engine: "offscreen_inner",
       execution_world: "inner",
     };
   } catch (err) {
+    const trace = scriptTrace.finish([{ level: "error", message: errorMessage(err) }]);
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
     return {
       ok: false,
@@ -541,11 +549,13 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       result: null,
       error: errorMessage(err) || "The script context is unavailable.",
       code: errorCode(err) || "SCRIPT_CONTEXT_UNAVAILABLE",
+      trace,
       engine: "offscreen_inner",
       execution_world: "inner",
       details: {},
     };
   } finally {
+    scriptTrace.close();
     unregisterNetworkExecution?.();
   }
 }
@@ -633,6 +643,10 @@ function requestInnerTraceSnapshot(requestId: string): Promise<unknown[]> {
 }
 
 function handleRunScriptInnerRuntimeMessage(msg: Fields = {}) {
+  if (msg?.type === "run_script_inner_diagnostic") {
+    acceptScriptTrace(String(msg.requestId || ""), msg.row);
+    return { ok: true, handled: true };
+  }
   if (msg?.type === "run_script_inner_trace_snapshot_result") {
     runScriptInnerTraceWaiters.get(String(msg.requestId || ""))?.(msg.trace);
     return { ok: true, handled: true };

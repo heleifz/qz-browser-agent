@@ -10,7 +10,7 @@ import { backgroundReceiveBudget, backgroundTransferBudget } from "./transfer-bu
 const OWNED_MESSAGE_TYPES = new Set([
   "accept_location_consent", "accept_data_consent", "get_content_language", "offscreen_keepalive", "session_export_import_request", "mcp_bridge_connect",
   "mcp_connection_status", "mcp_connection_connect", "mcp_connection_disconnect",
-  "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_trace_snapshot_result", "run_script_inner_fetch",
+  "stop_session", "run_script_inner_result", "run_script_inner_trace", "run_script_inner_diagnostic", "run_script_inner_trace_snapshot_result", "run_script_inner_fetch",
   "run_script_inner_fetch_cancel", "run_script_tool_call",
 ]);
 

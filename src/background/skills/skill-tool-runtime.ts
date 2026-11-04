@@ -271,7 +271,7 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
     assertSkillExecutionActive(signal);
     return executeBuiltinTool("run_script", { code, args: scriptArgs, timeout: controlArgs.timeout }, signal, {
       ...context, source: "plugin_tool", pluginId: plugin.id, skillToolName: tool.name,
-      skillExecution: { plugin, config: skillConfig },
+      skillExecution: { plugin, config: skillConfig, resultMode: "receipt" },
     });
   }
   const innerRuntime = tool.runtime === "inner";

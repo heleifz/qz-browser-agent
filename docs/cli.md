@@ -438,8 +438,8 @@ qz session show SESSION_ID
 qz session cancel SESSION_ID
 ```
 
-stdout is JSON `{traces,result}` on success and failure. traces is an ordered string array
-without levels. Tool traces carry sequence numbers and supplied tabRef values; settled calls include
+stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace is an
+ordered string array without levels. Tool traces carry sequence numbers and supplied tabRef values; settled calls include
 the call ID used by the sidebar. result is the returned business value, null for undefined, or a failure in
 `{code,message,hint?,details?}` form. Business trace/traces fields stay inside result. Script
 locations are in details. Exit codes are 0 for success, 1 for execution or connection failure,

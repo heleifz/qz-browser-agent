@@ -23,7 +23,7 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
       return value;
     ` },
     { path: 'legacy.js', type: 'script', content: 'return new Map([["legacy", true]]);' },
-    { path: 'bad.js', type: 'script', content: 'return new Map();' },
+    { path: 'bad.js', type: 'script', content: 'trace("bad.begin"); return new Map();' },
     { path: 'table.js', type: 'script', content: `return {rows:[{name:'Business row'}],ok:false,error:'business field',result:'business result'};` },
     { path: 'scalar.js', type: 'script', content: 'trace("scalar trace"); return 42;' },
   ] };
@@ -44,18 +44,36 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     packaged:await tools.script_contract__read({tabRef:'fast'}),
     legacy:await tools.script_contract__legacy({timeout:5})
   };`);
-  expect(values.packaged).toEqual(values.inline);
+  expect(values.packaged.ok).toBe(true);
+  expect(values.packaged.result).toEqual(values.inline);
   expect(values.legacy.ok).toBe(true);
   expect(values.legacy.result.__qz_type).toBe('Map');
-  expect(await script(`return await tools.script_contract__scalar({});`)).toBe(42);
-  expect((await script(`return await tools.script_contract__table({});`)).rows).toEqual([{ name: 'Business row' }]);
+  // The outer script chooses the returned business value; nested diagnostics still reach the LLM.
+  const scalar = await cli(['script', '--session', sessionId, '--json', '-'], `
+    trace('outer.before');
+    const value=await tools.script_contract__scalar({});
+    trace('outer.after');
+    return value.result;
+  `);
+  expect(scalar.exitCode).toBe(0);
+  expect(scalar.value.result).toBe(42);
+  expect(scalar.value.trace.filter(line => ['outer.before', 'scalar trace', 'outer.after'].includes(line)))
+    .toEqual(['outer.before', 'scalar trace', 'outer.after']);
+  const table = await script(`return (await tools.script_contract__table({})).result;`);
+  expect(table.rows).toEqual([{ name: 'Business row' }]);
+  expect(table.ok).toBe(false);
+  expect(table.error).toBe('business field');
 
-  let completed = false;
-  const branches = script(`return await Promise.all([
+  let completed = false, concurrentTrace = [];
+  const branches = cli(['script', '--session', sessionId, '--json', '-'], `return await Promise.all([
     tools.script_contract__read({tabRef:'slow',lane:'slow'}),
     tools.script_contract__read({tabRef:'fast',lane:'fast'}),
     tools.script_contract__read({tabRef:'slow',lane:'same'})
-  ]);`).finally(() => { completed = true; });
+  ]);`).then(entry => {
+    expect(entry.exitCode, JSON.stringify(entry)).toBe(0);
+    concurrentTrace = entry.value.trace;
+    return entry.value.result;
+  }).finally(() => { completed = true; });
   try {
     await expect.poll(() => [fixture.pending('slow'), fixture.pending('fast'), fixture.pending('same')]).toEqual([1, 1, 0]);
     fixture.release('fast');
@@ -64,28 +82,43 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     fixture.release('slow');
     await expect.poll(() => fixture.pending('same')).toBe(1);
     fixture.release('same');
-    expect(await branches).toEqual([values.inline, values.inline, values.inline]);
+    expect((await branches).map(value => ({ ok: value.ok, result: value.result }))).toEqual(
+      [values.inline, values.inline, values.inline].map(result => ({ ok: true, result })));
   } finally {
     for (const lane of ['fast', 'slow', 'same']) fixture.release(lane);
     await branches.catch(() => {});
   }
 
-  const failed = await cli(['script', '--session', sessionId, '--json', '-'], 'return await tools.script_contract__bad_value({});');
+  const failed = await cli(['script', '--session', sessionId, '--json', '-'], `trace('outer.failure.begin'); await tools.script_contract__scalar({}); return await tools.script_contract__bad_value({});`);
   expect(failed.exitCode).toBe(1);
   expect(failed.value.result.code).toBe('SCRIPT_VALUE_NOT_SERIALIZABLE');
+  expect(failed.value.trace.filter(line => ['outer.failure.begin', 'scalar trace', 'bad.begin'].includes(line)))
+    .toEqual(['outer.failure.begin', 'scalar trace', 'bad.begin']);
   const rows = await events(), calls = rows.filter(row => row.toolName === 'script_contract__bad_value');
   expect(calls).toHaveLength(1);
-  expect(failed.value.traces.some(line => line.includes(`call=${calls[0].toolCallId}`) && line.includes('failed'))).toBe(true);
+  expect(failed.value.trace.some(line => line.includes(`call=${calls[0].toolCallId}`) && line.includes('failed'))).toBe(true);
   const pageCalls = rows.filter(row => row.toolName === 'evaluate');
   const packagedCalls = rows.filter(row => row.toolName === 'script_contract__read');
   expect(new Set(rows.map(row => row.toolCallId)).size).toBe(rows.length);
-  for (const packaged of packagedCalls) expect(pageCalls.some(row => row.parentSpanId === `tool:${packaged.toolCallId}`)).toBe(true);
+  for (const packaged of packagedCalls) {
+    const children = pageCalls.filter(row => row.parentSpanId === `tool:${packaged.toolCallId}`);
+    expect(children.length).toBeGreaterThan(0);
+    if (packaged.args?.lane) for (const child of children) {
+      expect(concurrentTrace.filter(line => line.includes(`call=${child.toolCallId}`) && line.includes('completed'))).toHaveLength(1);
+    }
+  }
 
   // Render actual persisted event payloads, including custom DSL and generic fallbacks, in both UI paths.
   const cards = await page.evaluate(async rows => {
     const { renderToolEvent, disposeRendererTree } = await import('/sidepanel/tools/tool-renderer.js');
-    return ['read', 'table', 'scalar', 'legacy', 'bad_value'].flatMap(name => {
-      const event = rows.find(row => row.toolName === `script_contract__${name}`);
+    const fixtures = ['read', 'table', 'scalar', 'legacy', 'bad_value']
+      .map(name => ({ name, event: rows.find(row => row.toolName === `script_contract__${name}`) }));
+    fixtures.push(
+      { name: 'outer_scalar', event: rows.find(row => row.toolName === 'run_script' && row.result?.result === 42) },
+      { name: 'outer_table', event: rows.find(row => row.toolName === 'run_script' && row.result?.result?.rows?.[0]?.name === 'Business row') },
+      { name: 'outer_error', event: rows.find(row => row.toolName === 'run_script' && row.result?.code === 'SCRIPT_VALUE_NOT_SERIALIZABLE') },
+    );
+    return fixtures.flatMap(({ name, event }) => {
       return [false, true].map(staticOutput => {
         // Firefox's privileged test driver must pass data in the sidebar's own realm.
         const input = globalThis.JSON.parse(JSON.stringify({ ...event, name: event.toolName, hasResult: true, phase: 'done' }));
@@ -102,8 +135,9 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
   for (const card of cards) {
     if (card.name === 'read') expect(card.metrics, JSON.stringify(card)).toContain('/start');
     if (card.name === 'table') { expect(card.table, JSON.stringify(card)).toContain('Business row'); expect(card.state).not.toContain('error'); }
-    if (card.name === 'scalar') { expect(card.text, JSON.stringify(card)).toContain('42'); expect(card.text, JSON.stringify(card)).toContain('scalar trace'); expect(card.text).not.toContain('valueOnly'); }
+    if (card.name === 'scalar' || card.name === 'outer_scalar') { expect(card.text, JSON.stringify(card)).toContain('42'); expect(card.text, JSON.stringify(card)).toContain('scalar trace'); expect(card.text).not.toContain('valueOnly'); }
     if (card.name === 'legacy') expect(card.text, JSON.stringify(card)).toContain('Map');
-    if (card.name === 'bad_value') expect(card.state).toContain('error');
+    if (card.name === 'outer_table') { expect(card.text, JSON.stringify(card)).toContain('Business row'); expect(card.state).not.toContain('error'); }
+    if (card.name === 'bad_value' || card.name === 'outer_error') expect(card.state, JSON.stringify(card)).toContain('error');
   }
 }

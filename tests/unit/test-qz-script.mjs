@@ -10,7 +10,7 @@ import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
 import { pairBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 
 const running = { endpoint: "http://127.0.0.1:23456", health: {
-  features: { browserPairing: 1, scriptApiVersion: 1 }, status: { connected: true, clients: [{ clientId: "fixture" }] },
+  features: { browserPairing: 1, scriptApiVersion: 2 }, status: { connected: true, clients: [{ clientId: "fixture" }] },
 } };
 function stream(isTTY = false) { return { isTTY, columns: 100, text: "", write(value) { this.text += value; } }; }
 function setup(extra = {}) {
@@ -21,7 +21,9 @@ function setup(extra = {}) {
       ? { pong: true } : extra.callTool(...call) } : {}),
   };
 }
-const success = result => ({ sessionId: "s", toolName: "run_script", isError: false, result });
+const receipt = (ok, result, trace = []) => ({ ok, result: result === undefined ? null : result, trace });
+const wire = (ok, result, trace = []) => ({ sessionId: "s", toolName: "run_script", scriptApiVersion: 2, isError: !ok, result: receipt(ok, result, trace) });
+const success = (result, trace) => wire(true, result, trace);
 
 test("script help describes one outer runtime and schema discovery", async () => {
   const deps = setup();
@@ -39,12 +41,12 @@ test("scripts carry explicit session and JSON args without a page or implicit cr
   assert.equal(calls.length, 1);
   assert.equal(calls[0].name, "qingzhou_execute_tool");
   assert.equal(calls[0].payload.name, "run_script");
-  assert.equal(calls[0].payload.scriptApiVersion, 1);
+  assert.equal(calls[0].payload.scriptApiVersion, 2);
   assert.equal(calls[0].payload.sessionId, "s");
   assert.equal(calls[0].payload.clientId, "fixture");
   assert.deepEqual(calls[0].payload.args.args, args);
   for (const key of ["tabRef", "target", "scope"]) assert.equal(Object.hasOwn(calls[0].payload.args, key), false);
-  assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: args });
+  assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, args));
   assert.equal(deps.stderr.text, "");
 });
 
@@ -54,7 +56,7 @@ test("--args preserves every JSON value shape", async () => {
       assert.deepEqual(payload.args.args, value); return success(value);
     } });
     assert.equal(await main(["script", "--session", "s", "--args", JSON.stringify(value)], deps), 0);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: value });
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, value));
   }
 });
 
@@ -66,7 +68,7 @@ test("local files and stdin share the script request path", async t => {
   const deps = setup({ readStdin: () => assert.fail("a file script does not read stdin"),
     callTool: async (_endpoint, _name, payload) => { assert.equal(payload.args.code, code); return success("file"); } });
   assert.equal(await main(["script", "--session", "s", file], deps), 0);
-  assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: "file" });
+  assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, "file"));
 });
 
 test("invalid arguments and removed routes fail before discovery or stdin", async () => {
@@ -78,8 +80,8 @@ test("invalid arguments and removed routes fail before discovery or stdin", asyn
     assert.equal(await main(argv, deps), 2, argv.join(" "));
     const output = JSON.parse(deps.stdout.text);
     if (argv[0] === "script") {
-      assert.deepEqual(Object.keys(output).sort(), ["result", "traces"]);
-      assert.deepEqual(output.traces, []);
+      assert.deepEqual(Object.keys(output).sort(), ["ok", "result", "trace"]);
+      assert.deepEqual(output.trace, []);
       assert.equal(output.result.code, "INVALID_ARGUMENTS");
     } else assert.equal(output.code, "INVALID_ARGUMENTS");
     assert.doesNotMatch(deps.stdout.text, /secret-fixture/);
@@ -100,7 +102,7 @@ test("script request waiting exceeds its execution budget by sixty seconds", asy
       return success(7);
     } });
     assert.equal(await main(["script", "--session", "s", ...options], deps), 0);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: 7 });
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, 7));
   }
 });
 
@@ -110,27 +112,27 @@ test("business error-like keys and all JSON value shapes remain successful", asy
     { truncated: true, preview: "business", images: [{ mimeType: "image/png", data: "YQ==" }], results: [{ id: "r", images: [1] }] }]) {
     const deps = setup({ callTool: async () => success(value) });
     assert.equal(await main(["script", "--session", "s"], deps), 0);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: value });
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, value));
   }
   const missing = setup({ callTool: async () => success(undefined) });
   assert.equal(await main(["script", "--session", "s"], missing), 0);
-  assert.deepEqual(JSON.parse(missing.stdout.text), { traces: [], result: null });
+  assert.deepEqual(JSON.parse(missing.stdout.text), receipt(true, null));
 });
 
 test("tool errors retain public recovery fields and uncertain mutations never replay", async () => {
   const failure = { code: "ELEMENT_NOT_FOUND", message: "Target is absent", hint: "Refresh the element observation.", details: { target: "css:#missing" } };
   let count = 0;
-  const deps = setup({ callTool: async () => { count++; return { isError: true, result: failure }; } });
+  const deps = setup({ callTool: async () => { count++; return wire(false, failure); } });
   assert.equal(await main(["script", "--session", "s"], deps), 1);
-  assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: failure });
+  assert.deepEqual(JSON.parse(deps.stdout.text), receipt(false, failure));
   assert.equal(count, 1);
   const unknown = setup({ callTool: async (_endpoint, name) => {
     assert.equal(name, "qingzhou_execute_tool");
     throw Object.assign(new Error("Session not found."), { code: "DRIVE_SESSION_NOT_FOUND" });
   } });
   assert.equal(await main(["script", "--session", "missing", "--json"], unknown), 1);
-  assert.deepEqual(Object.keys(JSON.parse(unknown.stdout.text)).sort(), ["result", "traces"]);
-  assert.deepEqual(JSON.parse(unknown.stdout.text).traces, []);
+  assert.deepEqual(Object.keys(JSON.parse(unknown.stdout.text)).sort(), ["ok", "result", "trace"]);
+  assert.deepEqual(JSON.parse(unknown.stdout.text).trace, []);
   assert.equal(JSON.parse(unknown.stdout.text).result.code, "DRIVE_SESSION_NOT_FOUND");
 });
 
@@ -138,31 +140,49 @@ test("script output keeps ordered wire traces separate from business trace field
   const business = { ok: false, error: "business", trace: [{ message: "private data" }], traces: ["authored result"] };
   const traces = ["Script started.", "Opened the page.", "Read the title."];
   for (const tty of [false, true]) for (const flags of [[], ["--json"], ["--plain"]]) {
-    const deps = setup({ stdout: stream(tty), stderr: stream(tty), callTool: async () => ({ ...success(business), traces }) });
+    const deps = setup({ stdout: stream(tty), stderr: stream(tty), callTool: async () => success(business, traces) });
     assert.equal(await main(["script", "--session", "s", ...flags], deps), 0);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces, result: business });
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, business, traces));
     assert.equal(deps.stderr.text, "");
   }
 });
 
-test("failed scripts prefer wire traces and fall back only to public error trace rows", async () => {
-  const legacyTrace = [{ time: "12:00:00", level: "log", message: "Legacy progress." }, "Legacy final step."];
+test("script receipts preserve successful and failed results without inspecting authored fields", async () => {
   const recovery = { line: 7, value: { trace: [{ level: "business", message: "Authored recovery data." }], traces: ["authored"] } };
-  const failure = { code: "SCRIPT_EVALUATION_FAILED", message: "Page failed", details: { trace: legacyTrace, ...recovery } };
-  for (const wire of [undefined, [], ["Script started.", "Page failed."]]) {
-    const deps = setup({ callTool: async () => ({ isError: true, result: failure, ...(wire === undefined ? {} : { traces: wire }) }) });
+  const failure = { code: "SCRIPT_EVALUATION_FAILED", message: "Page failed", details: recovery };
+  for (const trace of [[], ["Script started.", "Page failed."]]) {
+    const deps = setup({ callTool: async () => wire(false, failure, trace) });
     assert.equal(await main(["script", "--session", "s"], deps), 1);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces: wire ?? ["Legacy progress.", "Legacy final step."], result: { ...failure, details: recovery } });
-    assert.deepEqual(failure.details.trace, legacyTrace, "presentation does not mutate the received ToolError");
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(false, failure, trace));
     assert.equal(deps.stderr.text, "");
   }
-  const business = { details: { trace: legacyTrace }, traces: ["business only"] };
+  const business = { details: { trace: [{ level: "business", message: "Data." }] }, traces: ["business only"] };
   const deps = setup({ callTool: async () => success(business) });
   assert.equal(await main(["script", "--session", "s"], deps), 0);
-  assert.deepEqual(JSON.parse(deps.stdout.text), { traces: [], result: business });
+  assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, business));
 });
 
-test("script usage, preflight and connection failures keep the two-key stdout shape", async () => {
+test("unversioned, old and malformed execution replies cannot masquerade as script receipts or replay", async () => {
+  for (const payload of [
+    { isError: false, result: receipt(false, { code: "BUSINESS", message: "data" }, ["business trace"]) },
+    { ...success(7), scriptApiVersion: 1 },
+    { ...success(7), result: { ok: true, trace: [] } },
+    { ...success(7), isError: true },
+    { ...success(7), result: receipt(true, 7, [{ level: "log", message: "old format" }]) },
+  ]) {
+    let executed = 0;
+    const deps = setup({ callTool: async () => { executed++; return payload; } });
+    assert.equal(await main(["script", "--session", "s"], deps), 1);
+    const output = JSON.parse(deps.stdout.text);
+    assert.equal(output.ok, false);
+    assert.equal(output.result.code, "UPGRADE_REQUIRED");
+    assert.deepEqual(output.trace, []);
+    assert.match(output.result.hint, /may have run/);
+    assert.equal(executed, 1);
+  }
+});
+
+test("script usage, preflight and connection failures keep the same stdout receipt", async () => {
   for (const [argv, extra, code, exitCode] of [
     [["script"], {}, "INVALID_ARGUMENTS", 2],
     [["script", "--session", "s"], { readStdin: async () => "" }, "INVALID_ARGUMENTS", 2],
@@ -173,8 +193,8 @@ test("script usage, preflight and connection failures keep the two-key stdout sh
     const deps = setup({ stdout: stream(true), stderr: stream(true), ...extra });
     assert.equal(await main(argv, deps), exitCode);
     const output = JSON.parse(deps.stdout.text);
-    assert.deepEqual(Object.keys(output).sort(), ["result", "traces"]);
-    assert.deepEqual(output.traces, []);
+    assert.deepEqual(Object.keys(output).sort(), ["ok", "result", "trace"]);
+    assert.deepEqual(output.trace, []);
     assert.equal(output.result.code, code);
     assert.equal(deps.stderr.text, "");
   }
@@ -189,9 +209,9 @@ test("host errors retain their full trace through CLI error serialization", asyn
       throw new QzError("TOOL_EXECUTION_FAILED", "Host execution failed.", { trace, hint: "Inspect the page before retrying." });
     } });
     assert.equal(await main(["script", "--session", "s"], deps), 1);
-    assert.deepEqual(JSON.parse(deps.stdout.text), { traces: messages, result: {
+    assert.deepEqual(JSON.parse(deps.stdout.text), receipt(false, {
       code: "TOOL_EXECUTION_FAILED", message: "Host execution failed.", hint: "Inspect the page before retrying.",
-    } });
+    }, messages));
     assert.equal(deps.stderr.text, "");
     assert.equal(calls, 1);
   }
@@ -214,17 +234,17 @@ test("real MCP errors present diagnostic messages once while successful business
       const [request] = await bridge.state.poll(browser, { timeoutMs: 2000 });
       assert.equal(request?.method, method);
       const payload = method === "ping" ? { ok: true, result: { pong: true } }
-        : method === "capabilities" ? { ok: true, result: { scriptApiVersion: 1 } }
+        : method === "capabilities" ? { ok: true, result: { scriptApiVersion: 2 } }
           : mode === "thrown-error" ? { ok: false, error: { ...error, details: { ...recovery, trace: rows } } }
-            : { ok: true, result: { isError: mode === "returned-error", result: error,
-              ...(mode === "returned-error" ? { traces: messages } : {}) } };
+            : { ok: true, result: mode === "returned-error"
+              ? wire(false, { ...error, details: recovery }, messages) : success(error) };
       assert.equal(completeBrowser(bridge.state, request.id, { clientId: browser.id, ...payload }), true);
     }
     assert.equal(await pending, mode === "authored-success" ? 0 : 1);
     const output = JSON.parse(deps.stdout.text);
     assert.deepEqual(output, mode === "authored-success"
-      ? { traces: [], result: error }
-      : { traces: messages, result: { ...error, details: mode === "thrown-error" ? { line: 4, column: 2 } : recovery } });
+      ? receipt(true, error)
+      : receipt(false, { ...error, details: mode === "thrown-error" ? { line: 4, column: 2 } : recovery }, messages));
     assert.equal(deps.stderr.text, "");
     assert.deepEqual(error.details.trace, rows.slice(-5), "the error transport and its authored recovery data stay unchanged");
     assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), [], "failure presentation cannot replay the script");
@@ -243,8 +263,8 @@ test("leading output and browser flags preserve the script failure envelope", as
       const deps = setup({ stdout: stream(true), stderr: stream(true), ...extra });
       assert.equal(await main([...prefix, ...words], deps), exitCode);
       const output = JSON.parse(deps.stdout.text);
-      assert.deepEqual(Object.keys(output).sort(), ["result", "traces"]);
-      assert.deepEqual(output.traces, []);
+      assert.deepEqual(Object.keys(output).sort(), ["ok", "result", "trace"]);
+      assert.deepEqual(output.trace, []);
       assert.equal(output.result.code, expected);
       assert.equal(deps.stderr.text, "");
     }
@@ -266,7 +286,7 @@ test("script appearing as an option value or another command's argument keeps th
 });
 
 test("browser selection is explicit and offline selections never fall back", async () => {
-  const health = { features: { browserPairing: 1, scriptApiVersion: 1 }, status: {
+  const health = { features: { browserPairing: 1, scriptApiVersion: 2 }, status: {
     clients: [{ clientId: "alpha", name: "Alpha" }, { clientId: "beta", name: "Beta" }],
     browsers: [{ clientId: "alpha", name: "Alpha" }, { clientId: "beta", name: "Beta" }, { clientId: "offline", name: "Offline" }],
   } };
@@ -275,8 +295,8 @@ test("browser selection is explicit and offline selections never fall back", asy
       openConnectionBrowser: () => assert.fail("an explicit offline profile cannot launch another browser"),
       callTool: () => assert.fail("wrong browser is never called") });
     assert.equal(await main(["script", "--session", "s", ...selector, "--timeout", "0.03"], deps), 1);
-    assert.deepEqual(Object.keys(JSON.parse(deps.stdout.text)).sort(), ["result", "traces"]);
-    assert.deepEqual(JSON.parse(deps.stdout.text).traces, []);
+    assert.deepEqual(Object.keys(JSON.parse(deps.stdout.text)).sort(), ["ok", "result", "trace"]);
+    assert.deepEqual(JSON.parse(deps.stdout.text).trace, []);
     assert.equal(JSON.parse(deps.stdout.text).result.code, expected);
   }
   let executed = 0;
@@ -290,7 +310,7 @@ test("browser selection is explicit and offline selections never fall back", asy
   } });
   assert.equal(await main(["script", "--session", "s"], automatic), 0);
   assert.equal(executed, 1);
-  assert.deepEqual(JSON.parse(automatic.stdout.text), { traces: [], result: 7 });
+  assert.deepEqual(JSON.parse(automatic.stdout.text), receipt(true, 7));
   const deps = setup({ findDaemon: async () => ({ ...running, health }), callTool: async (_endpoint, _name, args) => {
     assert.equal(args.clientId, "alpha"); return success(7);
   } });
@@ -324,8 +344,8 @@ test("MCP image transport leaves business images and results intact", () => {
     results: [{ id: "user", result: { images: [{ mimeType: "image/png", data: "dXNlcg==" }] } }] };
   const payload = { ...success(business), images: [{ mimeType: "image/png", data: "c2hvdA==" }] };
   const content = resultToContent(payload, { toolResult: true });
-  assert.deepEqual(JSON.parse(content[0].text).result, business);
-  assert.deepEqual(resultValue({ content }).result, business);
+  assert.deepEqual(JSON.parse(content[0].text).result, receipt(true, business));
+  assert.deepEqual(resultValue({ content }).result, receipt(true, business));
   const batch = { sessionId: "s", results: [{ id: "call", name: "run_script", isError: false, result: business,
     images: [{ mimeType: "image/png", data: "c2hvdA==" }] }] };
   const decoded = resultValue({ content: resultToContent(batch, { toolResult: true }) });
@@ -335,9 +355,9 @@ test("MCP image transport leaves business images and results intact", () => {
 });
 
 test("explicit returned image sidechannels become paths without changing stdout", async t => {
-  const deps = setup({ callTool: async () => ({ ...success({ imageId: "shot" }), traces: ["Screenshot saved."], images: [{ mimeType: "image/png", data: "c2hvdA==" }] }) });
+  const deps = setup({ callTool: async () => ({ ...success({ imageId: "shot" }, ["Screenshot saved."]), images: [{ mimeType: "image/png", data: "c2hvdA==" }] }) });
   assert.equal(await main(["script", "--session", "s"], deps), 0);
-  assert.deepEqual(JSON.parse(deps.stdout.text), { traces: ["Screenshot saved."], result: { imageId: "shot" } });
+  assert.deepEqual(JSON.parse(deps.stdout.text), receipt(true, { imageId: "shot" }, ["Screenshot saved."]));
   const path = deps.stderr.text.trim().replace(/^Image: /, "");
   assert.equal(readFileSync(path, "utf8"), "shot");
   t.after(async () => { const { rm } = await import("node:fs/promises"); await rm(dirname(path), { recursive: true, force: true }); });
@@ -356,21 +376,21 @@ test("new session service routes preserve the producer response", async () => {
 });
 
 
-test("CLI script API preflight rejects old extensions before any execution", async () => {
-  for (const version of [undefined, 0, 1, 2]) {
+test("CLI script API preflight rejects version mismatches in either direction before execution", async () => {
+  for (const requested of [1, 2]) for (const version of [undefined, 0, 1, 2, 3]) {
     const seen = [];
     const state = { signal: signal => signal || new AbortController().signal,
       resolveClient: async () => ({ id: "browser", controller: new AbortController() }),
       callExtension: async (method, params) => {
         seen.push(method);
         if (method === "capabilities") return version == null ? { protocolVersion: 1 } : { scriptApiVersion: version };
-        assert.equal(Object.hasOwn(params, "scriptApiVersion"), false);
+        assert.equal(params.scriptApiVersion, requested);
         return success(7);
       } };
     const request = executeMcpTool(state, "qingzhou_execute_tool", {
-      sessionId: "s", name: "run_script", scriptApiVersion: 1, args: { code: "async () => 7" },
+      sessionId: "s", name: "run_script", scriptApiVersion: requested, args: { code: "async () => 7" },
     });
-    if (version == null || version < 1) {
+    if (version !== requested) {
       await assert.rejects(request, error => error.code === "UPGRADE_REQUIRED" && /No script was executed/.test(error.message));
       assert.deepEqual(seen, ["capabilities"]);
     } else {

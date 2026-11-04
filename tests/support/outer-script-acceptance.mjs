@@ -32,9 +32,10 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     const entry = { argv, stdin, exitCode, stdout: stdout.text, stderr: stderr.text, value };
     transcript.push(entry);
     if (argv[0] === 'script') {
-      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(['result', 'traces']);
-      expect(Array.isArray(value.traces), JSON.stringify(entry)).toBe(true);
-      expect(value.traces.every(trace => typeof trace === 'string'), JSON.stringify(entry)).toBe(true);
+      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(['ok', 'result', 'trace']);
+      expect(value.ok, JSON.stringify(entry)).toBe(exitCode === 0);
+      expect(Array.isArray(value.trace), JSON.stringify(entry)).toBe(true);
+      expect(value.trace.every(trace => typeof trace === 'string'), JSON.stringify(entry)).toBe(true);
     }
     return entry;
   };
@@ -80,7 +81,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       expect(result.after.token).not.toBe(result.before.token);
       expect(result.after.path).toBe('/next'); expect(result.after.title).toBe('Outer script /next');
       expect(result.continued).toBe('yes'); expect(result.navigation.status).toBe('navigated');
-      expect(transcript.at(-1).value.traces.filter(value => ['navigation.begin', 'navigation.arrived', 'navigation.continued'].includes(value)))
+      expect(transcript.at(-1).value.trace.filter(value => ['navigation.begin', 'navigation.arrived', 'navigation.continued'].includes(value)))
         .toEqual(['navigation.begin', 'navigation.arrived', 'navigation.continued']);
       await expect.poll(async () => (await events()).filter(event => event.toolName === 'run_script').length).toBe(1);
       expect((await events()).map(event => event.toolName).sort()).toEqual([
@@ -157,7 +158,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
         { tabAlias: 'slow-open', path: '/popup-late', title: 'Outer script /popup-late' },
         { tabAlias: 'fast-open', path: '/fast', title: 'Outer script /fast' },
       ]);
-      expect(transcript.at(-1).value.traces.filter(value => value.endsWith('.read'))).toEqual(['fast-open.read', 'slow-open.read']);
+      expect(transcript.at(-1).value.trace.filter(value => value.endsWith('.read'))).toEqual(['fast-open.read', 'slow-open.read']);
     });
 
     await step('caught Promise.all errors leave siblings running and allSettled preserves every outcome', async () => {
@@ -193,8 +194,8 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       expect(failure.exitCode, JSON.stringify(failure)).toBe(1);
       expect(failure.value.result.code).toBeTruthy(); expect(failure.value.result.message).toContain('outer-fixture-failure');
       expect(Object.keys(failure.value.result).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
-      expect(failure.value.traces.filter(value => value === 'failure.begin')).toHaveLength(1);
-      expect(failure.value.traces).not.toContain('failure.unreached');
+      expect(failure.value.trace.filter(value => value === 'failure.begin')).toHaveLength(1);
+      expect(failure.value.trace).not.toContain('failure.unreached');
       const taskPage=context.pages().find(candidate=>candidate.url()===`${fixture.origin}/next`);
       await expect(taskPage.locator('body')).toHaveAttribute('data-partial-runs','1');
       const timeout = await cli(['script', '--session', sessionId, '--json', '--timeout', '10', '-'],

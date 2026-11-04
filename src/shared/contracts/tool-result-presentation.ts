@@ -28,6 +28,15 @@ export function copyToolResultPresentation<T>(source: unknown, target: T): T {
   return bindToolResultPresentation(target, getToolResultPresentation(source));
 }
 
+/** Retain diagnostics when an execution fails after producing a value. */
+export function toolFailurePresentation(error: unknown, collected: ToolResultPresentation = {}): ToolResultPresentation {
+  const presentation = { ...collected, ...getToolResultPresentation(error) };
+  const display = presentation._display as { script?: { valueOnly?: boolean } } | undefined;
+  if (display?.script?.valueOnly !== true) return presentation;
+  const { valueOnly, ...script } = display.script;
+  return { ...presentation, _display: { ...display, script } };
+}
+
 /** Preserve execution order and action meaning without exposing UI trace levels. */
 export function traceMessages(rows: unknown): readonly string[] {
   if (!Array.isArray(rows)) return [];
@@ -39,7 +48,8 @@ export function traceMessages(rows: unknown): readonly string[] {
     const match = action && /^(\S+)(?:\s+([\s\S]*))?$/.exec(row.message);
     const identity = [typeof row.sequence === "number" ? `#${row.sequence}` : "",
       typeof row.tabRef === "string" || typeof row.tabRef === "number" ? `tabRef=${JSON.stringify(row.tabRef)}` : "",
-      typeof row.toolCallId === "string" ? `call=${row.toolCallId}` : ""].filter(Boolean).join(" ");
+      typeof row.toolCallId === "string" ? `call=${row.toolCallId}` : "",
+      typeof row.parentCallId === "string" ? `parent=${row.parentCallId}` : ""].filter(Boolean).join(" ");
     return [match ? `${match[1]} ${action}${identity ? ` [${identity}]` : ""}${match[2] ? `: ${match[2]}` : ""}` : row.message];
   });
 }

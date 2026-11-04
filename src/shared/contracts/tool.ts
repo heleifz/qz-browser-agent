@@ -53,6 +53,8 @@ export interface ToolModelPolicy {
   pageUrlArgument?: string;
   omitArguments?: readonly string[];
   preserveResult?: boolean;
+  /** Script-to-model receipt; internal callers retain the tool's existing return contract. */
+  scriptResult?: 'value' | 'receipt';
   imagePrompt?: string;
   projectResult?(result: unknown): unknown;
 }

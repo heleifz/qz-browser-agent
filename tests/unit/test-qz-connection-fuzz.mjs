@@ -77,7 +77,7 @@ class SimulatedService {
   begin() {
     this.protocol = PROTOCOL_VERSION;
     this.pairing = 1;
-    this.scriptApi = 1;
+    this.scriptApi = 2;
     this.compatible = true;
     this.buildId = this.next(2) ? "current" : "old-compatible-build";
     this.browsers.forEach(browser => { browser.online = true; });
@@ -145,7 +145,7 @@ class SimulatedService {
         if (this.upgradeRace) { this.replace(); throw failure("CONNECTION_CHANGED"); }
         this.replace();
         if (!this.persistentUpgrade) {
-          this.protocol = PROTOCOL_VERSION; this.pairing = 1; this.scriptApi = 1; this.compatible = true;
+          this.protocol = PROTOCOL_VERSION; this.pairing = 1; this.scriptApi = 2; this.compatible = true;
         }
         return this.record();
       },
@@ -215,7 +215,7 @@ class SimulatedService {
           browser.online = false;
           throw failure("BRIDGE_CLIENT_DISCONNECTED");
         }
-        return { isError: false, traces: [], result: { sessionId: args.sessionId, clientId: browser.clientId } };
+        return { scriptApiVersion: 2, isError: false, result: { ok: true, result: { sessionId: args.sessionId, clientId: browser.clientId }, trace: [] } };
       },
     };
   }
@@ -281,7 +281,7 @@ for (const seed of seeds) {
         const variant = next(4);
         if (variant === 0) service.protocol = PROTOCOL_VERSION + 1;
         if (variant === 1) service.pairing = 0;
-        if (variant === 2) service.scriptApi = 0;
+        if (variant === 2) service.scriptApi = 1;
         if (variant === 3) service.compatible = false;
         expectedUpgrades = 1;
         if (scenario === "upgrade-stuck") { service.persistentUpgrade = true; code = "UPGRADE_REQUIRED"; }

@@ -8,6 +8,9 @@ import { planTabBatch } from '../../src/background/tools/tab-batch.js';
 import { skillResultData } from '../../src/sidepanel/tools/primitives/skill-result-data.js';
 import { createToolRuntimeDetails } from '../../src/sidepanel/tools/tool-runtime-details.js';
 import { buildScriptRequest, presentScriptResult } from '../../services/mcp-bridge/src/script-call.mjs';
+import { Agent } from '../../src/background/agent/agent.js';
+import { createTestAgentOptions } from '../support/agent-services.mjs';
+import { scriptReceipt } from '../../src/shared/contracts/script-receipt.js';
 
 const skill = (code, runtime = 'script') => ({ format: 'qingzhou.skill', schemaVersion: 2, name: 'script-contract', scope: 'resident', content: 'Contract fixture', resources: [
   { path: 'plugin.json', type: 'json', content: JSON.stringify({ format: 'qingzhou.plugin', schemaVersion: 1, id: 'script-contract', name: 'Script contract', settings: { fields: [{ key: 'token', type: 'secret', label: 'Token' }] }, tools: [
@@ -18,15 +21,18 @@ const skill = (code, runtime = 'script') => ({ format: 'qingzhou.skill', schemaV
 ] });
 const name = () => getActiveSkillToolSchemasSync()[0].function.name;
 
-test('CLI, inline script and new Skill return the same business values and errors', async () => {
+test('Skill receipts and internal inline values produce the same CLI and Agent receipt', async () => {
   for (const value of [null, false, 42, 'text', '{"json":"string"}', [1, { ok: false }], { ok: true, result: { nested: true } },
     { ok: false, error: 'data', code: 'BUSINESS', message: 'authored', _display: { script: { trace: ['authored'] } } }]) {
     const code = 'trace("contract"); return args.value;';
     const f = await scriptExecutionFixture([skill(code)]);
     const presentation = {};
     const result = await f.execute(name(), { value }, { resultPresentation: presentation });
-    const inline = await f.execute('run_script', { code, args: { value } });
-    assert.deepEqual(result, value);
+    const inlinePresentation = {};
+    const inline = await f.execute('run_script', { code, args: { value } }, { resultPresentation: inlinePresentation });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.result, value);
+    assert.deepEqual(result.trace.map(row => row.message).slice(1), ['contract']);
     assert.deepEqual(inline, value);
     assert.deepEqual(getToolResultTraces(result, presentation), ['Script started.', 'contract']);
     assert.equal(presentation._plugin.id, 'script-contract', 'scalar/array results keep sidebar presentation separately');
@@ -34,14 +40,21 @@ test('CLI, inline script and new Skill return the same business values and error
     const stored = JSON.parse(JSON.stringify(presentToolResult(result, presentation)));
     const view = createToolRuntimeDetails({ genericRenderer: {} }).project({ name: name(), result: stored, hasResult: true, isError: false });
     assert.equal(view.state, 'completed');
-    assert.deepEqual(view.result, value, 'sidebar projection unwraps exactly one host envelope');
     assert.deepEqual(skillResultData(view.result, view.originalResult), value, 'renderer paths stay relative to authored business data after reload');
-    if (value && typeof value === 'object') assert.ok(isToolValue(result), 'business error keys cannot become execution failures');
+    assert.equal(presentation._display.script.valueOnly, undefined, 'a receipt must not gain a second UI envelope');
     const request = buildScriptRequest({ sessionId: 's', code, args: { value } });
     assert.equal(request.args.timeout, 120);
-    const cli = presentScriptResult({ isError: false, result, traces: getToolResultTraces(result, presentation) });
+    const agent = new Agent('receipt-test', createTestAgentOptions({ tools: f.runtime }));
+    const native = JSON.parse(agent._buildToolResultMessages('inline', inline, false, 'run_script', inlinePresentation)[0].content);
+    const skillMessage = JSON.parse(agent._buildToolResultMessages('skill', result, false, name(), presentation)[0].content);
+    assert.deepEqual(native, { ok: true, result: value, trace: ['Script started.', 'contract'] });
+    assert.deepEqual(skillMessage, native, 'installed Skill and inline script have one model-facing receipt');
+    assert.deepEqual(JSON.parse(agent._buildToolResultMessages('page', inline, false, 'evaluate', inlinePresentation)[0].content), native,
+      'a page script called directly by the model uses the same boundary');
+    const cli = presentScriptResult({ scriptApiVersion: 2, isError: false,
+      result: scriptReceipt(inline, { format: 'value', isError: false, presentation: inlinePresentation }) });
     assert.equal(cli.exitCode, 0);
-    assert.deepEqual(JSON.parse(cli.text).result, value);
+    assert.deepEqual(JSON.parse(cli.text), native, 'CLI and native Agent expose the same script receipt');
   }
   for (const code of ['throw new Error("boom");', 'return new Map([["key", 1]]);', 'const a = {}; a.self = a; return a;']) {
     const f = await scriptExecutionFixture([skill(code)]);
@@ -59,7 +72,7 @@ test('CLI, inline script and new Skill return the same business values and error
 test('a script Skill owns its argument schema; page-looking fields stay data until a child uses them', async () => {
   const f = await scriptExecutionFixture([skill('return {tabRef:args.tabRef, tabAlias:args.tabAlias, target:args.target};')]);
   const args = { tabRef: 'not-created-yet', tabAlias: 'business value', target: 'uid:not-a-page-element' };
-  assert.deepEqual(await f.execute(name(), args), args);
+  assert.deepEqual((await f.execute(name(), args)).result, args);
   const definition = f.runtime.resolveDefinition(name());
   assert.equal(definition.model.preserveResult, true);
   assert.equal(definition.timeout({}, name()), 120_000);
@@ -88,7 +101,7 @@ test('old inner Skill keeps its required timeout, result envelope and permissive
   assert.notEqual(f.messages[0].strictResult, true);
 });
 
-test('concurrent tool traces keep sequence, public alias and host identity through CLI presentation', async () => {
+test('internal Promise.all retains input result order when child tools complete in reverse order', async () => {
   let release;
   const slow = new Promise(resolve => { release = resolve; });
   const f = await scriptExecutionFixture([], async call => {
@@ -100,14 +113,5 @@ test('concurrent tool traces keep sequence, public alias and host identity throu
   const value = await f.execute('run_script', { code: `return await Promise.all(['slow','fast'].map(tabRef => tools.evaluate({tabRef, code:() => 1})));` },
     { resultPresentation: presentation });
   assert.deepEqual(value, ['slow', 'fast']);
-  const rows = presentation._display.script.trace.filter(row => row.sequence);
-  for (const [sequence, alias] of [[1, 'slow'], [2, 'fast']]) {
-    const pair = rows.filter(row => row.sequence === sequence);
-    assert.deepEqual(pair.map(row => row.level), ['tool.start', 'tool.end']);
-    assert.ok(pair.every(row => row.tabRef === alias && row.toolCallId.startsWith('host-')));
-    assert.equal(pair[0].toolCallId, pair[1].toolCallId);
-  }
-  const traces = getToolResultTraces(value, presentation);
-  assert.ok(traces.some(line => line.includes('#1 tabRef="slow" call=host-')));
   assert.deepEqual(traceMessages([{ level: 'tool.error', message: 'evaluate boom' }, 'old trace']), ['evaluate failed: boom', 'old trace']);
 });

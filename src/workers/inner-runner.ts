@@ -78,6 +78,7 @@ async function runInnerScript(payload: WorkerExecute) {
   const args = input;
   const tabId = null;
   let seq = 0;
+  let traceIndex = 0;
   pushTrace("script.start", [{ sourceLength: source.length }]);
 
   function traceText(value: unknown) {
@@ -95,12 +96,14 @@ async function runInnerScript(payload: WorkerExecute) {
     const message = Array.from(items || []).map(traceText).join(" ");
     const row = {
       ...call,
+      traceIndex: ++traceIndex,
       time: new Date().toISOString(),
       level: String(level || "trace"),
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
     };
     traceRows.push(row);
     if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
+    if (!row.level.startsWith("tool.")) send({ type: "script_trace", row });
     return row;
   }
 

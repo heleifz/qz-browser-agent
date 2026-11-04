@@ -1,5 +1,6 @@
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
-import { copyToolResultPresentation, getToolResultPresentation, presentToolResult, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { copyToolResultPresentation, getToolResultPresentation, presentToolResult, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { scriptReceipt } from "../../shared/contracts/script-receipt.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { t as promptT } from "./prompts/messages.js";
@@ -2668,7 +2669,7 @@ export class Agent {
       toolRegistrySnapshot: this._toolRegistrySnapshot,
       language: this._runLanguage,
     };
-    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity?: object) => {
+    const failure = (tc: ModelToolCall, error: unknown, args: unknown = parseToolCallArguments(getToolCallArgumentsValue(tc)), toolIdentity?: object, presentation?: ToolResultPresentation) => {
       const err = record(error);
       const details = record(err.details);
       const toolName = normalizeToolCallName(tc);
@@ -2679,7 +2680,7 @@ export class Agent {
         String(err.message || err.error || error),
         { hint: typeof err.hint === "string" ? err.hint : undefined, details },
       ));
-      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true, resultPresentation: {} as ToolResultPresentation };
+      return { call: tc, id: tc.id, toolName, toolIdentity: identity, args, result: result as unknown, isError: true, resultPresentation: toolFailurePresentation(error, presentation) };
     };
     const batch = planTabBatch(toolCalls, tc => {
       const args = parseToolCallArguments(getToolCallArgumentsValue(tc));
@@ -2786,7 +2787,7 @@ export class Agent {
         } catch (error) {
           acceptingUpdates = false;
           await this._toolRuntime.discardToolResult?.(executionResult, identity);
-          return failure(tc, error, args, toolIdentity);
+          return failure(tc, error, args, toolIdentity, resultPresentation);
         }
       },
       commit: async outcome => {
@@ -2815,9 +2816,9 @@ export class Agent {
         // Only this cursor publishes state, effects, bindings, final events and model messages.
         batch.settle(outcome.call, result, isError);
         if (["BATCH_TAB_DEPENDENCY_FAILED", "OPERATION_ABORTED"].includes(String(record(result).code))) {
-          const normalized = failure(outcome.call, result, undefined, outcome.toolIdentity);
+          const normalized = failure(outcome.call, result, undefined, outcome.toolIdentity, outcome.resultPresentation);
           settled.set(outcome.call, normalized);
-        } else settled.set(outcome.call, { ...outcome, result, isError, resultPresentation: isError ? {} : outcome.resultPresentation });
+        } else settled.set(outcome.call, { ...outcome, result, isError, resultPresentation: isError ? toolFailurePresentation(result, outcome.resultPresentation) : outcome.resultPresentation });
         flushLedger();
       },
     }).finally(() => flushLedger(true));
@@ -2908,9 +2909,12 @@ export class Agent {
     const messages = [];
     const policy = this._toolModelPolicy(toolName);
 
-    if (!isError && policy.preserveResult) {
-      messages.push({ role: "tool", tool_call_id: toolCallId, _toolIsError: false,
-        content: typeof result === "string" ? result : JSON.stringify(result) ?? "undefined" });
+    if (policy.scriptResult || !isError && policy.preserveResult) {
+      const modelResult = policy.scriptResult ? scriptReceipt(result, {
+        format: policy.scriptResult, isError, presentation: resultPresentation,
+      }) : result;
+      messages.push({ role: "tool", tool_call_id: toolCallId, _toolIsError: isError,
+        content: typeof modelResult === "string" ? modelResult : JSON.stringify(modelResult) ?? "undefined" });
       const images = { ...getToolResultPresentation(result), ...resultPresentation }._images || [];
       if (images.length && this._runProfile?.features?.imageInput !== false) {
         messages.push({ role: "user", _origin: "tool_image", content: [

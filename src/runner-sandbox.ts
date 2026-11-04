@@ -83,6 +83,10 @@ function startWorkerRun(data: Record<string, unknown>) {
   worker.onmessage = (event: MessageEvent<InnerWorkerOutput>) => {
     if (workers.get(requestId) !== worker) return;
     const message = event.data || {};
+    if (message.type === "script_trace") {
+      parent.postMessage({ source: SANDBOX_SOURCE, type: "script_trace", requestId, row: message.row }, "*");
+      return;
+    }
     if (message.type === "tool_call") {
       traceInnerSandbox("worker.tool_call", {
         requestId,

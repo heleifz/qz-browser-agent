@@ -108,7 +108,7 @@ snapshot. Any build-time capability can use these fields through `qz.registerToo
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
 marks a tool that may touch global resources. Public `run_script` declares `behavior.orchestration`:
 its arguments are business data, and its descendant tools acquire the actual page lanes. New Skill
-tools with `runtime: "script"` use this same runner, direct JSON result, optional 120-second timeout
+tools with `runtime: "script"` use this same runner, optional 120-second timeout
 and trusted scheduling definition. Native batches and nested calls can run these containers concurrently.
 Manifest behavior fields cannot grant scheduling authority. Legacy Skill runtimes retain their barriers
 and result contracts through the hidden `run_skill_script` host. All descendants share execution lanes
@@ -139,6 +139,8 @@ that result into a call-local slot, reads it only at the existing hard timeout, 
 updates. Use concise `pending` text naming the unfinished work. `behavior.timeoutResult` selects the
 host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
+
+At the model boundary, scripts produce `{ok, result, trace}` on success and failure; failure `result` is a ToolError. Internal `evaluate` calls return business values, while Skill callers keep their existing receipts. Nested diagnostics are collected by the host independently of the returned business data.
 
 Tools return business data; `bindToolResultPresentation` from `#sdk/background/tools` keeps display
 metadata beside that result until the host builds the renderer event. Package imports are limited to their own files, pinned

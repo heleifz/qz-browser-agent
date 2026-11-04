@@ -7,6 +7,7 @@ import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
+import { inheritScriptTrace, collectScriptResultTrace, recordScriptToolTrace } from "./script-trace.js";
 import type { RegisteredTool } from "./registry.js";
 import type { ToolBatchTabPolicy, ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
@@ -89,16 +90,18 @@ export function createRunScriptBridge({
     const parentCallId = parent?.toolCallId || parent?.toolExecutionId;
     const parentSpanId = typeof parent?.spanId === "string" ? parent.spanId : parentCallId ? `tool:${parentCallId}` : undefined;
     let started = false;
+    let traceSequence: number | undefined;
     const record = async (phase: "start" | "end", result: unknown, isError: boolean, startedExecution?: boolean) => {
       try { await recordNestedTool?.({ sessionId, runId, name, toolCallId, parentCallId, parentSpanId, phase, externalDrive,
         args: plainObject(message.args), result, isError, startedExecution,
-        resultPresentation: isError ? undefined : resultPresentation }); }
+        resultPresentation }); }
       catch (error) { logger.debug("[轻舟] persist nested tool failed:", error instanceof Error ? error.message : error); }
     };
     const start = async (startedExecution: boolean) => {
       if (started || !name || !supervisor.isRunCurrent(sessionId, runId)) return;
       if (message.parentCallId !== undefined && !getToolCallParent(message.parentCallId, sessionId, runId)) return;
       started = true;
+      traceSequence = recordScriptToolTrace(parent, { phase: "start", name, toolCallId, parentCallId, tabRef: plainObject(message.args).tabRef });
       await record("start", undefined, false, startedExecution);
     };
     const response = await executeToolCall(message, sender, (result, presentation) => {
@@ -110,6 +113,10 @@ export function createRunScriptBridge({
       await start(false);
       await record("end", observed && response.isError !== true ? rawResult : response.result ?? response, response.isError === true);
     }
+    if (started) recordScriptToolTrace(parent, { phase: "end", name, toolCallId, parentCallId,
+      sequence: traceSequence,
+      tabRef: plainObject(message.args).tabRef, isError: response.isError === true,
+      message: String(plainObject(response.result).message || response.message || "") });
     return { ...response, toolCallId };
   }
 
@@ -205,6 +212,7 @@ export function createRunScriptBridge({
             preserveWorkingTab: policy?.kind === "observe" || policy?.kind === "target" && policy.observation,
             source: "run_script", senderTabId: sender?.tab?.id || null,
           };
+          inheritScriptTrace(parent, executionContext);
           await start(true);
           return executionResult = await toolRuntime.execute(toolName, toolArgs, signal, executionContext);
         },
@@ -217,7 +225,7 @@ export function createRunScriptBridge({
           await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
           const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
           if (resultStopped) return respondFailure(resultStopped, { toolName });
-          observe(result, isError ? undefined : executionContext.resultPresentation);
+          observe(result, executionContext.resultPresentation);
           if (isError) {
             return respondFailure(result, { toolName });
           }
@@ -249,6 +257,7 @@ export function createRunScriptBridge({
         },
       }) as Fields; }
       finally {
+        collectScriptResultTrace(parent, executionContext);
         await toolRuntime.discardToolResult?.(executionResult, executionContext);
         if (!scheduler.pending && schedulers.get(key) === scheduler) schedulers.delete(key);
       }

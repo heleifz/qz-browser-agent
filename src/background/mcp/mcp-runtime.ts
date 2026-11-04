@@ -1,5 +1,6 @@
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
-import { bindToolResultPresentation, getToolResultPresentation, presentToolResult, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { bindToolResultPresentation, getToolResultPresentation, presentToolResult, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { scriptReceipt, SCRIPT_API_VERSION } from "../../shared/contracts/script-receipt.js";
 import { createSessionUserInput } from "../session/user-input.js";
 import { productText } from "../../shared/product-text.js";
 import { parseBeijingDateTime } from "../../shared/time-utils.js";
@@ -18,7 +19,6 @@ import {
   prepareDriveToolCall,
   projectDriveResult,
   getDriveToolTraces,
-  driveFailurePresentation,
   runDriveCalls,
   type DriveToolObservation,
 } from "./external-drive.js";
@@ -34,7 +34,7 @@ import type { Agent } from "../agent/agent.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
 import type { SkillRecord, SkillResource } from "../../shared/skills/skill-utils.js";
 import type { RunProfile } from "../agent/run-profile.js";
-import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
+import type { ToolBatchTabPolicy, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ResponsePort } from "../transports/sidepanel.js";
 type Fields = Record<string, unknown>;
@@ -65,7 +65,7 @@ interface McpToolsPort {
   runtime: {
     getSchemas(options: { runProfile: RunProfile; context: ToolContext; loadedPluginSkillNames: string[] }): { type: string; function: { name: string; description: string; parameters: object } }[];
     execute(name: string, args: Fields, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
-    getModelPolicy?(name: string): { projectResult?(result: unknown): unknown } | null | undefined;
+    getModelPolicy?(name: string): ToolModelPolicy | null | undefined;
     getBatchTabPolicy?(name: string, args: unknown): ToolBatchTabPolicy | null;
     getTabAliases?(sessionId: string): Record<string, number>;
     getToolResultPageContext?(result: unknown): Fields;
@@ -130,7 +130,7 @@ export function createMcpRuntime({
   function describe() {
     return {
       protocolVersion: 1,
-      scriptApiVersion: 1,
+      scriptApiVersion: SCRIPT_API_VERSION,
       storageKey: storageKey(),
       methods: [
         "ping", "capabilities", "get_bridge_config", "save_bridge_config", "runtime_message",
@@ -553,6 +553,12 @@ export function createMcpRuntime({
     const language = getLanguage();
     const parsed = parseDriveRequest(params);
     if (!parsed.ok) throw parsed.error;
+    const callsScript = parsed.mode === "single" ? parsed.name === "run_script" : parsed.calls.some(call => call.name === "run_script");
+    if (callsScript && params.scriptApiVersion !== SCRIPT_API_VERSION) {
+      throw toolError("UPGRADE_REQUIRED", "The CLI and extension use incompatible script APIs. No script was executed.", {
+        hint: "Update the CLI and extension together, then reconnect before running the script.",
+      });
+    }
     signal?.throwIfAborted();
     const { sessionId, metadata } = await requireToolSession(params.sessionId);
     if (metadata.source !== "external-drive") {
@@ -592,6 +598,7 @@ export function createMcpRuntime({
         const name = parsed.name;
         const toolCallId = crypto.randomUUID();
         const resultPresentation: ToolResultPresentation = {};
+        const policy = tools.runtime.getModelPolicy?.(name);
         try {
           const prepared = prepareDriveToolCall(name, params.args);
           if (!prepared.ok) throw prepared.error;
@@ -599,17 +606,26 @@ export function createMcpRuntime({
           signal?.throwIfAborted();
           callSignal?.throwIfAborted();
           rememberLoadedSkill(sessionId, name, result);
-          const projected = projectDriveResult(result, tools.runtime.getModelPolicy?.(name) ?? null, resultPresentation);
+          const projected = projectDriveResult(result, policy, resultPresentation);
           const isError = isToolFailure(result);
-          const presentation = isError ? driveFailurePresentation(result, resultPresentation) : resultPresentation;
+          const presentation = isError ? toolFailurePresentation(result, resultPresentation) : resultPresentation;
           const traces = getDriveToolTraces(result, presentation, isError);
           noteDriveTool(name, prepared.args, projected.value, isError, projected.images, result, presentation, toolCallId);
+          if (policy?.scriptResult) return {
+            toolName: name, sessionId, runId: runId || null, isError, scriptApiVersion: SCRIPT_API_VERSION,
+            result: scriptReceipt(result, { format: policy.scriptResult, isError, presentation }),
+            ...(projected.images.length ? { images: projected.images } : {}),
+          };
           const body = { toolName: name, sessionId, runId: runId || null, result: projected.value, isError };
           return { ...body, ...(projected.images.length ? { images: projected.images } : {}), ...(traces.length ? { traces } : {}) };
         } catch (error) {
-          const presentation = driveFailurePresentation(error, resultPresentation);
+          const presentation = toolFailurePresentation(error, resultPresentation);
           bindToolResultPresentation(error, presentation);
           noteDriveTool(name, params.args, driveToolFailure(error), true, [], error, presentation, toolCallId);
+          if (policy?.scriptResult) return {
+            toolName: name, sessionId, runId: runId || null, isError: true, scriptApiVersion: SCRIPT_API_VERSION,
+            result: scriptReceipt(driveToolFailure(error), { format: policy.scriptResult, isError: true, presentation }),
+          };
           throw error;
         }
       }

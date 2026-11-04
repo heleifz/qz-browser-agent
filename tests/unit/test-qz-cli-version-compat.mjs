@@ -55,7 +55,7 @@ test("MCP client initialization reports the package version", async t => {
 const running = {
   endpoint: "http://127.0.0.1:23456", instanceId: "existing-service",
   compatible: true, updateAvailable: true,
-  health: { features: { browserPairing: 1, scriptApiVersion: 1 }, instanceId: "existing-service", buildId: "previous-build", status: {
+  health: { features: { browserPairing: 1, scriptApiVersion: 2 }, instanceId: "existing-service", buildId: "previous-build", status: {
     connected: true, clients: [{ clientId: "browser-1" }],
   } },
 };
@@ -119,7 +119,7 @@ test("a missing daemon is started once before a session mutation", async () => {
 });
 
 test("an incompatible service gets one preflight restart and the script is dispatched only on the replacement", async () => {
-  const legacy = { ...running, health: { ...running.health, features: { browserPairing: 1 } } };
+  const legacy = { ...running, health: { ...running.health, features: { browserPairing: 1, scriptApiVersion: 1 } } };
   const replacement = { ...running, endpoint: "http://127.0.0.1:23457", instanceId: "replacement-service",
     health: { ...running.health, instanceId: "replacement-service" } };
   let restarts = 0;
@@ -136,12 +136,12 @@ test("an incompatible service gets one preflight restart and the script is dispa
       if (name === "qingzhou_call") return { pong: true };
       if (name === "qingzhou_get_drive_session") return { sessionId: "existing", title: "Existing task", status: "ready" };
       assert.equal(name, "qingzhou_execute_tool");
-      return { isError: false, traces: ["Script started."], result: 7 };
+      return { scriptApiVersion: 2, isError: false, result: { ok: true, result: 7, trace: ["Script started."] } };
     },
   });
   assert.equal(restarts, 1);
   assert.equal(calls.filter(call => call.name === "qingzhou_execute_tool").length, 1);
-  assert.deepEqual(JSON.parse(output.text), { traces: ["Script started."], result: 7 });
+  assert.deepEqual(JSON.parse(output.text), { ok: true, result: 7, trace: ["Script started."] });
 });
 
 test("persistent incompatibility stops after one restart before dispatching a script", async () => {

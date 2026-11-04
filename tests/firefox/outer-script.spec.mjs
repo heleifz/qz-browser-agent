@@ -5,7 +5,7 @@ import { openFirefoxSidebar } from './launch.mjs';
 import { connectFirefoxCli } from '../support/firefox-isolated-cli.mjs';
 import { exerciseOuterScripts } from '../support/outer-script-acceptance.mjs';
 
-for (const mode of ['navigation', 'interleavings', 'skills']) test(mode === 'skills' ? 'installed script Skills share inline semantics, concurrent lanes and trace identity' : mode === 'interleavings' ? 'Firefox outer script interleaved branches preserve lanes across navigation and caught errors'
+for (const mode of ['navigation', 'interleavings', 'skills']) test(mode === 'skills' ? 'installed script Skills preserve receipts, concurrent traces and live/static cards' : mode === 'interleavings' ? 'Firefox outer script interleaved branches preserve lanes across navigation and caught errors'
   : 'Firefox outer script coordinates actual navigation, AJAX, queues and popup cancellation', async ({}, testInfo) => {
   test.setTimeout(180_000);
   const extensionDir=testInfo.outputPath('extension');

@@ -9,7 +9,7 @@ export type ToolExecutionPhase = "injection" | "readiness" | "extraction" | "cdp
 
 export interface ToolContext extends SkillActivationContext {
   dynamicContext?: SkillActivationContext | null;
-  skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown> };
+  skillExecution?: { plugin: import("../shared/skills/skill-manifest.js").SkillManifest; config?: Record<string, unknown>; resultMode?: "receipt" };
   sessionId?: string;
   runId?: string | null;
   /** Execution mode supplied by the owning Session, inherited by nested calls. */

@@ -31,6 +31,11 @@ export async function scriptExecutionFixture(skills, onTool) {
       void runInnerWorker(worker, message.source, {
         scriptArgs: message.scriptArgs, strictResult: message.strictResult, fetchBridge: message.fetchBridge,
         async onMessage(call, respond) {
+          if (call.type === 'script_trace') {
+            runtime.handleRunScriptInnerRuntimeMessage({ type: 'run_script_inner_diagnostic', requestId: message.requestId, row: call.row });
+            return;
+          }
+          if (call.type !== 'tool_call') return;
           const result = await onTool?.(call);
           respond({ type: 'tool_response', callId: call.callId,
             response: { ok: true, result, toolCallId: 'host-' + call.callId } });

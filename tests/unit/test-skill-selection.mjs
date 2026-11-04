@@ -35,6 +35,15 @@ test('direct script values keep business envelope keys; actual failures never op
   assert.equal(await selectSkillResults(renderer, failed, undefined, context, () => assert.fail('failure cannot become candidates')), failed);
 });
 
+test('successful Skill receipts keep their trace and select from error-shaped business data', async () => {
+  const receipt = bindToolResultPresentation({ ok: true, result: { jobs, ok: false, error: 'business' },
+    trace: [{ level: 'trace', message: 'collected' }] }, { _plugin: { ...metadata, runtime: 'script' } });
+  const chosen = await selectSkillResults(renderer, receipt, undefined, context, async () => selected(['job-b']));
+  assert.equal(chosen.ok, true);
+  assert.deepEqual(chosen.result, { selectedIds: ['job-b'], selectedItems: [jobs[1]], totalItems: 2 });
+  assert.deepEqual(chosen.trace, receipt.trace);
+});
+
 test('maps declared paths to cards, preserves provenance and effects, returns only chosen source rows', async () => {
   const input = result();
   const controller = new AbortController();

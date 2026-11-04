@@ -28,7 +28,7 @@ export async function selectSkillResults(renderer: SkillRenderer, result: unknow
   const wrapped = !direct && Object.hasOwn(outer, "result") && (plugin.runtime || ["ok", "hasResult", "resultType", "engine"]
     .some(key => Object.hasOwn(outer, key)));
   const inner = wrapped ? outer.result : result;
-  if (isToolFailure(result) || !direct && failed(record(inner))) return result;
+  if (isToolFailure(result) || !direct && outer.ok !== true && failed(record(inner))) return result;
   const payload = mcpData(inner, plugin.runtime === "mcp");
   const data = renderer.sourcePath ? atPath(payload, renderer.sourcePath) : payload;
   const candidates = atPath(data, renderer.itemsPath || "items");

@@ -158,7 +158,7 @@ const runtime = createMcpRuntime({
 });
 
 assert.equal(runtime.describe().storageKey, "_mcp_config");
-assert.equal(runtime.describe().scriptApiVersion, 1);
+assert.equal(runtime.describe().scriptApiVersion, 2);
 assert.ok(runtime.describe().methods.includes("execute_tool"));
 
 const dispatched = await runtime.dispatchRuntimeMessage({ type: "test", requestId: "req-1" }, { expectedType: "first" });
@@ -575,7 +575,7 @@ for (const stage of ["context", "metadata"]) {
   const authored = { _display: { authored: true }, _image: 'authored image', result: 'business' };
   const values = [undefined, 'primitive', authored];
   const holders = [];
-  toolRuntime.getModelPolicy = () => ({ preserveResult: true });
+  toolRuntime.getModelPolicy = () => ({ preserveResult: true, scriptResult: "value" });
   toolRuntime.execute = async (_name, { index }, _signal, context) => {
     assert.deepEqual(context.resultPresentation, {});
     holders.push(context.resultPresentation);
@@ -584,14 +584,21 @@ for (const stage of ["context", "metadata"]) {
     return markToolValue(values[index]);
   };
   try {
+    for (const version of [undefined, 1, 3]) for (const batch of [false, true]) {
+      const call = { name: 'run_script', args: { code: 'return 1;' } };
+      await assert.rejects(runtime.executeTool({ sessionId: 'drive-s', scriptApiVersion: version,
+        ...(batch ? { calls: [{ id: 'incompatible', ...call }] } : call) }), { code: 'UPGRADE_REQUIRED' });
+      assert.equal(holders.length, 0, 'incompatible clients are rejected before any script starts');
+    }
     for (const mode of ['single', 'batch']) {
       driveNotes.length = 0;
       const calls = values.map((_, index) => ({ id: String(index), name: 'run_script', args: { index, code: 'async () => null' } }));
-      const results = mode === 'batch' ? (await runtime.executeTool({ sessionId: 'drive-s', calls })).results : [];
+      const results = mode === 'batch' ? (await runtime.executeTool({ sessionId: 'drive-s', calls, scriptApiVersion: 2 })).results : [];
       if (mode === 'single') for (const call of calls) {
-        results.push(await runtime.executeTool({ sessionId: 'drive-s', name: call.name, args: call.args }));
+        results.push(await runtime.executeTool({ sessionId: 'drive-s', name: call.name, args: call.args, scriptApiVersion: 2 }));
       }
-      assert.deepEqual(results.map(item => item.result), values);
+      assert.deepEqual(results.map(item => item.result), values.map(value => ({ok:true,result:value ?? null,trace:[]})));
+      assert.ok(results.every(item => item.scriptApiVersion === 2));
       assert.deepEqual(results[1].images, [{ mimeType: 'image/png', data: 'aGk=' }]);
       assert.equal(driveNotes.length, values.length);
       for (const [index, event] of driveNotes.entries()) {
@@ -647,18 +654,20 @@ for (const stage of ["context", "metadata"]) {
         { id: 'business', name: 'run_script', args: { code: 'return input;', args: business } },
         { id: 'failure', name: 'run_script', args: { code: 'for (let i = 0; i < 8; i++) trace("line-" + i); throw new Error("after all logs");' } },
       ];
-      const results = mode === 'batch' ? (await runtime.executeTool({ sessionId: 'drive-s', calls })).results : [];
-      if (mode === 'single') for (const call of calls) results.push(await runtime.executeTool({ sessionId: 'drive-s', name: call.name, args: call.args }));
-      assert.equal(results[0].result, 7);
-      assert.deepEqual(results[0].traces.slice(-3), ['first', 'second', 'third']);
-      assert.ok(results[0].traces.every(row => typeof row === 'string'));
+      const results = mode === 'batch' ? (await runtime.executeTool({ sessionId: 'drive-s', calls, scriptApiVersion: 2 })).results : [];
+      if (mode === 'single') for (const call of calls) results.push(await runtime.executeTool({ sessionId: 'drive-s', name: call.name, args: call.args, scriptApiVersion: 2 }));
+      assert.equal(results[0].result.result, 7);
+      assert.deepEqual(results[0].result.trace.slice(-3), ['first', 'second', 'third']);
+      assert.ok(results[0].result.trace.every(row => typeof row === 'string'));
       assert.equal(results[0].isError, false);
-      assert.deepEqual(results[1].result, business);
-      assert.equal(Object.hasOwn(results[1], 'traces') && results[1].traces.includes('not a diagnostic'), false);
+      assert.deepEqual(results[1].result.result, business);
+      assert.equal(results[1].result.trace.includes('not a diagnostic'), false);
       assert.equal(results[1].isError, false, 'only producer status interprets an authored ok/code/message object');
       assert.equal(results[2].isError, true);
-      assert.equal(results[2].traces.filter(row => row.startsWith('line-')).length, 8);
-      assert.equal(results[2].result.details.trace.length, 5);
+      assert.equal(results[2].result.trace.filter(row => row.startsWith('line-')).length, 8);
+      assert.equal(results[2].result.ok, false);
+      assert.equal(results[2].result.result.details?.trace, undefined);
+      assert.ok(results.every(item => item.scriptApiVersion === 2));
       const failureCard = driveNotes.find(event => event.isError);
       assert.equal(failureCard.result._display.script.valueOnly, undefined);
       assert.equal(failureCard.result._display.script.trace.filter(row => row.message.startsWith('line-')).length, 8);

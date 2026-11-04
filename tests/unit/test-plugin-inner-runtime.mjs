@@ -137,11 +137,12 @@ assert.deepEqual(scriptSchema.function.parameters.required, ["tabRef"]);
 await executeSkillTool("runtime_example__script_query", { timeout: 10, tabRef: "research" }, null,
   { sessionId: "session-1" }, dispatch, { skillSettings });
 assert.equal(configCalls[2].includeSecrets, true);
-assert.equal(dispatches[2].name, "run_script", "new Skill scripts use the public execution contract");
+assert.equal(dispatches[2].name, "run_script", "new Skill scripts share the public executor");
 assert.equal(dispatches[2].args.target, undefined);
 assert.equal(dispatches[2].args.tabId, undefined, "outer scripts do not inherit a page execution context");
 assert.equal(dispatches[2].args.args.tabRef, "research", "the caller's alias reaches the script unchanged");
 assert.equal(dispatches[2].context.skillExecution.config.token, "private-token");
+assert.equal(dispatches[2].context.skillExecution.resultMode, "receipt");
 
 const legacySchema = schemas.find(item => item.function.name === "runtime_example__legacy_page");
 assert.ok(legacySchema.function.parameters.required.includes("tabRef"));

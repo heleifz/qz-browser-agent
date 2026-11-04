@@ -15,7 +15,7 @@ import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
 import { driveGuide } from "./drive-guide.mjs";
-import { buildScriptRequest, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
+import { buildScriptRequest, presentScriptFailure, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
 
 export const HELP = renderHelp();
 
@@ -355,7 +355,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     live?.finish();
     const payload = errorPayload(error);
     const scriptCommand = (parsed?.command ?? commandNameFromArgs(argv)) === "script";
-    if (scriptCommand) stdout.write(presentScriptResult({ isError: true, result: payload }).text);
+    if (scriptCommand) stdout.write(presentScriptFailure(payload).text);
     else if (mode.json) stdout.write(`${JSON.stringify(payload)}\n`);
     else stderr.write(renderError(payload, { ...mode, color: mode.color && Boolean(stderr.isTTY) }));
     return payload.code === "INVALID_ARGUMENTS" ? 2 : !scriptCommand && payload.code === "INTERRUPTED" ? 130 : 1;

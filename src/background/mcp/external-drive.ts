@@ -1,9 +1,10 @@
 import { t } from "../../shared/i18n/backend.js";
 import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
-import { copyToolResultPresentation, getToolResultPresentation, getToolResultTraces, traceMessages, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { copyToolResultPresentation, getToolResultPresentation, getToolResultTraces, traceMessages, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { scriptReceipt, SCRIPT_API_VERSION } from "../../shared/contracts/script-receipt.js";
 import { driveToolText } from "./tool-messages.js";
 import { getLanguage } from "../../shared/i18n/index.js";
-import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
+import type { ToolBatchTabPolicy, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
 
@@ -39,7 +40,7 @@ export interface DriveToolObservation {
   resultPresentation?: ToolResultPresentation;
 }
 type Fields = Record<string, unknown>;
-type ModelPolicy = { preserveResult?: boolean; projectResult?(result: unknown): unknown } | null | undefined;
+type ModelPolicy = ToolModelPolicy | null | undefined;
 export type DriveParse =
   | { ok: false; error: Error }
   | { ok: true; mode: "single"; name: string; timeoutSeconds: number | null; maxCalls: number }
@@ -253,15 +254,6 @@ export function getDriveToolTraces(result: unknown, collected: ToolResultPresent
   return typeof error.code === "string" && typeof error.message === "string" ? traceMessages(record(error.details).trace) : [];
 }
 
-/** Keep failure diagnostics without presenting a completed script value as success. */
-export function driveFailurePresentation(error: unknown, collected: ToolResultPresentation = {}): ToolResultPresentation {
-  const presentation = { ...collected, ...getToolResultPresentation(error) };
-  const display = record(presentation._display), script = record(display.script);
-  if (script.valueOnly !== true) return presentation;
-  const { valueOnly, ...failure } = script;
-  return { ...presentation, _display: { ...display, script: failure } };
-}
-
 function failed(call: DriveCall, error: unknown, args: unknown = call.args, collected: ToolResultPresentation = {}): DriveOutcome {
   const err = record(error);
   const aborted = err.name === "AbortError" || err.name === "TimeoutError";
@@ -274,7 +266,7 @@ function failed(call: DriveCall, error: unknown, args: unknown = call.args, coll
     name: call.name,
     args,
     isError: true,
-    resultPresentation: driveFailurePresentation(error, collected),
+    resultPresentation: toolFailurePresentation(error, collected),
     result: copyToolResultPresentation(error, toolError(code, message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: err.details as Fields | undefined })),
   };
 }
@@ -367,7 +359,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         const isError = isToolFailure(result);
         return {
           call, id: call.id, name: call.name, args, result,
-          resultPresentation: isError ? driveFailurePresentation(result, resultPresentation) : resultPresentation, isError,
+          resultPresentation: isError ? toolFailurePresentation(result, resultPresentation) : resultPresentation, isError,
         };
       } catch (error) {
         await deps.discardToolResult?.(undefined, context);
@@ -392,13 +384,14 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args));
     const images = outcome.projected?.images || [];
     const traces = getDriveToolTraces(outcome.result, outcome.resultPresentation, outcome.isError);
+    const format = deps.getModelPolicy?.(outcome.name)?.scriptResult;
     return {
       id: outcome.id,
       name: outcome.name,
-      result: outcome.projected?.value,
+      result: format ? scriptReceipt(outcome.result, { format, isError: outcome.isError, presentation: outcome.resultPresentation }) : outcome.projected?.value,
       isError: outcome.isError,
       ...(images.length ? { images } : {}),
-      ...(traces.length ? { traces } : {}),
+      ...(format ? { scriptApiVersion: SCRIPT_API_VERSION } : traces.length ? { traces } : {}),
     };
   });
   return { results };

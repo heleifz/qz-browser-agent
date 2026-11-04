@@ -455,11 +455,13 @@ and following-execution dependencies. No tool-name branch in the scheduler selec
 `run_script` runs orchestration outside pages. Native batches and nested calls schedule it as a
 container; its tools proxy invokes the catalog through the same Session authority, page lanes and
 shared concurrency budget. New Skill tools with `runtime: "script"` delegate to this runner and inherit
-its direct JSON result and optional 120-second timeout. Their arguments remain business data until
+its optional 120-second timeout. Their arguments remain business data until
 a descendant invokes a page tool. Legacy Skill runtimes keep their original contracts and barriers.
 `evaluate` declares tab-local parallel execution: independent pages can advance together while
 calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
 state effects rather than selecting a page or execution environment.
+
+CLI stdout and Agent tool messages share the script receipt `{ok, result, trace}`. Success carries the script return value; failure carries a ToolError. Trace is a string array collected by the host, including nested Skill calls and progress before failure or cancellation. Script-authored fields never select execution status or diagnostic metadata. Internal Skill calls retain their receipts and renderer paths stay relative to business data.
 
 Page functions passed to `evaluate` receive data through args and return their business value.
 They have document/window access, while the outer script uses tools for browser operations.

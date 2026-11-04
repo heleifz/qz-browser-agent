@@ -128,10 +128,9 @@ async function executeBrowserTool(state, name, args, { signal, connectionSignal,
   }
   if (name === "qingzhou_execute_tool") {
     const scriptApiVersion = params.scriptApiVersion;
-    delete params.scriptApiVersion;
     if (scriptApiVersion != null) {
       const capabilities = await state.callExtension("capabilities", {}, options);
-      if (!(Number(capabilities?.scriptApiVersion) >= scriptApiVersion)) {
+      if (capabilities?.scriptApiVersion !== scriptApiVersion) {
         throw Object.assign(new BridgeError("UPGRADE_REQUIRED", "The connected extension does not support this script API. No script was executed."), {
           hint: "Update the CLI and extension together, then reconnect before running the script.",
         });

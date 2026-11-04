@@ -56,7 +56,10 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
     const schema = getActiveSkillToolSchemasSync({ language })[0].function;
     assert.deepEqual(schema.parameters.required, ['tabRef']);
     const execute = limit => fixture.execute(schema.name, { tabRef: 'research', limit });
-    const result = await execute(1);
+    const receipt = await execute(1);
+    assert.equal(receipt.ok, true, JSON.stringify(receipt));
+    assert.ok(Array.isArray(receipt.trace));
+    const result = receipt.result;
     assert.equal(calls.length, 1, JSON.stringify(result));
     if (index === 0) assert.deepEqual(result, { title: 'Example', url: 'https://example.com/research',
       linkCount: 1, textLength: 12, links: [{ text: 'Link', href: 'https://example.com/link' }] });
@@ -64,7 +67,9 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
     else {
       assert.equal(result.count, 1);
       assert.equal(result.rows[0].url, 'https://example.com/one');
-      assert.equal((await execute(51)).code, 'ARGUMENT');
+      const invalid = await execute(51);
+      assert.equal(invalid.ok, true, 'an authored validation result is business data');
+      assert.equal(invalid.result.code, 'ARGUMENT');
       assert.equal(calls.length, 1, 'invalid arguments never enter the page');
     }
   }

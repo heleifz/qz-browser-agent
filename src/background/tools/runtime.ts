@@ -393,7 +393,8 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     ...identity,
     parameters: getSkillToolParameters(entry.tool),
     page: isSkillPageTool(entry.tool) ? "owned" : undefined,
-    model: scriptDefinition?.model || hostDefinition?.model,
+    model: entry.tool.runtime === "script" || entry.tool.runtime === "inner" || entry.tool.runtime === "page"
+      ? { preserveResult: true, scriptResult: "receipt" } : hostDefinition?.model,
     // Only the host-selected script runner grants orchestration; old/privileged Skills retain their barrier.
     behavior: scriptDefinition?.behavior || { ...hostDefinition?.behavior, barrier: true },
     source: "plugin",

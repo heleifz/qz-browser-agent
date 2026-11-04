@@ -318,7 +318,7 @@ test("HTTP pairing reports typed errors with extension CORS and enforces instanc
   const origin = `chrome-extension://${"a".repeat(32)}`;
   const post = (path, body) => fetch(`${bridge.endpoint}/v1/qingzhou/${path}`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
   const health = await (await fetch(`${bridge.endpoint}/health`)).json();
-  assert.deepEqual(health.features, { browserPairing: 1, scriptApiVersion: 1 });
+  assert.deepEqual(health.features, { browserPairing: 1, scriptApiVersion: 2 });
   const paired = await (await post("pair", identity(bridge.state))).json();
   assert.equal(paired.ok, true);
   const denied = await post("pair", { ...paired, connectionId: randomUUID() });
