@@ -58,7 +58,6 @@ For DOM access, call evaluate with an explicit tabRef. Its code is a self-contai
 ```sh
 qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
 // Read a compact DOM summary from the page opened earlier.
-await tools.wait_for_element({tabRef:"page", target:"css:body", state:"attached"});
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
@@ -67,7 +66,7 @@ return await tools.evaluate({
 JS
 ```
 
-Use ordinary action tools for clicks, forms and navigation. After opening or navigating, use wait_for_element for the DOM you need before reading it with evaluate. evaluate runs inside the page: navigating or closing that page can interrupt that evaluate call, while the outer script remains available. Do not blindly replay a script after an uncertain result; inspect completed work first.
+Use ordinary action tools for clicks, forms and navigation. evaluate waits for DOMContentLoaded by default; use waitUntil:"commit" for early page observation. Wait for specific elements or predicates when the task depends on dynamic content. evaluate runs inside the page: navigating or closing that page can interrupt that evaluate call, while the outer script remains available. Do not blindly replay a script after an uncertain result; inspect completed work first.
 
 ## Observe, act, and verify
 

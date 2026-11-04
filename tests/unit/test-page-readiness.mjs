@@ -20,13 +20,16 @@ globalThis.chrome = {
         if (contentReady && ackDelay) await pause(ackDelay);
         return { ok: contentReady, documentReady, contentType, url: tab.url, elementRefs: 1 };
       }
-      if (message.action === 'awaitDocument') return new Promise(resolve => { completeDocument = () => { documentReady = true; resolve({ ok: true }); }; });
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
     },
   },
   scripting: { async executeScript(options) {
+    if (options.func?.name === "documentReadiness") {
+      completeDocument = () => { documentReady = true; };
+      return [{ documentId: "document", result: documentReady }];
+    }
     if (!options.files) return [];
     if (injectionError) throw injectionError;
     injections.push(options);
@@ -55,6 +58,24 @@ const runtime = createToolRuntime({ sessions: {
 const context = { sessionId: "readiness", runId: "run", workingTabId: 1, preserveWorkingTab: true };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const load = () => { tab = { id: 1, url: targetUrl, status: "complete", title: "Gallery" }; };
+
+test('passive navigation observation arms while a replacement document is still pending', async () => {
+  load(); closed = denied = false;
+  tab.pendingUrl = targetUrl; tab.status = 'loading';
+  const listeners = new Set();
+  chrome.tabs.onUpdated = { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn) };
+  const controller = new AbortController();
+  const waiting = runtime.execute('wait_for_navigation', { tabId: 1, timeout: 1 }, controller.signal, context);
+  try {
+    for (let i = 0; !listeners.size && i < 100; i++) await pause(2);
+    assert.equal(listeners.size, 1, 'listener must precede the commit, not wait behind it');
+    load();
+    for (const listener of listeners) listener(1, { status: 'loading' }, tab);
+    for (const listener of listeners) listener(1, { status: 'complete' }, tab);
+    assert.equal((await waiting).status, 'navigated');
+    assert.equal(listeners.size, 0);
+  } finally { controller.abort(); await waiting.catch(() => {}); delete chrome.tabs.onUpdated; }
+});
 
 for (const name of ["read_article", "list_images"]) for (const pendingUrl of [targetUrl, undefined]) {
   for (const outcome of ["loaded", "cancelled", "timeout", "closed", "access-revoked", "blocked-redirect"]) {

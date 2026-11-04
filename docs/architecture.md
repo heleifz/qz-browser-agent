@@ -12,6 +12,13 @@ source of the shared code.
 For a new tool, page, renderer, provider, or embedded Skill, start with the [capability
 guide](../src/capabilities/README.md). Development rules are in [AGENTS.md](../AGENTS.md).
 
+Page tools prepare only the state they consume. Navigation returns after document commit;
+page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element targets
+observe their current nodes. `evaluate({waitUntil:"commit"})` supports early observation and
+predicate waits. Content messaging does not wait for parsing. Preparation uses the call's
+cancellation signal and deadline; document replacement can retry preparation, never dispatched
+user code or input. Event waits arm before their trigger and do not occupy the action lane.
+
 ## Runtime map
 
 ```text

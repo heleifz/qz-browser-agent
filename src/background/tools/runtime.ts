@@ -1,3 +1,4 @@
+import { waitForPageCommit } from "./document-readiness.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
@@ -155,20 +156,6 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
   }
 }
 
-// A pending main navigation still exposes either the initial blank or the old document.
-// This wait runs inside the caller's deadline and signal.
-async function waitForPageCommit(tabId: number, signal?: AbortSignal, context: ToolContext = {}) {
-  while (true) {
-    if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page");
-    const tab = await getAvailableTab(tabId, context);
-    // Chrome can drop pendingUrl when the initial blank commits while the target
-    // request is still in flight. Its loading status still warrants a bounded wait.
-    const loadingBlank = (!tab.url || tab.url === "about:blank") && tab.status === "loading";
-    if (!loadingBlank && !isPageTabUrl(tab.pendingUrl)) return;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-}
-
 export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}, context: ToolContext = {}): Promise<unknown> {
   if (!tabId) {
     throw makeSessionTabTargetError("TAB_REF_REQUIRED", { toolName: action }, context);
@@ -177,18 +164,12 @@ export async function sendToContent(tabId: number | undefined, action: string, p
   assertHtmlPage((await getAvailableTab(tabId, context)).url);
   const presence = await ensureContentScript(tabId, false, context);
   assertHtmlPage(presence.url, presence.contentType);
-  if (presence.documentReady === false) {
-    const finishReadiness = context.measurePhase?.("readiness");
-    try {
-      await withContentSignal(chrome.tabs.sendMessage(tabId, { action: "awaitDocument" }, { frameId: 0 }), context.signal);
-    } finally { finishReadiness?.(); }
-  }
   context.signal?.throwIfAborted();
   await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
   context.signal?.throwIfAborted();
   const finishPhase = context.measurePhase?.("extraction");
   try {
-    const response = await chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 });
+    const response = await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action, ...params }, { frameId: 0 }), context.signal);
     context.signal?.throwIfAborted();
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
@@ -718,8 +699,8 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             const tabId = Number(args.tabId);
             reportPartial({}, policy.pending);
           }
-          if (needsCommittedPage(selectedDefinition, args) && Number(args.tabId) > 0) {
-            await waitForPageCommit(Number(args.tabId), signal, callContext);
+          if (needsCommittedPage(selectedDefinition, args) && !toolBehaviorEnabled(selectedDefinition.behavior?.passiveWait, args) && Number(args.tabId) > 0) {
+            await waitForPageCommit(Number(args.tabId), callContext);
             // Revalidate even if the blank finished between admission and this wait.
             // It may have become a restricted page or lost its task ownership.
             Object.assign(args, await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal));
@@ -1059,9 +1040,11 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
   if (kind === "action") result = { ...toolError(timeoutError.code, timeoutError.message, {
-    hint: withLanguage(language, () => toolT("actionTimeout")),
+    hint: result.executed === false ? "The script did not execute. Check the page state before retrying."
+      : withLanguage(language, () => toolT("actionTimeout")),
     details: { ...timeoutError.details, ...(Array.isArray(result.trace) ? { trace: result.trace } : {}),
-      status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false },
+      ...(typeof result.executed === "boolean" ? { executed: result.executed } : {}),
+      status: result.executed === false ? "not_started" : "unconfirmed", mayHaveTakenEffect: result.executed !== false, automaticReplay: false },
   }) };
   // Only a fully validated successful screenshot can grant coordinates.
   if (result._image) {

@@ -15,8 +15,9 @@ function fixture() {
   globalThis.chrome = { tabs: { get: async () => ({ ...tab }), onUpdated: updated, onRemoved: removed },
     webNavigation: { onCommitted: committed, onHistoryStateUpdated: history, onReferenceFragmentUpdated: fragment } };
   const definitions = new Map(), calls = [];
-  let attached = true, visible = true, popup;
-  const presence = (_id, _action, args) => {
+  let attached = true, visible = true, popup, observationSignal;
+  const presence = (_id, _action, args, context) => {
+    observationSignal = context?.signal;
     calls.push(args); const found = attached && (!args.visibleOnly || visible);
     return { found, element: found ? { text: 'Node' } : null };
   };
@@ -25,12 +26,13 @@ function fixture() {
     captureTabScreenshot: async () => ({ dataUrl: 'image' }), sendToContent: presence,
     element: { resolveSelectorTarget: async (_id, target) => ({ tabId: 5, selector: '#node', target,
       ...(target.startsWith('uid:') ? { uid: 'node', ref: { backendNodeId: 1 } } : {}) }),
-      callElement: (_id, _binding, action, args) => presence(_id, action, args),
+      callElement: (_id, _binding, action, args, context) => presence(_id, action, args, context),
       addElementTargetsToFindResult: async value => ({ ...value, target: 'uid:t5.000001.1' }),
       elementTargetForSelector: value => `css:${value}` },
   });
   const context = { sessionId: 'task', runId: 'run', requestedTabRef: 'page' };
   return { tab, updated, removed, committed, history, fragment, definitions, calls, context,
+    get observationSignal() { return observationSignal; },
     state(a, v) { attached = a; visible = v; }, setPopup(value) { popup = value; },
     run: (name, args = {}, extra = {}, signal) => definitions.get(name).execute({ tabId: 5, timeout: 0.2, ...args }, signal, { ...context, ...extra }) };
 }
@@ -104,6 +106,12 @@ test('element states distinguish hidden from detached for CSS and original UID n
   }
 });
 
+test('element wait cancels its Content work when its own deadline expires', async () => {
+  const f = fixture(); f.state(false, false);
+  await assert.rejects(f.run('wait_for_element', { target: 'css:#node', timeout: 0.01 }), { code: 'TOOL_TIMEOUT' });
+  assert.equal(f.observationSignal.aborted, true);
+});
+
 test('page predicates receive JSON arguments and the caller alias, and return the truthy value', async () => {
   const f = fixture(), received = []; let count = 0;
   const result = await f.run('wait_for_function', { code: 'value => value', args: [1, 2] }, { async invokeTool(name, args, { signal }) {
@@ -111,7 +119,7 @@ test('page predicates receive JSON arguments and the caller alias, and return th
     return ++count === 1 ? false : { ready: true };
   } });
   assert.deepEqual(result, { ready: true }); assert.equal(received.length, 2);
-  assert.deepEqual(received[0], { name: 'evaluate', args: { tabRef: 'page', code: 'value => value', args: [1, 2] } });
+  assert.deepEqual(received[0], { name: 'evaluate', args: { tabRef: 'page', code: 'value => value', waitUntil: 'commit', args: [1, 2] } });
 });
 
 test('one deadline covers observation and action, while cancellation disposes an armed observer', async () => {

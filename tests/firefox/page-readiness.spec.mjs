@@ -64,3 +64,46 @@ function callTool(session, name, args) {
     }
   `);
 }
+
+test('evaluation prepares DOM while element tools observe the current document', async ({ firefoxSidebar: session }) => {
+  const held = new Map();
+  const server = createServer((request, response) => {
+    if (request.url.endsWith('.js')) { held.set(request.url, response); return; }
+    response.setHeader('Content-Type', 'text/html');
+    const body = '<input id="field"><button id="tap" onclick="this.dataset.clicked=\'yes\'">Tap</button>';
+    response.end(request.url === '/head'
+      ? `<!doctype html><head><script src="/head.js"></script></head><body>${body}</body>`
+      : `<!doctype html><body>${body}<script src="/tail.js"></script></body>`);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const release = path => { const response = held.get(path); response?.end('// ready'); held.delete(path); };
+  let tabId, timer;
+  try {
+    tabId = await session.extension('background', `return (await view.chrome.tabs.create(Cu.cloneInto({url:'about:blank',active:false},content))).id;`);
+    const call = (name, args = {}) => callTool(session, name, { tabId, timeout: 5, ...args });
+    await call('navigate', { url: `${origin}/head` });
+    expect(await call('evaluate', { waitUntil: 'commit', code: '() => !!document.body' })).toBe(false);
+    let completed = false;
+    const prepared = call('evaluate', { code: '() => !!document.body' }).then(value => { completed = true; return value; });
+    timer = setTimeout(() => release('/head.js'), 250);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(completed).toBe(false);
+    expect(await prepared).toBe(true);
+    await call('navigate', { url: `${origin}/tail` });
+    for (const state of ['attached', 'visible']) {
+      const found = await call('wait_for_element', { target: 'css:#field', state, timeout: 1 });
+      expect(found, JSON.stringify(found)).toMatchObject({ found: true });
+      expect(await call('act_on_element', { target: found.target, action: 'fill', value: state })).toEqual({});
+    }
+    expect(await call('act_on_element', { target: 'css:#tap', action: 'click' })).toEqual({});
+    expect(await call('evaluate', { waitUntil: 'commit', code: '() => ({state:document.readyState,clicked:document.querySelector("#tap").dataset.clicked})' }))
+      .toEqual({ state: 'loading', clicked: 'yes' });
+  } finally {
+    clearTimeout(timer);
+    for (const path of held.keys()) release(path);
+    if (tabId) await session.extension('background', `await view.chrome.tabs.remove(${tabId});`);
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

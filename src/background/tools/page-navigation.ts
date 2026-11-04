@@ -71,7 +71,7 @@ export async function beginPageNavigationObservation(tabId: number, signal?: Abo
             (!baselineLoading && loading) || (tab.pendingUrl && tab.pendingUrl !== baseline.pendingUrl)));
           // A request alone is not evidence of navigation. Downloads, 204 responses,
           // and cancelled navigations can finish without replacing the document.
-          const pending = !tab || (started && loading);
+          const pending = !tab || (started && (Boolean(tab.pendingUrl) || loading && !committed));
           if (!pending || Date.now() >= deadline) {
             return {
               pageBefore: dispatchPage,

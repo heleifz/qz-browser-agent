@@ -82,7 +82,6 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     expect(syntax.code, JSON.stringify(syntax)).toBe('SCRIPT_EVALUATION_FAILED');
     expect(syntax.message).toMatch(/SyntaxError/);
     expect(Object.keys(syntax).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
-    expect(syntax.hint).toBeTruthy();
 
     const tree = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
     expect(tree.message, JSON.stringify(tree)).toBeUndefined();

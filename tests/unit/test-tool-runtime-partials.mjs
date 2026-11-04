@@ -66,6 +66,7 @@ globalThis.chrome = {
   },
   scripting: { async executeScript(options) {
     if (probeBusy) return never();
+    if (options.func?.name === "documentReadiness") return [{ documentId: "doc", result: true }];
     const tab = tabs.get(options.target.tabId);
     return [{ documentId: 'doc', result: { readyState: 'interactive', title: tab.title, url: tab.url, observedAt: 1 } }];
   } },
@@ -87,12 +88,15 @@ const runtime = createToolRuntime({
   },
 });
 
-test('normal reads never wait for or start a page-state probe', async () => {
+test('normal reads prepare DOM without collecting full page-state diagnostics', async () => {
   reset();
   const sendMessage = chrome.tabs.sendMessage, executeScript = chrome.scripting.executeScript;
-  let probes = 0;
+  let probes = 0, readiness = 0;
   chrome.tabs.sendMessage = async (_id, message) => message.action === 'ping' ? { ok: true, contentType: 'text/html', elementRefs: 1 } : { text: 'Ready', elements: [] };
-  chrome.scripting.executeScript = () => { probes++; return never(); };
+  chrome.scripting.executeScript = options => {
+    if (options.func?.name === "documentReadiness") { readiness++; return Promise.resolve([{ result: true, documentId: "doc" }]); }
+    probes++; return never();
+  };
   try {
     for (const name of ['read_article', 'find_elements']) {
       await clearTraceLog();
@@ -106,6 +110,7 @@ test('normal reads never wait for or start a page-state probe', async () => {
       assert.equal(result.error, undefined);
     }
     assert.equal(probes, 0, 'page-state sampling belongs only to the hard-timeout fallback');
+    assert.equal(readiness, 2, 'page readers explicitly prepare their documents');
   } finally { chrome.tabs.sendMessage = sendMessage; chrome.scripting.executeScript = executeScript; }
 });
 

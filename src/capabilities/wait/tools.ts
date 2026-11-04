@@ -451,6 +451,7 @@ function observeNavigation(tabId: number, signal: AbortSignal): WaitObservation<
   const committed = (event: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
     if (event.tabId !== tabId || event.frameId !== 0) return;
     started = true;
+    void finish();
   };
   const sameDocument = (event: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
     if (event.tabId === tabId && event.frameId === 0) void finish();
@@ -557,7 +558,7 @@ registerTool({
   }, current => pollState(current, async () => {
     if (!context.invokeTool) throw new ToolExecutionError("TOOL_EXECUTION_FAILED", "Page evaluation is unavailable.");
     const value = await context.invokeTool("evaluate", { tabRef: context.requestedTabRef ?? input.tabRef ?? input.tabId,
-      code: input.code, ...(Object.hasOwn(input, "args") ? { args: input.args } : {}),
+      code: input.code, waitUntil: "commit", ...(Object.hasOwn(input, "args") ? { args: input.args } : {}),
     }, { signal: current });
     return value ? value : undefined;
   })),
@@ -580,15 +581,16 @@ registerTool({
     const intervalMs = legacy.interval != null ? Math.max(1, Number(legacy.interval) || 0) : secondsToMs(input.intervalSeconds, 500);
     return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input.target) },
       async current => {
-      const binding = await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, context);
+      const observing = Object.assign(Object.create(context), { signal: current });
+      const binding = await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);
       const reference = binding.target || element.elementTargetForSelector(binding.selector || binding.ref?.selector || "");
       current.throwIfAborted();
       return pollState(current, async () => {
         let result: Record<string, unknown>;
         try {
           const params = { selector: binding.selector, visibleOnly };
-          result = (binding.uid ? await element.callElement(binding.tabId, binding, "elementPresence", params, context)
-            : await sendToContent(binding.tabId, "elementPresence", params, context)) as Record<string, unknown>;
+          result = (binding.uid ? await element.callElement(binding.tabId, binding, "elementPresence", params, observing)
+            : await sendToContent(binding.tabId, "elementPresence", params, observing)) as Record<string, unknown>;
           if (result?.error) throw new ToolExecutionError(String(result.code || "CONTENT_SCRIPT_MESSAGE_FAILED"), String(result.error));
           if (!result || typeof result.found !== "boolean") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element presence response");
         } catch (error) {
@@ -602,7 +604,7 @@ registerTool({
           }
         }
         if (absent ? result.found : !result.found) return undefined;
-        const observed = result.found ? await element.addElementTargetsToFindResult(result.element, binding.tabId, context, binding.ref) : null;
+        const observed = result.found ? await element.addElementTargetsToFindResult(result.element, binding.tabId, observing, binding.ref) : null;
         const target = observed && typeof observed === "object" && "target" in observed ? observed.target : reference;
         return { state, found: result.found, target, element: observed };
       }, intervalMs);

@@ -8,7 +8,6 @@
 
 ```js
 await tools.open_tab({url:"https://example.com", tabAlias:"page"});
-await tools.wait_for_element({tabRef:"page", target:"css:body", state:"attached"});
 return await tools.evaluate({
   tabRef: "page",
   code: (limit) => ({title:document.title, text:document.body.innerText.slice(0,limit)}),
@@ -17,7 +16,7 @@ return await tools.evaluate({
 ```
 
 - `run_script` 固定在页面外编排，支持顶层 await/return；页面导航不会销毁外层脚本。页面工具逐次显式传 tabRef。
-- 新增 `evaluate` 执行页面函数，返回其业务值。JS 调用可直接传函数；JSON 调用传函数字符串。参数可为任意 JSON 值，函数不捕获外层变量。open_tab/navigate 保证导航提交，读取新页 DOM 前显式等待所需元素。页面卸载仍可能中断该次 evaluate，不自动重放。
+- 新增 `evaluate` 执行页面函数，返回其业务值。JS 调用可直接传函数；JSON 调用传函数字符串。参数可为任意 JSON 值，函数不捕获外层变量。open_tab/navigate 保证导航提交，evaluate 默认等待 DOMContentLoaded；waitUntil:"commit" 可提前观察，动态内容仍按具体条件等待。页面卸载仍可能中断该次 evaluate，不自动重放。
 - 新增 `list_tools` 从当前工具登记表返回签名；传 names 获取指定工具的完整 schema。CLI、内置 Agent 与脚本共用工具名和定义，没有另一套 SDK 方法名。
 - 动作保留实际输入送达和 fill/check 验证。普通成功回 `{}`；导航只附 navigated/url 或 navigationPending。confirmationRequired 要求先局部验证，再继续任务；观察按需要单独调用。
 - `wait_for_navigation/response/popup` 接受 `trigger:{name,args}`，先监听再调用一次动作。失败不重放，超时不回滚。`wait_for_load` 检查当前加载；`wait_for_navigation` 观察之后的新导航，包含同 URL 重载、SPA 和片段变化。`wait_for_url/element/function` 等待状态。

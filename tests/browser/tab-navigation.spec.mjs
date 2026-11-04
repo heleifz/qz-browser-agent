@@ -11,7 +11,7 @@ function escapeHtml(value) {
 }
 
 for (const watchNetwork of [false, true]) test(`tab navigation commits before reading (watchNetwork=${watchNetwork})`, async () => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   const held = new Map(), counts = new Map();
   const server = createServer((req, res) => {
     const path = req.url;
@@ -26,6 +26,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     if (path.startsWith("/busy-open-")) {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end("<title>Busy renderer</title><script>fetch('/started'+location.pathname);const until=Date.now()+8000;while(Date.now()<until){}</script>");
+      return;
+    }
+    if (path === '/early-elements') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><body><article>Early body</article><input id="early"><button id="tap" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Tap</button><script src="/head-block-tail"></script></body>');
       return;
     }
     if (path.startsWith('/late-body-')) {
@@ -211,6 +216,32 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     release("/slow-child");
 
     if (!watchNetwork) {
+      held.set('/head-block-evaluate', []);
+      const early = await call('open_tab', { url: `${origin}/late-body-evaluate` });
+      const earlyArgs = { tabRef: early.tabRef, code: '() => ({body:!!document.body, text:document.body?.innerText})' };
+      expect(await call('evaluate', { ...earlyArgs, waitUntil: 'commit' })).toMatchObject({ body: false });
+      const notStarted = await call('evaluate', { ...earlyArgs, timeout: 0.2, code: '() => {globalThis.__lateExecution = true;}' });
+      expect(notStarted.details, JSON.stringify(notStarted)).toMatchObject({ executed: false, mayHaveTakenEffect: false });
+      let evaluated = false;
+      const prepared = call('evaluate', earlyArgs).then(value => { evaluated = true; return value; });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(evaluated).toBe(false);
+      release('/head-block-evaluate');
+      expect(await prepared).toMatchObject({ body: true, text: expect.stringContaining('Late complete article') });
+      expect(await call('evaluate', { tabRef: early.tabRef, code: '() => globalThis.__lateExecution === true' })).toBe(false);
+
+      held.set('/head-block-tail', []);
+      const partial = await call('open_tab', { url: `${origin}/early-elements` });
+      for (const state of ['attached', 'visible']) {
+        const found = await call('wait_for_element', { tabRef: partial.tabRef, target: 'css:#early', state, timeout: 1 });
+        expect(found, JSON.stringify(found)).toMatchObject({ found: true });
+        expect(await call('inspect_element', { tabRef: partial.tabRef, target: found.target })).toMatchObject({ tag: 'input' });
+        expect(await call('act_on_element', { tabRef: partial.tabRef, target: found.target, action: 'fill', value: state })).toEqual({});
+      }
+      expect(await call('wait_for_function', { tabRef: partial.tabRef, code: '() => !!document.querySelector("#early")', timeout: 1 })).toBe(true);
+      expect(await call('act_on_element', { tabRef: partial.tabRef, target: 'css:#tap', action: 'click' })).toEqual({});
+      expect(await call('evaluate', { tabRef: partial.tabRef, waitUntil: 'commit', code: '() => ({clicks:document.querySelector("#tap").dataset.clicks,state:document.readyState})' })).toEqual({ clicks: '1', state: 'loading' });
+      release('/head-block-tail');
       for (const name of ['read_article', 'get_ax_tree', 'screenshot']) for (const outcome of ['ready', 'timeout']) {
         const suffix = `${name}-${outcome}`, head = `/head-block-${suffix}`;
         held.set(head, []); held.set('/late-image', []);
