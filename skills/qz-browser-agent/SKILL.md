@@ -44,7 +44,21 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 `qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
 
-Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools.
+Call tools by their catalog names. Use `tools.list_tools()` for compact signatures of common tools, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas, including tools absent from the default list. Read the relevant schema before using an unfamiliar tool.
+
+The built-in tools available to scripts are listed below. Loaded Skills can add tools; follow their instructions and query list_tools by name for their schemas.
+
+<!-- qz-drive-tools:start -->
+- **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, close, and manage page ownership.
+- **Page content and elements**: `act_on_element`, `find_elements`, `get_ax_tree`, `inspect_element`, `read_article`, `read_dom`, `scroll_page`. Read text, HTML, and accessibility trees; find, inspect, and act on elements; scroll pages.
+- **Waiting**: `wait`, `wait_for_element`, `wait_for_function`, `wait_for_load`, `wait_for_navigation`, `wait_for_popup`, `wait_for_url`, `wait_until`. Wait for page loads, navigation, popups, URLs, predicates, elements, or a specified time.
+- **Images and screen actions**: `act_on_screen`, `collect_images`, `list_images`, `read_image`, `read_image_asset`, `screenshot`. Capture screenshots, discover and collect images, read image assets, and act at screen coordinates.
+- **Network and console**: `network_body`, `network_recent`, `network_watch`, `read_console_messages`, `wait_for_network_idle`, `wait_for_response`. Watch requests, read captured bodies and console messages, and wait for responses or network idle.
+- **Scripts and discovery**: `evaluate`, `list_tools`, `run_script`. Run workflows through qz script, evaluate page functions, and discover tool schemas.
+- **Data and files**: `data_store`, `download_url`, `list_downloads`, `save_file`. Store structured data, save files, start downloads, and inspect downloaded files.
+- **Skills**: `list_skills`, `load_skill`, `load_skill_resource`. Find and load Skills and their packaged resources.
+- **Browser utilities**: `browse_history`, `get_location`, `send_alert`. Search browsing history, request location, and notify the user.
+<!-- qz-drive-tools:end -->
 
 ```sh
 qz script --session "$SID" - <<'JS'

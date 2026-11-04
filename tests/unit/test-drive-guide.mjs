@@ -5,8 +5,30 @@ import { driveGuide, resetDriveGuideCache } from "../../services/mcp-bridge/src/
 import { BridgeError } from "../../services/mcp-bridge/src/state.mjs";
 import { driveExtensionTimeoutSeconds, executeMcpTool } from "../../services/mcp-bridge/src/tools.mjs";
 import { buildScriptRequest, presentScriptResult, scriptTimeouts } from "../../services/mcp-bridge/src/script-call.mjs";
+import { renderDriveToolIndex } from "../../scripts/docs-drive-tools.mjs";
 
 const CHARS_PER_TOKEN = 23156 / 5700;
+
+test("the guide index matches the complete public drive catalog, including uncommon tools", async () => {
+  const generated = await renderDriveToolIndex();
+  const guide = driveGuide();
+  const index = guide.split("<!-- qz-drive-tools:start -->\n")[1]?.split("\n<!-- qz-drive-tools:end -->")[0];
+  assert.equal(index, generated, "Run npm run docs:drive to update the guide index");
+  const browser = globalThis.chrome;
+  globalThis.chrome = {};
+  try {
+    const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
+    const { isDriveToolForbidden } = await import("../../src/background/mcp/external-drive.js");
+    const expected = getToolSchemas({ language: "en" }).map(tool => tool.function.name)
+      .filter(name => !isDriveToolForbidden(name)).sort();
+    const documented = [...index.matchAll(/`([a-z_]+)`/g)].map(match => match[1]).sort();
+    assert.ok(expected.length > 0);
+    assert.deepEqual(documented, expected, "List every available built-in tool exactly once, without hidden or forbidden tools");
+  } finally {
+    if (browser === undefined) delete globalThis.chrome;
+    else globalThis.chrome = browser;
+  }
+});
 
 test("the packaged guide matches the installed Skill and keeps one script vocabulary", () => {
   const source = readFileSync(new URL("../../skills/qz-browser-agent/SKILL.md", import.meta.url), "utf8");
