@@ -14,8 +14,8 @@ export default `# 技能工作台
 7. 创建新 skill 时调用本 skill 暴露的“创建技能”Skill 工具；写入或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时调用“编辑技能资源”，一次只改一个资源且一次只做一个动作；修改已有 skill 正文或元信息时调用“更新技能”；删除时调用“删除技能”。
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
-10. 新建 Skill 脚本统一使用 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。通过 \`tools.*\` 调用浏览器工具；DOM 读写和页面登录态请求放进 \`tools.evaluate({ tabRef, code, args })\`。工具若操作调用方指定的页面，在 schema 中声明 \`tabRef\`，类型为 \`type:["integer","string"]\`，加入 \`required\`，并传给每次页面操作；脚本自己打开页面时使用返回的引用。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 只访问 \`network.allowedOrigins\` 声明的来源。
-11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本 return 业务 JSON；await 工具调用（包括 Skill）直接得到业务值，失败抛错。模型收到 \`{ok,result,trace}\`，trace 只包含报错和脚本主动输出的 trace()/console，包括嵌套脚本；在关键节点用 trace() 记录进度，便于失败后定位；渲染路径仍相对于业务值。独立流程使用 \`Promise.all\`，返回前等待工具调用。宿主自动添加可选的 \`timeout\`，单位为秒，默认 120；0 不设置本次截止时间，仍受父调用取消和期限约束。不要把 timeout 写进业务 schema。旧执行模式的脚本保留原有调用契约。
+10. 新建 Skill 脚本统一声明 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。通过 \`tools.*\` 调用浏览器工具；页面内 DOM 读写和复用页面登录态的请求统一放入自包含的 \`tools.evaluate({ tabRef, code, args })\`。若工具操作调用方指定的页面，须在 schema 中声明 \`tabRef\`（\`type:["integer","string"]\`）并列入 \`required\`，再传给每次页面操作；脚本自行打开页面时直接使用返回的 \`tabRef\`。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 仅访问 \`network.allowedOrigins\` 声明的来源。
+11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本直接 return 业务 JSON；await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错。模型收到 \`{ok,result,trace}\` 回执，\`trace\` 仅按序记录报错与脚本显式输出的 \`trace()\`/\`console\`（含嵌套脚本），建议在关键阶段用 \`trace()\` 打点以便失败定位；renderer 路径始终相对于脚本 return 的业务值解析。独立页面流程用 \`Promise.all\`，并在 return 前 await 所有调用。宿主自动注入可选 \`timeout\`（秒，默认 120；0 不设单次时限，仍受父调用取消与期限约束），请勿将 \`timeout\` 写进业务 schema。存量旧执行模式脚本保留原有调用契约。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
 14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，把来源页面的 tabRef 和该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。
@@ -188,7 +188,7 @@ export default `# 技能工作台
 
 ## 脚本约定
 
-Skill 脚本与 \`run_script.code\` 使用同一种源码形态：顶层 \`await\` 和 \`return\`，也兼容已有函数表达式。脚本在页面外运行，页面导航不会销毁它；可用 \`args\`、\`$plugin\`、\`tools\`、\`trace()\` 和 Web APIs，没有 \`window/document\`。传给 \`tools.evaluate\` 的页面函数必须自包含：通过 \`args\` 传值，不能捕获外层变量或调用 tools。导航和点击通过外层工具执行，之后再读取新页面；页面卸载可能中断单次 evaluate，代码不会自动重放。
+Skill 脚本与 \`run_script.code\` 使用同一种源码形态：顶层 \`await\` 和 \`return\`（兼容已有函数表达式）。脚本在页面外运行，页面导航不会销毁它，提供 \`args\`、\`$plugin\`、\`tools\`、\`trace()\` 与 Web APIs，不包含 \`window/document\`；await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错。传给 \`tools.evaluate\` 的页面函数必须自包含：通过 \`args\` 传值，不能捕获外层变量或调用 tools。导航和点击通过外层工具执行，之后再求值新页面；页面卸载可能中断单次 evaluate，代码不会自动重放。
 
 \`\`\`js
 return await tools.evaluate({

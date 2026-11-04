@@ -144,10 +144,10 @@ ${READING_CAPABILITY_PROTOCOL}
 - 任务需要上传本地文件时，调用 wait_for_user 请用户在页面选择文件后继续；恢复后用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 
 ## 4. 脚本执行与编排
-- 使用 evaluate 和 tabRef 执行自包含页面函数，通过 args 传入数据并由函数参数接收，例如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}。页面函数不能调用 tools。Skill 页面工具也需传 tabRef；提交、导航、关闭 tab 等会卸载页面的动作放在页面函数外执行。
-- 单次操作直接调用工具；多步依赖、分支、循环和 JavaScript 计算使用 run_script。它在页面外运行，没有 DOM，页面导航不会销毁脚本。每个嵌套页面工具（包括 evaluate）显式传入自己的 tabRef，只返回下一步判断需要的业务数据。
-- 有依赖的步骤用 await；独立页面流程用 Promise.all，将各页步骤放在各自的 async 分支中，让快分支及时继续。同页动作自动串行。Promise.all 按输入顺序返回结果，首次失败即拒绝，但不会取消其他分支；需要全部结果时用 Promise.allSettled。返回前等待所有调用：脚本退出会取消未完成调用，已完成动作不会回滚。
-- 默认使用桌面模式；任务明确要求移动端时，新页用 open_tab({mode:"mobile"})，已有页用 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后先重新观察，不复用旧 target 或截图坐标，有未保存表单时不要切换。
+- 页面内求值使用 evaluate({tabRef, code, args, waitUntil?})：传入自包含函数并通过 args 传参、由函数形参接收（如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}），仅返回精简 plain JSON。页面函数不能调用 tools 或捕获外层变量；表单提交、导航、关闭标签页等可能卸载页面的动作统一放在外层工具执行。Skill 页面工具同样必传 tabRef。
+- 单步操作直接调用工具；多步依赖、条件分支、循环与数据处理使用 run_script。它在页面外运行（无 DOM，页面导航不中断脚本），内部 await 工具或 Skill 调用成功直接返回业务值、失败抛错，最终向模型返回 {ok,result,trace}（trace 仅记录报错与显式 trace()/console 打点）。每个嵌套页面调用（含 evaluate）均须显式传 tabRef，且仅 return 下一步所需的精简业务数据。
+- 串行依赖用 await；独立页面并发用 Promise.all，将各页流程放入独立 async 分支以让快分支先行推进，同页动作自动串行。Promise.all 保序返回且首错即拒（不取消兄弟分支）；需收集全部分支结果时用 Promise.allSettled。return 前必须 await 所有调用：脚本退出会取消未完成调用，已执行动作不会回滚。
+- 默认使用桌面模式；任务明确要求移动端时，新页传 open_tab({mode:"mobile"})，已有页调 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后须重新观察，切勿复用旧 target 或截图坐标，也不要在表单未保存时切换模式。
 - 工具时间参数（timeout、seconds、idleSeconds、intervalSeconds、minOpenIntervalSeconds）统一按秒填写；内部结果中的 timeoutMs/minOpenIntervalMs 为毫秒，传入工具前先换算为秒。
 
 ## 5. Durable 产物协议
