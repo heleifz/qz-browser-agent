@@ -16,13 +16,7 @@
   "script.aToolsCallInsideRunScriptFailedCheckBridge": "فشل استدعاء tools.* داخل run_script. تحقّق من مهلة الجسر وعمق التداخل والوسائط ودورة حياة الصفحة.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "يحظر المتصفح حقن البرامج النصية في هذه الصفحة. قد يحدث ذلك في صفحات chrome:// أو متجر الإضافات أو الصفحات المدمجة أو الصفحات التي تفتقر إلى الأذونات المطلوبة.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "فشل تنفيذ البرنامج النصي. استخدم الخطأ وسجل التتبّع لتحديد آخر مرحلة ناجحة.",
-  "script.useARegularHttpHttpsPageRefreshOrReopen": "استخدم صفحة HTTP/HTTPS عادية، وأعد تحميلها أو فتحها، وانتظر استقرار التحميل قبل المحاولة مجددًا.",
-  "script.performClicksSubmissionsAndNavigationAsSeparateToolCalls": "نفّذ النقرات والإرسال والتنقّل باستدعاءات أدوات منفصلة. بعد استقرار الصفحة، استخدم run_script للقراءة أو المعالجة على دفعات.",
-  "script.useABoundedTimeoutRecordTheWaitTargetMatch": "حدّد مهلة انتظار محدودة. سجّل هدف الانتظار وعدد المطابقات وآخر URL في سجل التتبّع، ثم أعد المحاولة ببرنامج نصي أصغر.",
   "script.useTargetPageWithAWorkingTabForPage": "شغّل السكربت في الصفحة المحددة عبر tabRef باستخدام JavaScript المتصفح وinput/args وtools/tool.",
-  "script.returnTheCandidateCountAndASampleFirstOr": "أعِد أولًا عدد العناصر المرشّحة وعينة منها، أو استخدم انتظارًا محدودًا عبر waitFor(fn,label,timeout). لا تسلسل الوصول إلى خصائص عناصر قد تكون غير موجودة.",
-  "script.checkToolStartToolErrorInTheTraceIncluding": "افحص tool.start/tool.error في سجل التتبّع، بما في ذلك اسم الأداة والوسائط وtabRef وtimeout. عند الحاجة، انقل استدعاء الأداة إلى خارج run_script.",
-  "script.runOnARegularHttpHttpsPageOrUse": "شغّل على صفحة HTTP/HTTPS عادية، أو استخدم أدوات المتصفح الأصلية لقراءة معلومات التبويب والصفحة.",
   "script.inspectDiagnosticLasttraceAndTheErrorAddStageTrace": "افحص diagnostic.lastTrace والخطأ، وأضف علامات stage/trace، ثم أعد المحاولة ببرنامج نصي أصغر.",
   "script.callOpenTabForTheTargetUrlFirstThen": "استدعِ open_tab أولًا لعنوان URL المستهدف، ثم مرّر id المُعاد كقيمة run_script.tabRef.",
   "script.ifTheTargetPageIsKnownPassTabidTo": "إذا كانت الصفحة المستهدفة معروفة، فمرّر tabRef إلى run_script.",
@@ -31,6 +25,5 @@
   "script.noReturnValue": "لا توجد قيمة مُعادة",
   "script.theScriptRanWithoutAReturnValueOrReturned": "نُفّذ البرنامج النصي دون قيمة مُعادة، أو أعاد undefined.",
   "script.runCode": "تشغيل الكود",
-  "script.scriptToolAccessUnavailable": "هذا الاستدعاء لا يملك وصولاً إلى الأدوات ولم تتم إعادة تشغيله تلقائيًا.",
-  "script.scriptToolAccessRecovery": "افحص حالة الصفحة أولاً. لاستدعاء الأدوات، اكتب tools.name(...) صراحةً في الشيفرة ثم أرسل استدعاءً جديدًا."
+  "script.scriptToolAccessUnavailable": "هذا الاستدعاء لا يملك وصولاً إلى الأدوات ولم تتم إعادة تشغيله تلقائيًا."
 }

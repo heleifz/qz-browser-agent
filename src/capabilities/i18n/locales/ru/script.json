@@ -16,13 +16,7 @@
   "script.aToolsCallInsideRunScriptFailedCheckBridge": "Вызов tools.* внутри run_script завершился ошибкой. Проверьте тайм-ауты моста, глубину вложенности, аргументы и жизненный цикл страницы.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Браузер запрещает внедрение скриптов на этой странице. Это бывает на страницах chrome://, в магазине расширений, на встроенных страницах и при нехватке разрешений.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "Выполнение скрипта завершилось ошибкой. По ошибке и трассировке определите последний успешный этап.",
-  "script.useARegularHttpHttpsPageRefreshOrReopen": "Используйте обычную страницу HTTP/HTTPS, обновите или откройте её заново и дождитесь завершения загрузки перед повтором.",
-  "script.performClicksSubmissionsAndNavigationAsSeparateToolCalls": "Выполняйте клики, отправки и переходы отдельными вызовами инструментов. Когда страница стабилизируется, используйте run_script для чтения или пакетной обработки.",
-  "script.useABoundedTimeoutRecordTheWaitTargetMatch": "Ограничьте время ожидания. Запишите в трассировку цель ожидания, число совпадений и последний URL, затем повторите с более коротким скриптом.",
   "script.useTargetPageWithAWorkingTabForPage": "Запускайте скрипт на странице, указанной в tabRef, используя JavaScript браузера, input/args и tools/tool.",
-  "script.returnTheCandidateCountAndASampleFirstOr": "Сначала верните число кандидатов и пример либо используйте ограниченное ожидание waitFor(fn,label,timeout). Не обращайтесь цепочкой к свойствам элементов, которых может не быть.",
-  "script.checkToolStartToolErrorInTheTraceIncluding": "Проверьте tool.start/tool.error в трассировке: имя инструмента, аргументы, tabRef и timeout. При необходимости вынесите вызов инструмента из run_script.",
-  "script.runOnARegularHttpHttpsPageOrUse": "Выполните на обычной странице HTTP/HTTPS либо прочитайте данные вкладки и страницы встроенными инструментами браузера.",
   "script.inspectDiagnosticLasttraceAndTheErrorAddStageTrace": "Изучите diagnostic.lastTrace и ошибку, добавьте маркеры stage/trace и повторите с более коротким скриптом.",
   "script.callOpenTabForTheTargetUrlFirstThen": "Сначала вызовите open_tab для нужного URL, затем передайте полученный id в run_script.tabRef.",
   "script.ifTheTargetPageIsKnownPassTabidTo": "Если целевая страница известна, передайте tabRef в run_script.",
@@ -31,6 +25,5 @@
   "script.noReturnValue": "Нет возвращаемого значения",
   "script.theScriptRanWithoutAReturnValueOrReturned": "Скрипт выполнен без возвращаемого значения либо вернул undefined.",
   "script.runCode": "Выполнить код",
-  "script.scriptToolAccessUnavailable": "У этого вызова нет доступа к инструментам, и он не был автоматически повторён.",
-  "script.scriptToolAccessRecovery": "Сначала проверьте состояние страницы. Чтобы вызвать инструменты, явно напишите tools.name(...) в коде и отправьте новый вызов."
+  "script.scriptToolAccessUnavailable": "У этого вызова нет доступа к инструментам, и он не был автоматически повторён."
 }

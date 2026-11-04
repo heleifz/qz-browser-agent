@@ -16,13 +16,7 @@
   "script.aToolsCallInsideRunScriptFailedCheckBridge": "Un appel tools.* dans run_script a échoué. Vérifiez les délais du pont, la profondeur d’imbrication, les arguments et le cycle de vie de la page.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Le navigateur bloque l’injection de scripts sur cette page. Cela peut se produire sur les pages chrome://, la boutique d’extensions, les pages intégrées ou celles sans les autorisations requises.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "L’exécution du script a échoué. Utilisez l’erreur et la trace pour repérer la dernière étape réussie.",
-  "script.useARegularHttpHttpsPageRefreshOrReopen": "Utilisez une page HTTP/HTTPS classique, actualisez-la ou rouvrez-la, puis attendez la fin du chargement avant de réessayer.",
-  "script.performClicksSubmissionsAndNavigationAsSeparateToolCalls": "Effectuez les clics, envois et navigations avec des appels d’outils séparés. Une fois la page stable, utilisez run_script pour lire ou traiter les données par lots.",
-  "script.useABoundedTimeoutRecordTheWaitTargetMatch": "Définissez un délai limité. Consignez la cible attendue, le nombre de correspondances et la dernière URL dans la trace, puis réessayez avec un script plus court.",
   "script.useTargetPageWithAWorkingTabForPage": "Exécutez le script sur la page indiquée par tabRef avec JavaScript du navigateur, input/args et tools/tool.",
-  "script.returnTheCandidateCountAndASampleFirstOr": "Retournez d’abord le nombre de candidats et un exemple, ou utilisez une attente limitée waitFor(fn,label,timeout). N’enchaînez pas les accès aux propriétés d’éléments potentiellement absents.",
-  "script.checkToolStartToolErrorInTheTraceIncluding": "Vérifiez tool.start/tool.error dans la trace, notamment le nom de l’outil, les arguments, tabRef et timeout. Si nécessaire, sortez l’appel d’outil de run_script.",
-  "script.runOnARegularHttpHttpsPageOrUse": "Exécutez sur une page HTTP/HTTPS classique ou utilisez les outils natifs du navigateur pour lire les informations de l’onglet ou de la page.",
   "script.inspectDiagnosticLasttraceAndTheErrorAddStageTrace": "Examinez diagnostic.lastTrace et l’erreur, ajoutez des marqueurs stage/trace, puis réessayez avec un script plus court.",
   "script.callOpenTabForTheTargetUrlFirstThen": "Appelez d’abord open_tab pour l’URL cible, puis transmettez l’id retourné comme run_script.tabRef.",
   "script.ifTheTargetPageIsKnownPassTabidTo": "Si la page cible est connue, transmettez tabRef à run_script.",
@@ -31,6 +25,5 @@
   "script.noReturnValue": "Aucune valeur de retour",
   "script.theScriptRanWithoutAReturnValueOrReturned": "Le script s’est exécuté sans valeur de retour ou a retourné undefined.",
   "script.runCode": "Exécuter le code",
-  "script.scriptToolAccessUnavailable": "Cet appel n'a pas accès aux outils et n'a pas été relancé automatiquement.",
-  "script.scriptToolAccessRecovery": "Inspectez d'abord l'état de la page. Pour appeler des outils, écrivez tools.name(...) explicitement dans le code, puis soumettez un nouvel appel."
+  "script.scriptToolAccessUnavailable": "Cet appel n'a pas accès aux outils et n'a pas été relancé automatiquement."
 }

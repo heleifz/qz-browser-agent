@@ -16,13 +16,7 @@
   "script.aToolsCallInsideRunScriptFailedCheckBridge": "Ein tools.*-Aufruf in run_script ist fehlgeschlagen. Prüfe Bridge-Zeitüberschreitungen, Verschachtelungstiefe, Argumente und den Seitenlebenszyklus.",
   "script.theBrowserBlocksScriptInjectionOnThisPageThis": "Der Browser blockiert Skript-Injektionen auf dieser Seite. Das kann bei chrome://-Seiten, dem Erweiterungsstore, integrierten Seiten oder fehlenden Berechtigungen passieren.",
   "script.scriptExecutionFailedUseTheErrorAndTraceTo": "Skriptausführung fehlgeschlagen. Ermittle anhand des Fehlers und des Traces die letzte erfolgreiche Phase.",
-  "script.useARegularHttpHttpsPageRefreshOrReopen": "Verwende eine normale HTTP/HTTPS-Seite, lade sie neu oder öffne sie erneut und warte, bis der Ladevorgang abgeschlossen ist.",
-  "script.performClicksSubmissionsAndNavigationAsSeparateToolCalls": "Führe Klicks, Absenden und Navigation als separate Tool-Aufrufe aus. Verwende run_script erst auf der stabilen Seite zum Lesen oder zur Stapelverarbeitung.",
-  "script.useABoundedTimeoutRecordTheWaitTargetMatch": "Setze ein festes Zeitlimit. Halte Warteziel, Trefferzahl und letzte URL im Trace fest und versuche es mit einem kleineren Skript erneut.",
   "script.useTargetPageWithAWorkingTabForPage": "Führe das Skript auf der mit tabRef angegebenen Seite mit Browser-JavaScript, input/args und tools/tool aus.",
-  "script.returnTheCandidateCountAndASampleFirstOr": "Gib zuerst die Anzahl der Kandidaten und ein Beispiel zurück oder verwende waitFor(fn,label,timeout) mit Zeitlimit. Verkette keine Eigenschaftszugriffe auf möglicherweise fehlende Elemente.",
-  "script.checkToolStartToolErrorInTheTraceIncluding": "Prüfe tool.start/tool.error im Trace, einschließlich Tool-Name, Argumenten, tabRef und timeout. Verschiebe den Tool-Aufruf bei Bedarf aus run_script heraus.",
-  "script.runOnARegularHttpHttpsPageOrUse": "Führe das Skript auf einer normalen HTTP/HTTPS-Seite aus oder lies Tab- und Seiteninformationen mit nativen Browser-Tools.",
   "script.inspectDiagnosticLasttraceAndTheErrorAddStageTrace": "Prüfe diagnostic.lastTrace und den Fehler, ergänze stage/trace-Markierungen und versuche es mit einem kleineren Skript erneut.",
   "script.callOpenTabForTheTargetUrlFirstThen": "Rufe zuerst open_tab für die Ziel-URL auf und übergib die zurückgegebene id als run_script.tabRef.",
   "script.ifTheTargetPageIsKnownPassTabidTo": "Wenn die Zielseite bekannt ist, übergib tabRef an run_script.",
@@ -31,6 +25,5 @@
   "script.noReturnValue": "Kein Rückgabewert",
   "script.theScriptRanWithoutAReturnValueOrReturned": "Das Skript wurde ohne Rückgabewert ausgeführt oder hat undefined zurückgegeben.",
   "script.runCode": "Code ausführen",
-  "script.scriptToolAccessUnavailable": "Dieser Aufruf hatte keinen Werkzeugzugriff und wurde nicht automatisch wiederholt.",
-  "script.scriptToolAccessRecovery": "Prüfen Sie zuerst den Seitenzustand. Um Werkzeuge aufzurufen, schreiben Sie tools.name(...) explizit im Code und senden Sie einen neuen Aufruf."
+  "script.scriptToolAccessUnavailable": "Dieser Aufruf hatte keinen Werkzeugzugriff und wurde nicht automatisch wiederholt."
 }
