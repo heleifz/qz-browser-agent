@@ -58,7 +58,7 @@ For DOM access, call evaluate with an explicit tabRef. Its code is a self-contai
 ```sh
 qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
 // Read a compact DOM summary from the page opened earlier.
-await tools.wait_for_element({tabRef:"page", target:"css:body"});
+await tools.wait_for_element({tabRef:"page", target:"css:body", state:"attached"});
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
@@ -91,7 +91,7 @@ return await tools.wait_for_navigation({
 });
 ```
 
-wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element waits for current element state. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
+wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element defaults to visible; use attached when only DOM presence is needed. A body with zero height can contain visible children, so waiting for body visibility is not a page-readiness check. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
 
 Execute known steps serially in one script, then observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
 

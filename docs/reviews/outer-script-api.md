@@ -8,7 +8,7 @@
 
 ```js
 await tools.open_tab({url:"https://example.com", tabAlias:"page"});
-await tools.wait_for_element({tabRef:"page", target:"css:body"});
+await tools.wait_for_element({tabRef:"page", target:"css:body", state:"attached"});
 return await tools.evaluate({
   tabRef: "page",
   code: (limit) => ({title:document.title, text:document.body.innerText.slice(0,limit)}),
