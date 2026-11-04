@@ -307,13 +307,8 @@ export function errorPayload(error) {
   const payload = { code, message: interrupted ? "Stopped waiting. A started browser task may still be running."
     : timeout && error.code !== "TIMEOUT" ? "The request timed out. A started browser task may still be running." : error.message,
     ...(error.hint || detailHint ? { hint: error.hint || detailHint } : {}) };
-  if (code === "INVALID_ARGUMENTS") payload.hint ||= "With npm, use npm run qz -- <command> [options]. Run qz --help for usage.";
-  if (!payload.hint && (timeout || interrupted)) payload.hint = "Run qz tasks to inspect the task before repeating the command.";
-  if (!payload.hint && code === "BRIDGE_REQUEST_TIMEOUT") payload.hint = "The browser operation may still be running. Check the task before repeating the command.";
-  if (!payload.hint && code === "BRIDGE_CLIENT_REQUIRED") payload.hint = "Run qz status to list browser IDs, then repeat with --client ID.";
   if (["NOT_CONNECTED", "CONNECTION_ERROR", "CONNECTION_UNAVAILABLE", "CONNECTION_PENDING", "CONNECTION_CHANGED", "BROWSER_OPEN_FAILED", "BRIDGE_NOT_CONNECTED", "BRIDGE_CLOSED"].includes(code)) {
     Object.assign(details, { guide: GUIDE_URL, install: INSTALL_URL });
-    payload.hint ||= "Run qz install if the extension is missing, or open the URL from qz connect uri in the intended profile.";
   }
   if (Object.keys(details).length) payload.details = details;
   return payload;

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
-import { localFetch, readHealth, withToolClient } from "../../services/mcp-bridge/src/client.mjs";
+import { localFetch, QzError, readHealth, withToolClient } from "../../services/mcp-bridge/src/client.mjs";
 import { main, runCli } from "../../services/mcp-bridge/src/cli.mjs";
 
 async function fixture(t) {
@@ -127,10 +127,70 @@ test("an explicit offline or unknown browser never falls back to the other live 
       ...deps, ensureDaemon: () => assert.fail("the selected browser cannot authorize a second daemon"),
       openConnectionBrowser: () => assert.fail("an explicit browser cannot open a default profile"),
       restartDaemon: () => assert.fail("browser selection does not authorize a service upgrade"),
-    }), error => error.code === code);
+    }), error => {
+      assert.equal(error.code, code);
+      if (code === "CLIENT_OFFLINE") {
+        assert.equal(error.details.stage, "browser-connection");
+        assert.deepEqual(error.details.selectedBrowser, { clientId: offline.id, name: "offline-profile" });
+        assert.deepEqual(error.details.attemptedBrowsers, []);
+        assert.equal(error.details.operationSubmitted, false);
+        assert.match(error.message, /No browser operation was submitted/);
+        assert.equal(error.details.hint, undefined);
+      } else assert.equal(error.details.selectedBrowser, undefined);
+      return true;
+    });
   }
   assert.equal(traffic.length, 0, "invalid explicit selection does not initialize or probe another connection");
   assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), []);
+});
+
+test("connection diagnostics survive public JSON and script output without submitting an operation", async t => {
+  for (const scenario of ["selected", "exhausted", "all-families", "no-launch"]) await t.test(scenario, async t => {
+    let now = 1000000, stdout = "";
+    t.mock.method(Date, "now", () => now += 10);
+    const selected = { clientId: "offline-uuid", name: "Work profile", privateData: "not diagnostic" };
+    const health = { protocolVersion: 1, features: { browserPairing: 1, scriptApiVersion: 1 },
+      status: { clients: [], browsers: [selected] } };
+    const running = { endpoint: "http://127.0.0.1:18765", health };
+    const families = scenario === "exhausted" ? ["Chrome", "Firefox"] : ["Chrome", "Firefox", "Edge"];
+    const attempted = [];
+    const deps = {
+      findDaemon: async () => running,
+      callTool: () => assert.fail("no browser request may be submitted"),
+      openConnectionBrowser: async (_uri, { exclude }) => {
+        assert.notEqual(scenario, "selected");
+        assert.notEqual(scenario, "no-launch");
+        assert.deepEqual(exclude, attempted);
+        const browser = families[attempted.length];
+        if (!browser) throw new QzError("BROWSER_NOT_FOUND", "No more installed browsers.");
+        attempted.push(browser);
+        return { browser, opened: true };
+      },
+      readHealth: async () => { now += 100; return health; },
+      readStdin: async () => "return 7;",
+      stdout: { write: text => { stdout += text; } },
+      stderr: { write: () => assert.fail("machine output stays on stdout") },
+    };
+    for (const script of [false, true]) {
+      stdout = ""; attempted.length = 0;
+      const args = script ? ["script", "--session", "existing"] : ["session", "create", "--title", "Not submitted"];
+      args.push("--json", "--timeout", scenario === "no-launch" ? "0.001" : "0.5");
+      if (scenario === "selected") args.push("--client", selected.name);
+      assert.equal(await main(args, deps), 1);
+      const output = JSON.parse(stdout), error = script ? output.result : output;
+      assert.equal(error.code, scenario === "selected" ? "CLIENT_OFFLINE" : "CONNECTION_PENDING");
+      assert.equal(error.details.stage, "browser-connection");
+      assert.equal(error.details.operationSubmitted, false);
+      assert.deepEqual(error.details.attemptedBrowsers, attempted);
+      assert.deepEqual(attempted, ["selected", "no-launch"].includes(scenario) ? [] : families);
+      assert.deepEqual(error.details.selectedBrowser, scenario === "selected" ? { clientId: selected.clientId, name: selected.name } : undefined);
+      assert.match(error.message, /No browser operation was submitted/);
+      assert.equal(error.hint, undefined);
+      assert.equal(error.details.hint, undefined);
+      assert.equal(error.details.url, `${running.endpoint}/qz-connect${scenario === "selected" ? "?name=Work+profile" : ""}`);
+      assert.doesNotMatch(stdout, /privateData|not diagnostic/);
+    }
+  });
 });
 
 test("an explicit offline profile reconnects within its deadline without opening or using another browser", async t => {
@@ -164,6 +224,32 @@ test("an explicit offline profile reconnects within its deadline without opening
   const calls = traffic.filter(entry => entry.rpc?.method === "tools/call");
   assert.ok(calls.every(entry => entry.rpc.params.arguments.clientId === selected.id));
   assert.equal(calls.filter(entry => entry.rpc.params.name === "qingzhou_create_drive_session").length, 1);
+});
+
+test("stalled reconnect health reads respect cancellation and the remaining connection budget", async t => {
+  for (const cancelled of [true, false]) await t.test(cancelled ? "caller cancellation" : "deadline exhaustion", async t => {
+    const controller = new AbortController(), reason = new Error("Cancelled during health read");
+    let reads = 0;
+    const server = createServer((_request, _response) => {
+      reads++;
+      if (cancelled) controller.abort(reason);
+      // Accept the real HTTP request but never send headers or a body.
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+    const running = { endpoint: `http://127.0.0.1:${server.address().port}`, instanceId: "stalled-service",
+      health: { protocolVersion: 1, features: { browserPairing: 1 }, status: {
+        clients: [], browsers: [{ clientId: "offline-profile", name: "offline-profile" }],
+      } } };
+    const started = performance.now();
+    await assert.rejects(runCli(["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", cancelled ? "2" : "0.0305"], {
+      signal: controller.signal, findDaemon: async () => running,
+      callTool: () => assert.fail("no browser operation may be submitted"),
+      openConnectionBrowser: () => assert.fail("a pinned profile cannot launch a substitute"),
+    }), error => cancelled ? error === reason : error.code === "CLIENT_OFFLINE");
+    assert.equal(reads, 1);
+    assert.ok(performance.now() - started < 500, "health polling must not consume its independent one-second timeout");
+  });
 });
 
 test("cancellation during service discovery prevents both startup and upgrade before any browser call", async t => {

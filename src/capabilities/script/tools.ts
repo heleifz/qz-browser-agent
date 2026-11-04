@@ -48,7 +48,7 @@ function formatCdpScriptResult(input: unknown, engine = "cdp"): Fields {
       || record(exception.exception).value
       || exception.text
       || "Script evaluation failed";
-    return enrichRunScriptResult({
+    return {
       ok: false,
       hasResult: false,
       result: null,
@@ -61,7 +61,7 @@ function formatCdpScriptResult(input: unknown, engine = "cdp"): Fields {
         lineNumber: exception.lineNumber,
         columnNumber: exception.columnNumber,
       },
-    });
+    };
   }
 
   const value = record(evalResult.result);
@@ -77,7 +77,7 @@ function formatCdpScriptResult(input: unknown, engine = "cdp"): Fields {
       resultType: "undefined",
       engine,
       execution_world: "page",
-      message: "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.",
+      message: "Script completed successfully but returned undefined.",
     };
   }
 
@@ -117,10 +117,7 @@ function compactRunScriptEnvelope(envelope: Fields, engine = "cdp") {
   out.engine = out.engine || engine;
   out.execution_world = out.execution_world || (String(out.engine || engine).includes("inner") ? "inner" : "page");
   out.trace = compactScriptTrace(out.trace);
-  const result = enrichRunScriptResult(out);
-  return lastObservation && result && typeof result === "object"
-    ? { ...result, ...lastObservation }
-    : result;
+  return lastObservation ? { ...out, ...lastObservation } : out;
 }
 
 function normalizeRunScriptObservation(input: unknown) {
@@ -132,56 +129,6 @@ function normalizeRunScriptObservation(input: unknown) {
     _image: image,
     ...(value._imageDetail ? { _imageDetail: String(value._imageDetail) } : {}),
   };
-}
-
-function enrichRunScriptResult(result: Fields): Fields {
-  if (result.ok !== false || result.hint) return result;
-  return { ...result, hint: suggestRunScriptNextStep(classifyRunScriptFailure(
-    normalizeRunScriptErrorText(result.error || result.message), String(result.code || ''),
-  )) };
-}
-
-function normalizeRunScriptErrorText(error: unknown = "") {
-  return String(error || "").replace(/\s+/g, " ").trim();
-}
-
-function classifyRunScriptFailure(error: string, code = "") {
-  const text = `${code} ${error}`.toLowerCase();
-  if (/script_context_unavailable/.test(text)) return "script_context";
-  if (/page_context_unavailable|page javascript context is unavailable/.test(text)) return "page_context";
-  if (/self_unloading|may unload|blocked .*own tab/.test(text)) return "page_lifecycle";
-  if (/timed out|timeout/.test(text)) return "timeout";
-  if (/illegal return|unexpected token 'return'|await is only valid|unexpected token|unexpected identifier|missing \)|reserved word|syntaxerror/.test(text)) return "script_shape";
-  if (/\b(require|process|fs|path|module|exports|import)\b.*(not defined|unexpected)|\b(document|window) is not defined\b|cannot use import|geteventlisteners|\$0|monitorevents|copy is not defined/i.test(error)) return "wrong_runtime";
-  if (/cannot read propert(?:y|ies) of (null|undefined)|null is not an object|undefined is not an object|queryselector|query selector/.test(text)) return "selector_or_timing";
-  if (/run_script tool bridge|bridge timed out|empty bridge response|tool_call_failed/.test(text)) return "tool_bridge";
-  if (/cannot access contents|extensions gallery|chrome:|edge:|moz-extension|restricted url|permission/.test(text)) return "restricted_page";
-  return "script_error";
-}
-
-function suggestRunScriptNextStep(category: string) {
-  switch (category) {
-    case "script_context":
-      return toolT("scriptContextRecovery");
-    case "page_context":
-      return t("useARegularHttpHttpsPageRefreshOrReopen");
-    case "page_lifecycle":
-      return t("performClicksSubmissionsAndNavigationAsSeparateToolCalls");
-    case "timeout":
-      return t("useABoundedTimeoutRecordTheWaitTargetMatch");
-    case "script_shape":
-      return toolT("scriptShapeRecovery");
-    case "wrong_runtime":
-      return toolT("pageScriptRecovery");
-    case "selector_or_timing":
-      return t("returnTheCandidateCountAndASampleFirstOr");
-    case "tool_bridge":
-      return t("checkToolStartToolErrorInTheTraceIncluding");
-    case "restricted_page":
-      return t("runOnARegularHttpHttpsPageOrUse");
-    default:
-      return toolT("pageScriptRecovery");
-  }
 }
 
 function compactScriptTrace(trace: unknown) {
@@ -231,9 +178,9 @@ function normalizeRunScriptTarget(value: unknown) {
 }
 
 function makeRunScriptTargetRequiredError({ skill, script }: { code?: unknown; skill?: unknown; script?: unknown; context?: ToolContext } = {}) {
-  return Object.assign(new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef to run code that uses a page.", {
+  return new ToolExecutionError("TAB_REF_REQUIRED", "The page reference tabRef is missing.", {
     ...(skill ? { skill: String(skill) } : {}), ...(script ? { script: String(script) } : {}),
-  }), { hint: toolT("workingTabRecovery") });
+  });
 }
 
 registerTool({
@@ -293,13 +240,13 @@ registerTool({
   page: false,
   timeout: (args, name) => scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, name),
   validateArgs: args => {
-    if (args.tabRef != null || args.tabId != null) throw Object.assign(new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
-      "run_script executes outside the page."), { hint: "Use tools.evaluate({tabRef, code, args}) to run a function in a page." });
+    if (args.tabRef != null || args.tabId != null) throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
+      "run_script executes outside the page and does not accept a page reference.");
     scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, "run_script");
   },
   execute: async (input, signal, context = {}) => {
-    if (context.requestedTabRef != null) throw Object.assign(new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
-      "run_script executes outside the page."), { hint: "Use tools.evaluate({tabRef, code, args}) to run a function in a page." });
+    if (context.requestedTabRef != null) throw new ToolExecutionError("INVALID_RUN_SCRIPT_INPUT",
+      "run_script executes outside the page and does not accept a page reference.");
     const { code, args = {} } = input;
     const { skill, script } = input as typeof input & { skill?: unknown; script?: unknown };
     const hasInlineCode = String(code || "").trim().length > 0;
@@ -338,10 +285,8 @@ registerTool({
   page: "owned",
   timeout: (args, name) => scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, name),
   validateArgs: args => {
-    if (!isRunScriptCallableExpression(String(args.code || ""))) throw Object.assign(new ToolExecutionError(
-      "INVALID_SCRIPT_FUNCTION", "evaluate requires a self-contained function."), {
-      hint: "Pass an ordinary, arrow or async function in code. Pass outside values through args.",
-    });
+    if (!isRunScriptCallableExpression(String(args.code || ""))) throw new ToolExecutionError(
+      "INVALID_SCRIPT_FUNCTION", "evaluate code is not a function expression.");
   },
   execute: async ({ tabId, code, args }, signal, context = {}) => {
     const resolvedTabId = resolveRunScriptTargetTabId(tabId);
@@ -405,13 +350,12 @@ function describeScriptExecution(execution: Fields) {
     ok: true, result: execution.result,
     ...(trace.length ? { trace } : {}),
     ...(execution.hasResult === false || execution.resultType === 'undefined'
-      ? { hint: String(execution.message || 'The script returned undefined. Return a value to inspect the result.') } : {}),
+      ? { hint: 'The script returned undefined.' } : {}),
     ...(image || {}),
   };
   const details = record(execution.details);
   return { ...toolError(String(execution.code || 'SCRIPT_EVALUATION_FAILED'),
     String(details.originalError || execution.message || execution.error || 'Script failed.'), {
-      hint: String(execution.hint || toolT('pageScriptRecovery')),
       details: {
         ...details,
         ...(details.lineNumber != null ? { line: details.lineNumber } : {}),
@@ -429,7 +373,6 @@ function withoutToolAccess(result: Fields): Fields {
   if (result.ok !== false || !isToolApiReferenceError(result.error)) return result;
   return { ...result,
     code: "RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE", error: t("scriptToolAccessUnavailable"),
-    hint: t("scriptToolAccessRecovery"),
     details: { ...record(result.details), toolAccess: false, automaticReplay: false, mayHaveTakenEffect: true },
   };
 }
@@ -439,9 +382,9 @@ const runScriptInnerPendingByRequestId = new Map<string, { resolve(value: unknow
 const runScriptInnerTraceWaiters = new Map<string, (rows: unknown) => void>();
 
 function makeRunScriptAbortedError(context: ToolContext, phase = "run") {
-  return Object.assign(new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
+  return new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while waiting to ${phase} page script`, {
     ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }), phase,
-  }), { hint: "Inspect the page before retrying the script." });
+  });
 }
 
 async function waitForPageScriptTurn(previous: Promise<void>, signal: AbortSignal | undefined, context: ToolContext) {
@@ -567,11 +510,11 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       return compactRunScriptEnvelope(envelope, "offscreen_inner");
     }
     if (envelope && typeof envelope === "object" && envelope.ok === false) {
-      return enrichRunScriptResult({
+      return {
         ...envelope,
         engine: envelope.engine || "offscreen_inner",
         execution_world: envelope.execution_world || "inner",
-      });
+      };
     }
     return {
       ok: true,
@@ -583,7 +526,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
     };
   } catch (err) {
     if (errorCode(err) === "OPERATION_ABORTED") throw err;
-    return enrichRunScriptResult({
+    return {
       ok: false,
       hasResult: false,
       result: null,
@@ -592,7 +535,7 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       engine: "offscreen_inner",
       execution_world: "inner",
       details: {},
-    });
+    };
   } finally {
     unregisterNetworkExecution?.();
   }
@@ -735,7 +678,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
 }
 
 function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp", phase = "evaluate" }: { tabId?: number; reason?: string; phase?: string } = {}) {
-  return enrichRunScriptResult({
+  return {
     ok: false,
     hasResult: false,
     result: null,
@@ -744,9 +687,8 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
     code: "PAGE_CONTEXT_UNAVAILABLE",
     engine: "cdp",
     execution_world: "page",
-    hint: "Inspect the page before retrying. Perform navigation with outer tools, then evaluate in the new page.",
     details: { mayHaveTakenEffect: true, automaticReplay: false },
-  });
+  };
 }
 
 async function ensureRunScriptToolBridge(tabId: number, context: ToolContext) {

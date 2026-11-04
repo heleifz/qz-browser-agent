@@ -105,13 +105,28 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
         exhausted = true;
       }
     }
-    const health = await (dependencies.readHealth || readHealth)(running.endpoint);
+    if (Date.now() >= deadline) break;
+    let health;
+    try {
+      health = await (dependencies.readHealth || readHealth)(running.endpoint, {
+        timeoutMs: Math.max(1, Math.ceil(Math.min(1000, deadline - Date.now()))), signal,
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline) break;
+      throw error;
+    }
+    signal?.throwIfAborted();
+    if (Date.now() >= deadline) break;
     if (running.instanceId && health.instanceId !== running.instanceId) throw new QzError("CONNECTION_CHANGED", "The local service changed during connection. Retry the command.");
     selected = await locate(health);
     if (selected) return { running: { ...running, health }, clientId: selected };
     await delay(Math.max(1, Math.min(200, deadline - Date.now(), exhausted ? 200 : nextAttempt - Date.now())), undefined, { signal });
   }
-  throw new QzError(selector ? "CLIENT_OFFLINE" : "CONNECTION_PENDING", selector ? "The selected browser is not responding." : "qz is waiting for its browser extension.", {
-    url: uri, hint: "Open this URL in the intended browser profile with qz installed and complete its connection prompt, then retry.",
+  throw new QzError(selector ? "CLIENT_OFFLINE" : "CONNECTION_PENDING", `${selector ? "The selected browser is not responding." : "qz is waiting for its browser extension."} No browser operation was submitted.`, {
+    stage: "browser-connection",
+    ...(registered ? { selectedBrowser: { clientId: registered.clientId, name: registered.name } } : {}),
+    attemptedBrowsers: attempted.slice(0, 3), operationSubmitted: false,
+    url: uri,
   });
 }

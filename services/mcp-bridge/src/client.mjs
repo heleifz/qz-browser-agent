@@ -65,15 +65,23 @@ export async function localFetch(input, init) {
   });
 }
 
-export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch, allowIncompatible = false } = {}) {
+export async function readHealth(endpoint, { timeoutMs = 1000, fetch = localFetch, allowIncompatible = false, signal } = {}) {
+  signal?.throwIfAborted();
   const url = localUrl(endpoint);
-  const response = await fetch(`${url.origin}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new QzError("CONNECTION_UNAVAILABLE", `The qz connection health check failed (${response.status}).`);
-  const health = await response.json();
-  if (health.service !== SERVICE_NAME || !health.instanceId || (!allowIncompatible && health.protocolVersion !== PROTOCOL_VERSION)) {
-    throw new QzError("INCOMPATIBLE_SERVICE", "The local service is not a compatible qz installation.");
+  const timeout = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetch(`${url.origin}/health`, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    if (!response.ok) throw new QzError("CONNECTION_UNAVAILABLE", `The qz connection health check failed (${response.status}).`);
+    const health = await response.json();
+    signal?.throwIfAborted();
+    if (health.service !== SERVICE_NAME || !health.instanceId || (!allowIncompatible && health.protocolVersion !== PROTOCOL_VERSION)) {
+      throw new QzError("INCOMPATIBLE_SERVICE", "The local service is not a compatible qz installation.");
+    }
+    return health;
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
   }
-  return health;
 }
 
 function restoreCallImages(value, blocks) {

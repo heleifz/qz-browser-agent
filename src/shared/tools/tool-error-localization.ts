@@ -505,7 +505,7 @@ function localizeByCode(code: string, details: Record<string, unknown> = {}) {
   const missing = Array.isArray(details.missing) ? details.missing.join(", ") : "";
   switch (code) {
     case "UNKNOWN_TOOL":
-      return t("toolFailure.unknownTool", { tool: String(tool) });
+      return t("toolFailure.unknownTool", { tool: String(details.name || tool) });
     case "UNKNOWN_PLUGIN_TOOL":
       return t("toolFailure.unknownSkillTool", { tool: String(tool) });
     case "TOOL_FORBIDDEN_BY_RUN_PROFILE":

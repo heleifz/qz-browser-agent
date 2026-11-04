@@ -325,17 +325,40 @@ test("OSC strings use BEL and both string terminators, including C1 and unfinish
 });
 
 test("errors retain actionable details and respect plain and color output", () => {
-  const payload = { ok: false, error: { code: "CONNECTION_PENDING", message: "Open the connection page in Chrome.",
-    url: "http://127.0.0.1:18765/qz-connect", hint: "Then run qz connect again.", guide: "https://example.com/guide" } };
+  const payload = { ok: false, error: { code: "CONNECTION_PENDING", message: "No browser operation was submitted.",
+    details: { stage: "browser-connection", attemptedBrowsers: ["Chrome", "Firefox", "Edge"], operationSubmitted: false },
+    url: "http://127.0.0.1:18765/qz-connect", hint: "Then retry the command.", guide: "https://example.com/guide" } };
   const plain = renderError(payload, { width: 40 });
-  assert.match(plain, /Waiting for Chrome/);
-  assert.match(plain, /Then run qz connect again/);
+  assert.match(plain, /Waiting for browser extension/);
+  assert.match(plain, /Stage  browser-connection/);
+  assert.match(plain, /Browsers tried  Chrome, Firefox, Edge/);
+  assert.match(plain, /No browser operation was submitted/);
+  assert.doesNotMatch(plain, /Waiting for Chrome|operationSubmitted/);
+  assert.match(plain, /Then retry the command/);
   const colored = renderError(payload, { color: true, width: 40 });
   assert.match(colored, /\x1b\[33m/);
   assert.equal(stripVTControlCharacters(colored), plain);
   assert.match(renderError({ error: { message: "Invalid arguments" } }, { color: true }), /\x1b\[31m/);
   fits(plain, 40);
   fits(renderError(), 40);
+});
+
+test("offline connection diagnostics identify only the selected profile and show no launcher attempts", () => {
+  const payload = { code: "CLIENT_OFFLINE", message: "The selected browser is not responding. No browser operation was submitted.",
+    hint: "Open the URL in the selected browser profile, then retry.",
+    details: { stage: "browser-connection", selectedBrowser: { name: "Work\x1b]52;c;SECRET\x07", clientId: taskId },
+      attemptedBrowsers: [], operationSubmitted: false } };
+  for (const width of [40, 80]) {
+    const text = renderError(payload, { width });
+    assert.match(text, /Stage  browser-connection/);
+    assert.match(text, /Browser  Work/);
+    assert.ok(text.replace(/\s/g, "").includes(taskId));
+    assert.match(text, /Browsers tried  None/);
+    assert.match(text.replace(/\n/g, " "), /No browser operation was submitted/);
+    assert.doesNotMatch(text, /Chrome|Firefox|Edge|SECRET|\x1b/);
+    fits(text, width);
+  }
+  assert.match(renderError({ code: "CONNECTION_PENDING", details: { attemptedBrowsers: [] } }), /Browsers tried  None/);
 });
 
 test("suggested shell commands use placeholders for untrusted identifiers", () => {

@@ -77,6 +77,55 @@ other browser entries accept `CHROME_EXECUTABLE`. Keep the browser version fixed
 Session exchange runs headless by default; set `SESSION_EXCHANGE_HEADLESS=0` to open a browser
 window for debugging.
 
+## Direct-drive CLI fuzzing
+
+Run the connection state-machine corpus and the actual CLI/browser task corpus separately:
+
+```bash
+npm test -- unit --match qz-connection-fuzz
+npm test -- playwright direct-drive-fuzz.spec.mjs --workers 2
+```
+
+The corpus contains **50 distinct scenario types**, not 50 seeds: 25 connection scenarios and
+25 browser task scenarios. Both manifests assert their count and uniqueness.
+
+The [connection corpus](unit/test-qz-connection-fuzz.mjs) uses four persisted seeds and a stateful
+simulated transport. Each seed shuffles all 25 scenarios twice, producing 200 transitions by
+default. It varies browser identities, registration order, session ownership, disconnections,
+compatibility upgrades, service replacement, cancellation, and lost mutation replies. Additional
+histories cover launcher fallback/exhaustion, reconnect deadline exhaustion, cancellation during
+startup/upgrade, and transcript-only ownership discovery/conflicts. It checks routing and rejects
+ambiguous ownership without dispatching a mutation. This layer does not launch browsers or test
+installation of a released CLI version. The separate stalled-health regression in
+`test-qz-client-scope.mjs` uses real HTTP to check cancellation and remaining connection budgets.
+
+The browser corpus launches two isolated Chromium profiles against one real bridge and executes
+the CLI bin in a fresh subprocess for every command. Each of three persisted seeds runs all 25
+scenarios: ordinary, SPA and open-shadow checkout; parallel document comparison; and the 21
+[additional tasks](support/drive-task-scenarios.mjs). These check missing/unknown references,
+detached UIDs, reload/hash/document navigation, exactly-once AJAX triggers, popup chains, alias
+reuse/collisions, foreign-session writes, preservation of read-only user tabs, same-tab serialization,
+cross-tab progress, caught errors, cancellation, timeout without replay, Unicode business values,
+large-result projection, catalog recovery, and iframe target identity.
+Histories vary task order, owning profile, values, action order, and
+failures before or after submission. Service restarts occur before submission, after submission,
+or while the response to a recorded submission is withheld. The test observes automatic
+reconnection with the same browser identities, then resumes the same session without replaying
+the submission. Server receipts and independent Playwright DOM reads verify results and cleanup.
+Compatible build differences use the real daemon discovery path; incompatible upgrade admission
+is covered by the simulated corpus. These new browser cases do not cover Firefox or Edge.
+
+Filter a persisted case with `--grep 'seed=65537'`. Set `QZ_DRIVE_FUZZ_SEEDS` to comma-separated
+positive uint32 seeds to explore more browser histories, or `QZ_CONNECTION_FUZZ_SEEDS` to uint32
+seeds for the simulated corpus. Playwright attaches `direct-drive-fuzz.json` with scenario IDs,
+outcomes, command ranges, generated tasks, fault phases, scripts, CLI output, elapsed times, and
+output character counts. Additional tasks use fresh Sessions and are all attempted even if an
+earlier task fails; any failed task still fails the seed. The browser tests
+also compare full element observations with returned target maps and check that intermediate
+results do not leak into stdout. Explicit script values above 48,000 characters remain intact;
+scripts can return a compact projection instead. Character counts measure transport volume, not model tokens.
+Neither corpus invokes a model or measures model-driven task success rates.
+
 ## Tool data-flow scheduling
 
 Run `npm test -- unit --match tool-dataflow` for the Agent/runtime/Session transaction fixture and

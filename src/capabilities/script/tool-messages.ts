@@ -3,11 +3,6 @@ import { createTranslator } from "#sdk/shared/i18n";
 
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("script-tools", {
-  scriptContextRecovery: {
-    'zh-CN': '重新加载扩展后重试脚本。',
-    en: 'Reload the extension, then retry the script.',
-  },
-  pageScriptRecovery: {"zh-CN": "根据错误位置修正代码。用 tools.evaluate({tabRef,code,args}) 访问页面；确认已完成的动作后再重试。", "en": "Fix the code at the reported location. Use tools.evaluate({tabRef,code,args}) for page access; inspect completed actions before retrying."},
   runScriptDescription: {"zh-CN": "在页面外执行 JavaScript 编排，支持顶层 await 和 return。通过 tools 调用当前可用工具，每个页面调用显式传 tabRef；通过 tools.evaluate 在页面内执行函数。input 是 args 的值。使用 Promise.all 并发处理独立标签。只返回 return 的业务值；console 与 trace 记录诊断。timeout 单位为秒，默认 120；0 不设置本次截止时间，仍受父调用取消和期限约束。页面导航不会销毁外层脚本。", "en": "Run JavaScript orchestration outside pages, with top-level await and return. Call available tools through tools; each page call passes tabRef. Use tools.evaluate for a function inside a page. input is the value of args. Use Promise.all for independent tabs. Return only the business value needed; console and trace record diagnostics. timeout is seconds, defaults to 120; 0 removes this call deadline while retaining parent cancellation and deadlines. Page navigation does not destroy the outer script."},
   evaluateDescription: {"zh-CN": "在 tabRef 指定的页面执行自包含函数并返回其 JSON 值。函数可访问 document/window 和页面登录态；外部值通过 args 传入，不捕获外层变量。脚本中的 code 可以直接传函数，JSON 调用传函数字符串。用外层工具执行导航和点击；读取新页面 DOM 前先用 wait_for_element 等待所需元素。页面卸载可能中断本次 evaluate，代码不会自动重放。", "en": "Evaluate a self-contained function in the page identified by tabRef and return its JSON value. The function can use document/window and the page login state; pass outside values through args rather than captured variables. Scripts can pass a function as code; JSON callers pass its source string. Perform navigation and clicks through outer tools; wait for the required element before reading a new page’s DOM. Unloading the page may interrupt this evaluation; code is never replayed automatically."},
   evaluateCode: {"zh-CN": "自包含的普通函数、箭头函数或 async 函数。", "en": "A self-contained ordinary, arrow or async function."},
@@ -46,14 +41,6 @@ const messages = defineMessages("script-tools", {
   scriptTimeout: {
     "zh-CN": "脚本超时秒数，默认 120；0 表示不限时，仍受任务取消和调用方期限约束。",
     en: "Script timeout in seconds, default 120. Zero removes the script limit; cancellation and the caller deadline still apply.",
-  },
-  scriptShapeRecovery: {
-    "zh-CN": "使用顶层 await 调用 tools，并用 return 返回需要的值。",
-    en: "Use top-level await to call tools and return the value you need.",
-  },
-  workingTabRecovery: {
-    "zh-CN": "先用 open_tab 打开目标网页或用 list_tabs 查找网页，再显式传 tabRef。",
-    en: "Open the page with open_tab or find it with list_tabs, then pass tabRef explicitly.",
   },
 });
 

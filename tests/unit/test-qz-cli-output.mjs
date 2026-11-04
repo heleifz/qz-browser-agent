@@ -97,7 +97,10 @@ test("human errors use stderr, JSON errors use stdout, argument errors exit 2", 
     const text = json ? deps.stdout.text : deps.stderr.text;
     assert.match(text, /prompt/i);
     assert.doesNotMatch(text, /qz install/);
-    if (json) assert.equal(JSON.parse(text).code, "INVALID_ARGUMENTS");
+    if (json) {
+      assert.equal(JSON.parse(text).code, "INVALID_ARGUMENTS");
+      assert.equal(JSON.parse(text).hint, undefined);
+    }
   }
   const tool = setup({ tty: true, callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "TOOL_ERROR" }); } });
   assert.equal(await main(["send", "task-1", "Read the article"], tool), 1);

@@ -543,8 +543,14 @@ export function renderError(payload, options = {}) {
   const value = payload?.error || payload || {};
   const error = { ...value.details, ...value };
   const waiting = error.code === "CONNECTION_PENDING";
-  out.line(waiting ? "Waiting for Chrome" : "qz error", waiting ? "waiting" : "error");
+  out.line(waiting ? "Waiting for browser extension" : "qz error", waiting ? "waiting" : "error");
   out.line(error.message || "The command could not be completed.");
+  if (waiting || error.code === "CLIENT_OFFLINE") {
+    out.field("Stage", error.stage);
+    out.field("Browser", error.selectedBrowser?.name);
+    out.field("UUID", error.selectedBrowser?.clientId);
+    if (Array.isArray(error.attemptedBrowsers)) out.field("Browsers tried", error.attemptedBrowsers.slice(0, 3).join(", ") || "None");
+  }
   if (error.url) { out.line(); out.line(error.url, "accent"); }
   if (error.hint) { out.line(); out.line(error.hint); }
   if (error.command) out.script(error.command);
