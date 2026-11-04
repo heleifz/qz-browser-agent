@@ -404,6 +404,10 @@ export function appendErrorSection(parent: HTMLElement, value: unknown) {
     ${renderDiagnosticHtml(error.diagnostic)}
     ${renderToolErrorDetailsHtml(error.details)}
   `);
+  const source = record(input);
+  const trace = record(record(source._display).script).trace ?? record(source.details).trace ?? source.trace;
+  if (Array.isArray(trace)) appendScriptTrace(parent, trace);
+  if (typeof error.hint === "string" && error.hint.trim()) appendCompactLine(parent, { title: error.hint });
 }
 
 function renderToolErrorDetailsHtml(input: unknown) {
@@ -415,8 +419,7 @@ function renderToolErrorDetailsHtml(input: unknown) {
     [t("tool"), details.tool || details.skillToolName || details.pluginToolName],
     [t("script"), details.script],
   ].filter(([, value]) => value != null && value !== "");
-  const trace = Array.isArray(details.trace) ? details.trace.slice(-3) : [];
-  if (!rows.length && !trace.length) return "";
+  if (!rows.length) return "";
   return `
     <div class="tool-error-diagnostic">
       ${rows.map(([label, value]) => `
@@ -425,12 +428,6 @@ function renderToolErrorDetailsHtml(input: unknown) {
           <b>${escapeHtml(summarizeValue(value, 96))}</b>
         </div>
       `).join("")}
-      ${trace.length ? `
-        <div class="tool-error-diagnostic-row">
-          <span>Trace</span>
-          <b>${escapeHtml(trace.map(item => record(item).message || item).filter(Boolean).map(item => summarizeValue(item, 120)).join(" / "))}</b>
-        </div>
-      ` : ""}
     </div>
   `;
 }
