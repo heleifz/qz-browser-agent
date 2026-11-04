@@ -8,6 +8,8 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     { name: 'bad_value', runtime: 'script', script: 'bad.js' },
     { name: 'table', runtime: 'script', script: 'table.js', renderer: { type: 'table', itemsPath: 'rows', columns: [{ label: 'Name', path: 'name' }] } },
     { name: 'scalar', runtime: 'script', script: 'scalar.js' },
+    { name: 'modern_call', runtime: 'script', script: 'modern-call.js' },
+    { name: 'legacy_call', runtime: 'inner', script: 'legacy-call.js' },
   ];
   const skill = { format: 'qingzhou.skill', schemaVersion: 2, name: 'script-contract', scope: 'resident', content: 'Browser fixture', resources: [
     { path: 'plugin.json', type: 'json', content: JSON.stringify({ format: 'qingzhou.plugin', schemaVersion: 1, id: 'script-contract', tools }) },
@@ -24,8 +26,18 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     ` },
     { path: 'legacy.js', type: 'script', content: 'return new Map([["legacy", true]]);' },
     { path: 'bad.js', type: 'script', content: 'trace("bad.begin"); return new Map();' },
-    { path: 'table.js', type: 'script', content: `return {rows:[{name:'Business row'}],ok:false,error:'business field',result:'business result'};` },
+    { path: 'table.js', type: 'script', content: `return {rows:[{name:'Business row'}],ok:false,error:'business field',result:'business result',trace:['business trace']};` },
     { path: 'scalar.js', type: 'script', content: 'trace("scalar trace"); return 42;' },
+    { path: 'modern-call.js', type: 'script', content: `
+      const value=await tools.script_contract__scalar({});
+      if(typeof value!=='number') throw new Error('Modern caller received a receipt');
+      return value+1;
+    ` },
+    { path: 'legacy-call.js', type: 'script', content: `
+      const receipt=await tools.script_contract__scalar({});
+      if(receipt.ok!==true || !Array.isArray(receipt.trace)) throw new Error('Legacy caller lost its receipt');
+      return receipt.result+2;
+    ` },
   ] };
   const installed = await page.evaluate(skill => new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: 'sidepanel' }), requestId = 'script-contract-install';
@@ -42,27 +54,31 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
   const values = await script(`return {
     inline:await tools.evaluate({tabRef:'fast',code:()=>({title:document.title,path:location.pathname})}),
     packaged:await tools.script_contract__read({tabRef:'fast'}),
-    legacy:await tools.script_contract__legacy({timeout:5})
+    legacy:await tools.script_contract__legacy({timeout:5}),
+    modernCaller:await tools.script_contract__modern_call({}),
+    legacyCaller:await tools.script_contract__legacy_call({timeout:5})
   };`);
-  expect(values.packaged.ok).toBe(true);
-  expect(values.packaged.result).toEqual(values.inline);
-  expect(values.legacy.ok).toBe(true);
-  expect(values.legacy.result.__qz_type).toBe('Map');
+  expect(values.packaged).toEqual(values.inline);
+  expect(values.legacy.__qz_type).toBe('Map');
+  expect(values.modernCaller).toBe(43);
+  expect(values.legacyCaller).toBe(44);
   // The outer script chooses the returned business value; nested diagnostics still reach the LLM.
   const scalar = await cli(['script', '--session', sessionId, '--json', '-'], `
     trace('outer.before');
     const value=await tools.script_contract__scalar({});
     trace('outer.after');
-    return value.result;
+    return value;
   `);
   expect(scalar.exitCode).toBe(0);
   expect(scalar.value.result).toBe(42);
   expect(scalar.value.trace.filter(line => ['outer.before', 'scalar trace', 'outer.after'].includes(line)))
     .toEqual(['outer.before', 'scalar trace', 'outer.after']);
-  const table = await script(`return (await tools.script_contract__table({})).result;`);
+  const table = await script(`return await tools.script_contract__table({});`);
   expect(table.rows).toEqual([{ name: 'Business row' }]);
   expect(table.ok).toBe(false);
   expect(table.error).toBe('business field');
+  expect(table.result).toBe('business result');
+  expect(table.trace).toEqual(['business trace']);
 
   let completed = false, concurrentTrace = [];
   const branches = cli(['script', '--session', sessionId, '--json', '-'], `return await Promise.all([
@@ -82,8 +98,7 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     fixture.release('slow');
     await expect.poll(() => fixture.pending('same')).toBe(1);
     fixture.release('same');
-    expect((await branches).map(value => ({ ok: value.ok, result: value.result }))).toEqual(
-      [values.inline, values.inline, values.inline].map(result => ({ ok: true, result })));
+    expect(await branches).toEqual([values.inline, values.inline, values.inline]);
   } finally {
     for (const lane of ['fast', 'slow', 'same']) fixture.release(lane);
     await branches.catch(() => {});

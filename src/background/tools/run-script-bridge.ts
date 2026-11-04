@@ -250,6 +250,7 @@ export function createRunScriptBridge({
           return {
             ok: true,
             result: omitObservationImage(modelResult, Boolean(observation)),
+            ...(definition?.model?.scriptResult === "receipt" ? { resultFormat: "receipt" } : {}),
             ...(observation ? { observation } : {}),
             artifacts,
             isError: false,

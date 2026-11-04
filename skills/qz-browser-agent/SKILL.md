@@ -44,7 +44,7 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 `qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools and trace(), but no document/window, Node.js, fs, process, require or import.
 
-Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools.
+Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools. Awaited calls, including Skill tools, return business values directly; failures throw.
 
 ```sh
 qz script --session "$SID" - <<'JS'

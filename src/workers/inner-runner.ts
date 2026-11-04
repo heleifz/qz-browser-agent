@@ -138,10 +138,13 @@ async function runInnerScript(payload: WorkerExecute) {
           start.toolCallId = response.toolCallId;
           pushTrace("tool.end", [toolName], { ...identity, toolCallId: response.toolCallId });
           addToolArtifacts(response.artifacts || response.artifact);
-          if (response.result && typeof response.result === "object" && response.observation) {
-            observations.set(response.result, response.observation);
+          // Modern scripts receive business values; legacy callers retain the declared receipt.
+          const result = payload.strictResult && response.resultFormat === "receipt" && isRecord(response.result)
+            ? response.result.result : response.result;
+          if (result && typeof result === "object" && response.observation) {
+            observations.set(result, response.observation);
           }
-          resolve(response.result);
+          resolve(result);
         },
         reject(error, toolCallId) {
           start.toolCallId = toolCallId;

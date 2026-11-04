@@ -1,6 +1,6 @@
 /** Internal offscreen/sandbox/Worker wire protocol; task ownership stays in Background. */
 export interface BridgeFailure { ok: false; error?: string; message?: string; hint?: string; code?: string; details?: unknown; diagnostic?: unknown }
-export type ToolBridgeResponse = (BridgeFailure | { ok: true; result?: unknown; observation?: unknown; artifacts?: unknown; artifact?: unknown }) & { toolCallId?: string };
+export type ToolBridgeResponse = (BridgeFailure | { ok: true; result?: unknown; resultFormat?: 'receipt'; observation?: unknown; artifacts?: unknown; artifact?: unknown }) & { toolCallId?: string };
 export interface FetchResult { status: number; statusText?: string; headers?: [string, string][]; bodyBase64?: string; url?: string; redirected?: boolean }
 export type FetchBridgeResponse = BridgeFailure | { ok: true; result: FetchResult };
 export interface FetchRequest { url: string; method: string; headers: [string, string][]; bodyBase64: string }

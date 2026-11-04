@@ -15,7 +15,7 @@ export default `# 技能工作台
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
 10. 新建 Skill 脚本统一使用 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。通过 \`tools.*\` 调用浏览器工具；DOM 读写和页面登录态请求放进 \`tools.evaluate({ tabRef, code, args })\`。工具若操作调用方指定的页面，在 schema 中声明 \`tabRef\`，类型为 \`type:["integer","string"]\`，加入 \`required\`，并传给每次页面操作；脚本自己打开页面时使用返回的引用。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 只访问 \`network.allowedOrigins\` 声明的来源。
-11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本 return 业务 JSON；调用方收到回执，从 \`result\` 读取业务值，\`trace\` 读取诊断；渲染路径仍相对于业务值。独立流程使用 \`Promise.all\`，返回前等待工具调用。宿主自动添加可选的 \`timeout\`，单位为秒，默认 120；0 不设置本次截止时间，仍受父调用取消和期限约束。不要把 timeout 写进业务 schema。已有 Skill 保留原有调用契约。
+11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本 return 业务 JSON；await 工具调用（包括 Skill）直接得到业务值，失败抛错。模型收到 \`{ok,result,trace}\`，宿主汇总嵌套诊断；渲染路径仍相对于业务值。独立流程使用 \`Promise.all\`，返回前等待工具调用。宿主自动添加可选的 \`timeout\`，单位为秒，默认 120；0 不设置本次截止时间，仍受父调用取消和期限约束。不要把 timeout 写进业务 schema。旧执行模式的脚本保留原有调用契约。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
 14. Agent 用现有页面或 Network 工具找到 Skill Zip URL 后，把来源页面的 tabRef 和该 URL 传给“导入页面 Zip”。这个工具不负责扫描或猜测下载链接；下载在该页面的认证上下文中完成，解压、校验和 Skill 写入由 Background 统一处理。不要用页面脚本手工拼 base64 或自己解析 Zip。

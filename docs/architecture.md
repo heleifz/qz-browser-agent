@@ -461,7 +461,7 @@ a descendant invokes a page tool. Legacy Skill runtimes keep their original cont
 calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
 state effects rather than selecting a page or execution environment.
 
-CLI stdout and Agent tool messages share the script receipt `{ok, result, trace}`. Success carries the script return value; failure carries a ToolError. Trace is a string array collected by the host, including nested Skill calls and progress before failure or cancellation. Script-authored fields never select execution status or diagnostic metadata. Internal Skill calls retain their receipts and renderer paths stay relative to business data.
+CLI stdout and Agent tool messages share the script receipt `{ok, result, trace}`. Success carries the script return value; failure carries a ToolError. Trace is a string array collected by the host, including nested Skill calls and progress before failure or cancellation. Script-authored fields never select execution status or diagnostic metadata. Inside `run_script` and `runtime:"script"` Skills, awaited tool calls return business values directly, including calls to script Skills; failures reject. Legacy page/inner callers retain their original return contracts. Renderer paths stay relative to business data.
 
 Page functions passed to `evaluate` receive data through args and return their business value.
 They have document/window access, while the outer script uses tools for browser operations.
