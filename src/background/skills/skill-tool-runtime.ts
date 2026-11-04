@@ -24,7 +24,6 @@ interface SkillToolRuntime { skillSettings?: { getExecutionConfig?(plugin: Skill
 type HostCallTool = (name: string, args?: Fields) => Promise<unknown>;
 import { resolveSkillHostBinding } from "./skill-host-registry.js";
 import { copySkillManifestTrust, isTrustedSkillManifest } from "../../shared/skills/skill-provenance.js";
-import { copyToolEffects } from "../tools/effects.js";
 import { bindToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { summarizeSkillArgsForTrace } from "../tools/trace-summary.js";
 import { listSkills, loadSkillScript } from "./runtime.js";
@@ -446,27 +445,11 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
     runtimeTrace(`[skill] host unavailable plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt}`);
     throw err;
   }
-  const traceRows: { time: string; level: string; message: string }[] = [];
-  const trace = (...items: unknown[]) => {
-    traceRows.push({
-      time: new Date().toISOString(),
-      level: "trace",
-      message: items.map(item => {
-        try {
-          return typeof item === "string" ? item : JSON.stringify(item);
-        } catch (_err) {
-          return String(item);
-        }
-      }).join(" "),
-    });
-    if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
-  };
   const callTool: HostCallTool = async (toolName, toolArgs = {}) => {
     const targetName = String(toolName || "").trim();
     const toolStartedAt = Date.now();
     if (!targetName) throw new Error("Skill host tool call requires a tool name");
     assertSkillExecutionActive(signal);
-    trace("tool.start", { tool: targetName, args: copySkillTraceValue(toolArgs || {}) });
     runtimeTrace(`[skill] host tool.start plugin=${plugin.id} hostTool=${tool.name} target=${targetName} args=${summarizeSkillArgsForTrace(toolArgs)}`);
     try {
       const result = await executeBuiltinTool(targetName, toolArgs && typeof toolArgs === "object" ? toolArgs : {}, signal, {
@@ -475,7 +458,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
         pluginId: plugin.id,
         skillToolName: tool.name,
       });
-      trace("tool.end", { tool: targetName, result: copySkillTraceValue(result) });
       runtimeTrace(`[skill] host tool.end plugin=${plugin.id} hostTool=${tool.name} target=${targetName} durationMs=${Date.now() - toolStartedAt} result=${summarizeSkillArgsForTrace(result)}`);
       return result;
     } catch (err) {
@@ -487,11 +469,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
     const result = target
       ? await callTool(target, omitHostControlArgs(scriptArgs))
       : await handler!(omitHostControlArgs(scriptArgs), { callTool, tool, signal, context });
-    if (tool.includeTrace !== false && result && typeof result === "object" && !Array.isArray(result) && traceRows.length && !record(result).trace) {
-      const withTrace = copyToolEffects(result, { ...result, trace: traceRows });
-      runtimeTrace(`[skill] host done plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt} result=${summarizeSkillArgsForTrace(withTrace)}`);
-      return withTrace;
-    }
     runtimeTrace(`[skill] host done plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt} result=${summarizeSkillArgsForTrace(result)}`);
     return result;
   } catch (cause) {
@@ -503,7 +480,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
       skillName: plugin.skillName,
       tool: tool.name,
       script: tool.script,
-      trace: traceRows,
     };
     runtimeTrace(`[skill] host error plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} code=${record(err).code || ""} message=${err instanceof Error ? err.message : err} durationMs=${Date.now() - startedAt}`);
     throw err;
@@ -750,21 +726,6 @@ export function publishSkillToolRegistryUpdate(reason: string, snapshot = getSki
 
 function countSkillTools(snapshot: { plugins?: SkillManifest[] } = {}) {
   return (snapshot.plugins || []).reduce((sum, plugin) => sum + (plugin.tools?.filter(tool => !tool.hidden).length || 0), 0);
-}
-
-function copySkillTraceValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
-  if (value == null || typeof value !== "object") return value;
-  if (depth >= 6) return "[truncated]";
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.slice(0, 50).map(item => copySkillTraceValue(item, depth + 1, seen));
-  }
-  const out: Fields = {};
-  for (const [key, raw] of Object.entries(value).slice(0, 50)) {
-    out[key] = copySkillTraceValue(raw, depth + 1, seen);
-  }
-  return out;
 }
 
 function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {

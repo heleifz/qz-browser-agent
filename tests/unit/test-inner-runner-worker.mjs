@@ -33,7 +33,7 @@ for (const mode of ['development', 'production']) test(`${mode} Worker executes 
   assert.equal(result.ok, true, result.error);
   assert.deepEqual(result.result, { response: 'found', body: '数据', cancelled: 'AbortError', typed: { __qz_type: 'Uint8Array', length: 3, sample: [1,2,3] }, config: 7 });
   assert.equal(result.artifacts[0].id, 'artifact');
-  assert.ok(result.trace.some(row => row.message === 'Hello 轻舟 ✅'));
+  assert.deepEqual(result.trace.map(row => row.message), ['Hello 轻舟 ✅']);
   const cancelled = events.find(message => message.type === 'fetch_call' && message.request.url.endsWith('/cancel'));
   assert.equal(events.find(message => message.type === 'fetch_cancel').callId, cancelled.callId);
 });
@@ -45,6 +45,9 @@ test('compiled Worker preserves errors, guards, syntax diagnostics and undefined
   } });
   assert.equal(failed.result.code, 'TOOL_TEST_FAILURE');
   assert.deepEqual(failed.result.details, { retry: false });
+  assert.equal(failed.result.trace.length, 1);
+  assert.equal(failed.result.trace[0].level, 'error');
+  assert.match(failed.result.trace[0].message, /failed/);
   const blocked = await runInnerWorker(source, 'await fetch("https://blocked.test/path");', { fetchBridge: true, securityGuardrails: { rules: [{ action: 'block', type: 'domain', value: 'blocked.test' }] } });
   assert.equal(blocked.result.code, 'SECURITY_GUARDRAIL_BLOCKED');
   assert.equal(blocked.events.some(message => message.type === 'fetch_call'), false);
@@ -55,6 +58,7 @@ test('compiled Worker preserves errors, guards, syntax diagnostics and undefined
   const empty = await runInnerWorker(source, 'await Promise.resolve();');
   assert.equal(empty.result.ok, true);
   assert.equal(empty.result.hasResult, false);
+  assert.deepEqual(empty.result.trace, []);
 });
 
 for (const mode of ['development', 'production']) test(`${mode} public outer scripts serialize page functions and preserve arbitrary JSON arguments`, async () => {
@@ -89,6 +93,7 @@ for (const mode of ['development', 'production']) test(`${mode} public outer scr
   assert.equal(result.ok, true);
   assert.deepEqual(result.result, [null, false, 0, 'text', [1, { x: 2 }]].map(value => ({ value, code: 'DATA', message: 'text', ok: false })));
   assert.equal(calls.length, 7);
+  assert.deepEqual(result.trace, [], 'successful concurrent and sequential tool calls add no trace');
   assert.ok(calls.every(call => call.args.tabRef === 'page'));
   for (const script of [
     'return await tools.lookup({ transform: value => value });',

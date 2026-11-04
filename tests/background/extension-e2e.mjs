@@ -1036,7 +1036,7 @@ async function skillResultSelectionRoundTrip(page, providerServer) {
     assert.deepEqual(Object.keys(modelResult).sort(), ["ok", "result", "trace"]);
     assert.equal(modelResult.ok, !cancel);
     assert.ok(Array.isArray(modelResult.trace) && modelResult.trace.every(line => typeof line === "string"));
-    assert.ok(modelResult.trace.includes("Script started."), "the model retains the Skill execution trace after selection settles");
+    if (!cancel) assert.deepEqual(modelResult.trace, [], "successful Skill execution stays silent without explicit diagnostics");
     const selection = modelResult.result;
     if (cancel) {
       assert.equal(selection.code, "USER_CANCELLED_WAIT");

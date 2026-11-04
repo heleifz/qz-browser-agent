@@ -49,23 +49,18 @@ test('concurrent nested scripts contribute diagnostics even when the parent retu
   const rows = root.resultPresentation._display.script.trace;
   assert.deepEqual(rows.filter(item => item.level === 'trace').map(item => item.message).sort(),
     ['after', 'before', 'page:one', 'page:two', 'skill:one', 'skill:two']);
-  assert.equal(rows.filter(item => item.level === 'tool.start').length, 4);
-  assert.equal(rows.filter(item => item.level === 'tool.end').length, 4);
-  assert.deepEqual(rows.filter(item => item.level === 'tool.start' && item.parentCallId === 'root').map(item => item.sequence), [1, 2]);
-  for (const start of records.filter(event => event.phase === 'start')) {
-    for (const level of ['tool.start', 'tool.end']) {
-      const matches = rows.filter(item => item.level === level && item.toolCallId === start.toolCallId);
-      assert.equal(matches.length, 1);
-      assert.equal(matches[0].parentCallId, start.parentCallId);
-      assert.equal(matches[0].tabRef, start.args.tabRef);
-      assert.equal(matches[0].sequence, rows.find(item => item.level === 'tool.start' && item.toolCallId === start.toolCallId).sequence);
-    }
+  assert.equal(rows.length, 6, 'successful calls add no automatic diagnostics');
+  assert.deepEqual(getToolResultTraces(null, root.resultPresentation), rows.map(item => item.message));
+  assert.ok(rows.every(item => item.toolCallId === undefined && item.parentCallId === undefined));
+  const starts = records.filter(event => event.phase === 'start');
+  assert.equal(starts.length, 4, 'sidebar call events remain independent of script trace');
+  assert.equal(new Set(starts.map(event => event.toolCallId)).size, 4);
+  for (const start of starts) {
+    const ends = records.filter(event => event.phase === 'end' && event.toolCallId === start.toolCallId);
+    assert.equal(ends.length, 1);
+    assert.equal(ends[0].parentCallId, start.parentCallId);
+    assert.deepEqual(ends[0].args, start.args);
   }
-  for (const nested of rows.filter(item => item.message.startsWith('skill:'))) {
-    assert.notEqual(nested.toolCallId, 'forged');
-    assert.equal(nested.parentCallId, 'root');
-  }
-  assert.ok(getToolResultTraces(null, root.resultPresentation).some(value => /evaluate completed.*parent=/.test(value)));
 });
 
 test('recorded nested progress survives cancellation and late emissions cannot mutate a finished receipt', () => {
@@ -95,15 +90,14 @@ test('trace limits retain the latest progress and explicitly account for omitted
   } finally { trace.close(); }
 });
 
-test('Worker lifecycle rows and unknown executions cannot forge host tool identity', () => {
+test('unknown executions cannot publish diagnostics and authored metadata cannot forge call identity', () => {
   const context = { toolCallId: 'root', resultPresentation: {} }, trace = beginScriptTrace(context, 'trusted');
   try {
     acceptScriptTrace('unknown', row('injected'));
-    acceptScriptTrace('trusted', row('fake tool', 1, { level: 'tool.end', toolCallId: 'forged' }));
     acceptScriptTrace('trusted', row('normal diagnostic', 2, { toolCallId: 'forged', parentCallId: 'forged', tabRef: 'forged' }));
     const rows = trace.finish([]);
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].toolCallId, 'root');
+    assert.equal(rows[0].toolCallId, undefined);
     assert.equal(rows[0].parentCallId, undefined);
     assert.equal(rows[0].tabRef, undefined);
   } finally { trace.close(); }

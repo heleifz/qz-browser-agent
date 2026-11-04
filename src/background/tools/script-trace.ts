@@ -8,14 +8,10 @@ const MAX_MESSAGE = 1000;
 interface TraceScope {
   parent?: TraceScope;
   rows: TraceRow[];
-  callId?: string;
-  parentCallId?: string;
   omitted: number;
-  nextSequence: number;
   closed: boolean;
 }
 const scopes = new WeakMap<ToolResultPresentation, TraceScope>();
-const parents = new WeakMap<ToolResultPresentation, string>();
 const requests = new Map<string, { scope: TraceScope; lastIndex: number }>();
 const fields = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const scopeFor = (context?: ToolContext) => context?.resultPresentation ? scopes.get(context.resultPresentation) : undefined;
@@ -25,16 +21,13 @@ export function inheritScriptTrace(parent: ToolContext | undefined, child: ToolC
   const scope = scopeFor(parent);
   if (scope && child.resultPresentation) {
     scopes.set(child.resultPresentation, scope);
-    const parentId = parent?.toolCallId || parent?.toolExecutionId;
-    if (parentId) parents.set(child.resultPresentation, parentId);
   }
 }
 
 export function beginScriptTrace(context: ToolContext, requestId: string) {
   const presentation = context.resultPresentation ??= {};
   const parent = scopes.get(presentation);
-  const scope: TraceScope = { parent, rows: [], callId: context.toolCallId || context.toolExecutionId,
-    parentCallId: parents.get(presentation) || parent?.callId, omitted: 0, nextSequence: 0, closed: false };
+  const scope: TraceScope = { parent, rows: [], omitted: 0, closed: false };
   scopes.set(presentation, scope);
   const display = fields(presentation._display);
   presentation._display = { ...display, script: { ...fields(display.script), trace: scope.rows } };
@@ -49,7 +42,7 @@ export function beginScriptTrace(context: ToolContext, requestId: string) {
   };
 }
 
-/** Only a registered execution can publish rows; call identity always comes from its host context. */
+/** Only a registered execution can publish its diagnostics. */
 export function acceptScriptTrace(requestId: string, value: unknown): void {
   const request = requests.get(requestId);
   if (!request || request.scope.closed) return;
@@ -58,9 +51,7 @@ export function acceptScriptTrace(requestId: string, value: unknown): void {
     if (index <= request.lastIndex) return;
     request.lastIndex = index;
   }
-  // Bridge lifecycle owns tool rows. Worker/user metadata cannot forge another tool's identity.
-  if (String(row.level || "").startsWith("tool.")) return;
-  append(request.scope, diagnostic(row, request.scope));
+  append(request.scope, diagnostic(row));
 }
 
 /** Page evaluations use the same trusted presentation channel without an offscreen execution. */
@@ -69,36 +60,14 @@ export function collectScriptResultTrace(parent: ToolContext | undefined, child:
   if (!scope || scopeFor(child) !== scope) return;
   const rows = fields(fields(child.resultPresentation?._display).script).trace;
   if (!Array.isArray(rows)) return;
-  const identity = { callId: child.toolCallId || child.toolExecutionId, parentCallId: parent?.toolCallId || parent?.toolExecutionId };
   for (const row of rows) {
-    const value = fields(row);
-    if (!String(value.level || "").startsWith("tool.")) append(scope, diagnostic(value, identity));
+    append(scope, diagnostic(fields(row)));
   }
 }
 
-export function recordScriptToolTrace(parent: ToolContext | undefined, input: {
-  phase: "start" | "end"; name: string; toolCallId: string; parentCallId?: string;
-  tabRef?: unknown; isError?: boolean; message?: string; sequence?: number;
-}): number | undefined {
-  const scope = scopeFor(parent);
-  if (!scope || scope.closed) return;
-  const sequence = input.phase === "start" ? ++scope.nextSequence : input.sequence;
-  append(scope, {
-    time: new Date().toISOString(), level: input.phase === "start" ? "tool.start" : input.isError ? "tool.error" : "tool.end",
-    message: input.name + (input.isError && input.message ? ` ${input.message}` : ""),
-    toolCallId: input.toolCallId,
-    ...(sequence == null ? {} : { sequence }),
-    ...(input.parentCallId ? { parentCallId: input.parentCallId } : {}),
-    ...(typeof input.tabRef === "string" || typeof input.tabRef === "number" ? { tabRef: input.tabRef } : {}),
-  });
-  return sequence;
-}
-
-function diagnostic(row: Record<string, unknown>, identity: { callId?: string; parentCallId?: string }): TraceRow {
+function diagnostic(row: Record<string, unknown>): TraceRow {
   return { time: typeof row.time === "string" ? row.time.slice(0, 40) : new Date().toISOString(),
     level: typeof row.level === "string" ? row.level.slice(0, 32) : "trace", message: String(row.message ?? ""),
-    ...(identity.callId ? { toolCallId: identity.callId } : {}),
-    ...(identity.parentCallId ? { parentCallId: identity.parentCallId } : {}),
   };
 }
 

@@ -71,7 +71,7 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
   `);
   expect(scalar.exitCode).toBe(0);
   expect(scalar.value.result).toBe(42);
-  expect(scalar.value.trace.filter(line => ['outer.before', 'scalar trace', 'outer.after'].includes(line)))
+  expect(scalar.value.trace)
     .toEqual(['outer.before', 'scalar trace', 'outer.after']);
   const table = await script(`return await tools.script_contract__table({});`);
   expect(table.rows).toEqual([{ name: 'Business row' }]);
@@ -111,16 +111,14 @@ export async function exerciseSkillScripts({ page, script, cli, sessionId, event
     .toEqual(['outer.failure.begin', 'scalar trace', 'bad.begin']);
   const rows = await events(), calls = rows.filter(row => row.toolName === 'script_contract__bad_value');
   expect(calls).toHaveLength(1);
-  expect(failed.value.trace.some(line => line.includes(`call=${calls[0].toolCallId}`) && line.includes('failed'))).toBe(true);
+  expect(failed.value.trace.some(line => line.includes(failed.value.result.message))).toBe(true);
+  expect(concurrentTrace).toEqual([]);
   const pageCalls = rows.filter(row => row.toolName === 'evaluate');
   const packagedCalls = rows.filter(row => row.toolName === 'script_contract__read');
   expect(new Set(rows.map(row => row.toolCallId)).size).toBe(rows.length);
   for (const packaged of packagedCalls) {
     const children = pageCalls.filter(row => row.parentSpanId === `tool:${packaged.toolCallId}`);
     expect(children.length).toBeGreaterThan(0);
-    if (packaged.args?.lane) for (const child of children) {
-      expect(concurrentTrace.filter(line => line.includes(`call=${child.toolCallId}`) && line.includes('completed'))).toHaveLength(1);
-    }
   }
 
   // Render actual persisted event payloads, including custom DSL and generic fallbacks, in both UI paths.

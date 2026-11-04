@@ -32,9 +32,9 @@ test('Skill receipts and internal inline values produce the same CLI and Agent r
     const inline = await f.execute('run_script', { code, args: { value } }, { resultPresentation: inlinePresentation });
     assert.equal(result.ok, true);
     assert.deepEqual(result.result, value);
-    assert.deepEqual(result.trace.map(row => row.message).slice(1), ['contract']);
+    assert.deepEqual(result.trace.map(row => row.message), ['contract']);
     assert.deepEqual(inline, value);
-    assert.deepEqual(getToolResultTraces(result, presentation), ['Script started.', 'contract']);
+    assert.deepEqual(getToolResultTraces(result, presentation), ['contract']);
     assert.equal(presentation._plugin.id, 'script-contract', 'scalar/array results keep sidebar presentation separately');
     assert.deepEqual(presentToolResult(result, presentation).result, value);
     const stored = JSON.parse(JSON.stringify(presentToolResult(result, presentation)));
@@ -47,7 +47,7 @@ test('Skill receipts and internal inline values produce the same CLI and Agent r
     const agent = new Agent('receipt-test', createTestAgentOptions({ tools: f.runtime }));
     const native = JSON.parse(agent._buildToolResultMessages('inline', inline, false, 'run_script', inlinePresentation)[0].content);
     const skillMessage = JSON.parse(agent._buildToolResultMessages('skill', result, false, name(), presentation)[0].content);
-    assert.deepEqual(native, { ok: true, result: value, trace: ['Script started.', 'contract'] });
+    assert.deepEqual(native, { ok: true, result: value, trace: ['contract'] });
     assert.deepEqual(skillMessage, native, 'installed Skill and inline script have one model-facing receipt');
     assert.deepEqual(JSON.parse(agent._buildToolResultMessages('page', inline, false, 'evaluate', inlinePresentation)[0].content), native,
       'a page script called directly by the model uses the same boundary');
@@ -113,5 +113,6 @@ test('internal Promise.all retains input result order when child tools complete 
   const value = await f.execute('run_script', { code: `return await Promise.all(['slow','fast'].map(tabRef => tools.evaluate({tabRef, code:() => 1})));` },
     { resultPresentation: presentation });
   assert.deepEqual(value, ['slow', 'fast']);
-  assert.deepEqual(traceMessages([{ level: 'tool.error', message: 'evaluate boom' }, 'old trace']), ['evaluate failed: boom', 'old trace']);
+  assert.deepEqual(getToolResultTraces(value, presentation), [], 'concurrent successes stay silent without explicit diagnostics');
+  assert.deepEqual(traceMessages([{ level: 'error', message: 'evaluate boom' }, 'old trace']), ['evaluate boom', 'old trace']);
 });

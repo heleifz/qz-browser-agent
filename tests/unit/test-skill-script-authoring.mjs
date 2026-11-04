@@ -58,7 +58,7 @@ for (const language of ['en', 'zh-CN']) test(`${language} authored Skill example
     const execute = limit => fixture.execute(schema.name, { tabRef: 'research', limit });
     const receipt = await execute(1);
     assert.equal(receipt.ok, true, JSON.stringify(receipt));
-    assert.ok(Array.isArray(receipt.trace));
+    assert.deepEqual(receipt.trace ?? [], [], 'successful examples do not emit automatic trace');
     const result = receipt.result;
     assert.equal(calls.length, 1, JSON.stringify(result));
     if (index === 0) assert.deepEqual(result, { title: 'Example', url: 'https://example.com/research',

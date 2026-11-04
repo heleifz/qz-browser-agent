@@ -37,20 +37,13 @@ export function toolFailurePresentation(error: unknown, collected: ToolResultPre
   return { ...presentation, _display: { ...display, script } };
 }
 
-/** Preserve execution order and action meaning without exposing UI trace levels. */
+/** Return authored diagnostics and errors in execution order. */
 export function traceMessages(rows: unknown): readonly string[] {
   if (!Array.isArray(rows)) return [];
   return rows.flatMap(row => {
     if (typeof row === "string") return [row];
     if (!row || typeof row !== "object" || typeof row.message !== "string") return [];
-    if (row.level === "script.start") return ["Script started."];
-    const action = row.level === "tool.start" ? "started" : row.level === "tool.end" ? "completed" : row.level === "tool.error" ? "failed" : "";
-    const match = action && /^(\S+)(?:\s+([\s\S]*))?$/.exec(row.message);
-    const identity = [typeof row.sequence === "number" ? `#${row.sequence}` : "",
-      typeof row.tabRef === "string" || typeof row.tabRef === "number" ? `tabRef=${JSON.stringify(row.tabRef)}` : "",
-      typeof row.toolCallId === "string" ? `call=${row.toolCallId}` : "",
-      typeof row.parentCallId === "string" ? `parent=${row.parentCallId}` : ""].filter(Boolean).join(" ");
-    return [match ? `${match[1]} ${action}${identity ? ` [${identity}]` : ""}${match[2] ? `: ${match[2]}` : ""}` : row.message];
+    return [row.message];
   });
 }
 

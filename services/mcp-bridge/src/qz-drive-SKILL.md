@@ -106,7 +106,7 @@ return await Promise.all(
 JS
 ```
 
-Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace() and console diagnostics are returned as ordered strings in trace. Tool traces include a call sequence and the supplied tabRef when present; settled calls also include the call ID used by the sidebar.
+Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. Use trace() at key checkpoints, such as completed stages and counts, to help recover after a failure. trace contains only errors and explicit trace()/console output, in order.
 
 ## Documents and larger results
 
@@ -116,7 +116,7 @@ Images and files stay in their artifact stores; return their references. Busines
 
 ## Output and recovery
 
-stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace contains execution messages in order, without levels; result is the returned business value, or null for undefined. Use return for business output and console/trace for progress. A tool failure rejects its awaited call with `{code,message,hint?,details?}`; an uncaught failure puts that error in result. Keep its code, message and recovery guidance. Script locations are in details. Successful scripts exit 0; execution and connection failures exit 1; invalid CLI arguments exit 2.
+stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace contains errors and explicit diagnostics in order, without levels; result is the returned business value, or null for undefined. Use return for business output and console/trace for progress. A tool failure rejects its awaited call with `{code,message,hint?,details?}`; an uncaught failure puts that error in result. Keep its code, message and recovery guidance. Script locations are in details. Successful scripts exit 0; execution and connection failures exit 1; invalid CLI arguments exit 2.
 
 --timeout sets script execution seconds, defaults to 120, and accepts >0 through 3600. The request waits 60 seconds longer. Give the calling shell a longer deadline. A timeout or interrupted connection does not prove that a browser action was undone; inspect the session and page before repeating it.
 

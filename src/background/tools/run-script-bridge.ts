@@ -7,7 +7,7 @@ import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
-import { inheritScriptTrace, collectScriptResultTrace, recordScriptToolTrace } from "./script-trace.js";
+import { inheritScriptTrace, collectScriptResultTrace } from "./script-trace.js";
 import type { RegisteredTool } from "./registry.js";
 import type { ToolBatchTabPolicy, ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
@@ -90,7 +90,6 @@ export function createRunScriptBridge({
     const parentCallId = parent?.toolCallId || parent?.toolExecutionId;
     const parentSpanId = typeof parent?.spanId === "string" ? parent.spanId : parentCallId ? `tool:${parentCallId}` : undefined;
     let started = false;
-    let traceSequence: number | undefined;
     const record = async (phase: "start" | "end", result: unknown, isError: boolean, startedExecution?: boolean) => {
       try { await recordNestedTool?.({ sessionId, runId, name, toolCallId, parentCallId, parentSpanId, phase, externalDrive,
         args: plainObject(message.args), result, isError, startedExecution,
@@ -101,7 +100,6 @@ export function createRunScriptBridge({
       if (started || !name || !supervisor.isRunCurrent(sessionId, runId)) return;
       if (message.parentCallId !== undefined && !getToolCallParent(message.parentCallId, sessionId, runId)) return;
       started = true;
-      traceSequence = recordScriptToolTrace(parent, { phase: "start", name, toolCallId, parentCallId, tabRef: plainObject(message.args).tabRef });
       await record("start", undefined, false, startedExecution);
     };
     const response = await executeToolCall(message, sender, (result, presentation) => {
@@ -113,10 +111,6 @@ export function createRunScriptBridge({
       await start(false);
       await record("end", observed && response.isError !== true ? rawResult : response.result ?? response, response.isError === true);
     }
-    if (started) recordScriptToolTrace(parent, { phase: "end", name, toolCallId, parentCallId,
-      sequence: traceSequence,
-      tabRef: plainObject(message.args).tabRef, isError: response.isError === true,
-      message: String(plainObject(response.result).message || response.message || "") });
     return { ...response, toolCallId };
   }
 

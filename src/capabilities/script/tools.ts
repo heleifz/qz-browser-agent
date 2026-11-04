@@ -147,10 +147,6 @@ function compactScriptTrace(trace: unknown) {
       break;
     }
     clipped.push({
-      ...(typeof item.sequence === "number" ? { sequence: item.sequence } : {}),
-      ...(typeof item.tabRef === "string" || typeof item.tabRef === "number" ? { tabRef: item.tabRef } : {}),
-      ...(typeof item.toolCallId === "string" ? { toolCallId: item.toolCallId } : {}),
-      ...(typeof item.parentCallId === "string" ? { parentCallId: item.parentCallId } : {}),
       time: item.time || "",
       level: item.level || "trace",
       message,
@@ -769,7 +765,6 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
       input = args;
     }
     const safeInput = __qzSafeValueForMessage(input || {});
-    __qzPushTrace("tool.start", [toolName, safeInput]);
     const id = "qz_tool_" + Date.now() + "_" + (++__qzSeq);
     return new Promise((resolve, reject) => {
       function onMessage(event) {
@@ -779,12 +774,10 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
         window.removeEventListener("message", onMessage);
         const response = data.response;
         if (!response) {
-          __qzPushTrace("tool.error", [toolName, "empty bridge response"]);
           reject(new Error("tools." + toolName + " returned empty bridge response"));
           return;
         }
         if (!response.ok) {
-          __qzPushTrace("tool.error", [toolName, response.message || response.error || "bridge failed"]);
           const bridgeError = new Error(response.message || response.error || ("tools." + toolName + " bridge failed"));
           if (response.code) bridgeError.code = response.code;
           if (response.hint) bridgeError.hint = response.hint;
@@ -795,7 +788,6 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
         if (response.observation && typeof response.observation === "object") {
           __qzLastObservation = response.observation;
         }
-        __qzPushTrace("tool.end", [toolName, response.result]);
         __qzAddToolArtifacts(response.artifacts || response.artifact);
         resolve(response.result);
       }

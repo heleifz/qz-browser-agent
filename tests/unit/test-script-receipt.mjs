@@ -7,8 +7,8 @@ import { bindToolResultPresentation } from '../../src/shared/contracts/tool-resu
 import { toolError } from '../../src/shared/contracts/tool-error.js';
 
 const presentation = trace => ({ _display: { script: { valueOnly: true, trace } } });
-const hostRows = [{ level: 'script.start', message: 'start' }, { level: 'trace', message: 'saved checkpoint' }];
-const expectedTrace = ['Script started.', 'saved checkpoint'];
+const hostRows = [{ level: 'trace', message: 'saved checkpoint' }];
+const expectedTrace = ['saved checkpoint'];
 const call = { id: 'script-call', function: { name: 'run_script', arguments: '{"code":"return 1;"}' } };
 const policy = { preserveResult: true, scriptResult: 'value' };
 

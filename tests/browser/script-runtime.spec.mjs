@@ -70,8 +70,21 @@ for (const mode of ['development', 'production']) {
       });
       expect(bridged.result.ok).toBe(true);
       expect(bridged.result.result).toEqual({ accepted: true });
+      expect(bridged.result.trace ?? []).toEqual([]);
       expect(bridged.call).toMatchObject({ toolName: 'echo', sessionId: 'browser-task', runId: 'browser-run', depth: 1,
         args: { element: result.result.button } });
+    });
+
+    test('page Skill traces contain explicit checkpoints and errors only', async ({ page }) => {
+      const result = await page.evaluate(() => window.runPrivatePageScript(`
+        trace('page ready');
+        console.log('read checkpoint');
+        throw new Error('checkpoint failure');
+      `));
+      expect(result.code).toBe('SCRIPT_EVALUATION_FAILED');
+      expect(result.details.trace.map(row => row.message).slice(0, 2)).toEqual(['page ready', 'read checkpoint']);
+      expect(result.details.trace).toHaveLength(3);
+      expect(result.details.trace[2].message).toContain('checkpoint failure');
     });
 
     test('native browser request surfaces block and recover without leaving wrappers installed', async ({ page }) => {

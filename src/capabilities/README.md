@@ -140,7 +140,7 @@ updates. Use concise `pending` text naming the unfinished work. `behavior.timeou
 host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
 
-At the model boundary, scripts produce `{ok, result, trace}` on success and failure; failure `result` is a ToolError. Inside `run_script` and `runtime:"script"` Skills, tool calls return business values directly, including script Skill calls; failures reject. Legacy page/inner callers retain their original return contracts. Nested diagnostics are collected by the host independently of the returned business data.
+At the model boundary, scripts produce `{ok, result, trace}` on success and failure; failure `result` is a ToolError. Inside `run_script` and `runtime:"script"` Skills, tool calls return business values directly, including script Skill calls; failures reject. Legacy page/inner callers retain their original return contracts. The host collects errors and explicit trace()/console output from nested scripts independently of the returned business data. Successful tool calls add no trace entries.
 
 Tools return business data; `bindToolResultPresentation` from `#sdk/background/tools` keeps display
 metadata beside that result until the host builds the renderer event. Package imports are limited to their own files, pinned

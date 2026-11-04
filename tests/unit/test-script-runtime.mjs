@@ -195,10 +195,10 @@ for (const mode of ['development', 'production']) {
       }`, {}, { resultPresentation: presentation });
       const traces = [...getToolResultTraces(failure, presentation)];
       assert.equal(failure.code, kind === 'throw' ? 'SCRIPT_EVALUATION_FAILED' : 'TEST_FAILURE');
-      // This fixture stubs tool dispatch; host lifecycle rows are covered by the real bridge tests.
-      assert.deepEqual(traces.slice(0, 3), ['Script started.', 'completed steps', 'next step']);
-      assert.deepEqual(traces.slice(3, 9), Array.from({ length: 6 }, (_, index) => `checkpoint-${index}`));
-      assert.ok(traces.length > 5, 'failure metadata retains more than the compact ToolError tail');
+      // Only explicit checkpoints and the execution error reach the trace.
+      assert.deepEqual(traces.slice(0, 2), ['completed steps', 'next step']);
+      assert.deepEqual(traces.slice(2, 8), Array.from({ length: 6 }, (_, index) => `checkpoint-${index}`));
+      assert.equal(traces.length, 9, 'failure retains eight explicit checkpoints and one error');
       assert.ok(traces.every(row => typeof row === 'string'));
       assert.equal(Object.hasOwn(presentation._display.script, 'valueOnly'), false, 'failure metadata never marks a successful return');
       assert.equal(failure.details.trace.length, 5, 'the native error retains its bounded structured diagnostic tail');
@@ -216,7 +216,7 @@ for (const mode of ['development', 'production']) {
       traces: ['business trace'], trace: ['authored'], _display: {script: {trace: ['authored metadata']}}
     };`, {}, { resultPresentation: presentation });
     assert.deepEqual(structuredClone(business), { traces: ['business trace'], trace: ['authored'], _display: { script: { trace: ['authored metadata'] } } });
-    assert.deepEqual([...getToolResultTraces(business, presentation)], ['Script started.', 'ready']);
+    assert.deepEqual([...getToolResultTraces(business, presentation)], ['ready']);
     assert.deepEqual(getToolResultTraces(structuredClone(business)), [], 'untrusted same-named fields cannot forge execution traces');
     const schema = f.definitions.get('run_script').parameters;
     assert.equal(schema.required.includes('tabRef'), false);
