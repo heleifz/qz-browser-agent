@@ -46,16 +46,16 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 Call tools by their catalog names. Use `tools.list_tools()` for compact signatures of common tools, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas, including tools absent from the default list. Read the relevant schema before using an unfamiliar tool.
 
-The built-in tools available to scripts are listed below. Loaded Skills can add tools; follow their instructions and query list_tools by name for their schemas.
+Use these browser tools in scripts. Loaded Skills can add tools; follow their instructions and query list_tools by name for their schemas.
 
 <!-- qz-drive-tools:start -->
-- **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, close, and manage page ownership.
+- **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward.
 - **Page content and elements**: `act_on_element`, `find_elements`, `get_ax_tree`, `inspect_element`, `read_article`, `read_dom`, `scroll_page`. Read text, HTML, and accessibility trees; find, inspect, and act on elements; scroll pages.
 - **Waiting**: `wait`, `wait_for_element`, `wait_for_function`, `wait_for_load`, `wait_for_navigation`, `wait_for_popup`, `wait_for_url`, `wait_until`. Wait for page loads, navigation, popups, URLs, predicates, elements, or a specified time.
-- **Images and screen actions**: `act_on_screen`, `collect_images`, `list_images`, `read_image`, `read_image_asset`, `screenshot`. Capture screenshots, discover and collect images, read image assets, and act at screen coordinates.
+- **Images and screen actions**: `act_on_screen`, `list_images`, `read_image`, `screenshot`. Capture screenshots, discover and read images, and act at screen coordinates.
 - **Network and console**: `network_body`, `network_recent`, `network_watch`, `read_console_messages`, `wait_for_network_idle`, `wait_for_response`. Watch requests, read captured bodies and console messages, and wait for responses or network idle.
 - **Scripts and discovery**: `evaluate`, `list_tools`, `run_script`. Run workflows through qz script, evaluate page functions, and discover tool schemas.
-- **Data and files**: `data_store`, `download_url`, `list_downloads`, `save_file`. Store structured data, save files, start downloads, and inspect downloaded files.
+- **Files**: `download_url`, `list_downloads`, `save_file`. Save files, start downloads, and inspect downloaded files.
 - **Skills**: `list_skills`, `load_skill`, `load_skill_resource`. Find and load Skills and their packaged resources.
 - **Browser utilities**: `browse_history`, `get_location`, `send_alert`. Search browsing history, request location, and notify the user.
 <!-- qz-drive-tools:end -->
@@ -112,7 +112,7 @@ Execute known steps serially in one script, then observe the relevant result onc
 
 For PDFs, load the document Skill before reading: list_skills, then load_skill({name:"qingzhou-documents"}). Follow its tool schemas and use the original PDF URL. PDF viewers do not support ordinary body reads or page actions. Keep the returned fileId/docModelId in this session and follow chunk cursors only as needed. load_skill_resource can load a packaged document directly.
 
-Write large datasets in batches through data_store and return a compact summary or identifiers. Images and files stay in their artifact stores; return their references. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read instead of treating the preview as a full value. ToolError is never truncated.
+Images and files stay in their artifact stores; return their references. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read instead of treating the preview as a full value. ToolError is never truncated.
 
 ## Output and recovery
 

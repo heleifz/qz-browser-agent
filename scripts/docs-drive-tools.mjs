@@ -7,15 +7,17 @@ import { generateModelsDevIndex } from "./models-dev-assets.mjs";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const START = "<!-- qz-drive-tools:start -->";
 const END = "<!-- qz-drive-tools:end -->";
+// Browser-local gallery and table storage stays callable without occupying the top-level guide.
+const OMITTED_FROM_GUIDE = new Set(["collect_images", "read_image_asset", "data_store"]);
 // Group capability owners, not tool names: registrations remain the source of truth.
 const GROUPS = [
-  [["tabs"], "Tabs", "Open, navigate, list, close, and manage page ownership."],
+  [["tabs"], "Tabs", "Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward."],
   [["accessibility", "page"], "Page content and elements", "Read text, HTML, and accessibility trees; find, inspect, and act on elements; scroll pages."],
   [["wait"], "Waiting", "Wait for page loads, navigation, popups, URLs, predicates, elements, or a specified time."],
-  [["media"], "Images and screen actions", "Capture screenshots, discover and collect images, read image assets, and act at screen coordinates."],
+  [["media"], "Images and screen actions", "Capture screenshots, discover and read images, and act at screen coordinates."],
   [["diagnostics"], "Network and console", "Watch requests, read captured bodies and console messages, and wait for responses or network idle."],
   [["script"], "Scripts and discovery", "Run workflows through qz script, evaluate page functions, and discover tool schemas."],
-  [["data", "documents"], "Data and files", "Store structured data, save files, start downloads, and inspect downloaded files."],
+  [["data", "documents"], "Files", "Save files, start downloads, and inspect downloaded files."],
   [["skills"], "Skills", "Find and load Skills and their packaged resources."],
   [["bookmarks", "sessions", "settings"], "Browser utilities", "Search browsing history, request location, and notify the user."],
 ];
@@ -33,7 +35,7 @@ export async function renderDriveToolIndex() {
     for (const { id, setup } of contributions) {
       const names = [];
       setup({ models: {}, skills: {}, registerTool({ name, hidden }) {
-        if (!hidden && !isDriveToolForbidden(name)) names.push(name);
+        if (!hidden && !isDriveToolForbidden(name) && !OMITTED_FROM_GUIDE.has(name)) names.push(name);
       } });
       if (names.length) owners.set(id, names);
     }
