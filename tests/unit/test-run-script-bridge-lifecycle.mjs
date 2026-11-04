@@ -257,9 +257,9 @@ test('the registered catalog shares policy and preserves raw successful business
   assert.equal(f.state.cards.length, 4, 'catalog successes, a catalog failure and business return each record once');
 });
 
-test('drive discovery omits local storage tools from default and named queries while native discovery retains them', async () => {
+test('drive discovery omits its script entry and storage tools while native discovery retains them', async () => {
   const f = fixture(false);
-  const names = ['collect_images', 'read_image_asset', 'data_store'];
+  const names = ['run_script', 'collect_images', 'read_image_asset', 'data_store'];
   const listed = await f.call('list_tools', {});
   assert.equal(listed.ok, true);
   for (const name of names) {
