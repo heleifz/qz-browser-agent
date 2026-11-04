@@ -368,7 +368,7 @@ test.describe("uid resolves the original node", () => {
     const selected = await h.call("act_on_element", { target: "css:#pick", action: "select", value: "two" });
     expect(selected.code, JSON.stringify(selected)).toBeUndefined();
     expect((await h.state()).pick).toBe("two");
-    expect(selected.target).toMatch(/^uid:/);
+    expect(selected).toEqual({});
   });
 
   test("the root uid expands the accessibility tree", async () => {
@@ -478,11 +478,11 @@ test.describe("uid resolves the original node", () => {
     const date = await h.call("act_on_element", { target: "css:#when", action: "fill", value: "2026-10-22" });
     expect(date.code, JSON.stringify(date)).not.toBe("NOT_EDITABLE_ELEMENT");
     expect((await h.state()).when).toBe("2026-10-22");
+    const beforeEnter = await h.page.evaluate(() => window.enters);
     const rich = await h.call("act_on_element", { target: "css:#child", action: "fill", value: "replaced rich", submit: true });
     expect(rich.code, JSON.stringify(rich)).not.toBe("INPUT_RESULT_UNKNOWN");
-    expect(rich.filled).toBe(true);
-    expect(rich.submitDispatched).toBe(true);
-    expect(rich.value).toContain("replaced rich");
+    expect(rich).toEqual({});
+    expect(await h.page.evaluate(() => window.enters)).toBe(beforeEnter + 1);
     expect((await h.state()).rich).toContain("replaced rich");
   });
 
@@ -659,7 +659,7 @@ test.describe("uid resolves the original node", () => {
     }, { timeout: 20000 }).not.toBe("");
     const clicked = await h.call("act_on_element", { target: inside, action: "click" });
     expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
-    expect(clicked.inputDelivered).toBe(true);
+    expect(clicked).toEqual({});
     expect(await h.page.evaluate(() => document.querySelector("#frame").contentWindow.clicks)).toBe(1);
   });
 

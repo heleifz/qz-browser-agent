@@ -33,9 +33,14 @@ for (const key of ["downloadRegisteredAsAFileArtifactForThisTask", "downloadStar
 }
 
 const runScript = resolveToolDefinition("run_script");
-assert.deepEqual(runScript.parameters.required, ["timeout", "code"], "run_script should require timeout and code in simple schema");
-assertPropertyOrder(runScript.parameters, ["timeout", "tabRef", "args", "mutatesPage", "code"], "run_script should put timeout/tabRef first and long code last");
-assert.match(runScript.parameters.properties.code.description, /最后填写 code/, "run_script code description should tell the model to fill code last");
+assert.deepEqual(runScript.parameters.required, ["code"], "outer scripts should use the default timeout when omitted");
+assertPropertyOrder(runScript.parameters, ["timeout", "args", "code"], "outer scripts should keep long code last and page selection on nested calls");
+assert.equal(runScript.page, false, "outer scripts must not require or implicitly select a page");
+assert.match(runScript.parameters.properties.code.description, /顶层 await 和 return/, "outer scripts should explain their asynchronous return surface");
+assert.doesNotThrow(() => runScript.validateArgs({ code: "return 1" }), "an omitted timeout must remain executable");
+const evaluate = resolveToolDefinition("evaluate");
+assert.deepEqual(evaluate.parameters.required, ["tabRef", "code"], "page evaluation should require its explicit page and callable code");
+assert.equal(evaluate.page, "owned");
 
 const readArticle = resolveToolDefinition("read_article");
 assert.deepEqual(readArticle.parameters.required, ["limit", "tabRef"], "read_article should require an explicit context budget limit");

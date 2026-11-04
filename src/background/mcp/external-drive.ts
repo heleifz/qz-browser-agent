@@ -1,6 +1,6 @@
 import { t } from "../../shared/i18n/backend.js";
 import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
-import { copyToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { copyToolResultPresentation, getToolResultPresentation, getToolResultTraces, traceMessages, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { driveToolText } from "./tool-messages.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
@@ -20,21 +20,23 @@ const FORBIDDEN = new Set([
   "wait_for_user", "ask_user", "send_message", "use_tab", "get_working_tab", "run_skill_script",
 ]);
 
-/** Default qz tools / list_tools / tools.$list tier. Guide-tier names stay callable by name. */
+/** Default list_tools tier. Guide-tier names stay callable by name. */
 const DRIVE_DEFAULT_TOOLS = new Set([
   "open_tab", "navigate", "list_tabs", "close_tab",
   "get_ax_tree", "find_elements", "read_article", "act_on_element", "scroll_page",
   "screenshot", "wait_for_element", "wait_for_navigation",
-  "run_script", "load_skill", "list_skills",
+  "run_script", "evaluate", "list_tools", "wait_for_load", "wait_for_url", "wait_for_function", "wait_for_popup", "wait_for_response", "load_skill", "list_skills",
 ]);
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
 export interface DriveImage { mimeType: string; data: string }
 export interface DriveToolObservation {
   sessionId: string; runId: string; name: string; args: Record<string, unknown>; result: unknown; isError: boolean;
+  toolCallId?: string; parentCallId?: string; parentSpanId?: string; phase?: "start" | "end"; startedExecution?: boolean;
+  resultPresentation?: ToolResultPresentation;
 }
 type Fields = Record<string, unknown>;
-type ModelPolicy = { projectResult?(result: unknown): unknown } | null | undefined;
+type ModelPolicy = { preserveResult?: boolean; projectResult?(result: unknown): unknown } | null | undefined;
 export type DriveParse =
   | { ok: false; error: Error }
   | { ok: true; mode: "single"; name: string; timeoutSeconds: number | null; maxCalls: number }
@@ -106,6 +108,10 @@ export function prepareDriveToolCall(name: string, args: unknown): { ok: true; a
 /** One-line signature plus the first description line. Drive catalogs and tools.$list share this shape. */
 export function driveToolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
   if (isDriveToolForbidden(tool.name)) throw driveError("DRIVE_TOOL_FORBIDDEN", driveToolText("unavailable"));
+  return toolSignature(tool);
+}
+
+export function toolSignature(tool: { name: string; description?: string; parameters?: unknown }) {
   const parameters = record(tool.parameters);
   const sourceProperties = record(parameters.properties);
   const required = new Set(Array.isArray(parameters.required) ? parameters.required.map(item => String(item)) : []);
@@ -183,7 +189,8 @@ export function parseDriveRequest(params: Fields = {}): DriveParse {
 const DATA_URL = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/u;
 
 /** Apply the declared model policy, separate screenshot bytes and bound the text result. */
-export function projectDriveResult(result: unknown, policy: ModelPolicy = null): { value: unknown; images: DriveImage[] } {
+export function projectDriveResult(result: unknown, policy: ModelPolicy = null, collected: ToolResultPresentation = {}): { value: unknown; images: DriveImage[] } {
+  if (policy?.preserveResult && !isToolFailure(result)) return { value: result, images: [...({ ...getToolResultPresentation(result), ...collected }._images || [])] };
   let projected = result;
   try {
     if (policy?.projectResult) projected = policy.projectResult(result);
@@ -226,10 +233,28 @@ interface DriveOutcome {
   args: unknown;
   isError: boolean;
   result: unknown;
+  resultPresentation?: ToolResultPresentation;
   projected?: { value: unknown; images: DriveImage[] };
 }
 
-function failed(call: DriveCall, error: unknown, args: unknown = call.args): DriveOutcome {
+/** Only host presentation, or an explicitly failed ToolError, supplies transport traces. */
+export function getDriveToolTraces(result: unknown, collected: ToolResultPresentation = {}, isError = false): readonly string[] {
+  const traces = getToolResultTraces(result, collected);
+  if (traces.length || !isError) return traces;
+  const error = record(result);
+  return typeof error.code === "string" && typeof error.message === "string" ? traceMessages(record(error.details).trace) : [];
+}
+
+/** Keep failure diagnostics without presenting a completed script value as success. */
+export function driveFailurePresentation(error: unknown, collected: ToolResultPresentation = {}): ToolResultPresentation {
+  const presentation = { ...collected, ...getToolResultPresentation(error) };
+  const display = record(presentation._display), script = record(display.script);
+  if (script.valueOnly !== true) return presentation;
+  const { valueOnly, ...failure } = script;
+  return { ...presentation, _display: { ...display, script: failure } };
+}
+
+function failed(call: DriveCall, error: unknown, args: unknown = call.args, collected: ToolResultPresentation = {}): DriveOutcome {
   const err = record(error);
   const aborted = err.name === "AbortError" || err.name === "TimeoutError";
   const code = aborted ? "OPERATION_ABORTED" : String(err.code || "TOOL_EXECUTION_FAILED");
@@ -241,6 +266,7 @@ function failed(call: DriveCall, error: unknown, args: unknown = call.args): Dri
     name: call.name,
     args,
     isError: true,
+    resultPresentation: driveFailurePresentation(error, collected),
     result: copyToolResultPresentation(error, toolError(code, message, { hint: typeof err.hint === "string" ? err.hint : undefined, details: err.details as Fields | undefined })),
   };
 }
@@ -255,23 +281,26 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
   aliases?: Readonly<Record<string, number>>;
   context?: Fields;
   refreshContext?(context: Fields): Fields;
-  onSettled?(call: { id: string; name: string; args: unknown; isError: boolean; result: unknown; rawResult: unknown; images: DriveImage[] }): void;
+  onSettled?(call: { id: string; toolCallId: string; name: string; args: unknown; isError: boolean; result: unknown; rawResult: unknown; images: DriveImage[]; resultPresentation?: ToolResultPresentation }): void;
   signal: AbortSignal;
   maxInFlight?: number;
 }) {
   const language = getLanguage();
   const canCommit = Boolean(deps.commitToolResult && deps.discardToolResult);
+  const hostIds = new Map<DriveCall, string>(calls.map(call => [call, crypto.randomUUID()]));
   function publish(outcome: DriveOutcome) {
     if (outcome.projected) return outcome;
-    const projected = projectDriveResult(outcome.result, deps.getModelPolicy?.(outcome.name) ?? null);
+    const projected = projectDriveResult(outcome.result, deps.getModelPolicy?.(outcome.name) ?? null, outcome.resultPresentation);
     const published = { ...outcome, projected };
     deps.onSettled?.({
       id: published.id,
+      toolCallId: hostIds.get(published.call)!,
       name: published.name,
       args: published.call.args,
       isError: published.isError,
       result: projected.value,
       rawResult: published.result,
+      resultPresentation: published.resultPresentation,
       images: projected.images,
     });
     return published;
@@ -286,12 +315,13 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
       continue;
     }
     const next = { ...call, args: ready.args };
+    hostIds.set(next, hostIds.get(call)!);
     plannedBySource.set(call, next);
     planned.push(next);
   }
   const batch = planTabBatch(planned, call => {
     let policy = deps.getBatchTabPolicy?.(call.name, call.args) ?? null;
-    if (policy?.kind === "create" && policy.parallel && !canCommit) policy = { ...policy, parallel: false };
+    if (policy?.kind === "create" && !policy.targeted && policy.parallel && !canCommit) policy = { ...policy, parallel: false };
     return { args: call.args, policy };
   }, language, deps.aliases || {});
   const settled = new Map<DriveCall, DriveOutcome>();
@@ -300,6 +330,8 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     maxInFlight: deps.maxInFlight,
     dependencies: batch.dependencies,
     independent: batch.independent,
+    lane: batch.lane,
+    observer: batch.passive,
     completed: (call, outcome) => batch.complete(call, outcome.result, outcome.isError),
     cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args),
     tab: call => {
@@ -307,28 +339,31 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
       catch { return null; }
     },
     reject: (call, error) => failed(call, error, call.args),
-    execute: async (call, callSignal, parallel) => {
+    execute: async (call, callSignal, parallel, scope) => {
       let args: unknown = call.args;
       try { args = batch.args(call); }
       catch (error) { return failed(call, error, call.args); }
       const base: Fields = {
         ...(deps.context || {}),
+        nestedToolScope: scope,
+        toolCallId: hostIds.get(call), spanId: `tool:${hostIds.get(call)}`,
         preserveWorkingTab: batch.observation(call) === true,
         deferToolCommit: parallel,
         deferCreatedTabSelection: batch.parallelCreate(call) === true,
         createdTabResult: batch.executionParent(call),
       };
-      const context = deps.refreshContext ? deps.refreshContext(base) : base;
+      const resultPresentation: ToolResultPresentation = {};
+      const context = { ...(deps.refreshContext ? deps.refreshContext(base) : base), resultPresentation };
       try {
         const result = await deps.execute(call.name, args, callSignal, context);
-        const value = record(result);
+        const isError = isToolFailure(result);
         return {
           call, id: call.id, name: call.name, args, result,
-          isError: Boolean((value.code && value.message) || value.error || value.ok === false || value.isError === true),
+          resultPresentation: isError ? driveFailurePresentation(result, resultPresentation) : resultPresentation, isError,
         };
       } catch (error) {
         await deps.discardToolResult?.(undefined, context);
-        return failed(call, error, args);
+        return failed(call, error, args, resultPresentation);
       }
     },
     commit: async outcome => {
@@ -337,7 +372,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
         batch.assertDependenciesCommitted(outcome.call);
         if (!current.isError) await deps.commitToolResult?.(current.result, deps.signal, deps.context || {});
       } catch (error) {
-        current = failed(outcome.call, error, outcome.args);
+        current = failed(outcome.call, error, outcome.args, outcome.resultPresentation);
       }
       await deps.discardToolResult?.(outcome.result, deps.context || {});
       batch.settle(outcome.call, current.result, current.isError);
@@ -348,12 +383,14 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     const plannedCall = plannedBySource.get(call);
     const outcome = publish(blocked.get(call) || (plannedCall && settled.get(plannedCall)) || failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args));
     const images = outcome.projected?.images || [];
+    const traces = getDriveToolTraces(outcome.result, outcome.resultPresentation, outcome.isError);
     return {
       id: outcome.id,
       name: outcome.name,
       result: outcome.projected?.value,
       isError: outcome.isError,
       ...(images.length ? { images } : {}),
+      ...(traces.length ? { traces } : {}),
     };
   });
   return { results };

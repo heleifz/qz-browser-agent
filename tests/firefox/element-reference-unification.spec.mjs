@@ -26,11 +26,28 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       }
       catch(error) { const failure=Cu.waiveXrays(error); return {message:String(failure.message),code:String(failure.code || ''),...(failure.hint ? {hint:String(failure.hint)} : {}),...(failure.details ? {details:JSON.parse(JSON.stringify(failure.details))} : {})}; }
     `);
+    const controls = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
+    expect(controls.message, JSON.stringify(controls)).toBeUndefined();
+    for (const [id, name] of [['overlay-toggle', 'Overlay menu'], ['detached-toggle', 'Detached menu']]) {
+      const target = targetFor(controls, name, 'button');
+      expect(target || '', controls.snapshot).toMatch(uidPattern);
+      const clicked = await call('act_on_element', { target, action: 'click' });
+      expect(clicked).toEqual({});
+      await expect(page.locator(`#${id}`)).toBeChecked();
+      await expect(page.locator(`#${id}`)).toHaveAttribute('data-input-trusted', 'true');
+      expect(await call('inspect_element', { target })).toMatchObject({
+        target: expect.stringMatching(uidPattern), tag: 'input', name, checked: true, attrs: { id },
+      });
+    }
     const found = await call('find_elements', { target: 'body', tags: ['button', 'img'], limit: 40 });
     expect(found.message, JSON.stringify(found)).toBeUndefined();
     expect(found.results.every(item => uidPattern.test(item.target) && !('selector' in item) && !('uid' in item))).toBe(true);
     const alpha = found.results.find(item => item.name === 'Alpha' || item.text === 'Alpha');
-    expect((await call('act_on_element', { target: alpha.target, action: 'click' })).message).toBeUndefined();
+    const alphaClick = await call('act_on_element', { target: alpha.target, action: 'click' });
+    expect(alphaClick).toEqual({});
+    expect(await call('inspect_element', { target: alpha.target })).toMatchObject({
+      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: '', text: 'Alpha', attrs: { id: 'alpha' },
+    });
     await expect(page.locator('#alpha')).toHaveAttribute('data-clicked', 'yes');
     const inspected = await call('inspect_element', { target: '#alpha' });
     expect(inspected.target).toMatch(uidPattern);
@@ -45,12 +62,12 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     const wait = await call('wait_for_element', { target: '#alpha', timeout: 1 });
     expect(wait.element.target).toMatch(uidPattern);
     await page.locator('#alpha').evaluate(element => { element.style.display = 'none'; });
-    const hidden = await call('wait_for_element', { target: alpha.target, absent: true, timeout: 5 });
-    expect(hidden, JSON.stringify(hidden)).toMatchObject({ found: false, element: null });
+    const hidden = await call('wait_for_element', { target: alpha.target, state: 'hidden', timeout: 5 });
+    expect(hidden, JSON.stringify(hidden)).toMatchObject({ state: 'hidden', found: false, element: null });
     expect(hidden.timedOut).toBeUndefined();
     await page.locator('#alpha').evaluate(element => { const next = element.cloneNode(true); next.style.display = ''; element.replaceWith(next); });
-    const gone = await call('wait_for_element', { target: alpha.target, absent: true, timeout: 5 });
-    expect(gone, JSON.stringify(gone)).toMatchObject({ found: false, element: null });
+    const gone = await call('wait_for_element', { target: alpha.target, state: 'detached', timeout: 5 });
+    expect(gone, JSON.stringify(gone)).toMatchObject({ state: 'detached', found: false, element: null });
     const stale = await call('act_on_element', { target: alpha.target, action: 'click' });
     expect(stale.code, JSON.stringify(stale)).toMatch(/STALE_ELEMENT_UID/);
     const invalidTarget = await call('read_dom', { target: 'css:[' });
@@ -61,7 +78,7 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     expect(Object.keys(invalidTarget).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
     expect(JSON.stringify(invalidTarget)).not.toMatch(/"(?:selector|tabId)":/);
 
-    const syntax = await call('run_script', { code: 'async () => { const value = ; }', timeout: 20 });
+    const syntax = await call('evaluate', { code: 'async () => { const value = ; }', timeout: 20 });
     expect(syntax.code, JSON.stringify(syntax)).toBe('SCRIPT_EVALUATION_FAILED');
     expect(syntax.message).toMatch(/SyntaxError/);
     expect(Object.keys(syntax).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);

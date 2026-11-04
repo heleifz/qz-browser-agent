@@ -1,6 +1,6 @@
-import { copyToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { copyToolResultPresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
-import { type DriveToolObservation, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall } from "../mcp/external-drive.js";
+import { type DriveToolObservation, isDriveToolForbidden, prepareDriveToolCall } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -8,8 +8,11 @@ import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/art
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
 import type { RegisteredTool } from "./registry.js";
-import type { ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
+import type { ToolBatchTabPolicy, ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
+import { createNestedToolScheduler, independentToolPolicy } from "./tool-scheduler.js";
+import { tabReferenceId } from "../../shared/tab-reference.js";
+import { tabReferenceError } from "./tab-reference.js";
 type Fields = Record<string, unknown>;
 interface RunScriptToolContext extends ToolContext { loadedPluginSkillNames?: unknown; skillToolRegistrySnapshot?: unknown }
 interface BridgeHost {
@@ -21,13 +24,17 @@ interface BridgeHost {
   canManageSessions(sessionId: string): Promise<boolean>;
   buildRunProfile(input: { sessionId: string; canManageSessions: boolean | undefined; externalDrive: boolean }): Promise<NonNullable<ToolContext["runProfile"]>>;
   getRunToolContext?(sessionId: string, runId: string): Promise<RunScriptToolContext | null>;
-  recordDriveTool?(input: DriveToolObservation): Promise<unknown>;
+  recordNestedTool?(input: DriveToolObservation & { externalDrive: boolean }): Promise<unknown>;
   applyNestedToolResult?(input: { sessionId: string; runId: string; toolName: string; args: Fields; result: unknown; isError: boolean }): Promise<unknown>;
   toolRuntime: {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
     resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior>; model?: Readonly<ToolModelPolicy> } | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
     getTabAliases?(sessionId: string): Readonly<Record<string, number>>;
+    getBatchTabPolicy?(name: string, args: unknown, context: ToolContext): ToolBatchTabPolicy | null;
+    commitToolResult?(result: unknown, signal: AbortSignal, context: ToolContext): Promise<unknown>;
+    discardToolResult?(result: unknown, context: ToolContext): Promise<unknown>;
+    maxInFlight?: number;
   };
   collectArtifacts(name: string, args: Fields, result: unknown): Fields[];
   appendArtifacts?(input: { sessionId: string; runId: string; toolCallId: string; sourceTool: string; artifacts: Fields[] }): Promise<unknown>;
@@ -56,7 +63,7 @@ export function createRunScriptBridge({
   buildRunProfile,
   getRunToolContext = async () => null,
   applyNestedToolResult = async () => false,
-  recordDriveTool,
+  recordNestedTool,
   toolRuntime,
   collectArtifacts,
   appendArtifacts = async () => {},
@@ -70,28 +77,43 @@ export function createRunScriptBridge({
   if (!toolRuntime || typeof toolRuntime.execute !== "function") throw new TypeError("toolRuntime is required");
   if (typeof toolRuntime.resolveDefinition !== "function") throw new TypeError("toolRuntime.resolveDefinition is required");
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
+  const schedulers = new Map<string, ReturnType<typeof createNestedToolScheduler>>();
 
-  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
-    let rawResult: unknown, externalDrive = false;
-    const response = await executeToolCall(message, sender, result => { rawResult = result; }, mode => { externalDrive = mode; });
-    const sessionId = normalizeSessionId(message.sessionId);
-    const runId = String(message.runId || "").trim();
-    const name = String(message.toolName || "").trim();
+  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, invocationSignal?: AbortSignal) {
+    // The old transport spelling is a hidden alias for the registered catalog tool.
+    if (message.toolName === "__list_tools__") message = { ...message, toolName: "list_tools" };
+    let rawResult: unknown, resultPresentation: ToolResultPresentation | undefined, observed = false, externalDrive = false;
+    const sessionId = normalizeSessionId(message.sessionId), runId = String(message.runId || "").trim();
+    const name = String(message.toolName || "").trim(), toolCallId = crypto.randomUUID();
     const parent = getToolCallParent(message.parentCallId, sessionId, runId);
-    if (recordDriveTool && externalDrive && name && name !== "__list_tools__"
-      && plainObject(response).code !== "RUN_STOPPED" && supervisor.isRunCurrent(sessionId, runId)
-      && (message.parentCallId === undefined || parent && !parent.signal?.aborted)) {
-      try {
-        await recordDriveTool({ sessionId, runId, name, args: plainObject(message.args),
-          result: rawResult ?? response.result ?? response, isError: response.isError === true });
-      } catch (error) {
-        logger.debug("[轻舟] persist nested drive tool failed:", error instanceof Error ? error.message : error);
-      }
+    const parentCallId = parent?.toolCallId || parent?.toolExecutionId;
+    const parentSpanId = typeof parent?.spanId === "string" ? parent.spanId : parentCallId ? `tool:${parentCallId}` : undefined;
+    let started = false;
+    const record = async (phase: "start" | "end", result: unknown, isError: boolean, startedExecution?: boolean) => {
+      try { await recordNestedTool?.({ sessionId, runId, name, toolCallId, parentCallId, parentSpanId, phase, externalDrive,
+        args: plainObject(message.args), result, isError, startedExecution,
+        resultPresentation: isError ? undefined : resultPresentation }); }
+      catch (error) { logger.debug("[轻舟] persist nested tool failed:", error instanceof Error ? error.message : error); }
+    };
+    const start = async (startedExecution: boolean) => {
+      if (started || !name || !supervisor.isRunCurrent(sessionId, runId)) return;
+      if (message.parentCallId !== undefined && !getToolCallParent(message.parentCallId, sessionId, runId)) return;
+      started = true;
+      await record("start", undefined, false, startedExecution);
+    };
+    const response = await executeToolCall(message, sender, (result, presentation) => {
+      rawResult = result; resultPresentation = presentation; observed = true;
+    }, mode => { externalDrive = mode; }, invocationSignal, toolCallId, start);
+    if (name && supervisor.isRunCurrent(sessionId, runId)
+      && (started || plainObject(response).code !== "RUN_STOPPED")
+      && (started || message.parentCallId === undefined || getToolCallParent(message.parentCallId, sessionId, runId))) {
+      await start(false);
+      await record("end", observed && response.isError !== true ? rawResult : response.result ?? response, response.isError === true);
     }
     return response;
   }
 
-  async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown) => void, observeMode: (externalDrive: boolean) => void) {
+  async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown, presentation?: ToolResultPresentation) => void, observeMode: (externalDrive: boolean) => void, invocationSignal: AbortSignal | undefined, toolCallId: string, start: (executed: boolean) => Promise<void>) {
     await ready();
     let language = getLanguage();
     const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
@@ -111,8 +133,9 @@ export function createRunScriptBridge({
     // calls without the field retain their run-scoped cancellation contract.
     const parent = getToolCallParent(message.parentCallId, sessionId, runId);
     const runSignal = supervisor.getAbortSignal(sessionId, runId);
-    const signal = message.parentCallId !== undefined && !parent ? AbortSignal.abort()
+    const parentSignal = message.parentCallId !== undefined && !parent ? AbortSignal.abort()
       : parent?.signal && runSignal ? AbortSignal.any([parent.signal, runSignal]) : parent?.signal || runSignal || undefined;
+    const signal = invocationSignal && parentSignal ? AbortSignal.any([invocationSignal, parentSignal]) : invocationSignal || parentSignal;
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName, signal);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
     try {
@@ -121,36 +144,12 @@ export function createRunScriptBridge({
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
       const driveRun = toolContext.externalDrive === true;
-      if (driveRun && toolName !== "__list_tools__" && isDriveToolForbidden(toolName)) {
+      if (driveRun && isDriveToolForbidden(toolName)) {
         return respondFailure({
           error: t("drive.toolForbidden", { name: toolName }),
           code: "DRIVE_TOOL_FORBIDDEN",
           details: { toolName },
         }, { toolName });
-      }
-
-      if (toolName === "__list_tools__") {
-        const tools = [];
-        for (const schema of toolRuntime.getSchemas(toolContext)) {
-          const name = schema.function?.name || "";
-          if (!name || (driveRun && !isDriveToolDefault(name))) continue;
-          tools.push(driveRun
-            ? driveToolSignature({
-              name,
-              description: schema.function?.description || "",
-              parameters: schema.function?.parameters || {},
-            })
-            : {
-              name,
-              description: schema.function?.description || "",
-              parameters: schema.function?.parameters || {},
-            });
-        }
-        return {
-          ok: true,
-          result: { tools },
-          isError: false,
-        };
       }
 
       const depth = Math.max(0, Math.floor(Number(message.depth) || 0));
@@ -163,60 +162,97 @@ export function createRunScriptBridge({
       }
 
       let toolArgs = plainObject(message.args);
-      if (driveRun && toolName !== "__list_tools__") {
+      if (driveRun) {
         const prepared = prepareDriveToolCall(toolName, toolArgs);
         if (!prepared.ok) {
           return respondFailure(prepared.error, { toolName });
         }
         toolArgs = prepared.args;
       }
-      const definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: toolContext.skillToolRegistrySnapshot, toolRegistrySnapshot: toolContext.toolRegistrySnapshot, language: toolContext.language });
-      const result = await toolRuntime.execute(toolName, toolArgs, signal, {
-        ...toolContext,
-        sessionId,
-        runId,
-        runScriptToolDepth: depth,
-        source: "run_script",
-        senderTabId: sender?.tab?.id || null,
-      });
-      // A host or zero-timeout handler may complete after its run was revoked.
-      const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
-      if (executionStopped) return respondFailure(executionStopped, { toolName });
-      observe(result);
-      const output = plainObject(result);
-      const isError = isToolFailure(output);
-      await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
-      const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
-      if (resultStopped) return respondFailure(resultStopped, { toolName });
-      if (isError) {
-        return respondFailure(result, { toolName });
-      }
+      const key = JSON.stringify([sessionId, runId]);
+      let scheduler = schedulers.get(key);
+      if (!scheduler) { scheduler = createNestedToolScheduler(toolRuntime.maxInFlight); schedulers.set(key, scheduler); }
+      const policy = toolRuntime.getBatchTabPolicy?.(toolName, toolArgs, toolContext);
+      const staged = Boolean(toolRuntime.commitToolResult && toolRuntime.discardToolResult)
+        && independentToolPolicy(policy, toolArgs.tabId != null || Object.hasOwn(toolArgs, "tabRef"));
+      const aliases = toolRuntime.getTabAliases?.(sessionId) || {};
+      const ref = toolArgs.tabRef;
+      const lane = policy?.kind === "target" && policy.tabId != null ? policy.tabId
+        : policy?.kind === "create" && !policy.targeted ? typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? `alias:${toolArgs.tabAlias}` : `create:${crypto.randomUUID()}`
+        : tabReferenceId(ref) ?? (typeof ref === "string" ? aliases[ref] ?? `alias:${ref}` : Number(toolArgs.tabId) || null);
+      let definition: ReturnType<BridgeHost["toolRuntime"]["resolveDefinition"]>;
+      let executionResult: unknown;
+      let executionContext: ToolContext = toolContext;
+      try { return await scheduler.run<unknown>({
+        parent: parent?.nestedToolScope,
+        group: String(message.parentCallId || "legacy"),
+        lane,
+        produces: policy?.kind === "create" && typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? toolArgs.tabAlias : undefined,
+        targetAlias: typeof ref === "string" && tabReferenceId(ref) === null && !Object.hasOwn(aliases, ref) ? ref : undefined,
+        dependencyFailure: () => tabReferenceError("dependency_failed", ref, language), isError: isToolFailure,
+        policy, explicit: toolArgs.tabId != null || Object.hasOwn(toolArgs, "tabRef"), signal,
+        execute: async scope => {
+          const current = await resolveToolContext(sessionId, runId, parent, observeMode);
+          const stopped = stoppedBridgeError(sessionId, runId, toolName, signal);
+          if (stopped) return stopped;
+          definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: current.skillToolRegistrySnapshot, toolRegistrySnapshot: current.toolRegistrySnapshot, language: current.language });
+          executionContext = {
+            ...current, sessionId, runId, toolCallId, spanId: `tool:${toolCallId}`, nestedToolScope: scope, runScriptToolDepth: depth,
+            resultPresentation: {},
+            deferToolCommit: staged, deferCreatedTabSelection: staged && policy?.kind === "create" && !policy.targeted,
+            preserveWorkingTab: policy?.kind === "observe" || policy?.kind === "target" && policy.observation,
+            source: "run_script", senderTabId: sender?.tab?.id || null,
+          };
+          await start(true);
+          return executionResult = await toolRuntime.execute(toolName, toolArgs, signal, executionContext);
+        },
+        commit: async result => {
+          // A host or zero-timeout handler may complete after its run was revoked.
+          const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
+          if (executionStopped) return respondFailure(executionStopped, { toolName });
+          const isError = isToolFailure(result);
+          if (!isError && staged) await toolRuntime.commitToolResult?.(result, signal || new AbortController().signal, executionContext);
+          await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
+          const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
+          if (resultStopped) return respondFailure(resultStopped, { toolName });
+          observe(result, isError ? undefined : executionContext.resultPresentation);
+          if (isError) {
+            return respondFailure(result, { toolName });
+          }
 
-      const artifacts = collectArtifacts(toolName, toolArgs, result);
-      if (artifacts.length) {
-        try {
-          await appendArtifacts({
-            sessionId,
-            runId,
-            toolCallId: "",
-            sourceTool: toolName,
+          const artifacts = collectArtifacts(toolName, toolArgs, result);
+          if (artifacts.length) {
+            try {
+              await appendArtifacts({
+                sessionId,
+                runId,
+                toolCallId: "",
+                sourceTool: toolName,
+                artifacts,
+              });
+              scheduleArtifactRefresh(sessionId, { action: "artifacts", touchSession: true, delay: 400 });
+            } catch (error) {
+              logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
+            }
+          }
+          const modelResult = definition?.model?.projectResult ? definition.model.projectResult(result) : result;
+          const observation = nestedObservation(definition?.behavior, toolArgs, result);
+          return {
+            ok: true,
+            result: omitObservationImage(modelResult, Boolean(observation)),
+            ...(observation ? { observation } : {}),
             artifacts,
-          });
-          scheduleArtifactRefresh(sessionId, { action: "artifacts", touchSession: true, delay: 400 });
-        } catch (error) {
-          logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
-        }
+            isError: false,
+          };
+        },
+      }) as Fields; }
+      finally {
+        await toolRuntime.discardToolResult?.(executionResult, executionContext);
+        if (!scheduler.pending && schedulers.get(key) === scheduler) schedulers.delete(key);
       }
-      const modelResult = definition?.model?.projectResult ? definition.model.projectResult(result) : result;
-      const observation = nestedObservation(definition?.behavior, toolArgs, result);
-      return {
-        ok: true,
-        result: omitObservationImage(modelResult, Boolean(observation)),
-        ...(observation ? { observation } : {}),
-        artifacts,
-        isError: false,
-      };
     } catch (error) {
+      const stopped = stoppedBridgeError(sessionId, runId, toolName, signal);
+      if (stopped) return respondFailure(stopped, { toolName });
       const failure = plainObject(error);
       const localized = plainObject(withLanguage(language, () => localizeToolFailureError(error, {
         toolName,
@@ -245,6 +281,7 @@ export function createRunScriptBridge({
     };
     const canManage = runContext.runProfile ? undefined : await canManageSessions(sessionId);
     return {
+      nestedToolScope: parent?.nestedToolScope,
       externalDrive,
       sourceWindowId: positiveNumber(snapshotContext.sourceWindowId) || null,
       dynamicContext,
@@ -272,7 +309,15 @@ export function createRunScriptBridge({
     }, { toolName });
   }
 
-  return Object.freeze({ handleToolCall });
+  async function invokeTool(parent: ToolContext, name: string, args: Fields, signal?: AbortSignal) {
+    const senderId = Number(parent.senderTabId);
+    const response = await handleToolCall({ toolName: name, args, sessionId: parent.sessionId, runId: parent.runId,
+      parentCallId: parent.toolExecutionId || "", depth: Math.max(0, Number(parent.runScriptToolDepth) || 0) + 1,
+    }, senderId > 0 ? { tab: { id: senderId } } : {}, signal);
+    if (response.ok !== true) throw response.result || response;
+    return response.result;
+  }
+  return Object.freeze({ handleToolCall, invokeTool });
 }
 
 function omitObservationImage(result: unknown, stripImage = false) {

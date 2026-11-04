@@ -66,7 +66,7 @@ function assertUiRuntimeContracts() {
   assert.match(sidepanelCss, /textarea\.msg-user-edit-input\s*\{[\s\S]*border:\s*0[\s\S]*resize:\s*none/, "message editing should override the generic textarea border and resize handle");
   assert.match(sidepanelHtml, /id="chat-dock"[\s\S]*id="status-bar"[\s\S]*id="external-drive-readonly"[\s\S]*<footer id="input-area"[^>]*>/, "status and composer should live in one chat dock");
   assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.msg-user-actions/, "a read-only drive session hides message edits");
-  assert.match(sidepanelHtml, /id="drive-welcome-command"[^>]*>npx qz-browser-agent@latest connect</, "the drive welcome shows the published connect command");
+  assert.match(sidepanelHtml, /id="drive-welcome-command"[^>]*>npx qz-browser-agent@latest connect uri</, "the drive welcome shows the published URL-only connection command");
   assert.match(readFileSync(join(root, "src/sidepanel/features/chat/chat-workspace-feature.ts"), "utf8"), /setAttribute\("data-external-drive", "true"\)/, "drive chrome sets the attribute value the welcome rules match");
   assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.welcome-onboarding[\s\S]*display:\s*none\s*!important/, "a drive session hides the ordinary welcome cards");
   assert.match(sidepanelCss, /#app\[data-external-drive="true"\] \.drive-welcome\s*\{[^}]*display:\s*block/, "a drive session shows its own welcome");

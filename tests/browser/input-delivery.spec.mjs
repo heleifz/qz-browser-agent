@@ -151,8 +151,8 @@ test('input delivery follows submitted forms without replaying input', async ({}
       expect.soft(result?.code, label).toBe(scenario.missed ? 'INPUT_NOT_DELIVERED' : undefined);
       if (scenario.missed) expect.soft(page.out, label).toBe('none');
       else {
-        expect.soft(result?.navigated, label).toBe(scenario.navigated);
-        if (!scenario.action) expect.soft(result?.submitDispatched, label).toBe(true);
+        expect.soft(result?.navigated === true, label).toBe(scenario.navigated);
+        if (scenario.navigated) expect.soft(result?.url, label).toBe(page.url);
         if (scenario.value) expect.soft(page.value, label).toBe(scenario.value);
       }
       const downs = commands.filter(command => command.method === 'Input.dispatchKeyEvent' && command.params.type === 'keyDown' && command.params.key === 'Enter');

@@ -108,7 +108,7 @@ export async function startBridge({ host = "127.0.0.1", port = 18765, instanceId
         return response.end();
       }
       if (request.method === "GET" && path === "/health") return sendJson(response, 200, {
-        ok: true, service: "qz-browser-agent", protocolVersion: PROTOCOL_VERSION, features: { browserPairing: 1 }, instanceId, scopeId, buildId, processId: process.pid, status: state.status(),
+        ok: true, service: "qz-browser-agent", protocolVersion: PROTOCOL_VERSION, features: { browserPairing: 1, scriptApiVersion: 1 }, instanceId, scopeId, buildId, processId: process.pid, status: state.status(),
       }, cors);
       if (request.method === "GET" && path === "/qz-connect") {
         response.writeHead(200, {

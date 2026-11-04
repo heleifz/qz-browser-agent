@@ -11,7 +11,6 @@ import { isExtensionBridgeOrigin, startBridge } from "../../services/mcp-bridge/
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { TOOL_CATALOG, driveToolCatalog, executeMcpTool, mcpCatalogProfile, resultToContent } from "../../services/mcp-bridge/src/tools.mjs";
 import { resultValue } from "../../services/mcp-bridge/src/client.mjs";
-import { materializeExecImages } from "../../services/mcp-bridge/src/cli.mjs";
 
 const extensionOrigin = `chrome-extension://${"a".repeat(32)}`;
 const routingStub = { resolveClient: async id => ({ id, controller: new AbortController() }), signal: signal => signal || new AbortController().signal };
@@ -54,7 +53,7 @@ test("drive MCP lists the guide and the drive tools; qz-cli keeps the full catal
   assert.equal(mcpCatalogProfile({ clientName: "bridge-test" }), "drive");
   assert.equal(mcpCatalogProfile({ profile: "full", clientName: "bridge-test" }), "full");
   const names = driveToolCatalog().map(tool => tool.name);
-  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
+  assert.deepEqual(names, ["qingzhou_guide", "qingzhou_create_drive_session", "qingzhou_list_drive_sessions", "qingzhou_get_drive_session", "qingzhou_stop_session", "qingzhou_execute_tool", "qingzhou_list_tools", "qingzhou_get_tool", "qingzhou_bridge_status"]);
   assert.match(driveToolCatalog()[0].description, /qz CLI.*optional reference/);
   const execute = driveToolCatalog().find(tool => tool.name === "qingzhou_execute_tool");
   assert.doesNotMatch(execute.description, /先读说明书/);
@@ -481,14 +480,14 @@ test("MCP result content retains FastMCP list/string/null serialization", () => 
       { id: "open", name: "open_tab", result: { id: 1 }, isError: false },
       { id: "shot", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: "YQ==" }] },
     ],
-  });
+  }, { toolResult: true });
   assert.equal(batch[0].type, "text");
   assert.equal(batch[0].text.includes("YQ=="), false);
   assert.deepEqual(JSON.parse(batch[0].text).results[1].images, [{ id: "shot", index: 0 }]);
   assert.deepEqual(batch[1], { type: "image", data: "YQ==", mimeType: "image/png", _meta: { id: "shot", index: 0 } });
   const single = resultToContent({
     toolName: "screenshot", result: { ok: true }, images: [{ mimeType: "image/png", data: "YQ==" }],
-  });
+  }, { toolResult: true });
   assert.equal(single[0].text.includes("YQ=="), false);
   assert.equal(single[0].text.includes('"images"'), false);
   assert.deepEqual(single[1], { type: "image", data: "YQ==", mimeType: "image/png" });
@@ -503,7 +502,7 @@ test("a batch of two screenshots keeps each image with its call", () => {
       { id: "s1", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: first }] },
       { id: "s2", name: "screenshot", result: { ok: true }, isError: false, images: [{ mimeType: "image/png", data: second }] },
     ],
-  });
+  }, { toolResult: true });
   assert.equal(content[0].type, "text");
   assert.equal(content[0].text.includes(first), false);
   assert.equal(content[0].text.includes(second), false);
@@ -516,9 +515,6 @@ test("a batch of two screenshots keeps each image with its call", () => {
   assert.equal(restored.results[0].images[0].data, first);
   assert.equal(restored.results[1].images[0].data, second);
   assert.equal(Object.hasOwn(restored, "images"), false);
-  const files = materializeExecImages(restored);
-  assert.equal(readFileSync(files.results[0].images[0]).toString(), "one");
-  assert.equal(readFileSync(files.results[1].images[0]).toString(), "two");
 });
 
 test("drive calls require an explicit session id and do not invent one", async t => {

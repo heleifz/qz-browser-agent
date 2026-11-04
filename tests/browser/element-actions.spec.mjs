@@ -16,6 +16,10 @@ const html = `<!doctype html><meta name="viewport" content="width=device-width,i
   <input id="checkbox" type="checkbox"><input id="rollback" type="checkbox"><input id="cancelled" type="checkbox">
   <input id="disabled-check" type="checkbox" disabled><input id="radio" type="radio" checked>
   <input id="hidden-check" type="checkbox" style="display:none"><label id="hidden-label" for="hidden-check">Hidden checkbox</label>
+  <div style="position:relative;width:180px;height:40px;margin:8px 0">
+    <input id="overlay-check" type="checkbox" style="position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:2">
+    <label id="overlay-label" for="overlay-check" style="position:absolute;inset:0;width:100%;height:100%;margin:0">Transparent checkbox</label>
+  </div>
   <input id="hidden-disabled" type="checkbox" style="display:none" disabled><label id="disabled-label" for="hidden-disabled">Disabled checkbox</label>
   <input id="link-check" type="checkbox" style="display:none"><label for="link-check"><a id="label-link" href="#unexpected">Another destination</a></label>
   <input id="button-check" type="checkbox" style="display:none"><label for="button-check"><button id="label-button" type="button">Other action</button></label>
@@ -274,8 +278,7 @@ for (const mode of ["desktop", "mobile"]) {
     try {
       for (const [id, value] of [["text", "订单🙂"], ["textarea", "第一行\n第二行🙂  "], ["textarea", ""], ["controlled", "Accepted-轻舟"]]) {
         const filled = await h.act(id, "fill", { value });
-        expect(filled, JSON.stringify(filled)).toMatchObject({ filled: true, value, submitDispatched: false, method: "cdp" });
-        expect(filled).not.toHaveProperty("submitted");
+        expect(filled).toEqual({});
         const state = await h.state();
         expect(state.values[id]).toBe(value);
         expect(events(state, id, "input").length).toBeGreaterThan(0);
@@ -284,14 +287,14 @@ for (const mode of ["desktop", "mobile"]) {
       expect((await h.state()).acceptedValue).toBe("Accepted-轻舟");
       const spacedText = "  keep  spaces🙂  ";
       const spaced = await h.act("rich", "fill", { value: spacedText });
-      expect(spaced).toMatchObject({ filled: true, method: "cdp" });
+      expect(spaced).toEqual({});
       const spacedState = await h.state();
-      expect(spaced.value).toBe(spacedState.richRaw);
-      expect(spaced.value.replace(/\u00a0/g, " ")).toBe(spacedText);
+      expect(spacedState.richRaw.replace(/\u00a0/g, " ")).toBe(spacedText);
       expect(events(spacedState, "rich", "input").length).toBeGreaterThan(0);
       expect(events(spacedState, "rich", "input").every(event => event.trusted)).toBe(true);
-      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toMatchObject({ filled: true, method: "content" });
+      expect(await h.act("rich", "fill", { value: "第一段\n第二段" })).toEqual({});
       expect((await h.state()).values.rich.split(/\n+/)).toEqual(["第一段", "第二段"]);
+      expect(await h.page.locator('#rich p').allTextContents()).toEqual(["第一段", "第二段"]);
 
       const mismatch = await h.act("uppercase", "fill", { value: "mixed", submit: true });
       expect(mismatch).toMatchObject({ code: "ELEMENT_VALUE_MISMATCH" });
@@ -299,16 +302,16 @@ for (const mode of ["desktop", "mobile"]) {
       expect(state.submits).toBe(0);
       expect(state.values.uppercase).toBe("MIXED");
       expect(events(state, "uppercase", "keydown").some(event => event.key === "Enter")).toBe(false);
-      expect(await h.act("text", "fill", { value: "submit", submit: true })).toMatchObject({ filled: true, submitDispatched: true });
+      expect(await h.act("text", "fill", { value: "submit", submit: true })).toEqual({});
       state = await h.state();
       expect(state.submits).toBe(1);
       expect(events(state, "text", "keydown").filter(event => event.key === "Enter")).toEqual([
         expect.objectContaining({ trusted: true }),
       ]);
       await h.blockEnter();
-      expect(await h.act("text", "fill", { value: "cancelled", submit: true })).toMatchObject({ submitDispatched: true });
+      expect(await h.act("text", "fill", { value: "cancelled", submit: true })).toEqual({});
       expect((await h.state()).submits).toBe(1);
-      expect(await h.act("required", "fill", { value: "", submit: true })).toMatchObject({ submitDispatched: true });
+      expect(await h.act("required", "fill", { value: "", submit: true })).toEqual({});
       state = await h.state();
       expect(state.invalid).toBe(1);
       expect(state.submits).toBe(1);
@@ -328,11 +331,11 @@ for (const mode of ["desktop", "mobile"]) {
       expect(events(state, "sink", "keydown").some(event => event.key === "Enter")).toBe(false);
       expect(state.submits).toBe(1);
 
-      expect(await h.act("checkbox", "check")).toMatchObject({ checked: true, changed: true, method: "cdp" });
+      expect(await h.act("checkbox", "check")).toEqual({});
       const afterCheck = await h.state();
-      expect(await h.act("checkbox", "check")).toMatchObject({ checked: true, changed: false });
+      expect(await h.act("checkbox", "check")).toEqual({});
       expect((await h.state()).events.length).toBe(afterCheck.events.length);
-      expect(await h.act("checkbox", "uncheck")).toMatchObject({ checked: false, changed: true });
+      expect(await h.act("checkbox", "uncheck")).toEqual({});
       state = await h.state();
       expect(state.checks.checkbox).toBe(false);
       expect(events(state, "checkbox", "click")).toHaveLength(2);
@@ -357,8 +360,9 @@ for (const mode of ["desktop", "mobile"]) {
       expect(state.checks["disabled-check"]).toBe(false);
       expect(state.checks.radio).toBe(true);
 
-      expect(await h.act("hidden-check", "check")).toMatchObject({ checked: true, changed: true, method: "cdp" });
-      expect(await h.act("hidden-check", "uncheck")).toMatchObject({ checked: false, changed: true });
+      expect(await h.act("hidden-check", "check")).toEqual({});
+      expect((await h.state()).checks["hidden-check"]).toBe(true);
+      expect(await h.act("hidden-check", "uncheck")).toEqual({});
       state = await h.state();
       expect(state.checks["hidden-check"]).toBe(false);
       expect(events(state, "hidden-label", "click")).toHaveLength(2);
@@ -375,6 +379,40 @@ for (const mode of ["desktop", "mobile"]) {
     } finally { await h.close(); }
   });
 }
+
+for (const mode of ["desktop", "mobile"]) test(`${mode} transparent checkbox check uses its label surface exactly once`, async () => {
+  const h = await createHarness(mode);
+  const events = (state, id, type) => state.events.filter(event => event.id === id && event.type === type);
+  try {
+    const hit = await h.page.locator("#overlay-label").evaluate(label => {
+      label.scrollIntoView({ block: "center" });
+      const rect = label.getBoundingClientRect(), controlRect = label.control.getBoundingClientRect();
+      return { hit: document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.id,
+        opacity: getComputedStyle(label.control).opacity,
+        sameBox: rect.x === controlRect.x && rect.y === controlRect.y && rect.width === controlRect.width && rect.height === controlRect.height };
+    });
+    expect(hit).toEqual({ hit: "overlay-check", opacity: "0", sameBox: true });
+    for (const [action, checked, count] of [["check", true, 1], ["check", true, 1], ["uncheck", false, 2], ["uncheck", false, 2]]) {
+      const result = await h.act("overlay-check", action);
+      expect(result).toEqual({});
+      const state = await h.state();
+      expect(state.checks["overlay-check"]).toBe(checked);
+      for (const type of ["click", "input", "change"]) {
+        expect(events(state, "overlay-check", type)).toHaveLength(count);
+        expect(events(state, "overlay-check", type).every(event => event.trusted)).toBe(true);
+      }
+      expect(events(state, "overlay-label", "click")).toHaveLength(0);
+    }
+    const safeUrl = (await h.state()).url;
+    for (const [id, surface] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
+      expect(await h.act(id, "check")).toHaveProperty("message");
+      const state = await h.state();
+      expect(state.checks[id]).toBe(false);
+      expect(events(state, surface, "click")).toEqual([]);
+      expect(state.url).toBe(safeUrl);
+    }
+  } finally { await h.close(); }
+});
 
 for (const scenario of [
   { name: "observer setup / copied value", trigger: "observer", copy: true, focus: true },
@@ -489,14 +527,15 @@ test("httpbin pizza radios check through the wrapped label", async () => {
     );
     const large = await call('css:input[name="size"][value="large"]', "check");
     const checks = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll("input")].map(el => [el.value || el.name, el.checked])));
-    expect(large, JSON.stringify({ large, checks })).toMatchObject({ checked: true, changed: true, method: "cdp" });
+    expect(large).toEqual({});
     expect(checks).toMatchObject({ small: false, medium: false, large: true });
     const label = await call("css:fieldset:nth-of-type(1) > p:nth-of-type(2) > label", "click");
     const afterLabel = await h.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('input[type=radio]')].map(el => [el.value, el.checked])));
     expect(label, JSON.stringify({ label, afterLabel })).not.toHaveProperty("message");
     expect(afterLabel).toMatchObject({ small: false, medium: true, large: false });
     const bacon = await call('css:input[name="topping"][value="bacon"]', "check");
-    expect(bacon, JSON.stringify(bacon)).toMatchObject({ checked: true, changed: true, inputDelivered: true });
+    expect(bacon).toEqual({});
+    await expect(h.page.locator('input[value="bacon"]')).toBeChecked();
     const opened = await h.worker.evaluate((url) => elementHarness.call("open_tab", { url }), h.page.url());
     expect(opened, JSON.stringify(opened)).not.toHaveProperty("message");
     const shot = await h.worker.evaluate((tabId) => elementHarness.call("screenshot", { tabId, actionable: true }, "run_script"), opened.tabRef);
@@ -520,8 +559,7 @@ test("a click cancelled at pointerdown still counts as delivered", async () => {
         button.addEventListener("click", () => { window.clicks += 1; });
       </script>`);
     const result = await h.act("once", "click");
-    expect(result, JSON.stringify(result)).toMatchObject({ clickDispatched: true, inputDelivered: true });
-    expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(result).toEqual({});
     expect(await h.page.evaluate(() => window.clicks)).toBe(1);
   } finally { await h.close(); }
 });
@@ -554,9 +592,7 @@ test("a click that navigates is not reported as undelivered input", async () => 
     ]) {
       await h.page.setContent(html);
       const result = await h.act(id, "click");
-      expect(result, JSON.stringify(result)).toMatchObject({
-        clickDispatched: true, inputDelivered: true, navigated: true,
-      });
+      expect(result).toMatchObject({ navigated: true, url: expect.stringContaining(url) });
       expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
       await expect.poll(() => h.page.url()).toContain(url);
     }
@@ -589,10 +625,8 @@ for (const outcome of ["download", "no-content", "blocked"]) {
       const started = performance.now();
       const result = await h.act("request", "click");
       expect(performance.now() - started, JSON.stringify(result)).toBeLessThan(8000);
-      expect(result, JSON.stringify(result)).toMatchObject({
-        method: "href_navigation", navigationPending: false, navigated: false, urlChanged: false,
-        pageBefore: { url: beforeUrl }, pageAfter: { url: beforeUrl },
-      });
+      expect(result).toEqual({});
+      expect(h.page.url()).toBe(beforeUrl);
       expect(await h.page.evaluate(() => window.originalDocument)).toBe(documentMarker);
       expect(h.navigationRequests).toEqual(outcome === "blocked" ? [] : [`/navigation-${outcome}`]);
       expect(dialogs).toBe(outcome === "blocked" ? 1 : 0);
@@ -615,12 +649,8 @@ test("form submission navigation waits for delayed responses without submitting 
       await h.page.goto(beforeUrl);
       const beforeSubmissions = h.submissions.length;
       const result = await h.act("send", "click");
-      expect(result, JSON.stringify(result)).toMatchObject({
-        clickDispatched: true, inputDelivered: true, navigated: true,
-        urlChanged: afterUrl !== beforeUrl,
-        pageBefore: { url: beforeUrl },
-        pageAfter: { url: afterUrl, title: "Submission completed" },
-      });
+      expect(result).toEqual({ navigated: true, url: afterUrl });
+      await expect(h.page).toHaveTitle("Submission completed");
       expect(h.submissions.length - beforeSubmissions).toBe(1);
       expect(await h.page.evaluate(() => Number(sessionStorage.navigationClicks))).toBe(1);
       expect(h.page.url()).toBe(afterUrl);
@@ -634,10 +664,8 @@ test("form submission navigation waits for delayed responses without submitting 
         document.querySelector('form').onsubmit=event=>{event.preventDefault();submits++};
       </script>`);
     const prevented = await h.act("prevented", "click");
-    expect(prevented, JSON.stringify(prevented)).toMatchObject({
-      clickDispatched: true, inputDelivered: true, navigated: false, urlChanged: false,
-      pageAfter: { url },
-    });
+    expect(prevented).toEqual({});
+    expect(h.page.url()).toBe(url);
     expect(h.submissions).toHaveLength(beforeSubmissions);
     expect(await h.page.evaluate(() => ({ clicks, submits }))).toEqual({ clicks: 1, submits: 1 });
   } finally { await h.close(); }
@@ -661,28 +689,15 @@ for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift"
         return { result, elapsedMs: performance.now() - start };
       }, args);
       await testInfo.attach("press-navigation-result", { body: JSON.stringify({ scenario, result, elapsedMs }, null, 2), contentType: "application/json" });
-      expect(result, JSON.stringify(result)).toMatchObject({ pressed: true, key: args.key || args.value, method: "cdp", inputDelivered: true });
-      expect(result).not.toHaveProperty("submitDispatched");
-      expect(result).not.toHaveProperty("message");
       if (otherKey) {
-        for (const field of ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "observedNavigation"]) {
-          expect(result).not.toHaveProperty(field);
-        }
+        expect(result).toEqual({});
         // These handlers start a real slow navigation, but modified Enter/Escape must not wait for it.
         expect(elapsedMs).toBeLessThan(1000);
       } else {
         const afterUrl = ["cross"].includes(scenario) ? `${origin}/navigation-done?scenario=${scenario}&delay=${delay}`
           : scenario === "hash" ? `${beforeUrl}#sent` : scenario === "push" ? `${origin}/navigation-press?sent=1` : beforeUrl;
         const navigated = ["cross", "push", "same"].includes(scenario);
-        const changedUrl = ["cross", "push"].includes(scenario);
-        const title = ["cross", "same"].includes(scenario) ? "Submission completed" : "Before press";
-        expect(result).toMatchObject({
-          pageBefore: { url: beforeUrl, title: "Before press" }, pageAfter: { url: afterUrl, title },
-          urlChanged: changedUrl, titleChanged: title !== "Before press", navigationPending: scenario === "slow",
-          navigated: scenario === "slow" ? null : navigated,
-        });
-        if (changedUrl) expect(result.observedNavigation).toMatchObject({ url: afterUrl });
-        else expect(result).not.toHaveProperty("observedNavigation");
+        expect(result).toEqual(scenario === "slow" ? { navigationPending: true } : navigated ? { navigated: true, url: afterUrl } : {});
         expect(h.page.url()).toBe(afterUrl);
       }
       const submitsToServer = ["cross", "same", "slow", "shift", "escape"].includes(scenario);
@@ -749,15 +764,13 @@ test("an iframe click lands once and its key still arrives", async () => {
     for (const [id, name] of [["frame", "same-click"], ["xoframe", "cross-click"]]) {
       const result = await h.act(id, "click");
       const clicks = await h.page.frame({ name }).evaluate(() => window.clicks);
-      expect(result, JSON.stringify({ result, clicks })).toMatchObject({ clickDispatched: true, inputDelivered: true });
-      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(result).toEqual({});
       expect(clicks).toBe(1);
     }
     for (const [id, name] of [["keyframe", "same-key"], ["xokey", "cross-key"]]) {
       const result = await h.act(id, "press", { key: "a" });
       const keys = await h.page.frame({ name }).evaluate(() => window.keys);
-      expect(result, JSON.stringify({ result, keys })).toMatchObject({ pressed: true, inputDelivered: true });
-      expect(result).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+      expect(result).toEqual({});
       expect(keys).toContain("a");
     }
   } finally {
@@ -802,11 +815,10 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
 
     await h.worker.evaluate(() => { receiptMode = "unknown"; });
     const clicked = await h.act("once", "click");
-    expect(clicked, JSON.stringify(clicked)).toMatchObject({ clickDispatched: true, inputDelivered: true });
-    expect(clicked).not.toHaveProperty("code", "INPUT_NOT_DELIVERED");
+    expect(clicked).toEqual({});
     expect(await h.page.evaluate(() => window.clicks)).toBe(2);
     const pressed = await h.act("keys", "press", { key: "a" });
-    expect(pressed, JSON.stringify(pressed)).toMatchObject({ pressed: true, inputDelivered: true });
+    expect(pressed).toEqual({});
     expect(await h.page.evaluate(() => window.keys)).toContain("a");
   } finally { await h.close(); }
 });

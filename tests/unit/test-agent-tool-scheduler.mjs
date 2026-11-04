@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
-import { scheduleToolCalls } from '../../src/background/tools/tool-scheduler.js';
+import { createNestedToolScheduler, scheduleToolCalls } from '../../src/background/tools/tool-scheduler.js';
+import { planTabBatch } from '../../src/background/tools/tab-batch.js';
 globalThis.chrome = {};
-const { getParallelReadTab } = await import('../../src/background/tools/runtime.js');
+const { getBatchTabPolicy, getParallelReadTab } = await import('../../src/background/tools/runtime.js');
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 
 const call = (id, name, tabId) => ({ id, function: { name, arguments: JSON.stringify({ tabId, limit: 10 }) } });
@@ -137,6 +138,81 @@ test('scheduler bounds execution at ten and refills slots before earlier calls c
   assert.equal(peak, 10); assert.equal(active, 0);
   assert.deepEqual(committed, started);
   assert.deepEqual(parallelCalls, Array(11).fill(true));
+});
+
+test('finite batches arm ten passive observations without blocking their triggering action', async () => {
+  const items = [...Array.from({ length: 10 }, (_, id) => ({ id, name: 'wait_for_navigation', args: { tabRef: 1 } })),
+    { id: 10, name: 'act_on_element', args: { tabRef: 1, target: 'css:#go', action: 'click' } }];
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy(item.name, item.args) }));
+  const stop = new AbortController(), started = [], commits = [], observers = new Set();
+  const run = scheduleToolCalls(items, {
+    tab: () => 1, lane: plan.lane, independent: plan.independent, observer: plan.passive,
+    dependencies: plan.dependencies, signal: stop.signal, cancelled: item => item.id,
+    execute: async (item, signal) => {
+      started.push(item.id);
+      if (item.name === 'act_on_element') for (const release of [...observers]) release();
+      else await new Promise(resolve => {
+        const release = () => { signal.removeEventListener('abort', release); observers.delete(release); resolve(); };
+        observers.add(release); signal.addEventListener('abort', release, { once: true });
+      });
+      return item.id;
+    },
+    commit: async id => { commits.push(id); },
+  });
+  try {
+    await tick();
+    assert.deepEqual(started, items.map(item => item.id), 'the action must start while all ten observations are armed');
+    await run;
+    assert.deepEqual(commits, items.map(item => item.id), 'publication retains the original call order');
+    assert.equal(observers.size, 0);
+  } finally { stop.abort(); await run; }
+});
+
+test('finite containers yield a leaf slot before their own execution completes', async () => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const items = Array.from({ length: 11 }, (_, i) => i + 1), started = [], commits = [], releases = new Map();
+  let resumeParents, releaseAction, active = 0, peak = 0;
+  const parents = new Promise(resolve => { resumeParents = resolve; });
+  const holdLeaf = (id, signal) => new Promise(resolve => {
+    const release = () => { signal.removeEventListener('abort', release); releases.delete(id); resolve(); };
+    releases.set(id, release); signal.addEventListener('abort', release, { once: true });
+  });
+  const run = scheduleToolCalls(items, {
+    tab: id => id, signal: stop.signal, cancelled: id => id, reject: id => id,
+    execute: async (id, signal, _parallel, scope) => {
+      if (id <= 10) {
+        await nested.run({ parent: scope, group: 'children', lane: id, signal,
+          policy: { kind: 'target', implicit: false, observation: false, parallel: true },
+          execute: async () => {
+            started.push(`child-${id}`); peak = Math.max(peak, ++active);
+            try { await holdLeaf(id, signal); return id; } finally { active--; }
+          },
+        });
+        await parents;
+      } else {
+        started.push('action'); peak = Math.max(peak, ++active);
+        try { await new Promise(resolve => { releaseAction = resolve; }); } finally { active--; }
+      }
+      return id;
+    },
+    commit: async id => { commits.push(id); },
+  });
+  try {
+    await tick();
+    assert.equal(started.length, 10); assert.equal(active, 10);
+    releases.get(1)();
+    await tick();
+    assert.equal(started.at(-1), 'action', 'a completed child frees capacity even while its parent remains suspended');
+    assert.equal(active, 10); assert.equal(peak, 10);
+    assert.deepEqual(commits, [], 'the suspended first parent still holds the publication cursor');
+    for (const release of [...releases.values()]) release();
+    resumeParents(); releaseAction();
+    await run;
+    assert.deepEqual(commits, items); assert.equal(active, 0); assert.equal(nested.pending, 0);
+  } finally {
+    stop.abort(); resumeParents(); releaseAction?.();
+    await run;
+  }
 });
 
 test('Agent serializes same-tab lanes without blocking independent reads and retains global barriers', async () => {

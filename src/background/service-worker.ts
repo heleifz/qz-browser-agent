@@ -1,3 +1,5 @@
+import { presentToolResult } from "../shared/contracts/tool-result-presentation.js";
+import { toolIdentityEventFields } from "../shared/tools/tool-identity.js";
 import { initializeLanguage, whenLanguageReady, readLanguagePreference, saveLanguagePreference, getAvailableLanguages } from "../shared/i18n/index.js";
 import { firefoxExtension } from "../shared/product-text.js";
 import { matchConfiguredModelCapabilities } from "../shared/models/model-capabilities.js";
@@ -704,6 +706,7 @@ const locationService = createLocationService({
   locate: sidepanelChannel.requestLocation,
 });
 toolRuntime = createToolRuntime({
+  invokeNestedTool: (parent, name, args, signal) => runScriptBridge.invokeTool(parent, name, args, signal),
   requestLocation: locationService.request,
   skillSettings,
   skillNetwork,
@@ -732,6 +735,8 @@ toolRuntime = createToolRuntime({
     runAutomation: automationRuntime.run,
     listAutomationRuns: automationRuntime.listRuns,
     reserveCreatedTab: sessionTabs.reserveCreatedTab,
+    beginPopupCapture: sessionTabs.beginPopupCapture,
+    observePopup: sessionTabs.observePopup,
     getTabAliases: sessionTabs.getTabAliases,
     reserveTabAlias: sessionTabs.reserveTabAlias,
     commitTabAlias: sessionTabs.commitTabAlias,
@@ -767,7 +772,17 @@ const runScriptBridge = createRunScriptBridge({
     const [entry, metadata] = await Promise.all([sessionAgentHost.getLiveEntry(sessionId), sessionRepository.getMetadata(sessionId)]);
     return { ...entry?.agent?.getRunToolContext(runId), externalDrive: metadata?.source === "external-drive" };
   },
-  recordDriveTool: observation => mcpRuntime.recordNestedTool(observation),
+  recordNestedTool: observation => {
+    if (observation.externalDrive) return mcpRuntime.recordNestedTool(observation);
+    const { sessionId, runId, name: toolName, args, toolCallId, parentSpanId } = observation;
+    if (!toolCallId || !sessionSupervisor.isRunCurrent(sessionId, runId)) return Promise.resolve(false);
+    const meta = { runId, toolCallId, spanId: `tool:${toolCallId}`, parentSpanId, toolName, args,
+      ...toolIdentityEventFields(toolRuntime.getIdentity(toolName)) };
+    return Promise.resolve(observation.phase === "start"
+      ? sessionAgentHost.handleEvent(sessionId, { ...meta, type: "tool_execution_start", startedExecution: observation.startedExecution })
+      : sessionAgentHost.handleEvent(sessionId, { ...meta, type: "tool_execution_end", isError: observation.isError,
+        result: presentToolResult(observation.result, observation.resultPresentation) }));
+  },
   applyNestedToolResult: async ({ sessionId, ...payload }) => {
     const entry = await sessionAgentHost.getLiveEntry(sessionId);
     return entry?.agent?.applyNestedToolResult(payload) || false;
@@ -906,6 +921,8 @@ const backgroundApi = createBackgroundApi({
     list: sessionCommands.listSessionsRuntime,
     create: sessionCommands.createSessionFromApi,
     createDrive: (params: Record<string, unknown>) => mcpRuntime.createDriveSession(params),
+    listDrive: (params: Record<string, unknown>) => mcpRuntime.listDriveSessions(params),
+    getDrive: (params: Record<string, unknown>) => mcpRuntime.getDriveSession(params),
     rename: sessionCommands.renameSessionRuntime,
     remove: sessionCommands.deleteSessionRuntime,
     send: mcpRuntime.sendMessage,
@@ -1068,6 +1085,10 @@ function getMcpBridge() {
   });
 }
 dataConsent.whenAccepted.then(getMcpBridge).catch(error => console.debug("[qz] MCP bridge startup failed:", error));
+
+chrome.webNavigation.onCreatedNavigationTarget.addListener(target => {
+  sessionTabs.handlePopupCreated(target).catch(error => console.warn("[轻舟] persist popup ownership failed:", error));
+});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void releaseTabCdp(tabId);

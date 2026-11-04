@@ -141,7 +141,7 @@ test("mobile tabs use mobile headers from the first request, persist across runs
     expect(listedMobile).toMatchObject({ tabRef: tabId, url: `${url}/mobile`, active: false });
 
     const inputEvents = () => worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, world:"MAIN", func:()=>window.inputEvents}))[0].result, tabId);
-    expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toMatchObject({clickDispatched:true});
+    expect(await call("act_on_element", {tabRef:tabId,target:"css:#target", action:"click"})).toEqual({});
     expect(await inputEvents()).toEqual([{type:"touchstart",trusted:true},{type:"touchend",trusted:true}]);
     const inputShot = await call("screenshot", {tabRef:tabId,actionable:true});
     const point = await worker.evaluate(async tabId => (await chrome.scripting.executeScript({target:{tabId}, func:()=>{

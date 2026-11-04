@@ -1,4 +1,5 @@
 import type { ToolErrorDetails } from "../shared/contracts/tool-error.js";
+import type { ToolResultPresentation } from "../shared/contracts/tool-result-presentation.js";
 /** Background extension API. Runtime services are supplied by the owning host. */
 import type { SkillActivationContext } from "../shared/skills/skill-manifest.js";
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
@@ -17,6 +18,8 @@ export interface ToolContext extends SkillActivationContext {
   requestedTabRef?: string | number;
   /** Call-scoped cancellation, including the tool deadline. */
   signal?: AbortSignal;
+  /** Host-owned, call-local presentation; never part of the business result. */
+  resultPresentation?: ToolResultPresentation;
   /** Observation execution preserves the working tab; ordered commit may select the observed tab. */
   preserveWorkingTab?: boolean;
   /** Trusted batch creators publish ownership and working-tab state only at ordered settlement. */
@@ -32,6 +35,12 @@ export interface ToolContext extends SkillActivationContext {
   reportPartial?(result: Record<string, unknown>, pending: string): void;
   /** Opaque live invocation identity carried only by nested script transports. */
   toolExecutionId?: string;
+  /** Host-only nested dispatch. The live parent owns cancellation and recording. */
+  invokeTool?(name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<unknown>;
+  /** The same policy-filtered catalog used by native and script callers. */
+  listTools?(names?: readonly string[]): { tools: Record<string, unknown>[] };
+  /** Opaque scheduler authority; never accepted from a page message. */
+  nestedToolScope?: object;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */
   measurePhase?(phase: ToolExecutionPhase): () => void;
   /** Captured by the run. Registry references are in-memory capabilities, never wire data. */

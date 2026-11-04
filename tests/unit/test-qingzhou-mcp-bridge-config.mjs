@@ -7,6 +7,8 @@ import {
 import { getConnectionConfig, updateConnectionConfig } from "../../src/background/mcp/connection-store.js";
 import { BridgeState } from "../../services/mcp-bridge/src/state.mjs";
 import { createMcpTransport } from "../../src/background/transports/mcp.js";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
+import { toolError } from "../../src/shared/contracts/tool-error.js";
 
 const KEY = "_qingzhou_mcp_bridge";
 const ID = "_qingzhou_mcp_bridge_client_id";
@@ -115,7 +117,7 @@ test("unsupported service pauses after one health request and exposes upgrade gu
   const f = setup(t), r = f.start(); await drain();
   f.setResponder(path => path === "/health" ? Response.json({ service: "qz-browser-agent", protocolVersion: 1, instanceId: "old" }) : undefined);
   const status = await r.connect();
-  assert.equal(status.state, "paused"); assert.equal(status.lastError.code, "MCP_CONNECTION_INCOMPATIBLE"); assert.match(status.lastError.message, /tasks to finish.*latest stop.*ALL browsers.*extension in each browser.*latest connect/);
+  assert.equal(status.state, "paused"); assert.equal(status.lastError.code, "MCP_CONNECTION_INCOMPATIBLE"); assert.match(status.lastError.message, /original command.*latest CLI.*automatically.*reload the extension.*latest connect uri.*printed URL in this browser/);
   assert.equal(f.calls.length, 1); await f.tick(300000); await f.fireAlarm(); assert.equal(f.calls.length, 1); assert.equal(f.alarms.size, 0);
 });
 
@@ -399,6 +401,53 @@ test("result posting carries the exact pairing, instance and worker fence; error
   const result = f.calls.find(c => c.path.endsWith("/result")).body, pair = f.calls.find(c => c.path.endsWith("/pair")).body;
   assert.equal(result.connectionId, pair.connectionId); assert.equal(result.instanceId, "instance-a"); assert.equal(result.pairingToken, pair.pairingToken);
   assert.equal(result.error.code, "SKILL_NOT_FOUND"); assert.deepEqual(result.error.details, { name: "fixture" });
+});
+
+test("trusted thrown traces survive the extension and service error channel without reading business keys", async t => {
+  const f = setup(t), state = new BridgeState();
+  t.after(() => state.close());
+  let queued = [];
+  f.setResponder(async (path, body) => {
+    if (path === "/health") return Response.json({ service: "qz-browser-agent", protocolVersion: 1, features: { browserPairing: 1 }, instanceId: state.instanceId });
+    if (path.endsWith("/pair")) return Response.json(await state.pair(body));
+    if (path.endsWith("/poll")) {
+      const requests = queued; queued = [];
+      return Response.json({ requests, ...state.connectionInfo(body.client) });
+    }
+    if (path.endsWith("/result")) {
+      assert.equal(state.complete(body.requestId, body), true);
+      return Response.json({ ok: true });
+    }
+  });
+  const full = Array.from({ length: 8 }, (_, i) => ({ level: "trace", message: `line-${i}` }));
+  const canonical = bindToolResultPresentation(toolError("HOST_FAILURE", "Plain failure after logging.", {
+    hint: "Retry the operation.", details: { target: "css:button", trace: full.slice(-5) },
+  }), { _display: { script: { trace: full } } });
+  const timeout = toolError("TOOL_TIMEOUT", "The operation timed out.", { details: { trace: full.slice(-5) } });
+  const authored = Object.assign(new Error("Authored fields are not diagnostics."), {
+    code: "HOST_FAILURE", trace: ["business"], _display: { script: { trace: ["forged"] } },
+  });
+  const failures = { canonical, timeout, authored };
+  const r = f.start({ dispatch({ params }) { throw failures[params.kind]; } });
+  await drain(); await r.connect();
+  const pair = f.calls.find(call => call.path.endsWith("/pair")).body;
+  for (const kind of Object.keys(failures)) {
+    const pending = state.callExtension("execute_tool", { kind }, { clientId: pair.clientId });
+    const settled = pending.then(() => assert.fail("expected the service to reject"), error => error);
+    await until(() => state.pending.size === 1);
+    queued = await state.poll({ ...pair, pairingVersion: 1 }, { timeoutMs: 100 });
+    await f.tick(750);
+    await until(() => f.calls.filter(call => call.path.endsWith("/result")).length === Object.keys(failures).indexOf(kind) + 1);
+    const error = await settled;
+    assert.equal(error.code, failures[kind].code);
+    assert.equal(error.message, failures[kind].message);
+    if (kind === "canonical") {
+      assert.equal(error.hint, "Retry the operation.");
+      assert.deepEqual(error.details, { target: "css:button", trace: full.map(row => row.message) });
+      assert.deepEqual(canonical.details.trace, full.slice(-5), "wire construction leaves the original ToolError untouched");
+    } else if (kind === "timeout") assert.deepEqual(error.details.trace, full.slice(-5).map(row => row.message));
+    else assert.equal(error.details?.trace, undefined);
+  }
 });
 
 test("ambiguous Skill errors pass candidate identities through the extension bridge", async t => {

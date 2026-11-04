@@ -47,7 +47,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   const state = { sessionId: 'flow', ownedTabIds: [], workingTabId: null };
   const tabs = new Map(), events = [], writes = [], started = [], gates = new Map(), removed = [];
   const controller = new AbortController();
-  const scriptMetrics = { active: 0, peak: 0 }, scriptContexts = [];
+  const scriptMetrics = { active: 0, peak: 0 }, scriptContexts = [], scriptResultTabs = new WeakMap();
   let sessions;
   const tabsApi = {
     async get(id) { if (!tabs.has(id)) throw new Error('missing tab'); return { ...tabs.get(id) }; },
@@ -77,7 +77,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   if (scriptFixtures) {
     const registry = createToolRegistry(), register = registry.forCapability('script-fixture');
     for (const name of ['__flow_open', '__flow_read', '__flow_action']) register(runtime.resolveDefinition(name));
-    for (const name of ['run_script', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
+    for (const name of ['run_script', 'evaluate', 'run_skill_script']) register({ ...runtime.resolveDefinition(name),
       // Keep production declarations, schema, permission checks and effects; control only the script body.
       async execute(args, signal, context) {
         const key = args.args?.stage || args.code || args.script;
@@ -87,8 +87,11 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
           started.push(key); await fixture.wait(key, signal);
           if (fail === key) throw Object.assign(new Error('script failed'), { code: 'SCRIPT_EVALUATION_FAILED' });
           const tab = tabs.get(args.tabId);
-          if (args.mutatesPage) tab.body += '!';
-          return { ok: true, result: { target: args.target || 'page', text: tab?.body || 'inner' } };
+          if (name === 'evaluate' ? args.args?.mutate : args.mutatesPage) tab.body += '!';
+          const value = { text: tab?.body || 'outer' };
+          const result = name === 'run_skill_script' ? { ok: true, result: value } : value;
+          scriptResultTabs.set(result, args.tabId);
+          return result;
         } finally { scriptMetrics.active--; }
       },
     });
@@ -102,7 +105,7 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   agent._applyToolResultEffects = async (name, result, isError) => {
     effects.push({ name, result, isError, working: state.workingTabId, owned: [...state.ownedTabIds] });
     if (stopEffects && createdTabResultId(result) === 97) controller.abort();
-    const lane = name === 'run_script' ? scriptContexts.at(-1)?.tabId : createdTabResultId(result) ?? result.tabId;
+    const lane = scriptResultTabs.has(result) ? scriptResultTabs.get(result) : createdTabResultId(result) ?? result.tabId;
     const gate = `effects:${name}:${lane}`;
     if (hold.includes(gate)) await fixture.wait(gate, controller.signal);
     return apply(name, result, isError);
@@ -194,12 +197,11 @@ test('stop during effects retains published ownership but publishes no late succ
   assert.ok(snapshots[0].events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
 });
 
-for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of target === 'inner' ? [false] : [false, true]) {
-  test(`script barrier waits for prior commits and blocks later tabs: ${target || 'default'} / mutates=${mutatesPage}`, async () => {
-    const script = call('script', 'run_script', { code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, mutatesPage,
-      ...(target ? { target } : {}), ...(target === 'inner' ? {} : { tabRef: 'b' }) });
+for (const code of ['return 42;', 'return await tools.list_tools();']) {
+  test(`outer script barrier waits for prior commits and blocks later tabs: ${code}`, async () => {
+    const script = call('script', 'run_script', { code, args: { stage: 'script-b' }, timeout: 5 });
     const input = [open('a'), open('b'), read('a'), script, call('after', '__flow_read', { tabRef: 'a' }), read('b')];
-    const scriptEffects = `effects:run_script:${target === 'inner' ? 'undefined' : 98}`;
+    const scriptEffects = 'effects:run_script:undefined';
     const hold = ['read-a', 'effects:__flow_read:97', 'script-b', scriptEffects];
     const f = setup({ scriptFixtures: true, hold });
     const run = f.run(input);
@@ -210,26 +212,25 @@ for (const target of [undefined, 'page', 'inner']) for (const mutatesPage of tar
     f.gates.get('effects:__flow_read:97')(); await until(() => f.gates.has('script-b'));
     assert.equal(f.events.filter(e => e.type === 'tool_execution_end').length, 3);
     assert.equal(f.started.filter(key => key === 'read-a').length, 1);
-    assert.equal(f.started.includes('read-b'), false, 'later work on another tab waits too');
-    hold.splice(0, 2); // Later reads are no longer held.
+    assert.equal(f.started.includes('read-b'), false);
+    hold.splice(0, 2);
     f.gates.get('script-b')(); await until(() => f.gates.has(scriptEffects));
     assert.equal(f.started.filter(key => key === 'read-a').length, 1);
     assert.equal(f.started.includes('read-b'), false, 'later work also waits for the script commit');
-    assert.equal(f.siteChanges.length, 0);
     f.gates.get(scriptEffects)();
     const result = f.snapshot(await run);
-    assert.equal(f.siteChanges.length, mutatesPage ? 1 : 0);
-    assert.ok(f.scriptContexts.every(context => context.deferred === false));
+    assert.equal(f.siteChanges.length, 0, 'outer computation has no direct page effect');
+    assert.ok(f.scriptContexts.every(context => context.deferred === false && context.tabId === undefined));
     const serial = setup({ serial: true, scriptFixtures: true });
     assert.deepEqual(result, serial.snapshot(await serial.run(input)));
   });
 }
 
-for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
-  test(`script barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${target}`, async () => {
-    const snapshots = [], input = [open('a'), open('b'), call('script', 'run_script', {
-      code: 'tools.$list()', args: { stage: 'script-b' }, timeout: 5, target, ...(target === 'page' ? { tabRef: 'b', mutatesPage: true } : {}),
-    }), read('a'), read('b')];
+for (const name of ['run_script', 'run_skill_script']) for (const cancel of [false, true]) {
+  test(`orchestration barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${name}`, async () => {
+    const args = name === 'run_script' ? { code: 'return await tools.list_tools();', args: { stage: 'script-b' }, timeout: 5 }
+      : { skill: 'fixture', script: 'script-b', target: 'inner', timeout: 5 };
+    const snapshots = [], input = [open('a'), open('b'), call('script', name, args), read('a'), read('b')];
     for (const serial of [false, true]) {
       const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-b'] } : { fail: 'script-b' }) });
       const run = f.run(input);
@@ -244,10 +245,9 @@ for (const target of ['page', 'inner']) for (const cancel of [false, true]) {
   });
 }
 
-for (const target of [undefined, 'page']) for (const mutatesPage of [false, true]) {
-  test(`no-tools scripts overlap across tabs, serialize within a tab and commit like serial execution: ${target || 'default'} / ${mutatesPage}`, async () => {
-    const script = (id, ref) => call(id, 'run_script', { code: 'async () => input.stage', args: { stage: id },
-      timeout: 5, mutatesPage, tabRef: ref, ...(target ? { target } : {}) });
+for (const mutate of [false, true]) {
+  test(`page evaluations overlap across tabs, serialize within a tab and preserve ordered commit: mutate=${mutate}`, async () => {
+    const script = (id, ref) => call(id, 'evaluate', { code: 'value => value.stage', args: { stage: id, mutate }, timeout: 5, tabRef: ref });
     const input = [open('a'), open('b'), script('script-a', 'a'), script('script-a2', 'a'), script('script-b', 'b')];
     const f = setup({ scriptFixtures: true, hold: ['script-a', 'script-b'] }), run = f.run(input);
     await until(() => f.gates.has('script-a') && f.gates.has('script-b'));
@@ -261,9 +261,9 @@ for (const target of [undefined, 'page']) for (const mutatesPage of [false, true
   });
 }
 
-for (const cancel of [false, true]) test(`no-tools script ${cancel ? 'cancellation' : 'failure'} retains serial Session semantics`, async () => {
-  const input = [open('a'), open('b'), ...['a', 'b'].map(key => call(`script-${key}`, 'run_script', {
-    code: 'async () => args.stage', args: { stage: `script-${key}` }, tabRef: key, mutatesPage: true, timeout: 5,
+for (const cancel of [false, true]) test(`page evaluation ${cancel ? 'cancellation' : 'failure'} retains serial Session semantics`, async () => {
+  const input = [open('a'), open('b'), ...['a', 'b'].map(key => call(`script-${key}`, 'evaluate', {
+    code: 'value => value.stage', args: { stage: `script-${key}`, mutate: true }, tabRef: key, timeout: 5,
   })), read('a')], snapshots = [];
   for (const serial of [false, true]) {
     const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-a'] } : { fail: 'script-a' }) });

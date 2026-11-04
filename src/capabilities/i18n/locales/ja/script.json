@@ -6,6 +6,7 @@
   "script.executeCode": "コードを実行",
   "script.executePageScript": "ページのスクリプトを実行",
   "script.executeScript": "スクリプトを実行",
+  "script.listTools": "ツールを一覧表示",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "ページの JavaScript コンテキストが利用できません。run_script は実際のページコンテキストでのみ実行され、isolated world への切り替えは行っていません。",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "スクリプトで現在のタブのクリック、送信、移動、閉じる操作が発生し、ページがアンロードされる可能性があります。run_script はこれらの操作をブロックします。",
   "script.theScriptPageWaitOrNestedToolCallTimed": "スクリプト、ページの待機、または入れ子のツール呼び出しがタイムアウトしました。上限のない待機、未完了のリクエスト、見つからないセレクターを確認してください。",

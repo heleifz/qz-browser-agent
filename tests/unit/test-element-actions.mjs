@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { registerPageElementTools } from "../../src/capabilities/page/tools.js";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
+import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 const navigationListeners = new Set();
 globalThis.chrome = {
@@ -11,7 +12,7 @@ globalThis.chrome = {
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
-function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1 } = {}) {
+function fixture({ checked, mobile = false, frameId = "", hidden = false, observedNavigation = null, attached = true, receiptCount = 1, rejectUnbound = false } = {}) {
   const commands = [], messages = [], observations = [], controller = new AbortController();
   const receipts = new Set();
   chrome.scripting = { async executeScript({ args }) {
@@ -51,7 +52,10 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     async useElement(_tabId, _ref, _context, run) { return run(content); },
     elementTargetForSelector: selector => `css:${selector}`,
     getElementTargetDescription: () => "test target",
-    async sendToContent(_tabId, action, params) { return content(action, params); },
+    async sendToContent(_tabId, action, params) {
+      assert.equal(rejectUnbound, false, "a frame target must stay on its node-bound Content connection");
+      return content(action, params);
+    },
     clickPointReady: inspected => Boolean(inspected.clickablePoint),
     clickNotReadyResult: () => ({ error: "No point", code: "CLICK_POINT_OUT_OF_VIEWPORT" }),
     getPageContext: () => ({ pageMode: mobile ? "mobile" : "desktop" }),
@@ -66,11 +70,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
       return callback({}, send);
     },
   });
-  const observation = () => ({ target: "css:#target", tag: "input", type: checked === undefined ? "text" : "checkbox",
-    editable: checked === undefined, disabled: false, readOnly: false, focused: true, value: state.value,
-    ...(state.checked === undefined ? {} : { checked: state.checked }),
-    clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
-  return { commands, messages, observations, controller, state, receipts, inspection, observation,
+  return { commands, messages, observations, controller, state, receipts, inspection,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
@@ -166,9 +166,8 @@ for (const documentChanged of [false, true, null]) test(`Firefox Enter keeps pen
   await new Promise(setImmediate);
   t.mock.timers.tick(10000);
   const result = await pending;
-  assert.equal(result.urlChanged, false);
-  assert.equal(result.navigationPending, true);
-  assert.equal(result.navigated, documentChanged === true ? true : null);
+  assert.deepEqual(result, { navigationPending: true,
+    ...(documentChanged === true ? { navigated: true, url: "https://example.test/" } : {}) });
 });
 
 test("page changes during click preparation form the baseline instead of being attributed to the click", async t => {
@@ -187,11 +186,9 @@ test("page changes during click preparation form the baseline instead of being a
     await new Promise(setImmediate);
     t.mock.timers.tick(180);
     const result = await pending;
-    assert.equal(result.navigationPending, false);
-    assert.equal(result.navigated, null, "pre-existing loading is ambiguous, not evidence of a new navigation");
-    assert.equal(result.urlChanged, false);
-    assert.equal(result.pageBefore.url, tab.url);
-    assert.equal(result.pageAfter.url, tab.url);
+    assert.deepEqual(result, {}, "pre-existing loading is not reported as navigation caused by the action");
+    assert.equal(f.observations[0].pageBefore.url, tab.url);
+    assert.equal(f.observations[0].pageAfter.url, tab.url);
     assert.equal(f.commands.filter(command => command.params.type === "mouseReleased").length, 1);
     assert.equal(navigationListeners.size, 0);
   } finally { chrome.tabs.get = get; }
@@ -231,10 +228,8 @@ for (const method of ["href_navigation", "content_fallback"]) {
         await new Promise(setImmediate);
         t.mock.timers.tick(180);
         const result = await pending;
-        assert.equal(result.method, method);
-        assert.equal(result.navigationPending, false);
-        assert.equal(result.navigated, outcome === "already loading" ? null : outcome === "committed");
-        assert.equal(result.pageAfter.url, outcome === "committed" ? href : "https://example.test/");
+        assert.deepEqual(result, outcome === "committed" ? { navigated: true, url: href } : {});
+        assert.equal(f.observations[0].pageAfter.url, outcome === "committed" ? href : "https://example.test/");
         assert.equal(result._pageUrl, undefined);
         assert.equal(requests, 1);
         assert.equal(f.messages.filter(message => message.action === "actOnElement").length, hidden ? 0 : 1);
@@ -263,13 +258,10 @@ test('CSS select succeeds without a debugger connection or attachment permission
     assert.equal(params.elementAction, 'select');
     return { selected: true };
   });
-  assert.equal((await f.call({ action: 'select', value: 'choice' })).selected, true);
+  assert.deepEqual(await f.call({ action: 'select', value: 'choice' }), {});
   assert.equal(f.messages.filter(message => message.action === 'actOnElement').length, 1);
   assert.deepEqual(f.commands, []);
 });
-
-const pressFields = ["action", "target", "index", "key", "pressed", "method", "inputDelivered", "element"];
-const navigationFields = ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated"];
 
 for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
   for (const hidden of [false, true]) test(`press ${JSON.stringify(args)} observes before input (hidden=${hidden}) and appends navigation`, async t => {
@@ -290,13 +282,7 @@ for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
     await new Promise(setImmediate);
     t.mock.timers.tick(180);
     const result = await pending;
-    assert.deepEqual(Object.keys(result), [...pressFields, ...navigationFields, ...(hidden ? [] : ["observedNavigation"])]);
-    assert.deepEqual(result, {
-      action: "press", target: "css:#target", index: 0,
-      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.observation(),
-      pageBefore, pageAfter, urlChanged: !hidden, titleChanged: !hidden, navigationPending: false, navigated: !hidden,
-      ...(observedNavigation ? { observedNavigation } : {}),
-    });
+    assert.deepEqual(result, hidden ? {} : { navigated: true, url: pageAfter.url });
     assert.equal(added.mock.callCount(), 1);
     assert.equal(f.observations.length, 1);
     assert.equal(f.observations[0].prepared, null);
@@ -315,11 +301,8 @@ for (const key of ["Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Meta+Enter", "Esca
     t.mock.method(chrome.tabs, "get", () => { throw new Error("non-Enter must not probe navigation"); });
     // A supplied key wins over value:'Enter'. No timer is advanced in this test.
     const result = await f.call({ action: "press", key, value: "Enter" });
-    assert.deepEqual(result, {
-      action: "press", target: "css:#target", index: 0,
-      key, pressed: true, method: "cdp", inputDelivered: true, element: f.observation(),
-    });
-    assert.deepEqual(Object.keys(result), pressFields);
+    assert.deepEqual(result, {});
+    assert.equal(f.commands.filter(command => command.params.type === "keyDown" || command.params.type === "rawKeyDown").length, 1);
     assert.equal(added.mock.callCount(), 0);
     assert.equal(f.observations.length, 0);
     assert.equal(f.receipts.size, 0);
@@ -473,14 +456,8 @@ for (const outcome of ["success", "error reply", "throw", "cancel", "observation
         assert.match(result.hint, /find_elements/);
         assert.deepEqual(Object.keys(result).sort(), ["code", "message", "hint", "details"].sort());
       } else {
-        assert.equal(result.method, "content_fallback");
-        assert.equal(result.navigated, true);
-        assert.equal(result.urlChanged, true);
-        assert.equal(result.navigationPending, false);
-        assert.equal(result.pageAfter.url, observedNavigation.url);
-        assert.deepEqual(result.observedNavigation, observedNavigation);
-        for (const key of [...navigationFields, "observedNavigation"]) assert.equal(Object.hasOwn(result, key), true, key);
-        assert.equal("submitDispatched" in result, false);
+        assert.deepEqual(result, { navigated: true, url: observedNavigation.url });
+        assert.equal(f.observations[0].pageAfter.url, observedNavigation.url);
       }
     }
     assert.equal(fallbackCalls, 1);
@@ -530,22 +507,42 @@ test("a replaced field is not refilled or submitted", async () => {
   assertNoReplay(f);
 });
 
-for (const submit of [false, true]) test(`ordinary fill keeps its result without input receipts (submit=${submit})`, async t => {
+for (const submit of [false, true]) test(`ordinary fill verifies the field and returns a compact receipt (submit=${submit})`, async t => {
   const f = fixture();
   const injections = t.mock.method(chrome.scripting, 'executeScript');
   const result = await f.call({ action: "fill", value: "new", submit });
-  assert.equal(result.code, undefined);
-  if (submit) assert.equal(result.navigated, false);
+  assert.deepEqual(result, {});
   assert.equal(injections.mock.calls.some(call => call.arguments[0].target?.allFrames), false);
   assert.equal(f.commands.filter(command => command.params.key === 'Enter' && command.params.type === 'keyDown').length, Number(submit));
-  assert.equal(result.filled, true);
-  assert.equal(result.submitDispatched, submit);
-  assert.equal(result.value, "new");
+  assert.equal(f.state.value, "new");
+  assert.equal(f.messages.filter(message => message.action === "readElementActionState").length, 1);
   assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
-  assert.deepEqual(result.element, f.observation());
-  assert.equal(result.element.target, "css:#target");
   assert.equal(f.messages.some(message => message.action === "refreshElementFill" || message.action === "releaseElementFill"), false);
   assertNoReplay(f);
+});
+
+for (const uncertain of [false, true]) test(`rich-text evidence stays in presentation metadata and uncertainty remains explicit (${uncertain})`, async () => {
+  const f = fixture();
+  const structure = { paragraphCount: 2, brCount: 0, blockCount: 2, lineBreakCount: 1, htmlSample: "<p>One</p><p>Two</p>" };
+  f.onContent((action, params) => {
+    if (action === "inspectElement") return { ...f.inspection(), role: "textbox", name: "Article" };
+    if (action === "prepareElementFill") return { ...f.inspection(), fillMode: "content", contentEditable: true };
+    if (action === "actOnElement") {
+      f.state.value = params.value;
+      return { filled: true, fill: { value: params.value, richText: { structure,
+        ...(uncertain ? { method: "innerHTML", warning: "Editor state requires verification" } : {}),
+      } } };
+    }
+  });
+  const result = await f.call({ action: "fill", value: "One\nTwo" });
+  assert.deepEqual(result, uncertain ? { confirmationRequired: true, hint: "Verify the editor saved the value before continuing." } : {});
+  assert.doesNotMatch(JSON.stringify(result), /innerHTML|Article|paragraphCount|filled|"value"/);
+  assert.equal(f.state.value, "One\nTwo");
+  assert.equal(f.messages.filter(message => message.action === "actOnElement").length, 1);
+  assert.equal(f.messages.filter(message => message.action === "readElementActionState").length, 1);
+  assert.deepEqual(getToolResultPresentation(result)._display, {
+    elementAction: { element: { role: "textbox", name: "Article", text: undefined }, structure },
+  });
 });
 
 test("a replacement non-checkable input cannot count as a successful check", async () => {
@@ -576,8 +573,8 @@ for (const mobile of [false, true]) {
   test(`${mobile ? "mobile" : "desktop"} check is idempotent and never replays a partially applied click`, async () => {
     const f = fixture({ checked: true, mobile });
     const unchanged = await f.call({ action: "check" });
-    assert.equal(unchanged.checked, true);
-    assert.equal(unchanged.changed, false);
+    assert.deepEqual(unchanged, {});
+    assert.equal(f.state.checked, true);
     assert.equal(f.commands.length, 0);
     f.state.checked = false;
     const method = mobile ? "Input.dispatchTouchEvent" : "Input.dispatchMouseEvent";
@@ -595,6 +592,28 @@ function frameBox(y) {
   return { model: { content: [8, y, 308, y, 308, y + 80, 8, y + 80] } };
 }
 
+test("an iframe's resolved label stays on its original node-bound frame through click refresh", async () => {
+  const f = fixture({ frameId: "child", rejectUnbound: true });
+  const target = "uid:t7.00abcd.1";
+  const original = { ...f.inspection(), selector: "#control", visible: false, clickablePoint: null };
+  const label = { ...f.inspection(), selector: "#label", tag: "label", editable: false };
+  f.onContent((action, params) => {
+    if (action === "resolveClickTarget") return { resolvedSelector: "#label", element: label, originalElement: original };
+    if (action === "inspectElement" || action === "scrollElementIntoView") return { ...(params.clickTarget ? label : original) };
+  });
+  f.onCommand(method => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(40);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+  });
+  const clicked = await f.call({ target, action: "click" });
+  assert.deepEqual(clicked, {});
+  assert.equal(f.messages.filter(message => message.params.clickTarget).length, 2,
+    "both scrolling and the final inspection resolve the click surface in the original frame");
+  const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
+  assert.deepEqual([release.params.x, release.params.y], [28, 60]);
+});
+
 test("an in-view iframe click keeps the shifted point and does not scroll", async () => {
   const f = fixture({ frameId: "child" });
   f.onCommand(method => {
@@ -603,10 +622,7 @@ test("an in-view iframe click keeps the shifted point and does not scroll", asyn
     if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
   });
   const clicked = await f.call({ action: "click" });
-  assert.equal(clicked.clickDispatched, true);
-  assert.equal(clicked.inputDelivered, true);
-  assert.equal(clicked.element.state.clickablePointInViewport, true);
-  assert.equal(clicked.element.inViewport, true);
+  assert.deepEqual(clicked, {});
   assert.equal(f.messages.some(message => message.action === "scrollElementIntoView"), false);
   const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
   assert.deepEqual([release.params.x, release.params.y], [28, 60]);
@@ -622,10 +638,7 @@ test("an off-screen iframe click scrolls into the page viewport before dispatch"
     if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
   });
   const clicked = await f.call({ action: "click" });
-  assert.equal(clicked.code, undefined);
-  assert.equal(clicked.clickDispatched, true);
-  assert.equal(clicked.inputDelivered, true);
-  assert.equal(clicked.element.state.clickablePointInViewport, true);
+  assert.deepEqual(clicked, {});
   assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView").length, 1);
   const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
   assert.deepEqual([release.params.x, release.params.y], [28, 100]);

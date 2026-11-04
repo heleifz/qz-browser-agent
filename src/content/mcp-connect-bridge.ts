@@ -17,10 +17,10 @@ if (window === window.top && location.protocol === "http:"
       status.textContent = response.ok ? `Connected${connection.name ? ` as ${connection.name}` : ""}. You can close this tab.`
         : response.code === "DATA_CONSENT_REQUIRED"
           ? productText("Open the qz side panel and complete first-time setup, then reload this page.", "Open the qz sidebar and complete first-time setup, then reload this page.")
-          : String(response.error || "Connection failed. Run qz connect to try again.");
+          : String(response.error || "Connection failed. Run qz connect uri and open the printed URL in this browser.");
     }).catch(() => {
       status.dataset.qzConnectionState = "error";
-      status.textContent = "Connection failed. Run qz connect to try again.";
+      status.textContent = "Connection failed. Run qz connect uri and open the printed URL in this browser.";
     });
   }
 }

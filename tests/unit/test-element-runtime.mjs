@@ -371,7 +371,7 @@ assert.equal(fresh.selector, "", "a backend node uid keeps its direct node resol
 
 targetResolutions.length = 0;
 await runtime.resolveElementReference(undefined, { target: "uid:t5.000001.1", readOnly: true }, context);
-assert.equal(targetResolutions.at(-1).readOnly, false, "node-backed uids keep the ownership check");
+assert.equal(targetResolutions.at(-1).readOnly, true, "a declared read-only node UID uses the same non-claiming page access as a selector UID");
 
 const debuggerBeforeFallback = debuggerUses;
 runtime.registerElementRef({
@@ -565,10 +565,14 @@ runtime.registerElementRef({
   selector: "main > img.card:nth-of-type(2)",
   backendNodeId: 44,
 });
+const foreignNodeRead = await runtime.resolveElementReference(15, { target: "uid:t15.000006.1", readOnly: true }, context);
+assert.equal(foreignNodeRead.tabId, 15);
+assert.equal(foreignNodeRead.ref.backendNodeId, 44);
+assert.equal(targetResolutions.at(-1).readOnly, true);
 await assert.rejects(
-  runtime.resolveElementReference(15, { target: "uid:t15.000006.1", readOnly: true }, context),
+  runtime.resolveElementReference(15, { target: "uid:t15.000006.1" }, context),
   error => error?.code === "STALE_ELEMENT_UID",
-  "a node-backed uid still has to match a tab this session owns",
+  "a node-backed uid still requires ownership for a mutating operation",
 );
 ownedTabs = [15];
 runtime.registerElementRef({

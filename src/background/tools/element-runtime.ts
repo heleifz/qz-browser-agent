@@ -20,6 +20,7 @@ interface ElementRuntimeHost {
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
   initializeContentScript(tabId: number, context?: ToolContext): Promise<void>;
+  isReadOnlyAccess?(tabId: number, context: ToolContext): boolean;
 }
 import { isCdpFallbackForbiddenError } from "./cdp-runtime.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "./isolated-page-calls.js";
@@ -113,6 +114,7 @@ export function createElementRuntime({
   withDebugger,
   sendToContent,
   initializeContentScript,
+  isReadOnlyAccess = () => false,
 }: ElementRuntimeHost) {
 // ---------------------------------------------------------------------------
 // Page snapshot element refs
@@ -406,13 +408,13 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       { target: elementTargetForUid(requestedUid) },
     );
   }
-  const selectorFallback = !Number(ref.backendNodeId || 0) && Boolean(String(ref.selector || "").trim());
+  const observationOnly = readOnly === true || isReadOnlyAccess(Number(ref.tabId), context);
   const suffix = (/^t(\d+)\./.exec(requestedUid) || [])[1] || "";
   if (suffix) {
     const listed = taskTabIds(context);
-    // A read-only selector uid may name a tab this session does not own. Check that
+    // A read-only uid may name a tab this session does not own. Check that
     // suffix against the registered tab alone so it cannot collide with an owned tab.
-    const candidates = readOnly === true && selectorFallback
+    const candidates = observationOnly
       ? [Number(ref.tabId)]
       : (listed.length ? listed : [Number(ref.tabId)]);
     const matched = matchTabSuffix(suffix, candidates);
@@ -455,8 +457,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       tabId: resolvedTabId,
       source: "element_uid_reference",
       checkOnly: context.preserveWorkingTab === true || context.deferToolCommit === true,
-      // Selector fallback is a content-script read. Node-backed uids keep the ownership check.
-      readOnly: readOnly === true && selectorFallback,
+      readOnly: observationOnly,
     });
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {

@@ -125,7 +125,7 @@ https://github.com/user-attachments/assets/3203bc89-ef26-4f66-86cc-b602a912a1ab
    ```text
    查今年诺贝尔奖各奖项得主，整理成带来源链接的表格。
    ```
-4. **（可选）接入其他 Agent**：在终端运行 `npx --yes qz-browser-agent@latest connect`，即可让外部 Agent 调用轻舟。详见 [让你的 Agent 更会用浏览器](#让你的-agent-更会用浏览器)。
+4. **（可选）接入其他 Agent**：CLI 命令会按需启动本地服务并连接浏览器。Agent 说明书见 [让你的 Agent 更会用浏览器](#让你的-agent-更会用浏览器)。
 
 <details id="手动安装">
 <summary>无法访问 Chrome 应用商店？手动安装</summary>
@@ -145,9 +145,9 @@ Grok Bot、Claude Code、Codex、pi 等 Agent 可以直接操作已经连接的�
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```
-2. **配对一次**：需要 Node.js 22 及以上版本，运行后会自动在你的默认浏览器里完成配对。
+2. **选择浏览器（可选）**：需要 Node.js 22 及以上版本，CLI 命令会自动连接。如需指定浏览器 Profile，运行以下命令，并在该 Profile 中打开输出的链接：
    ```bash
-   npx qz-browser-agent@latest connect
+   npx qz-browser-agent@latest connect uri
    ```
 3. **直接吩咐**：跟你的 Agent 说“用轻舟对比最近 6 个月发布的开源大模型，整理成带来源的表格”。
 
@@ -159,7 +159,7 @@ npx qz-browser-agent@latest create "你的任务" --stream
 ```
 
 - `--stream` 会实时显示任务进展、需要你回答的问题和最终结果。
-- 用 MCP 客户端的话，配对后运行 `npx qz-browser-agent@latest mcp`，填入它返回的 HTTP 地址即可。
+- 用 MCP 客户端的话，运行 `npx qz-browser-agent@latest mcp`，填入它返回的 HTTP 地址即可。
 - 经常使用的话，可以运行 `npm install --global qz-browser-agent` 全局安装，之后用 `qz` 代替 `npx qz-browser-agent@latest`。
 - 多浏览器配对、追问、导出等用法见 [CLI 与 MCP 参考](docs/cli.md)。
 

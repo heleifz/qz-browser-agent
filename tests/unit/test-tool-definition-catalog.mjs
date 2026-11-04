@@ -344,9 +344,10 @@ function assertPageRoleTerminologyContract() {
     "Skill page tools must not advertise an implicit execution target");
   assert.match(
     accessibilityTools,
-    /获取 tabRef 指定的当前任务所拥有页面的语义快照/,
-    "get_ax_tree should state its owner-only CDP boundary",
+    /获取 tabRef 指定页面的语义快照/,
+    "get_ax_tree reads the explicitly referenced page",
   );
+  assert.equal(resolveToolDefinition("get_ax_tree").page, "readOnly", "AX observation permits authorized foreign-page reads");
   assert.match(
     browserContentProfile,
     /data\.hasWorkingTab === false \? t\("noWorkingPage"\) : t\("workingPage"\)/,

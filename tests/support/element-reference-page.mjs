@@ -14,7 +14,16 @@ export async function startElementReferencePage() {
     }
     const port = server.address().port;
     response.end(`<!doctype html><title>Element reference fixture</title>
-      <style>body{margin:12px}button{min-height:24px}iframe{display:block;width:400px;height:120px}</style>
+      <style>body{margin:12px}button{min-height:24px}iframe{display:block;width:400px;height:120px}
+        .reference-switch{position:relative;width:180px;margin-bottom:8px}
+        .reference-switch label,.reference-label{display:block;width:180px;padding:8px;background:#eee;cursor:pointer}
+        #overlay-toggle{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;z-index:2}
+        #detached-toggle{position:absolute;left:420px;top:12px;width:1px;height:1px;opacity:0}</style>
+      <div class="reference-switch"><input id="overlay-toggle" type="checkbox" role="button" aria-label="Overlay menu"
+        oninput="this.dataset.inputTrusted=String(event.isTrusted)"><label id="overlay-label" for="overlay-toggle">Overlay menu label</label></div>
+      <input id="detached-toggle" type="checkbox" role="button" aria-label="Detached menu"
+        oninput="this.dataset.inputTrusted=String(event.isTrusted)">
+      <section><label id="detached-label" class="reference-label" for="detached-toggle">Detached menu label</label></section>
       <section id="region"><p>Scoped region only</p><button id="alpha" onclick="this.dataset.clicked='yes'">Alpha</button></section>
       <p>Outside scope marker</p><button onclick="document.body.dataset.imageClicked='yes'"><img id="photo" alt="Main picture" src="/pixel.png" width="48" height="48"></button>
       <div id="shadow"></div><iframe id="same" src="/frame?kind=same"></iframe>

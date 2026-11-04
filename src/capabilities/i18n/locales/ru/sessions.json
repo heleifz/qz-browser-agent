@@ -229,8 +229,8 @@
   "sessions.externalDrive": "Внешний",
   "sessions.externalDriveReadOnly": "Эту сессию напрямую ведёт внешний клиент. Здесь можно только просматривать.",
   "sessions.externalDriveWelcomeTitle": "Управляется внешним агентом",
-  "sessions.externalDriveWelcomeBody": "Эту сессию напрямую ведёт внешний агент через MCP или CLI qz. Установите или обновите руководство: npx skills add alibaba/qz-browser-agent -g. Затем выполните эту команду в терминале.",
-  "sessions.externalDriveWelcomeCommandHint": "Привязать этот браузер",
+  "sessions.externalDriveWelcomeBody": "Эту сессию напрямую ведёт внешний агент через MCP или CLI qz. Установите или обновите руководство: npx skills add alibaba/qz-browser-agent -g. Команды CLI подключаются автоматически; для ручного сопряжения выполните команду ниже и откройте выведенный URL в этом браузере.",
+  "sessions.externalDriveWelcomeCommandHint": "Откройте выведенный URL в этом браузере",
   "sessions.externalDriveWelcomeCopy": "Копировать",
   "sessions.externalDriveWelcomeCopied": "Скопировано"
 }

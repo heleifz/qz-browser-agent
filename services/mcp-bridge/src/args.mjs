@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
 import { browserName } from "./browser-registry.mjs";
-import { COMMANDS, DRIVE_SESSION_REQUIRED, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
+import { COMMANDS, DRIVE_SESSION_REQUIRED, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
   throw new QzError("INVALID_ARGUMENTS", message);
@@ -18,21 +18,28 @@ function helpTopic(parts) {
   invalid("Use qz help COMMAND.");
 }
 
+const argumentOptions = {
+  session: { type: "string", short: "s" }, timeout: { type: "string" },
+  title: { type: "string", short: "t" }, client: { type: "string", short: "c" },
+  "wait-id": { type: "string" }, format: { type: "string" }, query: { type: "string" },
+  start: { type: "string" }, limit: { type: "string" }, scope: { type: "string" }, filename: { type: "string" },
+  parent: { type: "string" }, port: { type: "string" }, name: { type: "string" },
+  wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
+  json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
+  lang: { type: "string" }, profile: { type: "string" }, args: { type: "string" },
+  help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
+};
+
+/** Identify the command for syntax-error presentation while consuming option values normally. */
+export function commandNameFromArgs(argv) {
+  return parseArgs({ args: argv, allowPositionals: true, strict: false, options: argumentOptions }).positionals[0] || "help";
+}
+
 /** Parse syntax only. A prompt or args value of "-" is read from stdin by the caller. */
 export function parseCommand(argv) {
   let parsed;
   try {
-    parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, tokens: true, options: {
-      session: { type: "string", short: "s" }, timeout: { type: "string" },
-      title: { type: "string", short: "t" }, client: { type: "string", short: "c" },
-      "wait-id": { type: "string" }, format: { type: "string" }, query: { type: "string" },
-      start: { type: "string" }, limit: { type: "string" }, scope: { type: "string" }, filename: { type: "string" },
-      parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
-      wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
-      json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
-      lang: { type: "string" }, profile: { type: "string" }, tab: { type: "string" },
-      help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
-    } });
+    parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, tokens: true, options: argumentOptions });
   } catch (error) { invalid(error.message); }
 
   const options = { ...parsed.values };
@@ -65,8 +72,8 @@ export function parseCommand(argv) {
   if (options.name !== undefined) {
     try { options.name = browserName(options.name); } catch (error) { invalid(error.message); }
   }
-  if (options.client !== undefined && (options.name !== undefined || options["no-open"])) {
-    invalid("Use --client to select an existing browser, or --name/--no-open to prepare a binding URL.");
+  if (options.client !== undefined && options.name !== undefined) {
+    invalid("Use --client to select an existing browser, or --name to name a new profile.");
   }
   if (options.port !== undefined) {
     const port = Number(options.port);
@@ -97,7 +104,10 @@ export function parseCommand(argv) {
   }
 
   let command = originalCommand, action, id;
-  if (command === "browsers") {
+  if (command === "connect") {
+    if (words.length !== 1 || words[0] !== "uri") invalid("Use qz connect uri to print a browser connection URL.");
+    action = "uri";
+  } else if (command === "browsers") {
     action = words[0] || "list";
     if (action === "list" ? words.length > 1 : action !== "forget" || words.length !== 2 || !words[1].trim()) invalid("Use qz browsers [list], or qz browsers forget NAME|UUID.");
     id = words[1];
@@ -148,23 +158,21 @@ export function parseCommand(argv) {
     id = words[0];
     if (command === "submit") options.args = words[1];
     if (command === "watch") options.wait = true;
-  } else if (command === "exec") {
-    if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
-    else options.payload = words[0] ?? "-";
-    requireDriveSession("exec", options);
   } else if (command === "script") {
-    if (words.length > 1) invalid("Use qz script --session ID --tab TABREF [FILE|-].");
-    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a tabRef returned by open_tab/list_tabs.");
+    if (words.length > 1) invalid("Use qz script --session ID [FILE|-] [--args JSON].");
     requireDriveSession("script", options);
     options.file = words[0] ?? "-";
-  } else if (command === "tools") {
-    if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools --session ID [NAME].");
-    requireDriveSession("tools", options);
-    id = words[0];
+    if (options.args !== undefined) {
+      try { options.args = JSON.parse(options.args); } catch { invalid("--args must be valid JSON."); }
+    }
   } else if (command === "session") {
     action = words[0] || "";
-    if (action !== "create" || words.length !== 1) invalid("Use qz session create --title TITLE.");
-    if (!String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
+    const count = ["create", "list"].includes(action) ? 1 : 2;
+    if (!Object.hasOwn(COMMANDS.session.actions, action) || words.length !== count || words.some(word => !word.trim())) {
+      invalid("Use qz session create --title TITLE, qz session list, qz session show ID, or qz session cancel ID.");
+    }
+    if (action === "create" && !String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
+    id = words[1];
   } else if (command === "skill") {
     if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {

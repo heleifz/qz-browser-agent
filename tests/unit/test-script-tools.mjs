@@ -21,56 +21,80 @@ function fixture(evaluateCdpScript) {
   const definitions = new Map();
   createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
     skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript });
-  const run = definitions.get('run_script').execute;
-  return (tabId = 7, signal, context = {}, args = {}) => run({ code: '42', timeout: 5, tabId, ...args }, signal, { sessionId: 'task', runId: 'run', ...context });
+  const definition = definitions.get('evaluate');
+  return async (tabId = 7, signal, context = {}, args = {}) => {
+    const input = { code: '() => 42', timeout: 5, tabId, ...args };
+    definition.validateArgs(input);
+    return definition.execute(input, signal, { sessionId: 'task', runId: 'run', ...context });
+  };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-test('a deferred tab-local invocation cannot escalate to the tool bridge', async () => {
+test('page evaluation requires a function before any debugger operation', async () => {
   let evaluations = 0;
   const run = fixture(async () => { evaluations++; return {}; });
-  await assert.rejects(run(7, undefined, { deferToolCommit: true }, { code: 'tools.$list()' }), error => {
-    assert.equal(error.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
-    assert.equal(error.details.executed, false); assert.equal(error.details.automaticReplay, false);
-    return true;
-  });
+  for (const code of ['42', 'return input.value', 'tools.list_tools()']) {
+    await assert.rejects(run(7, undefined, { deferToolCommit: true }, { code }), error => {
+      assert.equal(error.code, 'INVALID_SCRIPT_FUNCTION');
+      assert.match(error.message, /not a function expression/);
+      assert.equal(error.hint, undefined);
+      return true;
+    });
+  }
   assert.equal(evaluations, 0);
 });
 
 test('page results preserve large structured values and public error feedback', async () => {
   const value = { text: 'large'.repeat(20000), rows: Array.from({ length: 1200 }, (_, id) => ({ id })) };
-  assert.equal((await fixture(async () => ({ result: { type: 'object', value } }))()).result, value);
+  assert.equal(await fixture(async () => ({ result: { type: 'object', value } }))(), value);
   const run = fixture(async () => ({ result: { type: 'object', value: { __runScriptEnvelope: true, ok: false,
     error: 'querySelector returned null', trace: [{ message: 'selected 0' }], __lastObservation: { _image: 'data:image/png;base64,eA==' } } } }));
   const result = await run();
   assert.equal(result.code, 'SCRIPT_EVALUATION_FAILED');
   assert.equal(result.message, 'querySelector returned null');
-  assert.ok(result.hint);
+  assert.equal(result.hint, undefined);
   assert.deepEqual(result.details.trace.map(row => [row.level, row.message]), [['trace', 'selected 0']]);
   for (const field of ['diagnostic', 'engine', 'execution_world', 'hasResult']) assert.equal(Object.hasOwn(result, field), false);
   assert.equal(result._image, 'data:image/png;base64,eA==');
   assert.equal(result.__runScriptEnvelope, undefined);
 });
 
-test('compile-only return recovery retains input args without adding a bridge', async () => {
-  let calls = 0;
-  const run = fixture(async (_id, { expression }) => {
-    if (++calls === 1) return { exceptionDetails: { text: 'SyntaxError: Illegal return statement' } };
-    assert.match(expression, /const input = \{"value":12\}/);
-    return { result: { type: 'number', value: 12 } };
-  });
-  const result = await run(7, undefined, {}, { code: 'return input.value', args: { value: 12 } });
-  assert.equal(result.result, 12); assert.equal(calls, 2);
+test('script failures report observed facts without recovery advice or replay', async () => {
+  for (const code of ['UNKNOWN_TOOL', 'STALE_ELEMENT_UID', 'STALE_ELEMENT_UID_PAGE_CHANGED', 'TOOL_TIMEOUT']) {
+    for (const extra of [{}, { hint: 'Inspect payment receipt; do not submit again.' },
+      { details: { mayHaveTakenEffect: true, automaticReplay: false } }]) {
+      let calls = 0;
+      const run = fixture(async () => {
+        calls++;
+        return { result: { type: 'object', value: { __runScriptEnvelope: true, ok: false,
+          code, error: 'opaque failure without English keywords', ...extra } } };
+      });
+      const result = await run();
+      assert.equal(result.code, code);
+      assert.equal(result.message, 'opaque failure without English keywords');
+      assert.equal(calls, 1, 'reporting a failure never replays the operation');
+      assert.equal(result.hint, undefined);
+      assert.deepEqual(result.details, extra.details || undefined);
+    }
+  }
 });
 
-test('missing-tool errors from the debugger return guidance without retrying', async () => {
+test('a page syntax error never replays the function body', async () => {
+  let calls = 0;
+  const run = fixture(async () => { calls++; return { exceptionDetails: { text: 'SyntaxError: Illegal return statement' } }; });
+  const result = await run(7, undefined, {}, { code: 'value => value', args: 12 });
+  assert.equal(result.code, 'SCRIPT_EVALUATION_FAILED');
+  assert.equal(calls, 1);
+});
+
+test('missing-tool errors from the debugger report unavailable access without retrying', async () => {
   for (const message of ['ReferenceError: tool is not defined', "ReferenceError: Can't find variable: tools"]) {
     let calls = 0;
     const run = fixture(async () => { calls++; throw new Error(message); });
     const result = await run();
     assert.equal(result.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(result.details.automaticReplay, false); assert.equal(calls, 1);
-    assert.match(result.hint, /tools\.name/);
+    assert.equal(result.hint, undefined);
   }
 });
 
@@ -92,7 +116,7 @@ test('native runtime exceptions are not mistaken for compile-only shape recovery
     const result = await run();
     assert.equal(result.code, 'SCRIPT_EVALUATION_FAILED');
     assert.equal(result.message, exceptionDetails.text);
-    assert.ok(result.hint);
+    assert.equal(result.hint, undefined);
     assert.equal(calls, 1);
   }
 });
@@ -112,14 +136,25 @@ test('same tab serializes, other tabs proceed, cancellation releases queued work
   await run(); assert.deepEqual(calls, [7, 9, 7, 7]);
 });
 
-test('nested run bypasses its own page queue and propagates abort failure', async () => {
+test('page evaluation keeps its queue even when called from outer orchestration', async () => {
   const first = deferred(); let calls = 0;
   const run = fixture(async () => { if (++calls === 1) await first.promise; return { result: { type: 'number', value: calls } }; });
   const outer = run(); await tick();
-  await run(7, undefined, { runScriptToolDepth: 1 });
-  assert.equal(calls, 2); first.resolve(); await outer;
+  const nested = run(7, undefined, { runScriptToolDepth: 1 });
+  await tick(); assert.equal(calls, 1);
+  first.resolve(); await Promise.all([outer, nested]);
+  assert.equal(calls, 2);
   const fail = fixture(async () => { throw new ToolExecutionError('OPERATION_ABORTED', 'stopped'); });
   await assert.rejects(fail(), { code: 'OPERATION_ABORTED' });
+});
+
+test('a trusted private Skill page parent can reenter its own evaluation queue', async () => {
+  const first = deferred(); let calls = 0;
+  const run = fixture(async () => { if (++calls === 1) await first.promise; return { result: { type: 'number', value: calls } }; });
+  const parent = run(); await tick();
+  assert.equal(await run(7, undefined, { runScriptToolDepth: 1, senderTabId: 7 }), 2);
+  first.resolve(); await parent;
+  assert.equal(calls, 2);
 });
 
 test('cancelling the last queued request does not release its still-running predecessor', async () => {

@@ -113,11 +113,12 @@ console.log("tool renderer contract tests passed");
 function testRunScriptRendererStaysQuiet() {
   const body = extractFunctionFromSource(scriptProfile, "render");
 
-  assert.match(body, /appendScriptFeedback\(parent,\s*envelope\)/, "run_script should keep trace and recovery rendering");
+  assert.match(body, /appendScriptFeedback\(parent,\s*valueOnly \? source : envelope\)/, "run_script should read trace from its trusted host envelope");
   const feedback = [];
   const appendFeedback = vm.runInNewContext(`(${extractFunctionFromSource(scriptProfile, "appendScriptFeedback")})`, {
     presentation: {
       getResultEnvelope: value => value,
+      record,
       appendScriptTrace: (_parent, trace) => feedback.push(["trace", trace]),
       appendCompactLine: (_parent, { title }) => feedback.push(["hint", title]),
     },
@@ -125,7 +126,8 @@ function testRunScriptRendererStaysQuiet() {
   appendFeedback({}, { ok: true, result: 7, trace: ["complete"] });
   appendFeedback({}, { code: "SCRIPT_EVALUATION_FAILED", message: "Failed", details: { trace: ["failed"] }, hint: "Inspect the page." });
   appendFeedback({}, { error: "Historical error", trace: ["historical"] });
-  assert.deepEqual(feedback, [["trace", ["complete"]], ["trace", ["failed"]], ["hint", "Inspect the page."], ["trace", ["historical"]]]);
+  appendFeedback({}, { result: { hint: "Business hint", trace: ["business"] }, _display: { script: { valueOnly: true, trace: ["host"] } } });
+  assert.deepEqual(feedback, [["trace", ["complete"]], ["trace", ["failed"]], ["hint", "Inspect the page."], ["trace", ["historical"]], ["trace", ["host"]]]);
   assert.match(body, /genericRenderer\.appendJsonCodeBlock\(parent,\s*"result",\s*value\)/, "run_script should keep result rendering");
   assert.doesNotMatch(body, /appendScriptMeta|buildScriptResultMeta|tool-script-meta/, "run_script should not render low-value meta pills");
   assert.doesNotMatch(toolSources, /function appendScriptMeta|function buildScriptResultMeta/, "obsolete script meta helpers should be removed");

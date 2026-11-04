@@ -344,7 +344,8 @@ test("normalizes URL patterns with safe wildcard syntax", () => {
 
 test("rejects adversarial wildcard hosts within a bounded process", () => {
   const result = spawnSync(process.execPath, [
-    "--import", "./tests/support/typescript-loader.mjs", "--input-type=module", "-e",
+    // Bound guardrail evaluation without rerunning the parent test bootstrap's asset generators.
+    "--import", "tsx", "--import", "./tests/support/default-locale.mjs", "--input-type=module", "-e",
     `import assert from 'node:assert/strict';
      import { normalizeGuardrailPatternInput, matchBlockedUrl } from './src/shared/security-guardrails.js';
      for (const suffix of ['!', ':', '@', '_']) {
@@ -1244,7 +1245,7 @@ test("act_on_element records unknown post-click URL changes for later rate limit
       spanId: "span_js_click",
       toolCallId: "call_js_click",
     });
-    assert.equal(clicked.observedNavigation?.rateLimit?.host, "js-click.example");
+    assert.deepEqual(clicked, { navigated: true, url: "https://js-click.example/after" });
 
     const openRuntime = installSessionTabResolver(tools, { sessionId: "js-click-open-session" })
       .createRuntime({ emit: event => toolEvents.push(event) });
@@ -1321,8 +1322,7 @@ test("act_on_element ignores hash-only URL changes for navigation rate limits", 
       spanId: "span_hash_click",
       toolCallId: "call_hash_click",
     });
-    assert.equal(clicked.navigated, false);
-    assert.equal(clicked.observedNavigation, undefined);
+    assert.deepEqual(clicked, {});
 
     const openRuntime = installSessionTabResolver(tools, { sessionId: "hash-open-session" })
       .createRuntime({ emit: event => toolEvents.push(event) });

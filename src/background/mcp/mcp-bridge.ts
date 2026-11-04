@@ -1,4 +1,5 @@
 import { toolError } from "../../shared/contracts/tool-error.js";
+import { getToolResultTraces, traceMessages } from "../../shared/contracts/tool-result-presentation.js";
 import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
 import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 import {
@@ -35,7 +36,7 @@ function firefoxWakeChrome(): FirefoxMcpWakeChrome | undefined {
   const host = (globalThis as { chrome?: FirefoxMcpWakeChrome }).chrome;
   return host?.qzFirefoxMcpWake === true ? host : undefined;
 }
-const upgradeGuidance = "Wait for running tasks to finish, then run npx --yes qz-browser-agent@latest stop (disconnects ALL browsers). Update/reload the extension in each browser and run npx --yes qz-browser-agent@latest connect. Reconnect other browsers from Settings.";
+const upgradeGuidance = "Retry the original command with the latest CLI to update an incompatible local service automatically. Update and reload the extension, then run npx --yes qz-browser-agent@latest connect uri and open the printed URL in this browser.";
 const newPairingToken = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 export function qingzhouMcpBridgeStorageKey() { return BRIDGE_STORAGE_KEY; }
@@ -180,7 +181,7 @@ class QingzhouMcpBridgeRuntime {
       });
     } else if (config.enabled && config.attemptsRemaining <= 0 && config.state !== "paused") {
       config = await this.persist(generation, { state: "paused", lastError: config.lastError || {
-        code: "MCP_CONNECTION_UNAVAILABLE", message: "Connection attempts are paused. Run qz connect or click Connect to retry.",
+        code: "MCP_CONNECTION_UNAVAILABLE", message: "Connection attempts are paused. Run qz connect uri and open the printed URL in this browser, or click Connect.",
       } });
     }
     this.emit();
@@ -415,7 +416,7 @@ class QingzhouMcpBridgeRuntime {
         state: paused ? "paused" : "reconnecting",
         ...(leaseWait ? { attemptsRemaining, leaseWaitRemaining: 0, nextRetryAt: Date.now() + Math.ceil(retryAfterMs) + 100 } : {}),
         ...(recoverSleep && attemptsRemaining <= 0 ? { attemptsRemaining: RETRY_LIMIT, nextRetryAt: Date.now() + RETRY_DELAY_MS } : {}),
-        lastError: { code, message: error instanceof Error ? error.message : "The local service is unavailable. Run qz connect to retry." },
+        lastError: { code, message: error instanceof Error ? error.message : "The local service is unavailable. Run qz connect uri and open the printed URL in this browser." },
       });
       if (paused) await this.setAlarm(false);
       else this.schedule(Math.max(0, (this.config?.nextRetryAt || 0) - Date.now()));
@@ -443,8 +444,13 @@ class QingzhouMcpBridgeRuntime {
           () => abortRequest(failure("BRIDGE_REQUEST_TIMEOUT", "The browser operation timed out.")));
         payload = { ok: true, result };
       } catch (error) {
-        payload = { ok: false, error: toolError(String(record(error).code || "TOOL_EXECUTION_FAILED"), error instanceof Error ? error.message : String(error), {
-          hint: typeof record(error).hint === "string" ? String(record(error).hint) : undefined, details: errorDetails(error),
+        const source = record(error);
+        const metadataTraces = getToolResultTraces(error);
+        const traces = metadataTraces.length ? metadataTraces
+          : typeof source.code === "string" && typeof source.message === "string" ? traceMessages(record(source.details).trace) : [];
+        payload = { ok: false, error: toolError(String(record(error).code || "TOOL_EXECUTION_FAILED"), typeof source.message === "string" ? source.message : String(error), {
+          hint: typeof record(error).hint === "string" ? String(record(error).hint) : undefined,
+          details: { ...errorDetails(error), ...(traces.length ? { trace: traces } : {}) },
         }) };
       }
       this.check(generation);
@@ -466,7 +472,7 @@ class QingzhouMcpBridgeRuntime {
       const value = record(await response.json());
       if (!response.ok) {
         const detail = record(value.error);
-        throw Object.assign(failure(String(detail.code || value.code || "MCP_CONNECTION_UNAVAILABLE"), String(detail.message || value.error || "The local service is unavailable. Run qz connect to retry.")), {
+        throw Object.assign(failure(String(detail.code || value.code || "MCP_CONNECTION_UNAVAILABLE"), String(detail.message || value.error || "The local service is unavailable. Run qz connect uri and open the printed URL in this browser.")), {
           retryAfterMs: value.retryAfterMs ?? detail.retryAfterMs,
         });
       }
@@ -481,7 +487,7 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number, onTime
     const onAbort = () => finish(signal.reason || cancelled());
     const timer = setTimeout(() => {
       try { onTimeout?.(); } catch { /* The caller still observes this timeout. */ }
-      finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry."));
+      finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect uri and open the printed URL in this browser."));
     }, ms);
     const finish = (error: unknown, value?: T) => {
       clearTimeout(timer); signal.removeEventListener("abort", onAbort);

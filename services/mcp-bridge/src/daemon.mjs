@@ -61,9 +61,9 @@ export async function findDaemon(options = {}) {
   if (!record || record.scopeId !== paths.scopeId || !processExists(record.processId)) return null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const health = await (options.readHealth || readHealth)(record.endpoint, { timeoutMs: 1000 });
+      const health = await (options.readHealth || readHealth)(record.endpoint, { timeoutMs: 1000, ...(options.allowIncompatible ? { allowIncompatible: true } : {}) });
       if (health.scopeId !== paths.scopeId || health.instanceId !== record.instanceId || health.processId !== record.processId) return null;
-      return { ...record, health, compatible: true, updateAvailable: health.buildId !== paths.buildId };
+      return { ...record, health, compatible: health.protocolVersion === PROTOCOL_VERSION, updateAvailable: health.buildId !== paths.buildId };
     } catch (error) {
       if (!processExists(record.processId) || ["INVALID_ENDPOINT", "INCOMPATIBLE_SERVICE"].includes(error.code)) return null;
       if (attempt === 0) await delay(100);
@@ -74,7 +74,8 @@ export async function findDaemon(options = {}) {
   });
 }
 
-async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
+async function withLock(paths, operation, { timeoutMs = 15000, signal } = {}) {
+  signal?.throwIfAborted();
   await mkdir(paths.directory, { recursive: true, mode: 0o700 });
   await chmod(paths.directory, 0o700);
   const owner = { processId: process.pid, id: randomUUID() };
@@ -85,8 +86,10 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
   let acquired = false;
   let missingTargetPermissionError;
   try {
+    signal?.throwIfAborted();
     await writeFile(join(candidate, ownerFile), JSON.stringify(owner), { mode: 0o600 });
     while (true) {
+      signal?.throwIfAborted();
       try {
         // The lock becomes visible already containing its unique owner file.
         await rename(candidate, paths.lock);
@@ -104,7 +107,7 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
             // A persistent denial remains EPERM rather than becoming a busy lock.
             if (missingTargetPermissionError || Date.now() >= deadline) throw missingTargetPermissionError || error;
             missingTargetPermissionError = error;
-            await delay(50);
+            await delay(50, undefined, { signal });
             continue;
           }
           if (!["EEXIST", "ENOTEMPTY", "ENOTDIR"].includes(error.code)) throw error;
@@ -129,9 +132,10 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
           }
         }
         if (Date.now() >= deadline) throw new QzError("CONNECTION_BUSY", "Another qz command is starting the local service. Try qz status shortly.");
-        await delay(50);
+        await delay(50, undefined, { signal });
       }
     }
+    signal?.throwIfAborted();
     return await operation();
   } finally {
     if (acquired) {
@@ -186,17 +190,23 @@ async function discardStartup(child, paths, instanceId) {
 }
 
 export async function ensureDaemon(options = {}) {
+  options.signal?.throwIfAborted();
   const paths = daemonPaths(options);
+  return withLock(paths, () => ensureDaemonLocked(paths, options), options);
+}
+
+async function ensureDaemonLocked(paths, options) {
+  options.signal?.throwIfAborted();
   const lookup = { ...options, stateDir: paths.directory, scopeId: paths.scopeId, buildId: paths.buildId };
-  return withLock(paths, async () => {
-    // A running service keeps its loaded code until an explicit stop. Editing files or
-    // invoking another npx cache copy must not interrupt browser tasks or MCP clients.
+    // Compatible services retain their loaded code across source edits or npx copies.
     const existing = await findDaemon(lookup);
+    options.signal?.throwIfAborted();
     if (existing) return existing;
     const port = options.preferredPort ?? 18765;
     if (port) {
       const endpoint = `http://127.0.0.1:${port}`;
       const health = await (options.readHealth || readHealth)(endpoint, { timeoutMs: 500 }).catch(() => null);
+      options.signal?.throwIfAborted();
       if (health?.scopeId === paths.scopeId && processExists(health.processId)) {
         const record = recordFromHealth(endpoint, health);
         await atomicJson(paths.state, record);
@@ -208,6 +218,7 @@ export async function ensureDaemon(options = {}) {
     try {
       const log = openSync(paths.log, "a", 0o600);
       try {
+        options.signal?.throwIfAborted();
         child = (options.spawnProcess || spawn)(process.execPath, [fileURLToPath(import.meta.url), "--run", paths.state, paths.scopeId, String(port), paths.buildId, instanceId], {
           detached: true, stdio: ["ignore", "ignore", log], windowsHide: true,
         });
@@ -215,11 +226,14 @@ export async function ensureDaemon(options = {}) {
           child.once("spawn", resolveSpawn);
           child.once("error", reject);
         });
+        options.signal?.throwIfAborted();
         child.unref();
       } finally { closeSync(log); }
       const deadline = Date.now() + (options.startTimeoutMs || 10000);
       while (Date.now() < deadline) {
+        options.signal?.throwIfAborted();
         const running = await findDaemon(lookup);
+        options.signal?.throwIfAborted();
         if (running) {
           if (running.instanceId !== instanceId || running.processId !== child.pid) {
             throw new QzError("START_FAILED", "Another qz service claimed the startup state. Check qz status.", { log: paths.log });
@@ -227,7 +241,7 @@ export async function ensureDaemon(options = {}) {
           return running;
         }
         if (childExited(child) || !processExists(child.pid)) break;
-        await delay(50);
+        await delay(50, undefined, { signal: options.signal });
       }
       throw new QzError("START_FAILED", "The qz local service did not start.", { log: paths.log });
     } catch (error) {
@@ -236,6 +250,21 @@ export async function ensureDaemon(options = {}) {
       await discardStartup(child, paths, instanceId);
       throw error;
     }
+}
+
+/** Replace only the exact service inspected by the caller, under the same startup lock. */
+export async function restartDaemon({ expected, ...options } = {}) {
+  options.signal?.throwIfAborted();
+  const paths = daemonPaths(options);
+  return withLock(paths, async () => {
+    const running = await findDaemon({ ...options, stateDir: paths.directory, scopeId: paths.scopeId, buildId: paths.buildId, allowIncompatible: true });
+    options.signal?.throwIfAborted();
+    if (!running || !expected || ["scopeId", "instanceId", "processId"].some(key => running[key] !== expected[key])) {
+      throw new QzError("CONNECTION_CHANGED", "The local service changed before its upgrade. Retry the command.");
+    }
+    await stopProcess(running);
+    options.signal?.throwIfAborted();
+    return ensureDaemonLocked(paths, options);
   }, options);
 }
 
@@ -243,6 +272,7 @@ export async function stopDaemon(options = {}) {
   const paths = daemonPaths(options);
   return withLock(paths, async () => {
     const running = await findDaemon(options);
+    options.signal?.throwIfAborted();
     if (!running) return { stopped: false, connected: false };
     return stopProcess(running);
   }, options);

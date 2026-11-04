@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test, expect } from './fixtures.mjs';
 import { ensureTestExtension } from '../support/extension-build.mjs';
 
-test('local page scripts overlap without a bridge; tool scripts remain barriers and errors never replay', async ({}, testInfo) => {
+test('page evaluations overlap; outer tool orchestration remains a barrier and errors never replay', async ({}, testInfo) => {
   test.setTimeout(90_000);
   const server = createServer((req, res) => {
     const index = /^\/page-(\d+)$/.exec(req.url || '')?.[1];
@@ -39,7 +39,8 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
         setRuntime, persistRuntime: async () => {}, ready: async () => {}, normalizeSessionId: String,
         now: () => new Date().toISOString(), broadcast() {}, loadSecurityGuardrails: async () => ({}) });
       chrome.tabs.onRemoved.addListener(id => { void sessions.handleTabRemoved(id); });
-      const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent: supervisor.isRunCurrent },
+      let bridge;
+      const runtime = createToolRuntime({ invokeNestedTool: (parent, name, args, signal) => bridge.invokeTool(parent, name, args, signal), sessions: { ...sessions, isRunCurrent: supervisor.isRunCurrent },
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id } });
       let agent;
       globalThis.bridgeInstalls = 0; globalThis.bridgeCalls = 0;
@@ -48,11 +49,12 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
         if (options.files?.includes('content/run-script-tool-bridge.js')) bridgeInstalls++;
         return inject(options);
       };
-      const bridge = createRunScriptBridge({ supervisor, getRuntime: () => state, canManageSessions: async () => true,
+      bridge = createRunScriptBridge({ supervisor, getRuntime: () => state, canManageSessions: async () => true,
         buildRunProfile: async () => ({}), getRunToolContext: async () => ({ toolRegistrySnapshot: runtime.snapshot(), language: 'en' }),
         toolRuntime: runtime, collectArtifacts: () => [],
         applyNestedToolResult: async ({ toolName, result, isError }) => agent._applyToolResultEffects(toolName, result, isError) });
       chrome.runtime.onMessage.addListener((message, sender, respond) => {
+        if (runtime.handleRunScriptInnerRuntimeMessage(message)) return false;
         if (message.type !== 'run_script_tool_call') return false;
         bridgeCalls++; bridge.handleToolCall(message, sender).then(respond, () => respond({ ok: false, code: 'FIXTURE_BRIDGE_ERROR' }));
         return true;
@@ -75,7 +77,8 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
           return { ms: performance.now() - start, peak, intervals, starts, ends,
             bridgeInstalls: bridgeInstalls - beforeBridge, bridgeCalls: bridgeCalls - beforeCalls,
             owned: state.ownedTabIds.map(String),
-            ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id) };
+            ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id),
+            values: messages.filter(m => m.role === 'tool').map(m => { try { return JSON.parse(m.content); } catch { return m.content; } }) };
         },
       };`);
     manifest.background.service_worker = 'script-test-worker.js';
@@ -89,21 +92,21 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
     await expect.poll(() => worker.evaluate(() => Boolean(globalThis.scriptTest))).toBe(true);
     const tabs = [];
     for (let i = 0; i < 6; i++) tabs.push((await worker.evaluate(url => scriptTest.open(url), `${origin}/page-${i}`)).tabRef);
-    const tc = (id, args) => ({ id, function: { name: 'run_script', arguments: JSON.stringify({ timeout: 10, ...args }) } });
-    const code = `async () => {
+    const tc = (id, args, name = 'evaluate') => ({ id, function: { name, arguments: JSON.stringify({ timeout: 10, ...args }) } });
+    const code = `async input => {
       await new Promise(resolve => setTimeout(resolve, 400));
       document.body.dataset.runs = String(Number(document.body.dataset.runs || 0) + 1);
-      return { title: document.title, text: document.querySelector('article').textContent.slice(0, 200), value: input.value + args.bump };
+      return { title: document.title, text: document.querySelector('article').textContent.slice(0, 200), value: input.value + input.bump };
     }`;
-    const calls = tabs.map((tabRef, i) => tc(`plain-${i}`, { tabRef, code, args: { value: i, bump: 10 }, mutatesPage: true }));
+    const calls = tabs.map((tabRef, i) => tc(`plain-${i}`, { tabRef, code, args: { value: i, bump: 10 } }));
     const run = (calls, budget = 10) => worker.evaluate(({ calls, budget }) => scriptTest.run(calls, budget), { calls, budget });
     const trials = [];
     for (let trial = 1; trial <= 3; trial++) for (const budget of trial % 2 ? [1, 10] : [10, 1]) {
       const result = await run(calls, budget);
       expect(result.ends.every(e => !e.isError && !e.result.incomplete)).toBe(true);
-      expect(result.ends.map(e => e.result.result.title)).toEqual(tabs.map((_, i) => `Local page ${i}`));
-      expect(result.ends.map(e => e.result.result.value)).toEqual(tabs.map((_, i) => i + 10));
-      expect(result.ends.every(e => e.result.result.text.length === 200)).toBe(true);
+      expect(result.values.map(value => value.title)).toEqual(tabs.map((_, i) => `Local page ${i}`));
+      expect(result.values.map(value => value.value)).toEqual(tabs.map((_, i) => i + 10));
+      expect(result.values.every(value => value.text.length === 200)).toBe(true);
       expect(result.owned).toEqual(tabs.map(String));
       expect(result.ids).toEqual(calls.map(c => c.id));
       expect(result.bridgeInstalls).toBe(0); expect(result.bridgeCalls).toBe(0);
@@ -118,20 +121,19 @@ test('local page scripts overlap without a bridge; tool scripts remain barriers 
     const sameTab = await run([tc('same-1', { tabRef: tabs[0], code, args: { value: 1, bump: 1 } }),
       tc('same-2', { tabRef: tabs[0], code, args: { value: 2, bump: 1 } })]);
     expect(sameTab.peak).toBe(1); expect(sameTab.ends.every(e => !e.isError)).toBe(true);
-    const withTools = await run(tabs.slice(0, 3).map((tabRef, i) => tc(`tools-${i}`, { tabRef, args: { tabRef },
-      code: 'async () => { await new Promise(r => setTimeout(r, 400)); const article = await tools.read_article({tabRef:input.tabRef,limit:1200}); return {title:document.title,chars:article.text.length}; }' })));
+    const withTools = await run(tabs.slice(0, 3).map((tabRef, i) => tc(`tools-${i}`, { args: { tabRef },
+      code: 'await new Promise(r => setTimeout(r, 400)); const article = await tools.read_article({tabRef:input.tabRef,limit:1200}); const title = await tools.evaluate({tabRef:input.tabRef,code:() => document.title}); return {title,chars:article.text.length};' }, 'run_script')));
     expect(withTools.peak).toBe(1); expect(withTools.ends.every(e => !e.isError)).toBe(true);
-    expect(withTools.bridgeInstalls).toBe(3); expect(withTools.bridgeCalls).toBe(3);
-    expect(withTools.ends.every(e => e.result.result.chars > 200)).toBe(true);
+    expect(withTools.bridgeInstalls).toBe(0); expect(withTools.bridgeCalls).toBe(6);
+    expect(withTools.values.every(value => value.chars > 200)).toBe(true);
 
-    const missingRef = await run([tc('nested-needs-reference', { tabRef: tabs[0],
-      code: 'async () => await tools.read_article({limit:1200})' })]);
+    const missingRef = await run([tc('nested-needs-reference', { code: 'return await tools.read_article({limit:1200});' }, 'run_script')]);
     expect(missingRef.ends[0].isError).toBe(true);
     expect(missingRef.ends[0].result.code).toBe('TAB_REF_REQUIRED');
     expect(missingRef.ends[0].result.hint).toContain('tabRef');
     expect(missingRef.bridgeCalls).toBe(1);
 
-    const failed = await run([tc('no-replay', { tabRef: tabs[0], mutatesPage: true,
+    const failed = await run([tc('no-replay', { tabRef: tabs[0],
       code: 'async () => { document.body.dataset.attempts = String(Number(document.body.dataset.attempts || 0) + 1); return globalThis.missingTools(); }' })]);
     expect(failed.ends[0].result.code).toBe('RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     expect(failed.ends[0].result.details.automaticReplay).toBe(false);

@@ -1960,6 +1960,7 @@ function snapshotStoppedTabs(runtime: Fields) {
   return {
     ownedTabIds: getOwnedTabIds(runtime),
     createdTabIds: normalizeSessionTabIds(runtime.createdTabIds),
+    popupTabIds: normalizeSessionTabIds(runtime.popupTabIds),
     driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds),
   };
 }
@@ -2014,7 +2015,7 @@ async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, sig
 
 async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, early?: {
   driveRunId: string;
-  stoppedTabs: { ownedTabIds: number[]; createdTabIds: number[]; driveHandoffTabIds: number[] };
+  stoppedTabs: { ownedTabIds: number[]; createdTabIds: number[]; popupTabIds: number[]; driveHandoffTabIds: number[] };
 }) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
@@ -2142,7 +2143,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
         });
         return;
       }
-      await sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session");
+      await sessionTabs.closeOwnedTabsAfterTerminal(id, "stop_session", captured.stoppedTabs.popupTabIds);
     })().catch((err) => {
       console.debug("[轻舟] close stopped session owned tabs failed:", errorMessage(err));
     });

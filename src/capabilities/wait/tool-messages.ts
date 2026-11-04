@@ -87,14 +87,33 @@ const messages = defineMessages("wait-tools", {
     "zh-CN": "卡片来源 HTTP(S) URL。",
     en: "Card source HTTP(S) URL.",
   },
-  waitForNavigationNoImages: {
-    "zh-CN": "等待 tabRef 指定的标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。当前模型不支持图片，加载后用 get_ax_tree/read_article/find_elements 确认状态。",
-    en: "Wait for the tab specified by tabRef to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. The current model does not support images; verify state with get_ax_tree/read_article/find_elements.",
+  waitForLoadDescription: {
+    "zh-CN": "等待 tabRef 指定页的当前加载完成；页面已完成时立即返回。这是状态检查，不证明发生了新导航。",
+    en: "Wait until the current page load in tabRef is complete; returns immediately if already complete. This state check does not prove a new navigation occurred.",
   },
+  waitForNavigationTitle: { "zh-CN": "等待新导航", en: "Wait for navigation" },
   waitForNavigationDescription: {
-    "zh-CN": "等待 tabRef 指定的标签页加载完成，返回 status、url、title。already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败。仅需视觉确认弹窗或验证码时传 screenshot:true。",
-    en: "Wait for the tab specified by tabRef to finish loading, returning status, url, and title. already_complete means the page was already loaded when called; it does not prove the preceding action succeeded or failed. Pass screenshot:true only for visual checks such as dialogs or CAPTCHAs.",
+    "zh-CN": "等待 tabRef 指定页之后发生的新导航（包括同 URL 重载、SPA 和片段导航）；已加载完成的旧页面不能满足。可传 trigger:{name,args}，先监听再执行该工具；动作与等待共用超时，动作失败直接报错。",
+    en: "Wait for a future navigation in tabRef, including same-URL reloads, SPA navigation, and fragment changes. An already-loaded page does not match. Pass trigger:{name,args} to arm before invoking a tool; action failure propagates and the deadline is shared.",
   },
+  waitForPopupTitle: { "zh-CN": "等待新页面", en: "Wait for popup" },
+  waitForPopupDescription: {
+    "zh-CN": "等待 tabRef 指定页因任务动作打开的新标签页，并在确认任务归属后返回 Tab。可传 trigger:{name,args}，先监听再执行动作；不会认领用户自行打开的页面。返回后可用 wait_for_load 等待新页加载。",
+    en: "Wait for a new tab caused by a task action in tabRef, returning its Tab after ownership is established. Optionally pass trigger:{name,args} to arm before the action. User-opened tabs are not claimed. Use wait_for_load afterwards if loading must finish.",
+  },
+  waitForPopupAlias: { "zh-CN": "新页面的可选别名。", en: "Optional alias for the new page." },
+  waitForUrlTitle: { "zh-CN": "等待页面地址", en: "Wait for URL" },
+  waitForUrlDescription: {
+    "zh-CN": "等待 tabRef 指定页的当前 URL 匹配 urlPattern 正则；当前已匹配时立即返回。",
+    en: "Wait until the current URL in tabRef matches the urlPattern regex; returns immediately when already matched.",
+  },
+  waitForUrlPattern: { "zh-CN": "匹配完整页面 URL 的正则表达式。", en: "Regular expression matched against the full page URL." },
+  waitForFunctionTitle: { "zh-CN": "等待页面条件", en: "Wait for page condition" },
+  waitForFunctionDescription: {
+    "zh-CN": "在 tabRef 指定页反复求值 code 函数，直到返回真值，并返回该值。args 可为任意 JSON 值，作为函数参数传入；函数应只读取页面状态。异常直接报错，超时返回 ToolError。",
+    en: "Evaluate the code function repeatedly in tabRef until it returns a truthy value, then return that value. args is any JSON value passed to the function. Read page state without changing it; evaluation errors propagate and timeout is a ToolError.",
+  },
+  waitForFunctionCode: { "zh-CN": "读取页面状态的函数表达式；返回真值表示条件已满足。", en: "Function expression reading page state; a truthy return value satisfies the condition." },
   waitForNavigationTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
     en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
@@ -116,20 +135,20 @@ const messages = defineMessages("wait-tools", {
     en: "Optional pre-action title to compute titleChanged.",
   },
   waitForElementDescription: {
-    "zh-CN": "等待 tabRef 指定页面出现指定元素（或 absent:true 等待其消失）。",
-    en: "Wait for a matching element to appear on the page specified by tabRef (or disappear when absent:true).",
+    "zh-CN": "等待 tabRef 指定页的 target 达到 state：attached、visible（默认）、hidden 或 detached。hidden 包括移除或不可见，detached 仅表示移除；uid 始终观察原节点，不重匹配替代节点。",
+    en: "Wait for target in tabRef to reach attached, visible (default), hidden, or detached. Hidden includes removal or invisibility; detached requires removal. A uid observes its original node, never a replacement.",
   },
   waitForElementTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",
     en: "Target tabRef: an alias or the tabRef returned by open_tab/list_tabs.",
   },
   waitForElementSelector: {
-    "zh-CN": "元素 target，优先 uid:，css: 兜底；uid 的 absent 表示原节点已移除或不可见。",
-    en: "Element target: prefer uid:, with css: as fallback; absent for a uid means the original node was removed or is invisible.",
+    "zh-CN": "元素 target，优先 uid:，css: 兜底。",
+    en: "Element target: prefer uid:, with css: as fallback.",
   },
-  waitForElementAbsent: {
-    "zh-CN": "是否等待元素消失，默认 false。",
-    en: "Wait for the element to disappear. Default: false.",
+  waitForElementState: {
+    "zh-CN": "期望状态，默认 visible。attached/detached 检查节点连接，visible/hidden 检查可见性。",
+    en: "Expected state; default: visible. Attached/detached check node connection; visible/hidden check visibility.",
   },
   waitForElementIntervalSeconds: {
     "zh-CN": "轮询间隔秒数，默认 0.5。",
@@ -167,6 +186,6 @@ const messages = defineMessages("wait-tools", {
     "zh-CN": "加载完成但截图失败，请调用 screenshot({tabRef}) 确认页面状态",
     en: "Loading finished, but the screenshot failed. Call screenshot({tabRef}) to check the page state.",
   },
-});
+}, { historicalLabels: ["waitForNavigationTitle", "waitForPopupTitle", "waitForUrlTitle", "waitForFunctionTitle"] });
 
 export const toolT = createTranslator(messages);

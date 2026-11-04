@@ -6,6 +6,7 @@
   "script.executeCode": "تشغيل الكود",
   "script.executePageScript": "تشغيل برنامج نصي للصفحة",
   "script.executeScript": "تشغيل البرنامج النصي",
+  "script.listTools": "عرض الأدوات",
   "script.thePageJavascriptContextIsUnavailableRunScriptRuns": "سياق JavaScript للصفحة غير متاح. يعمل run_script داخل سياق الصفحة الفعلي فقط؛ ولم يلجأ إلى بيئة معزولة.",
   "script.theScriptClickedSubmittedNavigatedOrClosedTheCurrent": "نفّذ البرنامج النصي نقرة أو إرسالًا أو تنقّلًا أو إغلاقًا للتبويب الحالي، وقد يؤدي ذلك إلى إلغاء تحميل الصفحة. يحظر run_script هذه الإجراءات.",
   "script.theScriptPageWaitOrNestedToolCallTimed": "انتهت مهلة البرنامج النصي أو انتظار الصفحة أو استدعاء أداة متداخل. تحقّق من الانتظار بلا حدّ والطلبات المعلّقة والمحدّدات غير المطابقة.",
