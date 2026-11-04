@@ -18,7 +18,6 @@ versions in the lockfile. Build, test, and benchmark commands accept `--help`.
 | `npm run verify:coverage` | Type-check and run the shared suites plus the Chrome package suites with coverage gates |
 | `npm run benchmark` | Measure conversation rendering; arguments select other benchmarks |
 | `npm run docs` | Generate the API reference at `dist/docs/api.md` |
-| `npm run docs:drive` | Regenerate the built-in tool index in the browser Skill and packaged CLI guide; also runs when packing the CLI |
 | `npm run doctor` | Check the local tools, dependencies, and test browser |
 | `npm run release` | Build a versioned Chrome ZIP locally. The default target is `manual` |
 | `npm run release:firefox` | Build a versioned unsigned Firefox `.xpi` locally. Same as `npm run release -- --target firefox` |

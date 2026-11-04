@@ -68,7 +68,7 @@ export function isDriveToolForbidden(name: string) {
   return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
 }
 
-/** Shared visibility policy for the guide and both compact and named tool discovery. */
+/** Shared visibility policy for compact and named tool discovery. */
 export function isDriveToolDiscoverable(name: string) {
   return !isDriveToolForbidden(name) && !DRIVE_UNLISTED_TOOLS.has(toolLocalName(name));
 }

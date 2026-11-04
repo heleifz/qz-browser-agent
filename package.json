@@ -19,7 +19,6 @@
     "verify:coverage": "npm run typecheck && npm test -- --all --coverage",
     "benchmark": "node --import tsx tests/benchmarks/run.mjs",
     "docs": "node scripts/docs-api.mjs",
-    "docs:drive": "node --import tsx scripts/docs-drive-tools.mjs",
     "doctor": "node --import tsx tests/doctor.mjs",
     "qz": "node services/mcp-bridge/src/bin.mjs",
     "release": "python3 scripts/publish-release.py",

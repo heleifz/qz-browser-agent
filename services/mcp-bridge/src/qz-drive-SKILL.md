@@ -36,7 +36,7 @@ return await tools.read_article({ tabRef: "page", limit: 3000 });
 JS
 ```
 
-open_tab, list_tabs and wait_for_popup return Tabs `{tabRef,url,title,active}`. Use the supplied tabAlias or a tabRef returned by those tools; tabAlias is optional. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. Returned positive integers or their numeric strings are also valid tabRef values; never guess one. A supplied alias is preserved in the returned Tab. active marks the tab visible to the user and never selects a tool target.
+open_tab, list_tabs and wait_for_popup return Tabs `{tabRef,url,title,active}`. Use the supplied tabAlias or a tabRef returned by those tools; tabAlias is optional. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. Returned positive integers or their numeric strings are also valid tabRef values; never guess one. A supplied alias is preserved in the returned Tab. active marks the tab visible to the user and never selects a tool target. set_page_mode switches between desktop and mobile modes; a change reloads the page, so observe it again afterward.
 
 Page tools always pass tabRef, including each call inside a script. A missing tabRef is TAB_REF_REQUIRED. One tab belongs to one session at a time. Use list_tabs({scope:"all"}) to inspect other web pages; changes require a session-owned page. Do not interrupt another session's owner.
 
@@ -52,20 +52,6 @@ qz script --session "$SID" - <<'JS'
 return await tools.list_tools();
 JS
 ```
-
-Use these browser tools in scripts.
-
-<!-- qz-drive-tools:start -->
-- **Tabs**: `close_tab`, `list_tabs`, `navigate`, `open_tab`, `set_page_mode`. Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward.
-- **Page content and elements**: `act_on_element`, `find_elements`, `get_ax_tree`, `inspect_element`, `read_article`, `read_dom`, `scroll_page`. Read text, HTML, and accessibility trees; find, inspect, and act on elements; scroll pages.
-- **Waiting**: `wait`, `wait_for_element`, `wait_for_function`, `wait_for_load`, `wait_for_navigation`, `wait_for_popup`, `wait_for_url`, `wait_until`. Wait for page loads, navigation, popups, URLs, predicates, elements, or a specified time.
-- **Images and screen actions**: `act_on_screen`, `list_images`, `read_image`, `screenshot`. Capture screenshots, discover and read images, and act at screen coordinates.
-- **Network and console**: `network_body`, `network_recent`, `network_watch`, `read_console_messages`, `wait_for_network_idle`, `wait_for_response`. Watch requests, read captured bodies and console messages, and wait for responses or network idle.
-- **Scripts and discovery**: `evaluate`, `list_tools`, `run_script`. Run workflows through qz script, evaluate page functions, and discover tool schemas.
-- **Files**: `download_url`, `list_downloads`, `save_file`. Save files, start downloads, and inspect downloaded files.
-- **Skills**: `list_skills`, `load_skill`, `load_skill_resource`. Find and load Skills and their packaged resources.
-- **Browser utilities**: `browse_history`, `get_location`, `send_alert`. Search browsing history, request location, and notify the user.
-<!-- qz-drive-tools:end -->
 
 For DOM access, call evaluate with an explicit tabRef. Its code is a self-contained function; pass outer values through args. It returns the function's value. Function closures, browser nodes and functions cannot be carried across pages as arguments or results.
 

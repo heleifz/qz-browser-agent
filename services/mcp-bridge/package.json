@@ -7,7 +7,7 @@
   "bin": { "qz": "src/bin.mjs" },
   "files": ["src/*.mjs", "src/catalog.json", "src/qz-drive-SKILL.md", "README.md", "LICENSE"],
   "scripts": {
-    "prepack": "node --import tsx ../../scripts/docs-drive-tools.mjs"
+    "prepack": "cp ../../skills/qz-browser-agent/SKILL.md src/qz-drive-SKILL.md"
   },
   "license": "Apache-2.0",
   "homepage": "https://alibaba.github.io/qz-browser-agent/",
