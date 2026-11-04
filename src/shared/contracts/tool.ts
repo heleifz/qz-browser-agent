@@ -78,6 +78,8 @@ export interface ToolBehavior {
   passiveWait?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */
   barrier?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Prepare CSS targets using this lookup before execution; tools owning readiness leave it unset. */
+  targetLookup?: "light" | "openShadow";
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Provisional creation; Session state is published at ordered Agent settlement. */

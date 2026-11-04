@@ -20,7 +20,7 @@ interface ElementSummary extends PageAction {
 interface ContentRequest {
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
-  index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
+  index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
   maxWidth?: number; maxHeight?: number; format?: string; quality?: number;
 }
@@ -2194,10 +2194,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       };
     },
 
-    elementPresence({ selector, visibleOnly = false }) {
+    elementPresence({ selector, index = 0, visibleOnly = false, includeShadow = false, queryOnly = false }) {
       const query = queryAll(selector);
       if (query.error) return query.error;
-      return elementPresence(query.elements[0] || null, Boolean(visibleOnly));
+      let element = query.elements[index] || null;
+      if (!element && includeShadow && index === 0) {
+        const scope = queryOpenShadowScope(selector);
+        if (!scope.error) element = scope.element;
+      }
+      return queryOnly ? { found: Boolean(element?.isConnected) } : elementPresence(element || null, Boolean(visibleOnly));
     },
 
     querySelector({ selector, limit = 10 }) {

@@ -27,12 +27,18 @@ test('all element readers share node UIDs, consumers accept target/legacy select
   try {
     const { sessionId } = await callTool(endpoint, 'qingzhou_create_drive_session', { title: 'Verify element references' });
     const invoke = async (name, args = {}) => {
-      try {
-        const result = (await callTool(endpoint, 'qingzhou_execute_tool', { sessionId, name, args: { tabRef: 'page', ...args } })).result;
-        expect(result).not.toHaveProperty('tabRef');
-        return result;
-      }
+      let response;
+      try { response = await callTool(endpoint, 'qingzhou_execute_tool', { sessionId, name, args: { tabRef: 'page', ...args } }); }
       catch (error) { return { code: error.code, message: error.message, ...(error.hint ? { hint: error.hint } : {}), ...(error.details ? { details: error.details } : {}) }; }
+      const result = response.result;
+      expect(result).not.toHaveProperty('tabRef');
+      if (name !== 'evaluate') return result;
+      expect(response.scriptApiVersion).toBe(2);
+      expect(Object.keys(result).sort()).toEqual(['ok', 'result', 'trace']);
+      expect(result.ok).toBe(!response.isError);
+      expect(Array.isArray(result.trace)).toBe(true);
+      expect(result.trace.every(line => typeof line === 'string')).toBe(true);
+      return result.result;
     };
     const script = code => invoke('evaluate', { code: `async () => { ${code} }`, timeout: 20 });
     const opened = await callTool(endpoint, 'qingzhou_execute_tool', { sessionId, name: 'open_tab', args: { url: fixture.url, tabAlias: 'page' } });

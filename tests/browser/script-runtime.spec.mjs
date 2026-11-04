@@ -16,7 +16,10 @@ for (const mode of ['development', 'production']) {
         window.chrome = { storage: { local: { get: async () => ({ securityGuardrails: { rules: [
           { action: 'block', type: 'domain', value: 'blocked.test' },
           { action: 'allow', type: 'pattern', value: 'https://blocked.test/allowed/*' },
-        ] } }) } }, scripting: { executeScript: async () => [] } };
+        ] } }) } },
+          tabs: { get: async id => ({ id, url: location.href, status: document.readyState === 'complete' ? 'complete' : 'loading' }) },
+          scripting: { executeScript: async ({ func, args = [] }) => func ? [{ result: await func(...args) }] : [] },
+        };
         const definitions = new Map();
         let skillCode = '';
         const { createScriptTools, ToolExecutionError } = window.QZ_SCRIPT_TEST;

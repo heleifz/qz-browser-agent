@@ -172,7 +172,7 @@ function emitDataChanged(payload: Fields, context: ToolContext = {}) {
 registerTool({
   name: "screenshot",
   argumentAliases: { selector: "target" },
-  behavior: { nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
+  behavior: { targetLookup: "light", nestedObservation: true, parallelRead: args => args.actionable !== true && !String(args.destination || "").trim(),
     timeoutResult: { kind: "read", pending: "screenshot capture" } },
   requires: { images: true },
   get description() { return toolT("screenshotDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
@@ -324,6 +324,7 @@ registerTool({
 
 registerTool({
   name: "list_images",
+  behavior: { targetLookup: "light" },
   argumentAliases: { selector: "target" },
   get description() { return toolT("listImagesDescription"); },
   get parameters() { return {
@@ -447,7 +448,7 @@ function assertSelectedImageSource(candidate: ImageMetadata = {}, observed: Imag
 
 registerTool({
   name: "collect_images",
-  behavior: { parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
+  behavior: { targetLookup: "light", parallelTab: true, uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
   get description() { return toolT("collectImagesDescription"); },
   get parameters() { return {
     type: "object",
@@ -668,6 +669,7 @@ registerTool({
 
 registerTool({
   name: "read_image",
+  behavior: { targetLookup: "light" },
   argumentAliases: { selector: "target" },
   requires: { images: true },
   model: { get imagePrompt() { return toolT("readImagePrompt"); } },

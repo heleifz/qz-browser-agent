@@ -6,7 +6,15 @@ import { join } from 'node:path';
 import { test, expect } from './fixtures.mjs';
 import { ensureTestExtension } from '../support/extension-build.mjs';
 
-test('page evaluations overlap; outer tool orchestration remains a barrier and errors never replay', async ({}, testInfo) => {
+function successfulScriptResult(receipt) {
+  expect(Object.keys(receipt).sort()).toEqual(['ok', 'result', 'trace']);
+  expect(receipt.ok).toBe(true);
+  expect(Array.isArray(receipt.trace)).toBe(true);
+  expect(receipt.trace.every(line => typeof line === 'string')).toBe(true);
+  return receipt.result;
+}
+
+test('page evaluations and outer orchestration overlap across tabs, preserve page order and never replay errors', async ({}, testInfo) => {
   test.setTimeout(90_000);
   const server = createServer((req, res) => {
     const index = /^\/page-(\d+)$/.exec(req.url || '')?.[1];
@@ -104,9 +112,10 @@ test('page evaluations overlap; outer tool orchestration remains a barrier and e
     for (let trial = 1; trial <= 3; trial++) for (const budget of trial % 2 ? [1, 10] : [10, 1]) {
       const result = await run(calls, budget);
       expect(result.ends.every(e => !e.isError && !e.result.incomplete)).toBe(true);
-      expect(result.values.map(value => value.title)).toEqual(tabs.map((_, i) => `Local page ${i}`));
-      expect(result.values.map(value => value.value)).toEqual(tabs.map((_, i) => i + 10));
-      expect(result.values.every(value => value.text.length === 200)).toBe(true);
+      const values = result.values.map(successfulScriptResult);
+      expect(values.map(value => value.title)).toEqual(tabs.map((_, i) => `Local page ${i}`));
+      expect(values.map(value => value.value)).toEqual(tabs.map((_, i) => i + 10));
+      expect(values.every(value => value.text.length === 200)).toBe(true);
       expect(result.owned).toEqual(tabs.map(String));
       expect(result.ids).toEqual(calls.map(c => c.id));
       expect(result.bridgeInstalls).toBe(0); expect(result.bridgeCalls).toBe(0);
@@ -121,11 +130,16 @@ test('page evaluations overlap; outer tool orchestration remains a barrier and e
     const sameTab = await run([tc('same-1', { tabRef: tabs[0], code, args: { value: 1, bump: 1 } }),
       tc('same-2', { tabRef: tabs[0], code, args: { value: 2, bump: 1 } })]);
     expect(sameTab.peak).toBe(1); expect(sameTab.ends.every(e => !e.isError)).toBe(true);
+    expect(sameTab.ids).toEqual(['same-1', 'same-2']);
+    expect(sameTab.values.map(successfulScriptResult).map(value => value.value)).toEqual([2, 3]);
     const withTools = await run(tabs.slice(0, 3).map((tabRef, i) => tc(`tools-${i}`, { args: { tabRef },
       code: 'await new Promise(r => setTimeout(r, 400)); const article = await tools.read_article({tabRef:input.tabRef,limit:1200}); const title = await tools.evaluate({tabRef:input.tabRef,code:() => document.title}); return {title,chars:article.text.length};' }, 'run_script')));
-    expect(withTools.peak).toBe(1); expect(withTools.ends.every(e => !e.isError)).toBe(true);
+    expect(withTools.peak).toBe(3); expect(withTools.ends.every(e => !e.isError)).toBe(true);
     expect(withTools.bridgeInstalls).toBe(0); expect(withTools.bridgeCalls).toBe(6);
-    expect(withTools.values.every(value => value.chars > 200)).toBe(true);
+    expect(withTools.ids).toEqual(['tools-0', 'tools-1', 'tools-2']);
+    const toolValues = withTools.values.map(successfulScriptResult);
+    expect(toolValues.map(value => value.title)).toEqual(['Local page 0', 'Local page 1', 'Local page 2']);
+    expect(toolValues.every(value => value.chars > 200)).toBe(true);
 
     const missingRef = await run([tc('nested-needs-reference', { code: 'return await tools.read_article({limit:1200});' }, 'run_script')]);
     expect(missingRef.ends[0].isError).toBe(true);

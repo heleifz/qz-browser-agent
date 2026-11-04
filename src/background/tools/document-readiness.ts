@@ -26,13 +26,13 @@ async function waitForDocument(tabId: number, context: ToolContext, parsed: bool
       signal?.throwIfAborted();
       const tab = await getTab();
       if (!pending(tab)) {
-        if (!parsed) return;
+        if (!parsed) return tab;
         try {
           const [frame] = await wait(chrome.scripting.executeScript({
             target: { tabId, frameIds: [0] }, injectImmediately: true,
             func: documentReadiness as () => boolean,
           }));
-          if (frame?.result === true && !pending(await getTab())) return;
+          if (frame?.result === true && !pending(await getTab())) return tab;
         } catch (error) {
           signal?.throwIfAborted();
           // Only a replaced execution context is safe to retry, before user code runs.

@@ -7,15 +7,21 @@ import { chromium } from 'playwright';
 // No user browser, extension profile, MCP daemon or provider settings are touched.
 export async function createAxViewportHarness({ baseline = false } = {}) {
   const bundle = await build({ stdin: { contents: `export { registerAccessibilityTools } from './src/capabilities/accessibility/tools.ts'; export { withLanguage } from './src/shared/i18n/index.ts';`, resolveDir: process.cwd() },
-    bundle: true, write: false, format: 'esm', platform: 'node', plugins: [{ name: 'ax-sources', setup(b) {
+    bundle: true, write: false, format: 'esm', platform: 'node',
+    banner: { js: 'let chrome; export const bindBrowserApi = api => { chrome = api; };' }, plugins: [{ name: 'ax-sources', setup(b) {
       b.onResolve({ filter: /^#sdk\// }, args => ({ path: resolve('src/sdk', args.path.slice(5) + '.ts') }));
       if (baseline) b.onLoad({ filter: /capabilities\/accessibility\/(tools|tool-messages)\.ts$/ }, args => ({ contents: execFileSync('git', ['show', `cbac588:${args.path.slice(process.cwd().length + 1)}`], { encoding: 'utf8' }), loader: 'ts' }));
     } }] });
-  const { registerAccessibilityTools, withLanguage } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+  const { registerAccessibilityTools, withLanguage, bindBrowserApi } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}#${crypto.randomUUID()}`);
   const content = (await build({ entryPoints: ['src/content/content-script.ts'], bundle: true, write: false, format: 'iife' })).outputFiles[0].text;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
+  // Keep the production readiness probe on the current real document, scoped to this harness.
+  bindBrowserApi({
+    tabs: { get: async id => ({ id, url: page.url() }) },
+    scripting: { executeScript: async ({ func }) => [{ result: await page.evaluate(func) }] },
+  });
   const cdp = await context.newCDPSession(page);
   const send = cdp.send.bind(cdp);
   const refs = new Map();

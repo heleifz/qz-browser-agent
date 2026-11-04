@@ -630,7 +630,7 @@ test.describe("uid resolves the original node", () => {
     });
     const replaced = await h.call("act_on_element", { target: swap, action: "click" });
     expect(replaced.code).toBe("STALE_ELEMENT_UID");
-    expect(replaced.message).toMatch(/page structure|页面结构|頁面結構/);
+    expect(replaced.message).toBe("The element target has expired or does not exist.");
     expect((await h.state()).hits.swap || 0).toBe(0);
     const fresh = await tree(h);
     const freshSwap = targets(fresh.snapshot, "button", "Swap")[0];

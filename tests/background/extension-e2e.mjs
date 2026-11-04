@@ -366,8 +366,12 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.equal(macroEnd?.result?.result?.ok, true);
   assert.equal(macroEnd?.result?.result?.filled, 10);
   assert.deepEqual(macroEnd?.result?.result?.batch?.state, observedState);
-  assert.equal(macroEnd?.result?._display, undefined, "run_script should not synthesize an action animation");
-  assert.match(macroEnd?.result?._image, /^data:image\/jpeg;base64,/);
+  assert.deepEqual(Object.keys(macroEnd?.result?._display || {}), ["script"], "run_script should expose script metadata without synthesizing an action animation");
+  assert.equal(macroEnd.result._display.script.valueOnly, true);
+  assert.ok(Array.isArray(macroEnd.result._display.script.trace));
+  assert.equal(macroEnd.result._images?.length, 1, "only the explicitly returned final screenshot should be promoted");
+  assert.equal(macroEnd.result._images[0].mimeType, "image/jpeg");
+  assert.match(macroEnd.result._images[0].data, /^[A-Za-z0-9+/]+={0,2}$/);
   const feedbackPixels = await page.evaluate(async id => {
     const event = window.__qzBackgroundE2E.events().find(item => (
       item?.type === "tool_execution_end"
@@ -375,7 +379,8 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
       && item?.toolName === "run_script"
       && item?.toolCallId === "call_screen_macro"
     ));
-    const response = await fetch(event?.result?._image || "");
+    const image = event.result._images[0];
+    const response = await fetch("data:" + image.mimeType + ";base64," + image.data);
     const bitmap = await createImageBitmap(await response.blob());
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext("2d");
@@ -410,6 +415,14 @@ async function screenActionFeedbackRoundTrip(page, browserContext, providerServe
   assert.equal(requests[3].containsDisplayProjection, false, "chat-only action metadata must not enter model context");
 
   const history = await historyMessages(page, sessionId);
+  const macroMessage = history.find(message => message.role === "tool" && message.tool_call_id === "call_screen_macro");
+  assert.ok(macroMessage, "the script receipt should reach model history");
+  const macroReceipt = JSON.parse(macroMessage.content);
+  assert.deepEqual(Object.keys(macroReceipt).sort(), ["ok", "result", "trace"]);
+  assert.equal(macroReceipt.ok, true);
+  assert.ok(Array.isArray(macroReceipt.trace) && macroReceipt.trace.every(line => typeof line === "string"));
+  assert.equal(macroReceipt.result.filled, 10);
+  assert.deepEqual(macroReceipt.result.batch.state, observedState);
   assert.equal(imageProjectionStats(history).totalImageCount, 9, "model projection must preserve all nine original history images");
   const exported = await request(page, "get_messages", { sessionId }, "messages");
   const exportedMessages = (exported.session?.entries || []).map(entry => entry.message);
@@ -2629,19 +2642,25 @@ async function createProviderServer() {
           : count > 3
             ? streamToolCall(`call_screen_observation_${count}`, "screenshot", JSON.stringify({ tabRef: "screen_fixture" }))
           : streamToolCall("call_screen_macro", "run_script", JSON.stringify({
-            tabRef: "screen_fixture",
             timeout: 30,
-            mutatesPage: true,
             code: `async () => {
-  // Run page actions sequentially in a fixed layout, then capture the result for the model.
-  const dpr = window.devicePixelRatio || 1;
-  const point = selector => {
-    const rect = document.querySelector(selector).getBoundingClientRect();
-    return {
-      x: (rect.left + rect.width / 2) * dpr,
-      y: (rect.top + rect.height / 2) * dpr,
-    };
-  };
+  // Read the fixed layout in the page, then run native actions sequentially outside it.
+  const { points, primaryModifier } = await tools.evaluate({
+    tabRef: "screen_fixture",
+    code: () => {
+      const dpr = window.devicePixelRatio || 1;
+      const targets = ["#click-target", "#double-click-target", "#hover-target", "#long-press-target",
+        "#text-target", "#wheel-target", "#drag-source", "#drop-target"];
+      return {
+        points: Object.fromEntries(targets.map(target => {
+          const rect = document.querySelector(target).getBoundingClientRect();
+          return [target, { x: (rect.left + rect.width / 2) * dpr, y: (rect.top + rect.height / 2) * dpr }];
+        })),
+        primaryModifier: /Mac/i.test(navigator.platform) ? "Meta" : "Control",
+      };
+    },
+  });
+  const point = target => points[target];
   const actionResults = [];
   await tools.screenshot({ tabRef: "screen_fixture" });
   const perform = async (action, args = {}) => {
@@ -2676,7 +2695,6 @@ async function createProviderServer() {
   await perform("hover", point("#hover-target"));
   await perform("long_press", { ...point("#long-press-target"), durationMs: 300 });
   await perform("type", { ...point("#text-target"), text: "扩展替换值", replace: true });
-  const primaryModifier = /Mac/i.test(navigator.platform) ? "Meta" : "Control";
   await perform("press", { key: primaryModifier + "+A" });
   await perform("type", { text: "扩展最终值", replace: false });
   await perform("press", { key: "Enter" });
@@ -2690,7 +2708,7 @@ async function createProviderServer() {
     endY: dragEnd.y,
   });
 
-  const state = window.__readScreenActionState();
+  const state = await tools.evaluate({ tabRef: "screen_fixture", code: () => window.__readScreenActionState() });
   if (state.clickCount !== 1
     || state.doubleClickClicks !== 2
     || state.doubleClickCount !== 1
@@ -2712,9 +2730,10 @@ async function createProviderServer() {
     || state.dropped !== true) {
     throw new Error("screen action HTML state did not match the expected sequence: " + JSON.stringify(state));
   }
-  await tools.screenshot({ tabRef: "screen_fixture" });
+  const screenshot = await tools.screenshot({ tabRef: "screen_fixture" });
   return {
     ok: true,
+    screenshot,
     filled: actionResults.length,
     batch: {
       actions: actionResults,

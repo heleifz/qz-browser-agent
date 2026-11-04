@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSessionTabs } from "../../src/background/session/tabs.js";
+import { createToolRegistry } from "../../src/background/tools/registry.js";
 
 const targetUrl = "https://example.test/gallery";
 let tab, closed, denied, reads, resolves, polls;
@@ -10,6 +11,8 @@ let ackDelay = 0;
 let completeInjection;
 let afterResolve;
 const injections = [];
+const targetQueries = [];
+let targetPresence = () => ({ found: true });
 globalThis.chrome = {
   runtime: { getURL: path => `chrome-extension://test/${path}` },
   storage: { local: { async get() { return { securityGuardrails: { blockedDomains: ["blocked.test"] } }; } } },
@@ -20,6 +23,7 @@ globalThis.chrome = {
         if (contentReady && ackDelay) await pause(ackDelay);
         return { ok: contentReady, documentReady, contentType, url: tab.url, elementRefs: 1 };
       }
+      if (message.action === "elementPresence") { targetQueries.push(message); return targetPresence(message); }
       reads++;
       assert.equal(tab.url, targetUrl, "must never read the initial blank document");
       return { text: "Loaded article", images: [], scanned: 0 };
@@ -38,7 +42,7 @@ globalThis.chrome = {
     contentType = 'text/html';
   } },
 };
-const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
+const { createToolRuntime, resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
 const state = { sessionId: "readiness", ownedTabIds: [1], workingTabId: 1 };
 const sessionTabs = createSessionTabs({
   supervisor: { getRuntime: () => state, runtimeEntries: () => [["readiness", state]], isRunCurrent: () => true },
@@ -281,4 +285,160 @@ test("cancelled Content installation cannot dispatch a late page read", async ()
     await pause(20);
     assert.equal(reads, 0);
   } finally { controller.abort(); completeInjection?.(); await rejected; }
+});
+
+
+function targetedFixture(name) {
+  load(); tab.status = "loading"; closed = denied = false; reads = 0;
+  contentReady = true; contentType = "text/html"; documentReady = false; completeDocument = undefined;
+  targetQueries.length = 0; targetPresence = () => ({ found: false });
+  const dispatched = [], registry = createToolRegistry();
+  registry.forCapability("readiness-probe")({ ...resolveToolDefinition(name), execute(args) {
+    dispatched.push(args); return { executed: true };
+  } });
+  return { dispatched, context: { ...context, toolRegistrySnapshot: registry.snapshot() } };
+}
+
+test("legacy page Skill target remains an execution mode with its original barrier", async () => {
+  const fixture = targetedFixture("run_skill_script");
+  const behavior = resolveToolDefinition("run_skill_script").behavior;
+  assert.equal(behavior.barrier, true); assert.equal(behavior.orchestration, undefined);
+  const result = await runtime.execute("run_skill_script", {
+    tabRef: 1, target: "page", skill: "fixture", script: "legacy.js", timeout: 1,
+  }, undefined, fixture.context);
+  assert.equal(result.executed, true); assert.equal(fixture.dispatched.length, 1);
+  assert.equal(targetQueries.length, 0); assert.equal(completeDocument, undefined); assert.equal(documentReady, false);
+  documentReady = true;
+});
+
+for (const targetLookup of [undefined, "light"]) test(`custom target preparation follows its declared lookup: ${targetLookup || "business"}`, async () => {
+  targetedFixture("inspect_element");
+  const registry = createToolRegistry(), calls = [];
+  registry.forCapability("business-target")({
+    name: "save_target", description: "Save a business record.", page: "owned",
+    behavior: { ...(targetLookup ? { targetLookup } : {}), timeoutResult: { kind: "action", pending: "record update" } },
+    parameters: { type: "object", properties: { tabRef: { type: "integer" }, target: { type: "string", enum: ["#record"] } }, required: ["tabRef", "target"] },
+    execute: args => { calls.push(args); return { saved: args.target }; },
+  });
+  const pending = runtime.execute("save_target", { tabRef: 1, target: "#record", timeout: 1 }, undefined,
+    { ...context, toolRegistrySnapshot: registry.snapshot() });
+  if (targetLookup) {
+    await until(() => typeof completeDocument === "function");
+    assert.equal(calls.length, 0, "CSS enums still prepare their declared locator");
+    completeDocument();
+  }
+  const result = await pending;
+  assert.equal(result.saved, "#record"); assert.equal(calls.length, 1);
+  assert.equal(targetQueries.length, targetLookup ? 1 : 0);
+  if (!targetLookup) { assert.equal(completeDocument, undefined); assert.equal(documentReady, false); }
+  documentReady = true;
+});
+
+async function until(condition) {
+  for (let attempt = 0; !condition() && attempt < 200; attempt++) await pause(2);
+  assert.ok(condition(), "expected readiness stage was reached");
+}
+
+for (const name of ["inspect_element", "find_elements", "act_on_element"]) {
+  for (const outcome of ["ready", "cancelled", "timeout"]) test(`CSS ${name} preparation before dispatch: ${outcome}`, async () => {
+    const fixture = targetedFixture(name), controller = new AbortController();
+    const pending = runtime.execute(name, { tabRef: 1, target: "css:#late", timeout: 0.3,
+      ...(name === "act_on_element" ? { action: "fill", value: "once" } : {}) }, controller.signal, fixture.context)
+      .then(value => ({ value }), error => ({ error }));
+    try {
+      await until(() => typeof completeDocument === "function");
+      assert.equal(fixture.dispatched.length, 0, "lookup preparation must precede the operation");
+      assert.equal(targetQueries.length, 1);
+      assert.equal(targetQueries[0].queryOnly, true, "preparation must not create observation refs");
+      if (outcome === "ready") completeDocument();
+      if (outcome === "cancelled") controller.abort();
+      const result = await pending;
+      if (outcome === "ready") {
+        assert.equal(result.error, undefined);
+        assert.equal(result.value.executed, true); assert.equal(fixture.dispatched.length, 1);
+      } else {
+        if (outcome === "cancelled") assert.equal(result.error.code, "OPERATION_ABORTED");
+        else {
+          assert.equal(result.error, undefined);
+          if (name === "act_on_element") {
+            assert.equal(result.value.code, "TOOL_TIMEOUT");
+            assert.equal(result.value.details.status, "unconfirmed");
+            assert.equal(result.value.details.automaticReplay, false);
+          } else assert.equal(result.value.incomplete.reason, "timeout");
+        }
+        completeDocument(); await pause(20);
+        assert.equal(fixture.dispatched.length, 0, "late parsing must never revive cancelled execution");
+      }
+    } finally { controller.abort(); completeDocument?.(); documentReady = true; await pending; }
+  });
+}
+
+for (const name of ["inspect_element", "act_on_element"]) test(`existing CSS ${name} target remains usable during parsing`, async () => {
+  const fixture = targetedFixture(name);
+  targetPresence = () => ({ found: true });
+  const result = await runtime.execute(name, { tabRef: 1, target: "css:#early", timeout: 0.3,
+    ...(name === "act_on_element" ? { action: "fill", value: "once" } : {}) }, undefined, fixture.context);
+  assert.equal(result.executed, true); assert.equal(documentReady, false); assert.equal(completeDocument, undefined);
+  assert.equal(fixture.dispatched.length, 1);
+  documentReady = true;
+});
+
+for (const status of ["loading", "complete"]) test(`CSS preparation does not wait after parsing: ${status}`, async () => {
+  const fixture = targetedFixture("inspect_element"); documentReady = true; tab.status = status;
+  const result = await runtime.execute("inspect_element", { tabRef: 1, target: "css:#missing", timeout: 0.3 }, undefined, fixture.context);
+  assert.equal(result.executed, true); assert.equal(fixture.dispatched.length, 1);
+  assert.equal(targetQueries.length, status === "loading" ? 1 : 0, "completed pages need no extra content query");
+});
+
+test("CSS action admission tolerates a new tab pending its first document", async () => {
+  const fixture = targetedFixture("act_on_element"), controller = new AbortController();
+  tab.url = "about:blank"; tab.pendingUrl = targetUrl; targetPresence = () => ({ found: true });
+  let done = false;
+  const pending = runtime.execute("act_on_element", { tabRef: 1, target: "css:#early", action: "fill", value: "once", timeout: 1 },
+    controller.signal, fixture.context).finally(() => { done = true; });
+  try {
+    await pause(20); assert.equal(done, false); assert.equal(fixture.dispatched.length, 0);
+    tab.url = targetUrl; delete tab.pendingUrl;
+    assert.equal((await pending).executed, true); assert.equal(fixture.dispatched.length, 1);
+  } finally { controller.abort(); documentReady = true; await pending; }
+});
+
+for (const name of ["inspect_element", "find_elements"]) test(`CSS ${name} retains its declared lookup scope`, async () => {
+  const fixture = targetedFixture(name), controller = new AbortController();
+  targetPresence = message => ({ found: message.includeShadow });
+  const pending = runtime.execute(name, { tabRef: 1, target: "css:#shadow-only", timeout: 0.3 }, controller.signal, fixture.context)
+    .then(value => ({ value }), error => ({ error }));
+  try {
+    await until(() => targetQueries.length === 1);
+    assert.equal(targetQueries[0].includeShadow, name === "find_elements");
+    if (name === "find_elements") { assert.equal((await pending).value.executed, true); assert.equal(documentReady, false); }
+    else {
+      await until(() => typeof completeDocument === "function");
+      assert.equal(fixture.dispatched.length, 0); controller.abort();
+      assert.equal((await pending).error.code, "OPERATION_ABORTED");
+    }
+  } finally { controller.abort(); completeDocument?.(); documentReady = true; await pending; }
+});
+
+for (const state of ["hidden", "detached"]) test(`passive ${state} observation bypasses CSS preparation`, async () => {
+  targetedFixture("wait_for_element");
+  const result = await runtime.execute("wait_for_element", { tabRef: 1, target: "css:#not-yet-parsed", state, timeout: 0.3 }, undefined, context);
+  assert.equal(result.found, false); assert.equal(result.state, state);
+  assert.equal(documentReady, false); assert.equal(completeDocument, undefined);
+  assert.equal(targetQueries.length, 1); assert.equal(targetQueries[0].queryOnly, undefined);
+  documentReady = true;
+});
+
+for (const violation of ["ownership", "security"]) test(`CSS preparation revalidates ${violation} before execution`, async () => {
+  const fixture = targetedFixture("act_on_element"), controller = new AbortController();
+  const pending = runtime.execute("act_on_element", { tabRef: 1, target: "css:#late", action: "fill", value: "never", timeout: 1 },
+    controller.signal, fixture.context);
+  const rejected = assert.rejects(pending, { code: violation === "ownership" ? "SESSION_TAB_UNAVAILABLE" : "SECURITY_GUARDRAIL_BLOCKED" });
+  try {
+    await until(() => typeof completeDocument === "function");
+    if (violation === "ownership") denied = true;
+    else tab.url = "https://blocked.test/after-parsing";
+    completeDocument(); await rejected;
+    assert.equal(fixture.dispatched.length, 0);
+  } finally { controller.abort(); denied = false; documentReady = true; await rejected; }
 });

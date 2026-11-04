@@ -171,7 +171,7 @@ registerTool({
   name: "read_article",
   argumentValueAliases: { source: { selector: "target" } },
   argumentAliases: { selector: "target" },
-  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "article extraction" } },
+  behavior: { targetLookup: "light", parallelRead: true, timeoutResult: { kind: "read", pending: "article extraction" } },
   get description() { return toolT("readArticleDescription"); },
   get parameters() { return {
     type: "object",
@@ -207,7 +207,7 @@ registerTool({
 registerTool({
   name: "read_dom",
   argumentAliases: { selector: "target" },
-  behavior: { timeoutResult: { kind: "read", pending: "DOM extraction" } },
+  behavior: { targetLookup: "light", timeoutResult: { kind: "read", pending: "DOM extraction" } },
   get description() { return toolT("readDomDescription"); },
   get parameters() { return {
     type: "object",
@@ -237,7 +237,7 @@ registerTool({
 registerTool({
   name: "find_elements",
   argumentAliases: { selector: "target" },
-  behavior: { parallelRead: true, timeoutResult: { kind: "read", pending: "element scan" } },
+  behavior: { parallelRead: true, targetLookup: "openShadow", timeoutResult: { kind: "read", pending: "element scan" } },
   get description() { return toolT("findElementsDescription"); },
   get parameters() { return {
     type: "object",
@@ -269,7 +269,7 @@ registerTool({
 registerTool({
   name: "inspect_element",
   argumentAliases: { selector: "target" },
-  behavior: { timeoutResult: { kind: "read", pending: "element inspection" } },
+  behavior: { targetLookup: "light", timeoutResult: { kind: "read", pending: "element inspection" } },
   get description() { return toolT("inspectElementDescription", { targetGrammar: ELEMENT_TARGET_GRAMMAR }); },
   get parameters() { return {
     type: "object",
@@ -309,7 +309,7 @@ registerTool({
 registerTool({
   name: "act_on_element",
   argumentAliases: { selector: "target" },
-  behavior: { parallelTab: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
+  behavior: { targetLookup: "light", parallelTab: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
     const action = String(args.action || "").trim().toLowerCase();
     const key = String(args.key || args.value || "").trim().toLowerCase();
     return action === "click" || (action === "fill" && args.submit === true)
@@ -765,7 +765,7 @@ function withElementActionHelp(result: ElementReply, action: string, target: str
 registerTool({
   name: "scroll_page",
   argumentAliases: { selector: "target" },
-  behavior: { timeoutResult: { kind: "action", pending: "scroll outcome confirmation" } },
+  behavior: { targetLookup: "light", timeoutResult: { kind: "action", pending: "scroll outcome confirmation" } },
   get description() { return toolT("scrollPageDescription"); },
   get parameters() { return {
     type: "object",
