@@ -705,8 +705,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             reportPartial({}, policy.pending);
           }
           if (needsCommittedPage(selectedDefinition, args) && !toolBehaviorEnabled(selectedDefinition.behavior?.passiveWait, args) && Number(args.tabId) > 0) {
-            const page = await waitForPageCommit(Number(args.tabId), callContext);
-            if (page.status === "loading" && selectedDefinition.behavior?.targetLookup) {
+            await waitForPageCommit(Number(args.tabId), callContext);
+            // Firefox can report complete before its committed document finishes parsing.
+            if (selectedDefinition.behavior?.targetLookup) {
               await elementRuntime.prepareCssTargets(Number(args.tabId), elementTargetsOf(selectedDefinition, args), {
                 index: parameters.properties.index ? Number(args.index) || 0 : 0,
                 includeShadow: selectedDefinition.behavior?.targetLookup === "openShadow",

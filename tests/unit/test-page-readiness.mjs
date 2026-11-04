@@ -387,7 +387,19 @@ for (const status of ["loading", "complete"]) test(`CSS preparation does not wai
   const fixture = targetedFixture("inspect_element"); documentReady = true; tab.status = status;
   const result = await runtime.execute("inspect_element", { tabRef: 1, target: "css:#missing", timeout: 0.3 }, undefined, fixture.context);
   assert.equal(result.executed, true); assert.equal(fixture.dispatched.length, 1);
-  assert.equal(targetQueries.length, status === "loading" ? 1 : 0, "completed pages need no extra content query");
+  assert.equal(targetQueries.length, 1, "CSS preparation follows the document, not the tab load status");
+});
+
+test("a complete tab still prepares CSS against its unparsed committed document", async () => {
+  const fixture = targetedFixture("inspect_element"), controller = new AbortController();
+  tab.status = "complete";
+  const pending = runtime.execute("inspect_element", { tabRef: 1, target: "css:#late", timeout: 1 }, controller.signal, fixture.context);
+  try {
+    await until(() => typeof completeDocument === "function");
+    assert.equal(fixture.dispatched.length, 0); assert.equal(targetQueries.length, 1);
+    completeDocument();
+    assert.equal((await pending).executed, true); assert.equal(fixture.dispatched.length, 1);
+  } finally { controller.abort(); completeDocument?.(); documentReady = true; await pending; }
 });
 
 test("CSS action admission tolerates a new tab pending its first document", async () => {

@@ -5,7 +5,15 @@ import { registerWaitTools } from '../../src/capabilities/wait/tools.js';
 import { ToolExecutionError } from '../../src/background/tools/arguments.js';
 
 globalThis.chrome = { runtime: { getURL: path => `chrome-extension://fixture/${path}` },
-  storage: { local: { async get() { return {}; } } }, tabs: { async get(id) { return { id, url: 'https://example.test/' }; } } };
+  storage: { local: { async get() { return {}; } } }, tabs: {
+    async get(id) { return { id, url: 'https://example.test/' }; },
+    async sendMessage(_id, message) {
+      if (message.action === 'ping') return { ok: true, contentType: 'text/html', elementRefs: 1 };
+      assert.equal(message.action, 'elementPresence');
+      assert.equal(message.selector, '#chosen'); assert.equal(message.queryOnly, true);
+      return { found: true };
+    },
+  } };
 const { createToolRuntime, resolveToolDefinition, getToolSchemas } = await import('../../src/background/tools/runtime.js');
 
 function runtimeFixture() {
@@ -119,6 +127,7 @@ test('shared rect contract canonicalizes legacy boxes across element observation
 test('native click readiness failure contains only public error fields', async () => {
   const inspect = { selector: '#disabled', disabled: true, visible: true,
     rect: { x: 1, y: 2, w: 30, h: 40 }, _elementRef: undefined };
+  const sendMessage = chrome.tabs.sendMessage;
   chrome.tabs.sendMessage = async (_id, params) => params.action === 'ping' ? { ok: true, contentType: 'text/html', elementRefs: 1 } : inspect;
   try {
     const result = await resolveToolDefinition('act_on_element').execute({ tabId: 5, target: 'css:#disabled', action: 'click' }, undefined, {});
@@ -130,7 +139,7 @@ test('native click readiness failure contains only public error fields', async (
     const thrown = new ToolExecutionError('element_disabled', result.message, result.details);
     thrown.hint = result.hint;
     assert.deepEqual(JSON.parse(JSON.stringify(thrown)), result);
-  } finally { delete chrome.tabs.sendMessage; }
+  } finally { chrome.tabs.sendMessage = sendMessage; }
 });
 
 test('the element binding converts Content query failures at its owned boundary', async () => {
