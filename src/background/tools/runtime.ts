@@ -45,7 +45,7 @@ import { ensureToolBrowserPermission } from "./browser-permissions.js";
 import { selectSkillResults } from "../skills/skill-selection.js";
 import { assertHtmlPage, assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle, toolBehaviorEnabled } from "./behavior.js";
-import { toolSignature, isDriveToolDefault, isDriveToolForbidden } from "../mcp/external-drive.js";
+import { toolSignature, isDriveToolDefault, isDriveToolDiscoverable } from "../mcp/external-drive.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
  * Core, Skill and script bridges share this boundary instead of invoking raw handlers.
@@ -518,7 +518,7 @@ export function getToolSchemas(options: ToolOptions = {}) {
 
 function listContextTools(context: ToolContext, names?: readonly string[]): { tools: Fields[] } {
   const allowed = getToolSchemas(context).filter(schema => context.externalDrive !== true
-    || !isDriveToolForbidden(schema.function.name));
+    || isDriveToolDiscoverable(schema.function.name));
   if (names) {
     const index = new Map(allowed.map(schema => [schema.function.name, schema.function]));
     const requested = [...new Set(names)];

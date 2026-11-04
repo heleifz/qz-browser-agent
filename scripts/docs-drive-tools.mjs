@@ -7,8 +7,6 @@ import { generateModelsDevIndex } from "./models-dev-assets.mjs";
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const START = "<!-- qz-drive-tools:start -->";
 const END = "<!-- qz-drive-tools:end -->";
-// Browser-local gallery and table storage stays callable without occupying the top-level guide.
-const OMITTED_FROM_GUIDE = new Set(["collect_images", "read_image_asset", "data_store"]);
 // Group capability owners, not tool names: registrations remain the source of truth.
 const GROUPS = [
   [["tabs"], "Tabs", "Open, navigate, list, and close tabs; set_page_mode switches between desktop and mobile modes, reloading on a change, so observe the page again afterward."],
@@ -26,7 +24,7 @@ export async function renderDriveToolIndex() {
   generateCapabilityCatalogs(ROOT);
   generateModelsDevIndex(ROOT);
   const { default: contributions } = await import("#capabilities/tools");
-  const { isDriveToolForbidden } = await import("../src/background/mcp/external-drive.ts");
+  const { isDriveToolDiscoverable } = await import("../src/background/mcp/external-drive.ts");
   const owners = new Map();
   const browser = globalThis.chrome;
   // Register declarations without browser services or executing any tool.
@@ -35,7 +33,7 @@ export async function renderDriveToolIndex() {
     for (const { id, setup } of contributions) {
       const names = [];
       setup({ models: {}, skills: {}, registerTool({ name, hidden }) {
-        if (!hidden && !isDriveToolForbidden(name) && !OMITTED_FROM_GUIDE.has(name)) names.push(name);
+        if (!hidden && isDriveToolDiscoverable(name)) names.push(name);
       } });
       if (names.length) owners.set(id, names);
     }

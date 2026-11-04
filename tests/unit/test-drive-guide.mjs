@@ -18,10 +18,9 @@ test("the guide index covers public browser tools while omitting local storage w
   globalThis.chrome = {};
   try {
     const { getToolSchemas } = await import("../../src/background/tools/runtime.js");
-    const { isDriveToolForbidden } = await import("../../src/background/mcp/external-drive.js");
-    const localStorageTools = new Set(["collect_images", "read_image_asset", "data_store"]);
+    const { isDriveToolDiscoverable } = await import("../../src/background/mcp/external-drive.js");
     const expected = getToolSchemas({ language: "en" }).map(tool => tool.function.name)
-      .filter(name => !isDriveToolForbidden(name) && !localStorageTools.has(name)).sort();
+      .filter(isDriveToolDiscoverable).sort();
     const documented = [...index.matchAll(/`([a-z_]+)`/g)].map(match => match[1]).sort();
     assert.ok(expected.length > 0);
     assert.deepEqual(documented, expected, "List every public browser tool exactly once, excluding local storage tools");

@@ -12,6 +12,7 @@ import {
   driveGroupTitle,
   driveToolSignature,
   isDriveToolDefault,
+  isDriveToolDiscoverable,
   isDriveToolForbidden,
   parseDriveRequest,
   prepareDriveToolCall,
@@ -393,7 +394,7 @@ export function createMcpRuntime({
       description: schema.function?.description || "",
       parameters: schema.function?.parameters || {},
       type: schema.type || "function",
-    })).filter(tool => tool.name);
+    })).filter(tool => tool.name && (!externalDrive || isDriveToolDiscoverable(tool.name)));
     return { sessionId, externalDrive, tools: catalog };
   }
 

@@ -20,6 +20,9 @@ const FORBIDDEN = new Set([
   "wait_for_user", "ask_user", "send_message", "use_tab", "get_working_tab", "run_skill_script",
 ]);
 
+// Local storage workflows remain callable but are omitted from direct-drive discovery.
+const DRIVE_UNLISTED_TOOLS = new Set(["collect_images", "read_image_asset", "data_store"]);
+
 /** Default list_tools tier. Guide-tier names stay callable by name. */
 const DRIVE_DEFAULT_TOOLS = new Set([
   "open_tab", "navigate", "list_tabs", "close_tab",
@@ -65,9 +68,14 @@ export function isDriveToolForbidden(name: string) {
   return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
 }
 
+/** Shared visibility policy for the guide and both compact and named tool discovery. */
+export function isDriveToolDiscoverable(name: string) {
+  return !isDriveToolForbidden(name) && !DRIVE_UNLISTED_TOOLS.has(toolLocalName(name));
+}
+
 /** True when a drive catalog or in-script $list should show this tool without asking for it by name. */
 export function isDriveToolDefault(name: string) {
-  if (isDriveToolForbidden(name)) return false;
+  if (!isDriveToolDiscoverable(name)) return false;
   const local = toolLocalName(name);
   return DRIVE_DEFAULT_TOOLS.has(name) || DRIVE_DEFAULT_TOOLS.has(local);
 }

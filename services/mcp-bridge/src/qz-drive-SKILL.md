@@ -44,7 +44,7 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 `qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
 
-Call tools by their catalog names. Use `tools.list_tools()` for compact signatures of common tools, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas, including tools absent from the default list. Read the relevant schema before using an unfamiliar tool.
+Call tools directly when their arguments are known from this guide or an earlier schema lookup. For unfamiliar arguments, query only the needed schemas with `tools.list_tools({names:["inspect_element","wait_for_response"]})`; batch names and reuse schemas across scripts in the same task. Use `tools.list_tools()` only for a broader overview of common tools. Recheck the schema after an argument error or a CLI/extension update.
 
 Use these browser tools in scripts. Loaded Skills can add tools; follow their instructions and query list_tools by name for their schemas.
 
@@ -62,8 +62,8 @@ Use these browser tools in scripts. Loaded Skills can add tools; follow their in
 
 ```sh
 qz script --session "$SID" - <<'JS'
-// Discover browser tools before choosing a more specialized operation.
-return await tools.list_tools();
+// Look up unfamiliar arguments for the next step, then reuse these schemas.
+return await tools.list_tools({ names: ["inspect_element", "wait_for_response"] });
 JS
 ```
 
