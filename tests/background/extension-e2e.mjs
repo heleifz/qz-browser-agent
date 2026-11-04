@@ -1033,11 +1033,15 @@ async function skillResultSelectionRoundTrip(page, providerServer) {
     const modelRequests = providerServer.requests.filter(item => item.marker === marker);
     assert.equal(modelRequests.length, 3, "the task resumes once after the user settles the selection");
     const modelResult = modelRequests.at(-1).selectionResult;
+    assert.deepEqual(Object.keys(modelResult).sort(), ["ok", "result", "trace"]);
+    assert.equal(modelResult.ok, !cancel);
+    assert.ok(Array.isArray(modelResult.trace) && modelResult.trace.every(line => typeof line === "string"));
+    assert.ok(modelResult.trace.includes("Script started."), "the model retains the Skill execution trace after selection settles");
+    const selection = modelResult.result;
     if (cancel) {
-      assert.equal(modelResult.code, "USER_CANCELLED_WAIT");
-      assert.equal(modelResult.selectedItems, undefined);
+      assert.equal(selection.code, "USER_CANCELLED_WAIT");
+      assert.equal(selection.selectedItems, undefined);
     } else {
-      const selection = modelResult.result || modelResult;
       assert.deepEqual(selection.selectedIds, candidateIds.slice(1));
       assert.deepEqual(selection.selectedItems.map(item => item.id), candidateIds.slice(1));
       assert.equal(selection.selectedItems[0].company, "Harbor");
