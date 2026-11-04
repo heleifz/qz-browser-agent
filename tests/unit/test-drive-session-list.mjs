@@ -37,14 +37,15 @@ test('one drive session retains one task entry across exec, batches, scripts and
       loadedSkillNames: () => [], recordLoadedSkillNames() {},
       runtime: {
         getSchemas: () => [], getTabAliases: () => ({ page: 1 }),
-        getBatchTabPolicy: () => ({ kind: 'target', implicit: false }),
+        getBatchTabPolicy: name => name === 'run_script' ? { kind: 'script' } : { kind: 'target', implicit: false },
+        getModelPolicy: name => name === 'run_script' ? { preserveResult: true, scriptResult: 'value' } : null,
         async execute(name, args, _signal, context) {
           if (name === 'run_script') {
             for (let i = 0; i < 2; i++) await runtime.recordNestedTool({
               sessionId: context.sessionId, runId: context.runId, name: 'read_article',
               args: { tabRef: 'page' }, result: { text: 'Nested article' }, isError: false,
             });
-            return { ok: true, result: 2 };
+            return 2;
           }
           return { text: 'Public article', title: 'Same article' };
         },
@@ -61,7 +62,8 @@ test('one drive session retains one task entry across exec, batches, scripts and
       { id: 'read', name: 'read_article', args: { tabRef: 'page' } },
       { id: 'read', name: 'read_article', args: { tabRef: 'page' } },
     ] });
-    await runtime.executeTool({ sessionId, name: 'run_script', args: { tabRef: 'page', timeout: 1, code: 'async () => 2' } });
+    const script = await runtime.executeTool({ sessionId, name: 'run_script', scriptApiVersion: 2, args: { timeout: 1, code: 'return 2;' } });
+    assert.deepEqual(script.result, { ok: true, result: 2, trace: [] });
     assert.deepEqual(Object.keys(await repository.listMetadata()), [sessionId]);
     assert.equal(state.list().length, 1, 'summary and tool events update the same task entry');
     assert.equal(state.getRecord(sessionId).createdAt, before.createdAt);

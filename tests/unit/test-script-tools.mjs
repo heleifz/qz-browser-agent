@@ -126,7 +126,8 @@ test('missing-tool errors from the debugger report unavailable access without re
     const result = await run();
     assert.equal(result.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(result.details.automaticReplay, false); assert.equal(calls, 1);
-    assert.equal(result.hint, undefined);
+    assert.match(result.hint, /tools\.name\(\.\.\.\).*evaluate/);
+    assert.ok(result.hint.includes('run_script'));
   }
 });
 

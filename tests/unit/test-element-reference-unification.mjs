@@ -69,18 +69,24 @@ test('one registry format separates frames/documents and preserves older image o
 
 test('UID waits retain opaque host authority, distinguish removal from unknown references, and cancel polling', async () => {
   const definitions = new Map(), controller = new AbortController();
-  const context = Object.defineProperty({ signal: controller.signal }, Symbol('authority'), { value: 7 });
+  const authority = Symbol('authority');
+  const context = Object.defineProperty({ signal: controller.signal }, authority, { value: 7 });
+  let observationContext;
   let unavailable = false, calls = 0;
   registerWaitTools({ registerTool: definition => definitions.set(definition.name, definition),
     getToolRuntimeDependencies: () => ({}), captureTabScreenshot: async () => ({}), sendToContent: async () => ({}),
     element: {
       resolveSelectorTarget: async (_tabId, target, _index, received) => {
-        assert.equal(received, context);
+        assert.equal(Object.getPrototypeOf(received), context);
+        assert.equal(received[authority], 7, 'observation inherits non-enumerable host authority');
+        assert.notEqual(received.signal, controller.signal, 'the observation also carries its own deadline');
+        observationContext = received;
         if (target === 'uid:unknown') throw new ToolExecutionError('STALE_ELEMENT_UID', 'unknown');
         return { tabId: 5, uid: 'node', target, selector: '', ref: { backendNodeId: 42 } };
       },
       callElement: async (_tabId, _binding, action, args, received) => {
-        assert.equal(received, context); assert.equal(action, 'elementPresence'); assert.equal(args.visibleOnly, true); calls++;
+        assert.equal(received, observationContext); assert.equal(received[authority], 7);
+        assert.equal(action, 'elementPresence'); assert.equal(args.visibleOnly, true); calls++;
         if (unavailable) throw new ToolExecutionError('STALE_ELEMENT_UID', 'gone', { reason: 'node_unavailable' });
         return { found: true, element: { selector: '#node' } };
       },

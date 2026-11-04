@@ -384,6 +384,7 @@ function withoutToolAccess(result: Fields): Fields {
   if (result.ok !== false || !isToolApiReferenceError(result.error)) return result;
   return { ...result,
     code: "RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE", error: t("scriptToolAccessUnavailable"),
+    hint: toolT("toolAccessRecovery"),
     details: { ...record(result.details), toolAccess: false, automaticReplay: false, mayHaveTakenEffect: true },
   };
 }
@@ -549,6 +550,8 @@ async function runScriptWithOffscreenInnerRunner(code: string, context: ToolCont
       result: null,
       error: errorMessage(err) || "The script context is unavailable.",
       code: errorCode(err) || "SCRIPT_CONTEXT_UNAVAILABLE",
+      hint: typeof record(err).hint === "string" ? record(err).hint
+        : !errorCode(err) || errorCode(err) === "SCRIPT_CONTEXT_UNAVAILABLE" ? toolT("scriptContextRecovery") : undefined,
       trace,
       engine: "offscreen_inner",
       execution_world: "inner",
@@ -708,6 +711,7 @@ function makePageContextUnavailableResult(error: unknown, { tabId, reason = "cdp
     error: "page_context_unavailable",
     message: "The page execution context became unavailable.",
     code: "PAGE_CONTEXT_UNAVAILABLE",
+    hint: toolT("pageContextRecovery"),
     engine: "cdp",
     execution_world: "page",
     details: { mayHaveTakenEffect: true, automaticReplay: false },

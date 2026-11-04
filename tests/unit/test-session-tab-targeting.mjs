@@ -119,6 +119,7 @@ globalThis.chrome = {
   scripting: {
     async executeScript(details = {}) {
       state.scriptInjections.push(details);
+      if (details.func?.name === 'documentReadiness') return [{ result: true }];
       if (details.args?.length === 1 && typeof details.args[0] === 'boolean') return [{ result: { width: 800, height: 600, scale: 1 } }];
       return details.injectImmediately ? navigation.result(details.target.tabId) : [];
     },

@@ -4,6 +4,7 @@ const debuggerListeners = { event: [], detach: [] };
 globalThis.chrome = {
   runtime: { id: "extension-id" },
   tabs: { async get(tabId) { return { id: tabId, url: "https://example.com/forms/post" }; } },
+  scripting: { executeScript: async () => [{ result: true }] },
   debugger: {
     onEvent: { addListener(listener) { debuggerListeners.event.push(listener); } },
     onDetach: { addListener(listener) { debuggerListeners.detach.push(listener); } },

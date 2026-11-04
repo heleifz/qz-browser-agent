@@ -3,7 +3,11 @@ import { after, test } from "node:test";
 
 const originalChrome = globalThis.chrome;
 const debuggerEvents = [];
-globalThis.chrome = { debugger: { onEvent: { addListener: listener => debuggerEvents.push(listener) } } };
+globalThis.chrome = {
+  tabs: { get: async id => ({ id, url: "https://example.test/", status: "complete" }) },
+  scripting: { executeScript: async () => [{ result: true }] },
+  debugger: { onEvent: { addListener: listener => debuggerEvents.push(listener) } },
+};
 after(() => { globalThis.chrome = originalChrome; });
 const { registerAccessibilityTools } = await import("../../src/capabilities/accessibility/tools.js");
 const { ToolExecutionError } = await import("../../src/background/tools/arguments.js");

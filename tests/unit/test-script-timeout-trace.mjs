@@ -38,7 +38,8 @@ globalThis.chrome = {
     async sendMessage() { return { ok: true }; },
   },
   scripting: {
-    async executeScript() {
+    async executeScript(details) {
+      if (details?.func?.name === 'documentReadiness') return [{ result: true }];
       return [{ documentId: "doc", result: { readyState: "complete", title: "Page", url: "https://example.test/page", observedAt: 1 } }];
     },
   },

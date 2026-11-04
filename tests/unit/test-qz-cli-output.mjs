@@ -99,7 +99,7 @@ test("human errors use stderr, JSON errors use stdout, argument errors exit 2", 
     assert.doesNotMatch(text, /qz install/);
     if (json) {
       assert.equal(JSON.parse(text).code, "INVALID_ARGUMENTS");
-      assert.equal(JSON.parse(text).hint, undefined);
+      assert.match(JSON.parse(text).hint, /qz --help/);
     }
   }
   const tool = setup({ tty: true, callTool: async () => { throw Object.assign(new Error("Page failed"), { code: "TOOL_ERROR" }); } });

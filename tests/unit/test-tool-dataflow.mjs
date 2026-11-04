@@ -177,6 +177,16 @@ test('stop closes all uncommitted creations and prevents later state/alias/effec
   assert.ok(f.events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
 });
 
+// Speculatively executed calls retain page diagnostics after Stop; unstarted serial calls have none.
+// Compare committed state, errors and model messages while checking that diagnostic difference separately.
+function withoutFailurePagePresentation(snapshot) {
+  return { ...snapshot, events: snapshot.events.map(event => {
+    if (!event.isError) return event;
+    const { _pageTitle, _pageUrl, _pageContext, ...result } = event.result;
+    return { ...event, result };
+  }) };
+}
+
 test('serial and parallel stop at the same committed prefix retain identical state', async () => {
   const input = [open('a'), open('b'), open('c'), read('a'), read('b'), read('c')];
   const snapshots = [];
@@ -184,7 +194,10 @@ test('serial and parallel stop at the same committed prefix retain identical sta
     const f = setup({ serial, stopAt: 'open-a' });
     snapshots.push(f.snapshot(await f.run(input)));
   }
-  assert.deepEqual(snapshots[0], snapshots[1]); assert.deepEqual(snapshots[0].owned, [97]);
+  assert.equal(snapshots[0].events.find(event => event.toolCallId === 'read-a').result._pageUrl, 'https://example.test/a');
+  assert.equal(snapshots[1].events.find(event => event.toolCallId === 'read-a').result._pageUrl, undefined);
+  assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
+  assert.deepEqual(snapshots[0].owned, [97]);
 });
 
 test('stop during effects retains published ownership but publishes no late success or alias', async () => {
@@ -192,54 +205,62 @@ test('stop during effects retains published ownership but publishes no late succ
   for (const serial of [false, true]) {
     const f = setup({ serial, stopEffects: true }); snapshots.push(f.snapshot(await f.run(input)));
   }
-  assert.deepEqual(snapshots[0], snapshots[1]);
+  assert.equal(snapshots[0].events.find(event => event.toolCallId === 'read-a').result._pageUrl, 'https://example.test/a');
+  assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
   assert.deepEqual(snapshots[0].owned, [97]); assert.deepEqual(snapshots[0].live, [97]);
   assert.ok(snapshots[0].events.filter(e => e.type === 'tool_execution_end').every(e => e.result.code === 'OPERATION_ABORTED'));
 });
 
 for (const code of ['return 42;', 'return await tools.list_tools();']) {
-  test(`outer script barrier waits for prior commits and blocks later tabs: ${code}`, async () => {
+  test(`outer script overlaps page work while result publication remains ordered: ${code}`, async () => {
     const script = call('script', 'run_script', { code, args: { stage: 'script-b' }, timeout: 5 });
     const input = [open('a'), open('b'), read('a'), script, call('after', '__flow_read', { tabRef: 'a' }), read('b')];
     const scriptEffects = 'effects:run_script:undefined';
     const hold = ['read-a', 'effects:__flow_read:97', 'script-b', scriptEffects];
     const f = setup({ scriptFixtures: true, hold });
     const run = f.run(input);
-    await until(() => f.gates.has('read-a'));
-    assert.equal(f.started.includes('script-b'), false);
-    f.gates.get('read-a')(); await until(() => f.gates.has('effects:__flow_read:97'));
-    assert.equal(f.started.includes('script-b'), false, 'execution completion alone does not release the barrier');
-    f.gates.get('effects:__flow_read:97')(); await until(() => f.gates.has('script-b'));
-    assert.equal(f.events.filter(e => e.type === 'tool_execution_end').length, 3);
-    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
-    assert.equal(f.started.includes('read-b'), false);
-    hold.splice(0, 2);
+    const committed = () => f.events.filter(event => event.type === 'tool_execution_end').map(event => event.toolCallId);
+    await until(() => f.gates.has('read-a') && f.gates.has('script-b') && f.started.includes('read-b'));
+    assert.equal(f.started.filter(key => key === 'read-a').length, 1, 'same-page work waits for its prior execution');
+    assert.deepEqual(committed(), ['open-a', 'open-b']);
+    hold.splice(hold.indexOf('read-a'), 1);
+    f.gates.get('read-a')();
+    await until(() => f.gates.has('effects:__flow_read:97') && f.started.filter(key => key === 'read-a').length === 2);
+    assert.deepEqual(committed(), ['open-a', 'open-b'], 'later completed work cannot overtake the first read commit');
+    hold.splice(hold.indexOf('effects:__flow_read:97'), 1);
+    f.gates.get('effects:__flow_read:97')();
+    await until(() => committed().length === 3);
     f.gates.get('script-b')(); await until(() => f.gates.has(scriptEffects));
-    assert.equal(f.started.filter(key => key === 'read-a').length, 1);
-    assert.equal(f.started.includes('read-b'), false, 'later work also waits for the script commit');
+    assert.deepEqual(committed(), ['open-a', 'open-b', 'read-a'], 'later reads await script publication, not execution');
     f.gates.get(scriptEffects)();
     const result = f.snapshot(await run);
+    assert.deepEqual(committed(), input.map(item => item.id));
     assert.equal(f.siteChanges.length, 0, 'outer computation has no direct page effect');
-    assert.ok(f.scriptContexts.every(context => context.deferred === false && context.tabId === undefined));
+    assert.ok(f.scriptContexts.every(context => context.deferred === true && context.tabId === undefined));
     const serial = setup({ serial: true, scriptFixtures: true });
     assert.deepEqual(result, serial.snapshot(await serial.run(input)));
   });
 }
 
 for (const name of ['run_script', 'run_skill_script']) for (const cancel of [false, true]) {
-  test(`orchestration barrier ${cancel ? 'cancellation' : 'failure'} is serial-equivalent: ${name}`, async () => {
+  test(`${name} ${cancel ? 'cancellation at a committed prefix' : 'failure'} preserves ordered Session outcomes`, async () => {
     const args = name === 'run_script' ? { code: 'return await tools.list_tools();', args: { stage: 'script-b' }, timeout: 5 }
       : { skill: 'fixture', script: 'script-b', target: 'inner', timeout: 5 };
     const snapshots = [], input = [open('a'), open('b'), call('script', name, args), read('a'), read('b')];
     for (const serial of [false, true]) {
       const f = setup({ serial, scriptFixtures: true, ...(cancel ? { hold: ['script-b'] } : { fail: 'script-b' }) });
       const run = f.run(input);
-      if (cancel) { await until(() => f.gates.has('script-b')); f.controller.abort(); }
+      if (cancel) {
+        await until(() => f.gates.has('script-b') && f.events.some(event => event.type === 'tool_execution_end' && event.toolCallId === 'open-b'));
+        if (!serial && name === 'run_script') await until(() => f.started.includes('read-b'));
+        f.controller.abort();
+      }
       snapshots.push(f.snapshot(await run));
       assert.equal(f.siteChanges.length, 0);
-      assert.equal(f.started.includes('read-a'), !cancel);
+      assert.equal(f.started.includes('read-a'), !cancel || !serial && name === 'run_script',
+        'modern script containers permit independent reads; legacy Skill scripts retain their barrier');
     }
-    assert.deepEqual(snapshots[0], snapshots[1]);
+    assert.deepEqual(withoutFailurePagePresentation(snapshots[0]), withoutFailurePagePresentation(snapshots[1]));
     assert.equal(snapshots[0].events.find(e => e.type === 'tool_execution_end' && e.toolCallId === 'script').result.code,
       cancel ? 'OPERATION_ABORTED' : 'SCRIPT_EVALUATION_FAILED');
   });

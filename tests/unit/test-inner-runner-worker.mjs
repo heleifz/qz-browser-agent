@@ -108,6 +108,7 @@ for (const mode of ['development', 'production']) test(`${mode} Worker returns o
   const source = await compileInnerWorker({ mode });
   const image = key => ({ _image: `data:image/png;base64,${Buffer.from(key).toString('base64')}`, _imageDetail: 'high' });
   const run = script => runInnerWorker(source, script, { strictResult: true, onMessage(message, respond) {
+    if (message.type === 'script_trace') return;
     assert.equal(message.type, 'tool_call');
     assert.ok(['screenshot', 'read_image'].includes(message.toolName));
     respond({ type: 'tool_response', callId: message.callId, response: {

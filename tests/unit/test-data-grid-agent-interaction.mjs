@@ -389,10 +389,11 @@ function assertAgentPromptContract() {
   assert.match(promptsSource, /data_store create_table 传 table \+ columns/, "system prompt should route schema-only table creation through create_table");
   assert.match(promptsSource, /业务字段都在 row\.data 内/, "system prompt should explain the data_store row wrapper");
   assert.match(promptsSource, /不要用 row\["标题"\] 取业务字段/, "system prompt should prevent top-level row field access");
-  assert.match(promptsSource, /使用 run_script 执行无 DOM 的 JavaScript 计算或工具编排[\s\S]*data_store 批量清洗、分组、统计、去重通过 tools\.data_store 分批读写/, "system prompt keeps page-independent table crunching available without choosing a page");
-  assert.match(promptsSource, /每个嵌套页面工具（包括 evaluate）仍要显式传入自己的 tabRef/, "orchestration selects each page explicitly");
+  assert.match(promptsSource, /JavaScript 计算使用 run_script。它在页面外运行，没有 DOM/, "system prompt keeps page-independent table crunching available without choosing a page");
+  assert.match(promptsSource, /大批 rows 在 run_script 内部分批调用 tools\.data_store 落库并验证 schema\/list/, "table workflows batch writes and verify the stored schema and rows");
+  assert.match(promptsSource, /每个嵌套页面工具（包括 evaluate）显式传入自己的 tabRef/, "orchestration selects each page explicitly");
   assert.doesNotMatch(promptsSource, /run_script\(\{target:/, "the prompt should not expose script execution internals");
-  assert.match(promptsSource, /最后只返回表名、行数、聚合口径、少量样例和异常统计/, "system prompt should keep table crunching summaries small");
+  assert.match(promptsSource, /只返回下一步判断需要的业务数据/, "system prompt should keep table crunching summaries small");
   assert.match(promptsSource, /聚合结果或派生表使用稳定唯一 dedupField/, "system prompt should require stable unique dedup fields for aggregated outputs");
 }
 

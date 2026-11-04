@@ -261,7 +261,20 @@ for (const kind of ['srcdoc', 'blank', 'same-src']) test(`Firefox duplicate ifra
       sendToContent: async () => ({ title: 'Outer', url: page.url(), actions: [] }),
       withDebugger: async (_id, run) => run({}, send), elementTargetGrammar: 'target grammar',
     });
-    const result = await definition.execute({ tabId, scope: 'full' }, undefined, { sessionId: 'owner' });
+    const previousChrome = globalThis.chrome;
+    globalThis.chrome = {
+      tabs: { async get(id) { assert.equal(id, tabId); return { url: page.url(), status: 'complete' }; } },
+      scripting: { async executeScript({ target, func }) {
+        assert.deepEqual(target, { tabId, frameIds: [0] });
+        return [{ result: await page.evaluate(func) }];
+      } },
+    };
+    let result;
+    try { result = await definition.execute({ tabId, scope: 'full' }, undefined, { sessionId: 'owner' }); }
+    finally {
+      if (previousChrome === undefined) delete globalThis.chrome;
+      else globalThis.chrome = previousChrome;
+    }
     assert.equal(result.snapshot.replace(/target=uid:\S+ /g, ''), [
       'RootWebArea "Outer"',
       ' Iframe "First frame"',

@@ -29,8 +29,9 @@ function fixture() {
   const toolRuntime = {
     getToolResultPageContext: result => pageContexts.get(result) || {},
     getSchemas: () => [], getTabAliases: () => aliases, resolveDefinition: () => ({ behavior: {} }),
+    getModelPolicy: name => name === 'run_script' ? { preserveResult: true, scriptResult: 'value' } : null,
     getBatchTabPolicy: name => name === 'open_tab' ? { kind: 'create' }
-      : ['read_article', 'run_script'].includes(name) ? { kind: 'target', implicit: false } : null,
+      : name === 'run_script' ? { kind: 'script' } : name === 'read_article' ? { kind: 'target', implicit: false } : null,
     async execute(name, args, signal, context) {
       if (name === 'open_tab') {
         const tabId = ++nextTab;
@@ -45,7 +46,8 @@ function fixture() {
           await bridge.handleToolCall({ sessionId: context.sessionId, runId: context.runId,
             parentCallId: parent.toolExecutionId, toolName, args: nestedArgs });
         }
-        return observed({ ok: true, result: { title: 'user data, not page title' } }, tabId);
+        context.resultPresentation._display = { script: { valueOnly: true, trace: [] } };
+        return observed({ title: 'user data, not page title' }, aliases[args.steps?.[0]?.[1]?.tabRef]);
       });
       if (args.fail) throw Object.assign(new Error('synthetic failure'), { code: 'TEST_FAILURE' });
       return observed({ text: 'Article' }, tabId);
@@ -94,12 +96,12 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
     assert.deepEqual(result.results.map(row => row.id), ['open', 'read'], 'response correlation stays unchanged');
   }
   await f.runtime.executeTool({ sessionId, calls: ['a', 'b'].map(tabRef => ({ id: 'same', name: 'read_article', args: { tabRef } })) });
-  const script = await f.runtime.executeTool({ sessionId, name: 'run_script', args: { tabRef: 'a', timeout: 10, code: 'async () => {}', steps: [
+  const script = await f.runtime.executeTool({ sessionId, name: 'run_script', scriptApiVersion: 2, args: { timeout: 10, code: 'async () => {}', steps: [
     ['read_article', { tabRef: 'a' }], ['read_article', { tabRef: 'b' }],
     ['wait', { seconds: 0 }], ['read_article', { tabRef: 'a', fail: true }],
     ['read_article', {}],
   ] } });
-  assert.deepEqual(script.result, { ok: true, result: { title: 'user data, not page title' } }, 'UI metadata must not change the model response');
+  assert.deepEqual(script.result, { ok: true, result: { title: 'user data, not page title' }, trace: [] }, 'UI metadata must not change the model response');
   const history = await f.transcript.get(sessionId);
   assert.equal(history.length, 14, '8 batch calls + 5 nested invocations + parent script');
   assert.equal(new Set(history.map(row => row.toolCallId)).size, 14);
@@ -108,7 +110,7 @@ test('drive cards preserve every call across batches, duplicate correlation IDs,
   assert.equal(history.at(-3).isError, true);
   assert.equal(history.at(-2).isError, true);
   assert.equal(history.at(-1).result._pageTitle, 'Page a');
-  assert.equal(history.at(-1).args.tabRef, 'a');
+  assert.equal(history.at(-1).args.tabRef, undefined, 'outer scripts leave page references to their child calls');
   assert.equal(history[1].args.tabRef, 'a', 'batch display keeps the requested alias, not resolved internal arguments');
   const replay = f.events.at(-1);
   f.transcript.recordEvent(sessionId, replay);

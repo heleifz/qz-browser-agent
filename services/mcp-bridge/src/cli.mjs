@@ -112,7 +112,15 @@ async function dispatchCommand(parsed, dependencies) {
   dependencies.signal?.throwIfAborted();
   const open = dependencies.openBrowser || openBrowser;
   const find = dependencies.findDaemon || findDaemon;
-  if (command === "install") return { result: await open(INSTALL_URL) };
+  if (command === "install") {
+    try { return { result: await open(INSTALL_URL) }; }
+    catch (error) {
+      if (error?.code === "BROWSER_OPEN_FAILED" && !error.hint && !error.details?.hint) {
+        error.hint = "Open the store URL manually, or configure a default browser and retry qz install.";
+      }
+      throw error;
+    }
+  }
   if (command === "connect") {
     const running = await find({ allowIncompatible: true }) || await (dependencies.ensureDaemon || ensureDaemon)(options.port === undefined ? {} : { preferredPort: options.port });
     if (options.port !== undefined && Number(new URL(running.endpoint).port) !== options.port) throw new QzError("PORT_MISMATCH",

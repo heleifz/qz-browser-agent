@@ -69,8 +69,9 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
   assert.match(system, en ? /Use evaluate with tabRef for a self-contained page function[\s\S]*Page functions cannot call tools/ : /使用 evaluate 和 tabRef 执行自包含页面函数[\s\S]*页面函数不能调用 tools/);
-  assert.match(system, en ? /Use run_script for JavaScript computation or tool orchestration without a DOM/ : /使用 run_script 执行无 DOM 的 JavaScript 计算或工具编排/);
-  assert.match(system, en ? /Each nested page tool, including evaluate, must specify its own tabRef/ : /每个嵌套页面工具（包括 evaluate）仍要显式传入自己的 tabRef/);
+  assert.match(system, en ? /Use run_script for dependent workflows, branching, loops and JavaScript computation/ : /多步依赖、分支、循环和 JavaScript 计算使用 run_script/);
+  assert.match(system, en ? /It runs outside pages without a DOM and survives navigation/ : /它在页面外运行，没有 DOM，页面导航不会销毁脚本/);
+  assert.match(system, en ? /Each nested page tool, including evaluate, must specify its own tabRef/ : /每个嵌套页面工具（包括 evaluate）显式传入自己的 tabRef/);
   assert.equal(imageMessages.length, vision ? 2 : 1);
   if (en) assert.doesNotMatch(JSON.stringify(imageMessages), /\p{Script=Han}/u);
   if (vision) assert.equal(imageMessages[1].content[1].image_url.url, image);
