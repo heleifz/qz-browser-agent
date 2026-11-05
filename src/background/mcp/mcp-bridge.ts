@@ -448,10 +448,12 @@ class QingzhouMcpBridgeRuntime {
         const metadataTraces = getToolResultTraces(error);
         const traces = metadataTraces.length ? metadataTraces
           : typeof source.code === "string" && typeof source.message === "string" ? traceMessages(record(source.details).trace) : [];
-        payload = { ok: false, error: toolError(String(record(error).code || "TOOL_EXECUTION_FAILED"), typeof source.message === "string" ? source.message : String(error), {
+        const { message, ...failure } = toolError(String(source.code || "TOOL_EXECUTION_FAILED"), typeof source.message === "string" ? source.message : String(error), {
           hint: typeof record(error).hint === "string" ? String(record(error).hint) : undefined,
           details: { ...errorDetails(error), ...(traces.length ? { trace: traces } : {}) },
-        }) };
+        });
+        // Protocol v1 services expect a string error and top-level recovery fields.
+        payload = { ok: false, error: message, ...failure };
       }
       this.check(generation);
       // Results are bound to the exact service/worker lease that dequeued the request.

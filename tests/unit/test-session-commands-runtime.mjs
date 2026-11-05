@@ -23,6 +23,8 @@ import { t } from "../../src/shared/i18n/backend.js";
 
 await creationRunAndHistoryFlow();
 await publicSessionObservations();
+await publicTaskMessagesUseModelValues();
+await publicTaskMessagesKeepUncommittedWorkAsProgress();
 await duplicateAcceptedPromptIsIdempotent();
 await submittedMessageStartsOrQueuesAtomically();
 await acceptedCleanupIsPostCommitAndNonBlocking();
@@ -181,8 +183,10 @@ async function creationRunAndHistoryFlow() {
 async function publicSessionObservations() {
   const fixture = createFixture();
   const created = await fixture.commands.createSessionFromApi({ title: 'Compare public prices' });
-  const session = created.session;
+  const { id, ...session } = created.session;
   const sessionId = session.sessionId;
+  assert.equal(id, sessionId, 'legacy CLI/MCP clients can read session.id');
+  assert.equal(typeof id, 'string');
   assert.deepEqual(session, { sessionId, title: 'Compare public prices', status: 'idle' });
   assert.equal(created.started, false);
   assert.equal((await fixture.repository.getMetadata(sessionId)).id, sessionId, 'stored identity remains internal');
@@ -218,6 +222,112 @@ async function publicSessionObservations() {
   assert.equal(deleted.deleted, true);
   assert.equal(deleted.source, undefined);
   assert.equal(deleted.requestedBy, undefined);
+}
+
+async function publicTaskMessagesUseModelValues() {
+  const business = { tabId: "authored value", _pageContext: { label: "authored context" }, nodes: [{ selector: "authored selector" }] };
+  const receipt = { ok: true, result: business, trace: ["Collected both pages"] };
+  const failure = { ok: false, result: { code: "TARGET_NOT_FOUND", message: "Refresh the target", details: { tabRef: "catalog" } }, trace: ["Page loaded", "Target missing"] };
+  const calls = [
+    { id: "reused", name: "read_article", args: { tabRef: "first" }, result: { text: "First page" } },
+    { id: "script", name: "run_script", args: { code: "return args", args: business }, result: receipt },
+    { id: "failure", name: "run_script", args: { code: "throw new Error('missing')" }, result: failure, isError: true },
+    { id: "reused", name: "read_article", args: { tabRef: "second" }, result: { text: "Second page" } },
+  ];
+  const messages = [{ role: "user", content: "Compare pages" }, ...calls.flatMap(call => [
+    { role: "assistant", content: null, tool_calls: [{ id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] },
+    { role: "tool", tool_call_id: call.id, content: JSON.stringify(call.result), _toolIsError: call.isError === true },
+  ]), { role: "assistant", content: "Comparison complete" }];
+  for (const source of ["live", "stored"]) {
+    const f = createFixture(), sessionId = `public-tools-${source}`;
+    await f.repository.createMetadata({ id: sessionId, title: "Compare pages" });
+    const ui = calls.map((call, index) => ({ type: "tool", name: call.name, toolCallId: call.id, runId: `run-${index}`,
+      args: { ...call.args, tabId: 987 }, argsText: "HOST_ONLY_ARGS", result: { _pageContext: "HOST_ONLY_RESULT" },
+      phase: "done", isRunning: false, isError: call.isError === true }));
+    // A stale UI checkpoint must not append running work to a completed conversation.
+    ui.push({ type: "tool", name: "stale_progress", args: { tabId: 988 }, result: "HOST_ONLY_STALE", isRunning: true });
+    if (source === "live") f.agent(sessionId).messages.push(...messages);
+    else await f.commands.saveSessionRecordRuntime({ sessionId, conversation: serializeConversation(messages), transcript: ui });
+    f.transcripts.set(sessionId, ui);
+    f.setRuntime(sessionId, { status: "completed", running: false });
+    const originalUi = structuredClone(ui);
+    const tail = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+    assert.deepEqual(tail.messages.filter(item => item.type === "tool").map(item => ({
+      name: item.name, args: JSON.parse(item.args), result: JSON.parse(item.result), isError: item.isError,
+    })), calls.map(call => ({ name: call.name, args: call.args, result: call.result, isError: call.isError === true })), source);
+    assert.equal(tail.messages.at(-1).content, "Comparison complete");
+    assert.equal(JSON.stringify(tail).includes("HOST_ONLY"), false, source);
+    const waited = await f.commands.waitSessionsRuntime({ sessionIds: [sessionId], num: 50 });
+    assert.deepEqual(waited.sessions[0].lastMessages, tail.messages, "wait and last_messages share the public contract");
+    assert.deepEqual(ui, originalUi, "public reads must not rewrite UI evidence");
+    assert.equal(JSON.parse(f.commands.compactTranscriptEvent(ui[0]).args).tabId, 987, "the existing UI compact projection remains available");
+  }
+}
+
+async function publicTaskMessagesKeepUncommittedWorkAsProgress() {
+  const f = createFixture(), sessionId = "public-progress";
+  await f.repository.createMetadata({ id: sessionId, title: "Read pages" });
+  const agent = f.agent(sessionId);
+  const completed = text => [
+    { role: "assistant", content: null, tool_calls: [{ id: "reused", type: "function", function: { name: "read_article", arguments: '{"tabRef":"page"}' } }] },
+    { role: "tool", tool_call_id: "reused", content: JSON.stringify({ text }), _toolIsError: false },
+  ];
+  agent.messages.push(...completed("Previously committed page"));
+  const ui = [
+    { type: "tool", name: "read_article", toolCallId: "reused", runId: "new-run", args: { tabId: 987 }, argsText: "HOST_ONLY", result: "HOST_ONLY_UNCOMMITTED", phase: "done", isRunning: false },
+    { type: "tool", name: "evaluate", args: { tabId: 987 }, argsText: "HOST_ONLY_PARTIAL", result: "HOST_ONLY_PARTIAL", phase: "preparing", isRunning: true },
+  ];
+  f.transcripts.set(sessionId, ui);
+  f.setRuntime(sessionId, { status: "running", running: true, runId: "new-run" });
+  const tail = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.equal(tail.messages.length, 2);
+  assert.deepEqual(JSON.parse(tail.messages[0].result), { text: "Previously committed page" }, "a reused ID must not substitute an uncommitted UI result");
+  const progress = tail.messages[1];
+  assert.equal(progress.name, "evaluate");
+  assert.equal(progress.isRunning, true);
+  assert.equal(progress.phase, "preparing");
+  assert.equal(progress.args, null);
+  assert.equal(progress.result, null);
+  assert.equal(progress.argsText, "");
+  assert.equal(JSON.stringify(tail).includes("HOST_ONLY"), false);
+  assert.deepEqual((await f.commands.getLastMessagesRuntime({ sessionId, num: 1 })).messages, [progress], "tail limit applies after adding progress");
+
+  ui[1].name = "ask_user";
+  const question = { type: "wait", title: "Choose currency", message: "Which currency should this budget use?", status: "waiting",
+    form: { fields: [], internal: "HOST_ONLY_FORM" } };
+  ui.push(question);
+  f.setRuntime(sessionId, { status: "waiting_user", running: true });
+  const waiting = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.deepEqual(waiting.messages.at(-1), {
+    type: "wait", title: question.title, message: question.message, status: "waiting", reason: "",
+  }, "a parent must see the child's current question before the tool result is committed");
+  assert.equal(waiting.messages.at(-2).name, "ask_user");
+  assert.equal(waiting.messages.at(-2).args, null);
+  assert.equal(waiting.messages.at(-2).argsText, "");
+  assert.equal(JSON.stringify(waiting).includes("HOST_ONLY"), false);
+  question.status = "resolved";
+  f.setRuntime(sessionId, { status: "running", running: true });
+  const resolved = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.equal(resolved.messages.some(item => item.type === "wait"), false, "resolved UI questions must not become current task progress");
+  ui.pop();
+
+  agent.messages.push(...completed("Newly committed page"));
+  ui[1].isRunning = false;
+  f.setRuntime(sessionId, { status: "completed", running: false });
+  const committed = await f.commands.getLastMessagesRuntime({ sessionId, num: 50 });
+  assert.deepEqual(committed.messages.map(item => JSON.parse(item.result).text), ["Previously committed page", "Newly committed page"]);
+
+  const legacyId = "legacy-public-progress";
+  await f.repository.createMetadata({ id: legacyId, title: "Legacy task" });
+  f.transcripts.set(legacyId, [{ type: "assistant", content: "Legacy answer" }, ...ui]);
+  f.setRuntime(legacyId, { status: "completed", running: false });
+  const legacy = await f.commands.getLastMessagesRuntime({ sessionId: legacyId, num: 50 });
+  assert.equal(legacy.messages[0].content, "Legacy answer");
+  assert.equal(legacy.messages.length, 3);
+  for (const tool of legacy.messages.slice(1)) {
+    assert.equal(tool.args, null); assert.equal(tool.result, null); assert.equal(tool.argsText, "");
+  }
+  assert.equal(JSON.stringify(legacy).includes("HOST_ONLY"), false, "old records without a public conversation must not expose UI payloads");
 }
 
 async function duplicateAcceptedPromptIsIdempotent() {

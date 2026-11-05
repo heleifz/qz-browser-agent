@@ -932,13 +932,16 @@ function launchSessionPrompt(sessionId: string, firstMessage: unknown, signal?: 
   return true;
 }
 
-function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
-  return createSessionRuntime({
+async function createSessionFromApi(params: Fields = {}, signal?: AbortSignal) {
+  const { session: created, started } = await createSessionRuntime({
     title: params.title || "",
     firstMessage: params.firstMessage || params.text || "",
     parentSessionId: params.parentSessionId || ROOT_SESSION_ID,
     publicView: true,
   }, signal);
+  const session = created as ReturnType<typeof publicSessionRecord>;
+  // Older CLI/MCP clients read session.id when displaying or observing the new task.
+  return { session: { ...session, id: session.sessionId }, started };
 }
 
 function createUiSessionFromApi(params: Fields = {}) {
@@ -1303,11 +1306,12 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   const count = Math.max(1, Math.min(50, Math.floor(Number(num) || 5)));
   const sessions = await getSessions();
   const entry = await agentHost.getLiveEntry(id);
+  const conversation = entry?.agent.exportSession();
   let source = "";
   let transcript: TranscriptEntry[] = [];
 
   if (entry) {
-    transcript = await sessionTranscript.get(id, entry.agent.exportSession());
+    transcript = await sessionTranscript.get(id, conversation);
     source = "runtime";
   }
 
@@ -1331,7 +1335,16 @@ async function getLastMessagesRuntime({ sessionId, num = 5 }: { sessionId?: unkn
   }
 
   const runtime = getSessionRuntimeState(id);
-  const tail = transcript.slice(-count).map(compactTranscriptEvent);
+  // Public task observations use the same messages the child model receives.
+  // UI tool payloads contain execution arguments and presentation, not public values.
+  const observed = transcriptFromConversation(await sessionTranscript.getConversation(id, conversation));
+  const progress = (runtime.running || runtime.pendingStart) ? transcript.filter(event =>
+    event.type === "tool" && event.isRunning || event.type === "wait" && event.status === "waiting",
+  ).map(event => event.type === "tool" ? toolExecutionProgress(event) : event) : [];
+  const messages = observed.length
+    ? [...observed, ...progress]
+    : transcript.map(event => event.type === "tool" ? toolExecutionProgress(event) : event);
+  const tail = messages.slice(-count).map(compactTranscriptEvent);
   const artifacts = await sessionArtifacts.collect(id, transcript);
   return {
     sessionId: id,
@@ -1821,6 +1834,10 @@ async function collectWaitSessionSummaries(sessionIds: string[], num: number) {
 }
 
 const SESSION_TAIL_TEXT_LIMIT = 6000;
+
+function toolExecutionProgress(event: TranscriptEntry): TranscriptEntry {
+  return { type: "tool", name: event.name, phase: event.phase, isRunning: event.isRunning, isError: event.isError };
+}
 
 function compactTranscriptEvent(event: TranscriptEntry) {
   if (!event || typeof event !== "object") return { type: "unknown" };

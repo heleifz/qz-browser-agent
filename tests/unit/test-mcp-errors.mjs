@@ -13,27 +13,33 @@ async function bridgeFixture(t) {
   return bridge;
 }
 
-test("typed extension errors keep recovery metadata through a real MCP client without replay", async t => {
+for (const format of ["flat", "nested"]) {
+test(`${format} extension errors keep recovery metadata through a real MCP client without replay`, async t => {
   const bridge = await bridgeFixture(t);
+  const details = { tabRef: "report", target: "uid:t1.s1.2", downloadId: 42, filename: "results.xlsx", reason: "USER_CANCELED",
+    trace: ["Report prepared.", "Download interrupted."] };
   const pending = callTool(bridge.endpoint, "qingzhou_export_data_table", { table: "results" });
   const rejected = assert.rejects(pending, error => {
     assert.equal(error.code, "DOWNLOAD_INTERRUPTED");
-    assert.match(error.message, /interrupted/);
-    assert.deepEqual(error.details, { tabRef: "report", target: "uid:t1.s1.2", downloadId: 42, filename: "results.xlsx", reason: "USER_CANCELED" });
+    assert.equal(error.message, "Download interrupted.");
+    assert.deepEqual(error.details, details);
     assert.equal(error.hint, "Retry the export from the report tab.");
     assert.equal(JSON.stringify(error).includes("secret-api-key"), false);
     return true;
   });
   const [request] = await pollBrowser(bridge.state, { id: "browser" }, { timeoutMs: 1000 });
   assert.equal(request.method, "export_data_table");
-  completeBrowser(bridge.state, request.id, {
-    ok: false, error: { code: "DOWNLOAD_INTERRUPTED", message: "Download interrupted.", hint: "Retry the export from the report tab.",
-      details: { tabRef: "report", target: "uid:t1.s1.2", downloadId: 42, filename: "results.xlsx", reason: "USER_CANCELED", apiKey: "secret-api-key", request: { authorization: "secret-api-key" } } },
-  });
+  const failure = { code: "DOWNLOAD_INTERRUPTED", message: "Download interrupted.", hint: "Retry the export from the report tab.",
+    details: { ...details, apiKey: "secret-api-key", request: { authorization: "secret-api-key" } } };
+  const { message, ...metadata } = failure;
+  completeBrowser(bridge.state, request.id, format === "nested"
+    ? { ok: false, error: failure }
+    : { ok: false, error: message, ...metadata });
   await rejected;
   assert.equal(bridge.state.pending.size, 0);
   assert.equal(bridge.state.inflight.size, 0);
 });
+}
 
 test("ambiguous Skill errors preserve only candidate identities through a real MCP client", async t => {
   const bridge = await bridgeFixture(t);
