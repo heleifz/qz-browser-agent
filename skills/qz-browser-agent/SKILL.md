@@ -96,6 +96,24 @@ return await tools.wait_for_navigation({
 
 `wait_for_navigation` matches only a new navigation after listening starts (including same-URL reloads, SPA transitions, and hash changes); an already-loaded page never satisfies it. `wait_for_load` checks whether the current page load has finished. `wait_for_element` defaults to `visible` (use `attached` for DOM presence; a zero-height `body` can still contain visible children, so do not use `body` visibility as a readiness check). Use `wait_for_function` for application-specific conditions. Prefer observable conditions over fixed sleeps.
 
+Keep actions, the wait for their expected result, and one focused read in the same script. Choose a condition that distinguishes the new result from any previous result.
+
+```js
+// Submit a known form whose completed result appears in an initially hidden panel.
+await tools.act_on_element({
+  tabRef: "page", target: args.fieldTarget, action: "fill", value: args.value
+});
+await tools.act_on_element({
+  tabRef: "page", target: args.submitTarget, action: "click"
+});
+const ready = await tools.wait_for_element({
+  tabRef: "page", target: args.resultTarget, state: "visible", timeout: 10
+});
+return await tools.read_article({
+  tabRef: "page", source: "target", target: ready.target, limit: 2000
+});
+```
+
 Use `await` for dependencies and `Promise.all` for independent page workflows that process results within each async branch. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
 
 ```sh
