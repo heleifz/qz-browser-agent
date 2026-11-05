@@ -48,6 +48,7 @@ import {
   genSessionId,
   normalizeParentSessionId,
   normalizeSessionId,
+  normalizeDriveClientName,
 } from "../../shared/session/session-store.js";
 import { createSessionRecord, createSessionTitle, normalizeTranscript, serializeConversation } from "../../shared/session/session-codec.js";
 import { persistSessionImages, resolveSessionImages } from "../../shared/session/session-image-assets.js";
@@ -169,6 +170,7 @@ export function createSessionRepository({
         titleSource: existing?.titleSource || normalizeTitleSource(input.titleSource, parentSessionId),
         parentSessionId,
         source: normalizeSessionSource(input.source || existing?.source),
+        driveClientName: input.driveClientName == null ? existing?.driveClientName : normalizeDriveClientName(input.driveClientName),
         driveGroupTitle: normalizeDriveGroupTitle(input.driveGroupTitle || existing?.driveGroupTitle),
         automationId: normalizeSessionId(input.automationId || existing?.automationId),
         automationRunId: normalizeSessionId(input.automationRunId || existing?.automationRunId),
@@ -668,13 +670,23 @@ function normalizeMetadataMap(value: unknown): Record<string, SessionMetadata> {
 }
 
 function cleanMetadata<T extends Fields>(session: T): T {
-  const next = { ...session };
+  const next: Fields = { ...session };
   if (!next.source) delete next.source;
+  if (next.source === "external-drive") {
+    // Older versions persisted the generated Chinese label instead of its client name.
+    const legacy = String(next.driveGroupTitle || "");
+    const client = next.driveClientName ?? (legacy.startsWith("轻舟 · ") ? legacy.slice("轻舟 · ".length) : undefined);
+    if (client !== undefined || !legacy) {
+      next.driveClientName = normalizeDriveClientName(client);
+      delete next.driveGroupTitle;
+    }
+  }
+  if (next.driveClientName === undefined) delete next.driveClientName;
   if (!next.driveGroupTitle) delete next.driveGroupTitle;
   delete next.keepDriveTabs;
   if (!next.automationId) delete next.automationId;
   if (!next.automationRunId) delete next.automationRunId;
-  return next;
+  return next as T;
 }
 
 function normalizeTitleSource(value: unknown, parentSessionId: unknown) {

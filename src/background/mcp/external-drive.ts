@@ -3,7 +3,9 @@ import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
 import { copyToolResultPresentation, getToolResultPresentation, getToolResultTraces, traceMessages, toolFailurePresentation, type ToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { scriptReceipt, SCRIPT_API_VERSION } from "../../shared/contracts/script-receipt.js";
 import { driveToolText } from "./tool-messages.js";
-import { getLanguage } from "../../shared/i18n/index.js";
+import { createTranslator, getLanguage } from "../../shared/i18n/index.js";
+import { contentMessages } from "../../shared/i18n/content.js";
+import { normalizeDriveClientName } from "../../shared/session/session-store.js";
 import type { ToolBatchTabPolicy, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { planTabBatch } from "../tools/tab-batch.js";
 import { scheduleToolCalls } from "../tools/tool-scheduler.js";
@@ -53,9 +55,7 @@ function driveError(code: string, message: string) {
 }
 
 export function driveGroupTitle(clientName: unknown) {
-  const raw = String(clientName ?? "").replace(/[\r\n\t]+/gu, " ").replace(/\s+/gu, " ").trim();
-  const display = (raw === "qz-cli" ? "CLI" : raw || "MCP").slice(0, 40);
-  return `轻舟 · ${display}`;
+  return `${createTranslator(contentMessages)("brand")} · ${normalizeDriveClientName(clientName)}`;
 }
 
 function toolLocalName(name: string) {

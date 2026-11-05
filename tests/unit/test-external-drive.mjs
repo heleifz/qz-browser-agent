@@ -80,6 +80,8 @@ test("drive titles and request sentences stay on the existing tool", () => {
     assert.equal(t("drive.sendMessageRejected"), "这个会话由外部客户端直接操作，这里只能查看。");
   });
   withLanguage("en", () => {
+    assert.equal(driveGroupTitle("qz-cli"), "qz · CLI");
+    assert.equal(driveGroupTitle("轻舟 · My client"), "qz · 轻舟 · My client");
     assert.equal(t("drive.sessionOccupied"), "This session already has a task, so it cannot be driven directly. Create a new session with qz session create (MCP: qingzhou_create_drive_session).");
     assert.equal(t("drive.toolForbidden", { name: "ask_llm" }), "Direct drive cannot call ask_llm.");
     assert.equal(t("drive.sendMessageRejected"), "An external client is driving this session. This view is read-only.");
@@ -770,7 +772,8 @@ test("only explicit creation admits a drive session; busy runs remain isolated",
   assert.deepEqual(openedResult.images, [{ mimeType: "image/png", data: "YQ==" }]);
   assert.equal(metadata["drive-1"].source, "external-drive");
   assert.equal(metadata["drive-1"].title, "Inspect example page");
-  assert.equal(metadata["drive-1"].driveGroupTitle, "轻舟 · pi");
+  assert.equal(metadata["drive-1"].driveClientName, "pi");
+  assert.equal(metadata["drive-1"].driveGroupTitle, undefined);
   assert.equal(metadata["drive-2"].title, "Inspect example page");
   assert.match(openedResult.runId, /^drive-/);
   assert.equal(created.length, 2);
@@ -1119,6 +1122,23 @@ test("a drive create does not take over an existing task", async () => {
   const again = await repository.createMetadata({ id: "fresh", title: "other", source: "external-drive" });
   assert.equal(again.title, "轻舟 · CLI");
   assert.equal(again.source, "external-drive");
+});
+
+test("drive metadata migrates generated labels while preserving client and custom titles", async () => {
+  const storage = createMemoryStorage({ _sessions: {
+    old: { id: "old", title: "用户任务标题", source: "external-drive", driveGroupTitle: "轻舟 · Claude Code" },
+    custom: { id: "custom", source: "external-drive", driveGroupTitle: "Personal research" },
+  } });
+  const repository = createSessionRepository({ storage });
+  const old = await repository.getMetadata("old");
+  assert.equal(old.driveClientName, "Claude Code");
+  assert.equal(old.driveGroupTitle, undefined);
+  assert.equal(old.title, "用户任务标题");
+  assert.equal((await repository.getMetadata("custom")).driveGroupTitle, "Personal research");
+  const created = await repository.createMetadata({ id: "new", source: "external-drive", title: "新任务", driveClientName: "qz-cli" });
+  assert.equal(created.driveClientName, "CLI");
+  assert.equal(storage.snapshot()._sessions.new.driveGroupTitle, undefined);
+  assert.equal(storage.snapshot()._sessions.old.driveClientName, "Claude Code");
 });
 
 

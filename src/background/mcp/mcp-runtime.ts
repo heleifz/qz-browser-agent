@@ -10,7 +10,6 @@ import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
   createExternalDriveCoordinator,
-  driveGroupTitle,
   driveToolSignature,
   isDriveToolDefault,
   isDriveToolDiscoverable,
@@ -32,6 +31,7 @@ import type { createSessionSupervisor } from "../session/supervisor.js";
 import type { createSkillDocumentResourceService } from "../skills/skill-document-resources.js";
 import type { Agent } from "../agent/agent.js";
 import type { SessionMetadata } from "../../shared/session/session-store.js";
+import { normalizeDriveClientName } from "../../shared/session/session-store.js";
 import type { SkillRecord, SkillResource } from "../../shared/skills/skill-utils.js";
 import type { RunProfile } from "../agent/run-profile.js";
 import type { ToolBatchTabPolicy, ToolModelPolicy } from "../../shared/contracts/tool.js";
@@ -439,7 +439,7 @@ export function createMcpRuntime({
     if (!sessions.createMetadata) return "";
     await sessions.createMetadata({
       id: sessionId, title, titleSource: "fixed", source: "external-drive",
-      driveGroupTitle: driveGroupTitle(clientName), firstMessage: "",
+      driveClientName: normalizeDriveClientName(clientName), firstMessage: "",
     });
     const created = await sessions.listMetadata();
     if (String(created[sessionId]?.source || "") !== "external-drive") {

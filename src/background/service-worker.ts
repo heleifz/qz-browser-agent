@@ -486,7 +486,7 @@ const sessionTabs = createSessionTabs({
   rootSessionId: ROOT_SESSION_ID,
 });
 // Keep Chrome listener registration synchronous; commands await startup dependencies.
-const languageReady = initializeLanguage({ watch: true });
+const languageReady = initializeLanguage({ watch: true, onChange: () => sessionTabs.scheduleGroupSync("language") });
 const sessionRuntimeReady = Promise.all([
   sessionRuntimeState.hydrate(), languageReady, dataConsent.ready,
   initializeProviderHeaderRules({ runtime: chrome.runtime, dnr: chrome.declarativeNetRequest, fetch }),

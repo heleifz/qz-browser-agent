@@ -1098,7 +1098,8 @@ export function createSessionTabs({
       const meta = sessions[runtimeSessionId];
       const drive = meta?.source === "external-drive";
       const key = drive ? `drive:${runtimeSessionId}` : GLOBAL_SESSION_TAB_GROUP_ID;
-      const title = drive ? String(meta?.driveGroupTitle || "").trim() || driveGroupTitle("") : "";
+      const title = drive ? meta.driveClientName !== undefined ? driveGroupTitle(meta.driveClientName)
+        : String(meta.driveGroupTitle || "").trim() || driveGroupTitle("") : "";
       const validTabIds: number[] = [];
       const ownedTabIds = getOwnedTabIds(runtime);
       for (const tabId of ownedTabIds) {
