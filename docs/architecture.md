@@ -79,6 +79,8 @@ manifest](../src/products/manifest.json) selects adapters for the public build.
 [Side Panel startup](../src/sidepanel/features/app/data-consent.ts) defers workspace initialization
 until acceptance. The Background API gate covers transports, while Session commands guard internal
 run admission. Scheduler and MCP startup wait for consent.
+Connection-page requests await the stored consent record before the connection owner checks it,
+so a cold worker does not treat hydration as missing acceptance.
 
 Location is collected by the `get_location` tool when a task needs local information. The
 [location service](../src/background/services/location.ts) requests a separate first-use approval

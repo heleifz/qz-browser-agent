@@ -21,7 +21,7 @@ return await tools.evaluate({
 - 动作保留实际输入送达和 fill/check 验证。普通成功回 `{}`；导航只附 navigated/url 或 navigationPending。confirmationRequired 要求先局部验证，再继续任务；观察按需要单独调用。
 - `wait_for_navigation/response/popup` 接受 `trigger:{name,args}`，先监听再调用一次动作。失败不重放，超时不回滚。`wait_for_load` 检查当前加载；`wait_for_navigation` 观察之后的新导航，包含同 URL 重载、SPA 和片段变化。`wait_for_url/element/function` 等待状态。
 - `qz script` 成功和失败都在 stdout 输出 `{ok,result,trace}`；ok 表示脚本执行成功，trace 是按执行顺序排列、不分级别的消息字符串，result 为 return 的业务值，undefined 映射 null。失败 result 为 `{code,message,hint?,details?}`；成功退出 0，执行或连接失败退出 1，用法错误退出 2。扩展在脚本边界构造统一回执并通过 scriptApiVersion:2 标记，CLI 校验后原样输出；CLI 与扩展协议版本不一致时在执行前被拦截；业务值内的 trace/traces、ok/error/code 等键保真，不参与日志或成败判定。
-- CLI 的浏览器操作先自动准备连接；输入验证在任何启动或配对之前完成。优先复用响应正常的在线 UUID，无在线连接时按 Chrome、Firefox、Edge 顺序有界尝试已安装浏览器，每家只打开一次，实际响应后固定 UUID。显式 --client 不回退；多浏览器中的已有会话经只读查询唯一定位后固定 UUID。协议不兼容只在业务调用前、锁内核对服务身份后重启一次；已提交操作不重放。`qz connect uri` 只打印指定 profile 的连接地址，公开 stop 命令删除。
+- CLI 的浏览器操作先自动准备连接；输入验证在任何启动或配对之前完成。优先复用响应正常的在线 UUID，无在线连接时仅在受支持的系统默认浏览器（Chromium 系或 Firefox）打开一次连接页并等待响应，默认浏览器不受支持时提示手动配对；实际响应后固定 UUID。显式 --client 不回退；多浏览器中的已有会话经只读查询唯一定位后固定 UUID。协议不兼容只在业务调用前、锁内核对服务身份后重启一次；已提交操作不重放。`qz connect uri` 只打印指定 profile 的连接地址，公开 stop 命令删除。
 - Tab 仍为 `{tabRef,url,title,active}`。active 是用户可见状态；会话归属继续承担互斥、权限和清理职责。因果关联的新 popup 纳入原会话，取消后的晚到页面受同一清理屏障约束。
 
 ## CLI 与 Skill 文案对照

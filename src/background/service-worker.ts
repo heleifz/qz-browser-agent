@@ -881,6 +881,7 @@ const mcpManagement = createMcpManagementRuntime({
 let mcpBridge: ReturnType<typeof startQingzhouMcpBridge> | undefined;
 const mcpConnectPage = createMcpConnectPage({
   extensionId: chrome.runtime.id,
+  ready: dataConsent.ready,
   assertConsent: dataConsent.assertAccepted,
   connect: (input, assertCurrent) => getMcpBridge().connect(input, assertCurrent),
   status: () => mcpBridge?.status() || getQingzhouMcpConnectionStatus(),
@@ -1056,6 +1057,8 @@ const backgroundApi = createBackgroundApi({
   },
 }, path => {
   if (["system.ready", "system.contentLanguage", "system.sessionImportLabels", "system.ping", "system.acceptDataConsent", "exchange.revealForImport", "system.mcpConnectionStatus", "system.disconnectMcp", "sessions.stop"].includes(path)) return;
+  // Connection pages can wake a cold worker; their owner awaits stored consent before checking it.
+  if (["system.connectMcp", "system.closeMcpConnectPage"].includes(path)) return;
   dataConsent.assertAccepted();
 });
 

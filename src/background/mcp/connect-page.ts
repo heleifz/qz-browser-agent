@@ -3,6 +3,7 @@ import { connectionName } from "./connection-store.js";
 
 interface ConnectDependencies {
   extensionId: string;
+  ready: Promise<unknown>;
   assertConsent(): void;
   connect(input: CliConnectionInput, assertCurrent: () => Promise<void>): Promise<CliConnectionStatus>;
   status(): Promise<CliConnectionStatus>;
@@ -16,6 +17,7 @@ interface ConnectDependencies {
 export function createMcpConnectPage(deps: ConnectDependencies) {
   let closing: Promise<unknown> = Promise.resolve();
   async function source(sender: chrome.runtime.MessageSender) {
+    await deps.ready;
     deps.assertConsent();
     const url = connectionUrl(sender.url);
     if (sender.id !== deps.extensionId || sender.frameId !== 0 || !Number.isInteger(sender.tab?.id) || !url) {

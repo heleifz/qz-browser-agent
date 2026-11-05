@@ -100,7 +100,7 @@ class SimulatedService {
     this.cancelStart = false;
     this.cancelUpgrade = false;
     this.snapshotOwners = new Set();
-    this.launchers = null;
+    this.defaultBrowser = null;
     this.launchAttempts = [];
     this.clock = null;
     this.controller = new AbortController();
@@ -157,18 +157,17 @@ class SimulatedService {
         if (this.reconnect && this.healthReads >= this.reconnect.after) this.reconnect.browser.online = true;
         return this.health();
       },
-      openConnectionBrowser: async (uri, { signal, exclude }) => {
+      openConnectionBrowser: async (uri, { signal, timeoutMs, ...options }) => {
         this.opens++;
-        assert.ok(this.launchers, "only launcher histories authorize opening a browser");
+        assert.ok(this.defaultBrowser, "only launcher histories authorize opening a browser");
+        assert.equal(this.opens, 1, "connection preparation must not open another browser");
         assert.equal(uri, `${this.endpoint}/qz-connect`);
         assert.equal(signal, this.controller.signal);
-        assert.deepEqual(exclude, this.launchAttempts, "never retry an already opened browser family");
+        assert.ok(timeoutMs > 0 && timeoutMs <= 300, "opening stays within the caller's connection budget");
+        assert.deepEqual(options, {}, "the default browser opener does not receive a fallback list");
         await this.tick();
-        const browser = this.launchers[this.launchAttempts.length];
-        if (!browser) throw failure("BROWSER_NOT_FOUND");
-        this.launchAttempts.push(browser);
-        if (browser === this.respondingLauncher) this.launchTarget.online = true;
-        return { browser, opened: true, url: uri };
+        this.launchAttempts.push(this.defaultBrowser.clientId);
+        return { browser: "System default browser", opened: true, url: uri };
       },
       callTool: async (endpoint, name, args, options) => {
         this.events.push(name);
@@ -240,7 +239,7 @@ function expectedRoute(service, selector, sessionId) {
 export const connectionScenarioIds = Object.freeze(["create-auto", "create-pinned", "script-owner", "script-pinned", "unknown", "offline",
   "reconnect", "service-changed", "duplicate-owner", "missing-session", "upgrade", "upgrade-stuck",
   "upgrade-race", "startup", "cancel-discovery", "lost-reply", "extension-upgrade", "uncertain-owner",
-  "launcher-fallback", "launcher-exhausted", "reconnect-deadline", "cancel-startup", "cancel-upgrade",
+  "launcher-connect", "launcher-pending", "reconnect-deadline", "cancel-startup", "cancel-upgrade",
   "snapshot-owner", "snapshot-conflict"]);
 assert.equal(connectionScenarioIds.length, 25);
 assert.equal(new Set(connectionScenarioIds).size, 25);
@@ -321,13 +320,9 @@ for (const seed of seeds) {
       }
       if (scenario.startsWith("launcher-")) {
         service.browsers.forEach(browser => { browser.online = false; });
-        // Fallback needs multiple families. Exhaustion needs fewer than all three:
-        // the third successful launch deliberately receives the remaining budget.
-        const installed = scenario === "launcher-fallback" ? 2 + next(2) : 1 + next(2);
-        service.launchers = shuffled(["Chrome", "Firefox", "Edge"], next).slice(0, installed);
-        service.launchTarget = target;
-        service.respondingLauncher = scenario === "launcher-fallback" ? service.launchers.at(-1) : null;
-        if (scenario === "launcher-exhausted") code = "CONNECTION_PENDING";
+        service.defaultBrowser = target;
+        if (scenario === "launcher-connect") service.reconnect = { browser: target, after: 2 + next(3) };
+        else code = "CONNECTION_PENDING";
       }
       if (scenario === "reconnect-deadline") {
         target.online = false;
@@ -340,7 +335,7 @@ for (const seed of seeds) {
       if (clockMock) service.clock = { now: 1000000 };
       const route = expectedRoute(service, selector, sessionId);
       if (scenario === "reconnect") route.clientId = target.clientId;
-      else if (scenario === "launcher-fallback") route.clientId = target.clientId;
+      else if (scenario === "launcher-connect") route.clientId = target.clientId;
       else code ||= route.code;
       const beforeExecutions = [...target.sessions.values()].reduce((sum, session) => sum + session.executions, 0);
       history.push({ scenario, selector, sessionId, order: service.order.map(browser => browser.clientId), code });
@@ -352,13 +347,13 @@ for (const seed of seeds) {
               assert.ok(error.message);
               assert.equal(error.details.stage, "browser-connection");
               assert.equal(error.details.operationSubmitted, false);
-              assert.equal(error.details.hint, undefined);
+              assert.match(error.details.hint, /qz connect uri/);
               return true;
             });
         } else {
           const argv = script ? ["script", "--session", sessionId] : ["session", "create", "--title", `history ${history.length}`];
           if (selector) argv.push("--client", selector);
-          // Leave transport headroom for three launcher attempts; admission must
+          // Wait for the default browser within one budget; admission must
           // finish before, not one health read after, the simulated deadline.
           argv.push("--timeout", clockMock ? "0.3" : "2", "--json");
           let stdout = "", stderr = "";
@@ -372,6 +367,11 @@ for (const seed of seeds) {
             const error = script ? output.result : output;
             assert.equal(error.code, code);
             assert.ok(error.message.length > 10, "failure must explain what went wrong");
+            if (scenario === "launcher-pending") {
+              assert.match(error.hint, /qz connect uri/);
+              assert.equal(error.details.operationSubmitted, false);
+              assert.deepEqual(error.details.attemptedBrowsers, ["System default browser"]);
+            }
           } else if (script) {
             assert.deepEqual(output.result, { sessionId, clientId: route.clientId });
           } else {
@@ -391,8 +391,8 @@ for (const seed of seeds) {
         assert.ok(service.restarts <= 1);
         assert.equal(service.starts, ["startup", "cancel-startup"].includes(scenario) ? 1 : 0);
         if (scenario.startsWith("launcher-")) {
-          assert.deepEqual(service.launchAttempts, service.launchers, "every installed family tried once in order");
-          assert.equal(service.opens, service.launchers.length + (scenario === "launcher-exhausted" ? 1 : 0));
+          assert.deepEqual(service.launchAttempts, [target.clientId], "only the system default browser opens");
+          assert.equal(service.opens, 1);
           assert.ok(service.healthReads > 0);
         } else assert.equal(service.opens, 0);
         if (["upgrade-stuck", "upgrade-race", "cancel-discovery", "cancel-startup", "cancel-upgrade", "unknown"].includes(scenario)) assert.equal(service.calls.length, 0);

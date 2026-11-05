@@ -7,6 +7,8 @@ import { createMcpConnectPage, assertMcpSettingsSender } from "../../src/backgro
 import { createBackgroundApi } from "../../src/background/background-api.js";
 import { createRuntimeMessageTransport } from "../../src/background/transports/runtime-message.js";
 import { createSidepanelTransport } from "../../src/background/transports/sidepanel.js";
+import { createDataConsentService } from "../../src/background/services/data-consent.js";
+import { DATA_CONSENT_KEY, DATA_CONSENT_VERSION } from "../../src/shared/data-consent.js";
 
 const sender = { id: "extension", frameId: 0, tab: { id: 12 }, url: "http://127.0.0.1:23001/qz-connect" };
 const status = { state: "connected", clientId: "profile-uuid", name: "default", endpoint: "http://127.0.0.1:23001", retryCount: 0, retryLimit: 3 };
@@ -14,6 +16,7 @@ function setup() {
   const state = { consent: true, url: sender.url, connections: [], tabs: [{ id: 12 }, { id: 13 }], removed: [], created: 0 };
   const deps = {
     extensionId: "extension",
+    ready: Promise.resolve(),
     assertConsent() { if (!state.consent) throw Object.assign(new Error("Consent required"), { code: "DATA_CONSENT_REQUIRED" }); },
     getTab: async id => { assert.ok(state.tabs.some(tab => tab.id === id)); return { url: state.url }; },
     listTabs: async () => state.tabs,
@@ -31,6 +34,25 @@ test("connection derives its port from the Chrome sender and explicitly enables 
   const result = await new Promise(resolve => transport.listener({ type: "mcp_bridge_connect", endpoint: "http://evil.example" }, sender, resolve));
   assert.deepEqual(result, { ok: true, connected: true, status });
   assert.deepEqual(state.connections, [{ endpoint: "http://127.0.0.1:23001", name: "" }]);
+});
+
+for (const accepted of [true, false]) test(`cold connection waits for stored consent (${accepted ? "accepted" : "missing"})`, async () => {
+  const storageRead = Promise.withResolvers();
+  const consent = createDataConsentService({ get: () => storageRead.promise, set: async () => assert.fail("connecting cannot accept consent") });
+  const { state, deps } = setup();
+  const page = createMcpConnectPage({ ...deps, ready: consent.ready, assertConsent: consent.assertAccepted });
+  const transport = createRuntimeMessageTransport(createBackgroundApi({ system: { connectMcp: page.connect } }));
+  let reply;
+  const pending = new Promise(resolve => transport.listener({ type: "mcp_bridge_connect" }, sender, value => { reply = value; resolve(value); }));
+  await new Promise(setImmediate);
+  assert.equal(reply, undefined, "loading consent is not a first-time setup failure");
+  assert.equal(state.connections.length, 0, "no connection runs before the persisted choice is known");
+  storageRead.resolve({ [DATA_CONSENT_KEY]: accepted ? { version: DATA_CONSENT_VERSION, acceptedAt: 1 } : undefined });
+  const result = await pending;
+  assert.equal(result.ok, accepted);
+  if (accepted) assert.deepEqual(result.status, status);
+  else assert.equal(result.code, "DATA_CONSENT_REQUIRED");
+  assert.equal(state.connections.length, accepted ? 1 : 0);
 });
 
 test("connection rejects untrusted pages, subframes and extension senders without a tab", async () => {

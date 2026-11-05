@@ -375,7 +375,9 @@ npm run qz -- session cancel SESSION_ID
 [above](#load-temporarily-in-firefox). Pairing detail is in
 [Load qz in Firefox](cli.md#load-qz-in-firefox).
 
-Browser commands start the local service and connect when needed, reusing a compatible connection.
+Browser commands start the local service and connect when needed, reusing a compatible connection
+or opening the connection page once in the system default browser when it uses Chromium or Firefox.
+Use `qz connect uri` to pair a supported browser if the system default is unsupported.
 An incompatible service can be upgraded once before execution. The first browser is named `default`.
 `status` shows the actual service address and `mcp` prints its MCP URL. The default port is 18765,
 with a free-port fallback when occupied; `connect uri --port PORT` requests another port. A running

@@ -11,6 +11,7 @@ import {
 import { SKILL_SETTINGS_STORAGE_KEY } from "../../src/background/skills/skill-settings.js";
 
 const storageData = {};
+const consentRead = Promise.withResolvers();
 storageData._qingzhou_mcp_bridge = { enabled: false };
 const postedMessages = [];
 const COVERAGE_PLUGIN_SKILL_NAME = "coverage-plugin-skill";
@@ -196,6 +197,15 @@ globalThis.fetch = createFetchMock([
 try {
   await import("../../src/background/service-worker.js");
   const pluginRuntime = await import("../../src/background/skills/skill-tool-runtime.js");
+
+  const coldReplies = [];
+  const connectionSender = { id: chrome.runtime.id, frameId: 0, tab: state.tabs[0], url: "http://127.0.0.1:18765/qz-connect" };
+  const coldCalls = ["mcp_bridge_connect", "mcp_bridge_close", "mcp_connection_status"].map(type =>
+    invokeRuntimeMessage({ type }, connectionSender).then(reply => { coldReplies.push(reply); return reply; }));
+  await new Promise(setImmediate);
+  assert.deepEqual(coldReplies, [], "cold connection calls wait for consent storage hydration before applying the API gate");
+  consentRead.resolve();
+  for (const reply of await Promise.all(coldCalls)) assert.equal(reply.code, "DATA_CONSENT_REQUIRED", "missing consent still blocks connection after hydration");
 
   assert.equal(state.alarmsOnAlarm.length, 1, "only the automation alarm router should register before data consent");
   const exportSender = { tab: { id: 3, windowId: 1, url: "file:///tmp/exported-session.html" } };
@@ -1108,6 +1118,7 @@ function createChromeMock() {
       onChanged: makeEvent(state.storageOnChanged),
       local: {
         async get(key) {
+          if (key === "qz_data_consent") await consentRead.promise;
           if (key === "_skills" || (Array.isArray(key) && key.includes("_skills"))) {
             state.skillStorageReads += 1;
             if (state.skillStorageGetFailures > 0) {

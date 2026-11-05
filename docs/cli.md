@@ -29,9 +29,11 @@ installation, download the [latest GitHub release](https://github.com/alibaba/qz
 and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
 
 Browser operations prepare their connection automatically. They reuse a responding online browser,
-or open installed browsers in Chrome, Firefox, Edge order until the extension responds. Each browser
-is opened at most once within the connection deadline. Complete the first-use notice and connection
-prompt when needed. Use `qz connect uri` to print a URL for a specific profile without opening it.
+or open the connection page once in the system default browser when it uses Chromium or Firefox,
+then wait for its extension to respond. For an unsupported default browser, use `qz connect uri`
+to pair a supported browser.
+Complete the first-use notice and connection prompt when needed. Use `qz connect uri` to print a URL
+for a specific profile without opening it.
 The first new profile is named `default`; an existing profile retains its name.
 
 The examples and suggested next commands use `qz`. Replace it with
@@ -114,11 +116,12 @@ do not restart compatible services. No submitted browser operation is replayed d
 Without an explicit selection, a new task uses the first responding browser. An existing session
 is located through read-only queries when several browsers are online; ambiguous ownership requires
 `--client NAME|UUID`. An explicit selection never falls back to another browser. With no online
-connection, the CLI tries installed Chrome, Firefox and Edge once each within one deadline. When the
-service confirms a browser is reconnecting, the CLI waits for its lease recovery within the command's
-timeout before trying another browser. Pairing still requires the extension’s first-use notice and
-connection prompt. The connection page updates while reconnecting, then counts down for three seconds
-and closes after a successful connection.
+connection, the CLI opens the connection page once in the supported system default browser and waits there.
+When the service confirms a browser is reconnecting, the CLI first waits for its lease recovery within
+the command's timeout. If connection remains pending, check that page or use `qz connect uri` to pair
+a chosen browser profile. Pairing requires the extension’s first-use notice and connection prompt.
+The connection page updates while reconnecting, then counts down for three seconds and closes after
+a successful connection.
 
 To disconnect one browser, click **Disconnect: NAME** in its qz Settings. To cancel a task, use
 `qz cancel TASK_ID`, or `qz session cancel ID` for a direct-drive session, adding --client when needed.

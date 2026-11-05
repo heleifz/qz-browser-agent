@@ -101,19 +101,15 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
   let selected = await locate(running.health);
   if (selected) return { running, clientId: selected };
   const attempted = [];
-  let nextAttempt = 0, exhausted = Boolean(selector);
+  let opened = Boolean(selector);
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    if (!exhausted && Date.now() >= Math.max(nextAttempt, reconnectUntil)) {
-      try {
-        const opened = await (dependencies.openConnectionBrowser || openConnectionBrowser)(uri, { signal, exclude: [...attempted] });
-        attempted.push(opened.browser);
-        nextAttempt = Date.now() + (deadline - Date.now()) / Math.max(1, 4 - attempted.length);
-      } catch (error) {
-        signal?.throwIfAborted();
-        if (error.code !== "BROWSER_NOT_FOUND" || !attempted.length) throw error;
-        exhausted = true;
-      }
+    if (!opened && Date.now() >= reconnectUntil) {
+      const browser = await (dependencies.openConnectionBrowser || openConnectionBrowser)(uri, {
+        signal, timeoutMs: Math.max(1, Math.min(10000, deadline - Date.now())),
+      });
+      attempted.push(browser.browser || "System default browser");
+      opened = true;
     }
     if (Date.now() >= deadline) break;
     let health;
@@ -132,12 +128,15 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
     observeReconnect(health);
     selected = await locate(health);
     if (selected) return { running: { ...running, health }, clientId: selected };
-    await delay(Math.max(1, Math.min(200, deadline - Date.now(), exhausted ? 200 : Math.max(nextAttempt, reconnectUntil) - Date.now())), undefined, { signal });
+    await delay(Math.max(1, Math.min(200, deadline - Date.now())), undefined, { signal });
   }
   throw new QzError(selector ? "CLIENT_OFFLINE" : "CONNECTION_PENDING", `${selector ? "The selected browser is not responding." : "qz is waiting for its browser extension."} No browser operation was submitted.`, {
     stage: "browser-connection",
     ...(registered ? { selectedBrowser: { clientId: registered.clientId, name: registered.name } } : {}),
-    attemptedBrowsers: attempted.slice(0, 3), operationSubmitted: false,
+    attemptedBrowsers: attempted, operationSubmitted: false,
     url: uri,
+    hint: selector
+      ? "Open qz in the selected browser profile, then retry. Use qz connect uri --client NAME|UUID to reconnect that profile."
+      : "Check the connection page in your default browser, then retry. Use qz connect uri to connect a different supported browser profile.",
   });
 }

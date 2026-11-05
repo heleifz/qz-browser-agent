@@ -93,7 +93,7 @@ The [connection corpus](unit/test-qz-connection-fuzz.mjs) uses four persisted se
 simulated transport. Each seed shuffles all 25 scenarios twice, producing 200 transitions by
 default. It varies browser identities, registration order, session ownership, disconnections,
 compatibility upgrades, service replacement, cancellation, and lost mutation replies. Additional
-histories cover launcher fallback/exhaustion, reconnect deadline exhaustion, cancellation during
+histories cover default-browser connection/pending, reconnect deadline exhaustion, cancellation during
 startup/upgrade, and transcript-only ownership discovery/conflicts. It checks routing and rejects
 ambiguous ownership without dispatching a mutation. This layer does not launch browsers or test
 installation of a released CLI version. The separate stalled-health regression in

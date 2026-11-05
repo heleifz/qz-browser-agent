@@ -136,7 +136,7 @@ test("an explicit offline or unknown browser never falls back to the other live 
         assert.deepEqual(error.details.attemptedBrowsers, []);
         assert.equal(error.details.operationSubmitted, false);
         assert.match(error.message, /No browser operation was submitted/);
-        assert.equal(error.details.hint, undefined);
+        assert.match(error.details.hint, /qz connect uri/);
       } else assert.equal(error.details.selectedBrowser, undefined);
       return true;
     });
@@ -146,26 +146,22 @@ test("an explicit offline or unknown browser never falls back to the other live 
 });
 
 test("connection diagnostics survive public JSON and script output without submitting an operation", async t => {
-  for (const scenario of ["selected", "exhausted", "all-families", "no-launch"]) await t.test(scenario, async t => {
+  for (const scenario of ["selected", "default", "no-launch"]) await t.test(scenario, async t => {
     let now = 1000000, stdout = "";
     t.mock.method(Date, "now", () => now += 10);
     const selected = { clientId: "offline-uuid", name: "Work profile", privateData: "not diagnostic" };
     const health = { protocolVersion: 1, features: { browserPairing: 1, scriptApiVersion: 2 },
       status: { clients: [], browsers: [selected] } };
     const running = { endpoint: "http://127.0.0.1:18765", health };
-    const families = scenario === "exhausted" ? ["Chrome", "Firefox"] : ["Chrome", "Firefox", "Edge"];
     const attempted = [];
     const deps = {
       findDaemon: async () => running,
       callTool: () => assert.fail("no browser request may be submitted"),
-      openConnectionBrowser: async (_uri, { exclude }) => {
-        assert.notEqual(scenario, "selected");
-        assert.notEqual(scenario, "no-launch");
-        assert.deepEqual(exclude, attempted);
-        const browser = families[attempted.length];
-        if (!browser) throw new QzError("BROWSER_NOT_FOUND", "No more installed browsers.");
-        attempted.push(browser);
-        return { browser, opened: true };
+      openConnectionBrowser: async () => {
+        assert.equal(scenario, "default");
+        assert.equal(attempted.length, 0, "connection preparation opens the default browser only once");
+        attempted.push("System default browser");
+        return { browser: "System default browser", opened: true };
       },
       readHealth: async () => { now += 100; return health; },
       readStdin: async () => "return 7;",
@@ -183,10 +179,10 @@ test("connection diagnostics survive public JSON and script output without submi
       assert.equal(error.details.stage, "browser-connection");
       assert.equal(error.details.operationSubmitted, false);
       assert.deepEqual(error.details.attemptedBrowsers, attempted);
-      assert.deepEqual(attempted, ["selected", "no-launch"].includes(scenario) ? [] : families);
+      assert.deepEqual(attempted, scenario === "default" ? ["System default browser"] : []);
       assert.deepEqual(error.details.selectedBrowser, scenario === "selected" ? { clientId: selected.clientId, name: selected.name } : undefined);
       assert.match(error.message, /No browser operation was submitted/);
-      assert.equal(error.hint, undefined);
+      assert.match(error.hint, /qz connect uri/);
       assert.equal(error.details.hint, undefined);
       assert.equal(error.details.url, `${running.endpoint}/qz-connect${scenario === "selected" ? "?name=Work+profile" : ""}`);
       assert.doesNotMatch(stdout, /privateData|not diagnostic/);
@@ -281,8 +277,7 @@ test("a closed browser reconnects in Chrome without fallback or duplicate task c
   const reopened = Promise.withResolvers(), opened = [], methods = [];
   const pending = runCli(["session", "create", "--title", "After restart", "--timeout", "2", "--json"], {
     ...deps,
-    openConnectionBrowser: async (_uri, { exclude }) => {
-      assert.deepEqual(exclude, [], "Chrome reconnects before trying another browser");
+    openConnectionBrowser: async () => {
       opened.push("Chrome");
       const paired = await bridge.state.pair({ ...browser, connectionId: randomUUID() });
       reopened.resolve({ ...paired, id: paired.clientId, pairingVersion: 1 });
@@ -312,8 +307,7 @@ test("an authenticated reconnect waits for Chrome's lease within the caller's ti
     const running = { endpoint: "http://127.0.0.1:18765", health }, opened = [], methods = [];
     const pending = runCli(["session", "create", "--title", "After lease", "--timeout", String(timeout), "--json"], {
       findDaemon: async () => running,
-      openConnectionBrowser: async (_uri, { exclude }) => {
-        assert.deepEqual(exclude, [], "a confirmed reconnect must not open Firefox");
+      openConnectionBrowser: async () => {
         opened.push("Chrome"); return { browser: "Chrome", opened: true };
       },
       readHealth: async () => {
@@ -339,30 +333,29 @@ test("an authenticated reconnect waits for Chrome's lease within the caller's ti
   });
 });
 
-test("automatic preparation tries Firefox after an unresponsive Chrome and stops before Edge", async t => {
+test("automatic preparation waits for the default browser without launching a substitute", async t => {
   const { bridge, browser, running, deps } = await fixture(t);
   const connectedHealth = running.health;
   running.health = { ...connectedHealth, status: { ...connectedHealth.status, connected: false, clients: [] } };
-  const opened = [];
+  let opened = 0, healthReads = 0;
   const { value, requests } = await scriptedBrowsers(bridge, [browser], async request => {
     if (request.method === "ping") return { ok: true, result: { pong: true } };
     assert.equal(request.method, "create_drive_session");
-    return { ok: true, result: { sessionId: "firefox-task", title: "Browser discovery", status: "ready" } };
-  }, () => runCli(["session", "create", "--title", "Browser discovery", "--timeout", "1", "--json"], {
+    return { ok: true, result: { sessionId: "default-browser-task", title: "Default browser", status: "ready" } };
+  }, () => runCli(["session", "create", "--title", "Default browser", "--timeout", "1", "--json"], {
     ...deps,
-    readHealth: async () => opened.includes("Firefox") ? connectedHealth : running.health,
-    openConnectionBrowser: async (uri, { exclude, signal }) => {
+    readHealth: async () => ++healthReads >= 3 ? connectedHealth : running.health,
+    openConnectionBrowser: async (uri, { signal, timeoutMs }) => {
       assert.equal(uri, `${bridge.endpoint}/qz-connect`);
       assert.equal(signal?.aborted ?? false, false);
-      assert.deepEqual(exclude, opened, "each launched browser family is excluded from later attempts");
-      const family = ["Chrome", "Firefox", "Edge"].find(name => !exclude.includes(name));
-      assert.notEqual(family, "Edge", "the responding Firefox host must stop browser discovery");
-      opened.push(family);
-      return { url: uri, opened: true, browser: family };
+      assert.ok(timeoutMs > 0 && timeoutMs <= 1000);
+      assert.equal(++opened, 1, "an initializing extension does not authorize another browser launch");
+      return { url: uri, opened: true, browser: "System default browser" };
     },
   }));
-  assert.deepEqual(opened, ["Chrome", "Firefox"]);
-  assert.equal(value.result.sessionId, "firefox-task");
+  assert.equal(opened, 1);
+  assert.equal(healthReads, 3);
+  assert.equal(value.result.sessionId, "default-browser-task");
   assert.equal(requests.filter(request => request.method === "create_drive_session").length, 1);
   assert.ok(requests.every(request => request.clientId === browser.id));
 });
