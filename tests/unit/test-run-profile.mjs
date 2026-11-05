@@ -127,6 +127,21 @@ test("run profile exposes the current OS in the prompt", async () => {
   );
 });
 
+test("an external drive session keeps image tools when the configured model has no vision", async () => {
+  const config = { provider: "test", model: "text-only", vision: false, toolCalling: true };
+  const plain = await buildRunProfile({ sessionId: "task", config, platformInfo: { os: "linux" } });
+  const drive = await buildRunProfile({ sessionId: "drive", externalDrive: true, config, platformInfo: { os: "linux" } });
+  assert.equal(plain.model.vision, false);
+  assert.equal(drive.model.vision, false);
+  assert.ok(plain.tools.disabled.includes("screenshot"));
+  assert.equal(plain.features.imageInput, false);
+  assert.equal(drive.tools.disabled.includes("screenshot"), false);
+  assert.equal(drive.tools.disabled.includes("act_on_screen"), false);
+  assert.equal(drive.tools.disabled.includes("read_image"), false);
+  assert.equal(drive.features.imageInput, true);
+  assert.equal(drive.features.screenshots, true);
+});
+
 test("custom run profiles use the supplied configuration without loading a directory", async () => {
   const originalChrome = globalThis.chrome;
   globalThis.chrome = new Proxy({}, { get() { throw new Error("must not read Chrome"); } });

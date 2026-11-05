@@ -80,7 +80,7 @@ async function assertToolNotesAreCompact() {
       definitions.set(name, { description, parameters, execute });
     },
     ToolExecutionError,
-    getToolRuntimeDependencies: () => ({}),
+    getToolRuntimeDependencies: () => ({ sessions: { getTabAliases: () => ({}), resolveTargetTab: async () => ({ ok: true, ownedByCurrentTask: true }) } }),
     makeSessionTabTargetError: (code, details) => Object.assign(new Error(code), { code, details }),
     assertTabAllowed: async () => undefined,
     assertUrlAllowed: () => undefined,
@@ -91,21 +91,20 @@ async function assertToolNotesAreCompact() {
   let visibleMutations = 0;
   globalThis.chrome = {
     tabs: {
-      async get(tabId) {
-        return { id: tabId, active: false, title: "Background tab", url: "https://example.test/", windowId: 7 };
+      async query() {
+        return [{ id: 42, active: false, title: "Background tab", url: "https://example.test/", windowId: 7 }];
       },
       async update() {
         visibleMutations += 1;
-        throw new Error("use_tab must not activate or focus the browser tab");
+        throw new Error("discovery must not activate or focus the browser tab");
       },
     },
   };
   try {
-    const result = await definitions.get("use_tab").execute({ tabId: 42 });
-    assert.equal(result.tabId, 42);
-    assert.equal(result.active, false);
-    assert.equal(result.visibleChanged, false);
-    assert.equal(result.focusedWindow, false);
+    const result = await definitions.get("list_tabs").execute({}, undefined, { sessionId: 'hints', runId: 'run' });
+    assert.deepEqual(result, { tabs: [{ tabRef: 42, active: false, title: "Background tab", url: "https://example.test/" }], count: 1, foreign: 0 });
+    assert.equal(definitions.has("use_tab"), false);
+    assert.equal(definitions.has("get_working_tab"), false);
     assert.equal(visibleMutations, 0);
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
@@ -119,6 +118,7 @@ async function assertToolNotesAreCompact() {
 async function assertWaitToolNotesAreCompact() {
   const definitions = new Map();
   let screenshotFails = false;
+  let captures = 0;
   registerWaitTools({
     registerTool: definition => definitions.set(definition.name, definition),
     getToolRuntimeDependencies: () => ({ sessions: {
@@ -126,21 +126,29 @@ async function assertWaitToolNotesAreCompact() {
       resolveUserWait() {}, rejectUserWait() {}, isWaitingForUser() { return false; },
     } }),
     captureTabScreenshot: async () => {
+      captures++;
       if (screenshotFails) throw new Error("Screenshot unavailable");
       return { dataUrl: "data:image/png;base64,AA==" };
     },
     sendToContent: async () => ({}),
   });
   const context = { sessionId: "wait-hints", runId: "wait-run", workingTabId: 42 };
-  const resumed = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  const resumed = await definitions.get("wait_for_user").execute({ tabId: 42, message: "Continue when ready" }, undefined, context);
   assert.equal(resumed.continued, true);
   assert.ok(resumed._image);
-  assert.match(resumed.note, /用户已继续，这是当前页面状态截图，请确认并继续任务。/, "wait_for_user screenshot note should say user continued");
+  assert.match(resumed.note, /用户已继续，这是 tabRef 指定页面的状态截图，请确认并继续任务。/, "wait_for_user screenshot note should say user continued");
   screenshotFails = true;
-  const fallback = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  const fallback = await definitions.get("wait_for_user").execute({ tabId: 42, message: "Continue when ready" }, undefined, context);
   assert.equal(fallback.continued, true);
   assert.equal(fallback._image, undefined);
-  assert.match(fallback.note, /用户已继续，请确认当前页面状态后继续任务。/, "wait_for_user fallback note should say user continued");
+  assert.match(fallback.note, /用户已继续，请确认用户操作的结果后继续任务。/, "wait_for_user fallback note should say user continued");
+  const capturesBeforeUnscoped = captures;
+  screenshotFails = false;
+  const unscoped = await definitions.get("wait_for_user").execute({ message: "Continue when ready" }, undefined, context);
+  assert.equal(unscoped.continued, true);
+  assert.equal(unscoped._image, undefined);
+  assert.equal(captures, capturesBeforeUnscoped, "an optional screenshot never infers the recent or visible page");
+
 
   const previousChrome = globalThis.chrome;
   screenshotFails = false;

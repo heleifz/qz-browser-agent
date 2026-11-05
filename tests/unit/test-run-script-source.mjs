@@ -382,12 +382,13 @@ const toolsSource = [
   readSource("../../src/capabilities/script/tools.js"),
 ].join("\n");
 globalThis.chrome ||= {};
+globalThis.chrome.i18n = { getUILanguage: () => "zh-CN" };
 const { resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
 const runScriptDefinition = resolveToolDefinition("run_script");
 const runSkillScriptDefinition = resolveToolDefinition("run_skill_script");
 const { default: workbench } = await import("../../src/capabilities/skills/workbench.js");
 const runScriptStart = toolsSource.indexOf('registerTool({\n  name: "run_script"');
-const runScriptEnd = toolsSource.indexOf("\n});\n\nfunction isToolApiReferenceError", runScriptStart);
+const runScriptEnd = toolsSource.indexOf("\n});\n\n/** Both execution environments construct", runScriptStart);
 assert.ok(runScriptStart >= 0 && runScriptEnd > runScriptStart, "should find run_script tool block");
 const runScriptToolBlock = toolsSource.slice(runScriptStart, runScriptEnd);
 const runSkillScriptStart = toolsSource.indexOf('registerTool({\n  name: "run_skill_script"');
@@ -396,7 +397,7 @@ assert.ok(runSkillScriptStart >= 0 && runSkillScriptEnd > runSkillScriptStart, "
 const runSkillScriptToolBlock = toolsSource.slice(runSkillScriptStart, runSkillScriptEnd);
 assert.match(
   runScriptDefinition.description,
-  /脚本开始处用一行注释简明说明：这个脚本在什么页面做什么事情，达到什么目的/,
+  /脚本开始处用一行注释简明说明做什么事情、达到什么目的；访问页面时说明页面/,
   "run_script description should require a purpose comment at script start",
 );
 assert.match(
@@ -405,19 +406,16 @@ assert.match(
   "run_script recommended skeleton should show the opening purpose comment",
 );
 assert.match(
-  runScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
-  "run_script tabId schema should document strict target policy",
+  runScriptDefinition.parameters.properties.tabRef.description,
+  /tabRef/,
+  "run_script tabRef schema should document explicit page identity",
 );
+assert.equal(Object.hasOwn(runScriptDefinition.parameters.properties, "target"), false,
+  "run_script selects page access through tabRef and has no public execution target");
 assert.match(
   runScriptToolBlock,
-  /target:\s*\{\s*type:\s*"string",\s*enum:\s*\["page",\s*"inner"\]/,
-  "run_script should expose an explicit page/inner execution target",
-);
-assert.match(
-  runScriptToolBlock,
-  /executionTarget === "inner"[\s\S]*runScriptWithOffscreenInnerRunner/,
-  "run_script should only use the inner runner when target is explicitly inner",
+  /if \(!resolvedTabId\)[\s\S]*runScriptWithOffscreenInnerRunner/,
+  "run_script keeps no-page computation and orchestration available without a page reference",
 );
 assert.match(
   runScriptToolBlock,
@@ -440,20 +438,12 @@ assert.match(
   "run_skill_script should require timeout so plugin tools use one timeout source",
 );
 assert.match(
-  runSkillScriptDefinition.parameters.properties.tabId.description,
-  /本次调用的目标标签页 ID；省略时使用当前任务 workingTabId。/,
-  "run_skill_script tabId schema should document its working-tab default",
+  runSkillScriptDefinition.parameters.properties.tabRef.description,
+  /tabRef/,
+  "run_skill_script tabRef schema should document page identity",
 );
-assert.match(
-  runScriptDefinition.description,
-  /target:"inner" 表示轻舟内部 offscreen 运行环境/,
-  "run_script description should document explicit inner mode",
-);
-assert.match(
-  runScriptDefinition.description,
-  /target 不填或 target:"page" 表示页面模式，使用显式的当前任务拥有 tabId，或当前任务 workingTabId/,
-  "run_script description should keep page tasks on page targets",
-);
+assert.doesNotMatch(runScriptDefinition.description, /target:|workingTab|\binner\b/,
+  "public run_script guidance teaches page access without exposing execution internals");
 assert.match(
   runScriptDefinition.description,
   /不能用 getEventListeners、\$0、copy、monitorEvents/,
@@ -518,7 +508,7 @@ assert.match(
 );
 assert.match(
   workbench.content,
-  /\`runtime:"page"\` 在当前任务工作标签页或用 \`tabRef\` 指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab/,
+  /\`runtime:"page"\` 在用 \`tabRef\` 显式指定的自有页面上执行；\`runtime:"inner"\` 在无 DOM 的 Worker 中执行，不需要 tab/,
   "skill author script conventions should distinguish page and inner tab prerequisites",
 );
 assert.match(
@@ -538,7 +528,7 @@ assert.doesNotMatch(
 );
 assert.match(
   runScriptToolBlock,
-  /resolvedTabId = resolveRunScriptTargetTabId\(tabId, context\)/,
+  /resolvedTabId = resolveRunScriptTargetTabId\(tabId\)/,
   "run_script page branch should resolve targets through the strict target helper",
 );
 await assertScriptTargetPreflight();
@@ -560,25 +550,25 @@ async function assertScriptTargetPreflight() {
     const context = { sessionId: "script-session", runId: "script-run" };
     for (const [name, input] of [
       ["run_script", { code: "42" }],
-      ["run_skill_script", { skill: "fixture", script: "scripts/test.js" }],
+      ["run_skill_script", { skill: "fixture", script: "scripts/test.js", target: "inner" }],
     ]) {
       const controller = new AbortController();
       controller.abort();
       const before = resolutions.length;
-      // Cancellation stops the real handler before creating a Worker or loading a Skill.
-      // Reaching it without a tab proves the registered inner policy skips page preflight.
-      await assert.rejects(runtime.execute(name, { ...input, timeout: 0, target: "inner" }, controller.signal, context), { code: "OPERATION_ABORTED" });
-      assert.equal(resolutions.length, before, `${name} inner mode must not resolve a page`);
-      await assert.rejects(runtime.execute(name, { ...input, timeout: 0, target: "page" }, undefined, context), { code: "SESSION_TAB_TARGET_REQUIRED" });
-      for (const target of [undefined, "page"]) {
-        await assert.rejects(runtime.execute(name, { ...input, timeout: 0, ...(target ? { target, tabId: 8 } : {}) }, undefined,
-          { ...context, workingTabId: 7 }), { code: "SESSION_TAB_FOREIGN" });
-        const resolved = resolutions.at(-1);
-        assert.equal(resolved.tabId, target ? 8 : 7, `${name} uses only its explicit or session working tab`);
-        assert.equal(resolved.sessionId, context.sessionId);
-        assert.equal(resolved.runId, context.runId);
-        assert.equal(resolved.readOnly, false);
-      }
+      await assert.rejects(runtime.execute(name, { ...input, timeout: 0 }, controller.signal, context), { code: "OPERATION_ABORTED" });
+      assert.equal(resolutions.length, before, `${name} no-page execution must not resolve a page`);
+    }
+    await assert.rejects(runtime.execute("run_script", { code: "42", timeout: 0, mutatesPage: true }, undefined, context), { code: "TAB_REF_REQUIRED" });
+    await assert.rejects(runtime.execute("run_skill_script", { skill: "fixture", script: "scripts/test.js", timeout: 0 }, undefined, context), { code: "TAB_REF_REQUIRED" });
+    for (const name of ["run_script", "run_skill_script"]) {
+      const input = name === "run_script" ? { code: "42" } : { skill: "fixture", script: "scripts/test.js" };
+      await assert.rejects(runtime.execute(name, { ...input, timeout: 0, tabRef: 8 }, undefined,
+        { ...context, workingTabId: 7 }), { code: "SESSION_TAB_FOREIGN" });
+      const resolved = resolutions.at(-1);
+      assert.equal(resolved.tabId, 8, `${name} uses only its explicit page reference`);
+      assert.equal(resolved.sessionId, context.sessionId);
+      assert.equal(resolved.runId, context.runId);
+      assert.equal(resolved.readOnly, false);
     }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
@@ -617,7 +607,7 @@ assert.doesNotMatch(
 );
 assert.match(
   toolsSource,
-  /RUN_SCRIPT_TARGET_TAB_REQUIRED/,
+  /TAB_REF_REQUIRED/,
   "run_script strict target failure should have a structured error code",
 );
 assert.match(

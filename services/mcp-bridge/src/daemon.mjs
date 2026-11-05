@@ -65,11 +65,11 @@ export async function findDaemon(options = {}) {
       if (health.scopeId !== paths.scopeId || health.instanceId !== record.instanceId || health.processId !== record.processId) return null;
       return { ...record, health, compatible: true, updateAvailable: health.buildId !== paths.buildId };
     } catch (error) {
-      if (!processExists(record.processId) || ["invalid_endpoint", "incompatible_service"].includes(error.code)) return null;
+      if (!processExists(record.processId) || ["INVALID_ENDPOINT", "INCOMPATIBLE_SERVICE"].includes(error.code)) return null;
       if (attempt === 0) await delay(100);
     }
   }
-  throw new QzError("connection_unavailable", "The qz local service is running but did not respond. Try qz status again shortly.", {
+  throw new QzError("CONNECTION_UNAVAILABLE", "The qz local service is running but did not respond. Try qz status again shortly.", {
     endpoint: record.endpoint, processId: record.processId, log: paths.log,
   });
 }
@@ -108,7 +108,7 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
             continue;
           }
           if (!["EEXIST", "ENOTEMPTY", "ENOTDIR"].includes(error.code)) throw error;
-          if (Date.now() >= deadline) throw new QzError("connection_busy", "Another qz command is starting the local service. Try qz status shortly.");
+          if (Date.now() >= deadline) throw new QzError("CONNECTION_BUSY", "Another qz command is starting the local service. Try qz status shortly.");
           continue;
         }
         missingTargetPermissionError = undefined;
@@ -128,7 +128,7 @@ async function withLock(paths, operation, { timeoutMs = 15000 } = {}) {
             await rm(paths.lock, { force: true }).catch(error => { if (!["EISDIR", "ERR_FS_EISDIR"].includes(error.code)) throw error; });
           }
         }
-        if (Date.now() >= deadline) throw new QzError("connection_busy", "Another qz command is starting the local service. Try qz status shortly.");
+        if (Date.now() >= deadline) throw new QzError("CONNECTION_BUSY", "Another qz command is starting the local service. Try qz status shortly.");
         await delay(50);
       }
     }
@@ -148,7 +148,7 @@ function recordFromHealth(endpoint, health) {
 }
 
 async function stopProcess(running) {
-  if (running.processId === process.pid) throw new QzError("stop_failed", "The service is running inside this process.");
+  if (running.processId === process.pid) throw new QzError("STOP_FAILED", "The service is running inside this process.");
   try { process.kill(running.processId, "SIGTERM"); }
   catch (error) { if (error.code === "ESRCH") return { stopped: true, connected: false }; throw error; }
   const deadline = Date.now() + 5000;
@@ -156,7 +156,7 @@ async function stopProcess(running) {
     if (!processExists(running.processId)) return { stopped: true, connected: false };
     await delay(50);
   }
-  throw new QzError("stop_failed", "The local service has not stopped yet. Check qz status.");
+  throw new QzError("STOP_FAILED", "The local service has not stopped yet. Check qz status.");
 }
 
 function childExited(child) {
@@ -180,7 +180,7 @@ async function discardStartup(child, paths, instanceId) {
     child.kill(signal);
     if (await waitForChildExit(child, 1000)) break;
   }
-  if (!childExited(child)) throw new QzError("start_failed", "The failed qz startup process has not stopped.", { processId: child.pid, log: paths.log });
+  if (!childExited(child)) throw new QzError("START_FAILED", "The failed qz startup process has not stopped.", { processId: child.pid, log: paths.log });
   const record = await readJson(paths.state);
   if (record?.processId === child.pid && record.instanceId === instanceId) await rm(paths.state, { force: true });
 }
@@ -222,14 +222,14 @@ export async function ensureDaemon(options = {}) {
         const running = await findDaemon(lookup);
         if (running) {
           if (running.instanceId !== instanceId || running.processId !== child.pid) {
-            throw new QzError("start_failed", "Another qz service claimed the startup state. Check qz status.", { log: paths.log });
+            throw new QzError("START_FAILED", "Another qz service claimed the startup state. Check qz status.", { log: paths.log });
           }
           return running;
         }
         if (childExited(child) || !processExists(child.pid)) break;
         await delay(50);
       }
-      throw new QzError("start_failed", "The qz local service did not start.", { log: paths.log });
+      throw new QzError("START_FAILED", "The qz local service did not start.", { log: paths.log });
     } catch (error) {
       // Hold the startup lock until this invocation's child is gone. Otherwise a
       // delayed child could overwrite the state published by a concurrent retry.

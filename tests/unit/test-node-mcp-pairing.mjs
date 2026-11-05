@@ -343,9 +343,9 @@ function cliFixture() {
 
 test("CLI requires explicit multi-browser selection and resolves names to UUID for every command", async () => {
   const { clients, health, calls, dependencies } = cliFixture();
-  for (const command of [["connect"], ["tasks"], ["settings"], ["create", "Test"]]) await assert.rejects(runCli(command, dependencies), code("selection_required"));
+  for (const command of [["connect"], ["tasks"], ["settings"], ["create", "Test"]]) await assert.rejects(runCli(command, dependencies), code("SELECTION_REQUIRED"));
   for (const selector of ["missing", "offline"]) for (const command of [["connect"], ["create", "Test"]]) {
-    await assert.rejects(runCli([...command, "--client", selector], dependencies), code(selector === "missing" ? "client_not_found" : "client_offline"));
+    await assert.rejects(runCli([...command, "--client", selector], dependencies), code(selector === "missing" ? "CLIENT_NOT_FOUND" : "CLIENT_OFFLINE"));
   }
   assert.equal(calls.length, 0);
   await runCli(["create", "Test", "--client", "work"], dependencies);
@@ -359,7 +359,7 @@ test("CLI requires explicit multi-browser selection and resolves names to UUID f
 
 test("new CLI explains an older healthy daemon and never upgrades it by stopping it", async () => {
   const { health, dependencies, calls } = cliFixture(); delete health.features;
-  for (const command of [["connect"], ["create", "Test"], ["browsers"]]) await assert.rejects(runCli(command, dependencies), error => error.code === "upgrade_required" && /stop/.test(error.details.hint) && /reload/.test(error.details.hint) && /all browsers/.test(error.details.hint));
+  for (const command of [["connect"], ["create", "Test"], ["browsers"]]) await assert.rejects(runCli(command, dependencies), error => error.code === "UPGRADE_REQUIRED" && /stop/.test(error.details.hint) && /reload/.test(error.details.hint) && /all browsers/.test(error.details.hint));
   assert.equal(calls.length, 0);
   assert.equal((await runCli(["status"], dependencies)).result.running, true);
   assert.match((await runCli(["mcp"], dependencies)).text, /\/mcp/);
@@ -367,8 +367,8 @@ test("new CLI explains an older healthy daemon and never upgrades it by stopping
 
 test("explicit connect ports preserve an existing daemon and report its address", async () => {
   const { dependencies, calls } = cliFixture();
-  await assert.rejects(runCli(["connect", "--port", "18766"], dependencies), error => error.code === "port_mismatch" && /18765/.test(error.details.endpoint));
-  for (const port of ["0", "65536", "NaN", "1.5"]) await assert.rejects(runCli(["connect", "--port", port], dependencies), code("invalid_arguments"));
+  await assert.rejects(runCli(["connect", "--port", "18766"], dependencies), error => error.code === "PORT_MISMATCH" && /18765/.test(error.details.endpoint));
+  for (const port of ["0", "65536", "NaN", "1.5"]) await assert.rejects(runCli(["connect", "--port", port], dependencies), code("INVALID_ARGUMENTS"));
   assert.equal(calls.length, 0);
 });
 
@@ -466,7 +466,7 @@ test("async tool jobs outlive their caller but cannot transfer to a replacement 
     const done = state.getJob(job.jobId);
     assert.equal(done.status, replace ? "failed" : "completed");
     if (replace) {
-      assert.match(done.error, /BRIDGE_CLIENT_DISCONNECTED/);
+      assert.equal(done.error.code, "BRIDGE_CLIENT_DISCONNECTED");
       assert.deepEqual(await poll(state, target), []);
     } else assert.deepEqual(done.result, { accepted: true });
     assert.equal(state.pending.size, 0); assert.equal(state.inflight.size, 0);
@@ -512,6 +512,6 @@ test("binding URL preparation does not select, probe or open a browser and suppo
   assert.equal(launched.result.opened, true); assert.equal(Object.hasOwn(launched.result, "connected"), false);
   for (const args of [["--client", "missing", "--no-open"], ["--client", "work", "--name", "personal"],
     ["--name", ""], ["--name", "two words"], ["--name", randomUUID()]]) {
-    await assert.rejects(runCli(["connect", ...args], { ensureDaemon: () => assert.fail("invalid flags have no effects") }), code("invalid_arguments"));
+    await assert.rejects(runCli(["connect", ...args], { ensureDaemon: () => assert.fail("invalid flags have no effects") }), code("INVALID_ARGUMENTS"));
   }
 });

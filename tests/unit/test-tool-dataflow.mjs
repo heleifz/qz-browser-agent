@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Agent } from '../../src/background/agent/agent.js';
 import { createSessionTabs } from '../../src/background/session/tabs.js';
+import { bindCreatedTabResult, createdTabResultId } from '../../src/shared/contracts/page-observation.js';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
 import { createTestAgentOptions } from '../support/agent-services.mjs';
 globalThis.chrome = { runtime: { getURL: path => `chrome-extension://test/${path}` }, storage: { local: {
@@ -14,7 +15,7 @@ const read = key => call(`read-${key}`, '__flow_read', { tabRef: key });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(predicate) { for (let i = 0; !predicate() && i < 300; i++) await tick(); assert.ok(predicate(), 'fixture reached expected state'); }
 let fixture;
-defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', workingTab: 'created',
+defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', tabLifecycle: 'created',
   behavior: { parallelOpen: true }, parameters: { type: 'object', properties: { tabAlias: { type: 'string' } } },
   async execute(args, signal, context) {
     const id = args.tabAlias.charCodeAt(0);
@@ -24,12 +25,12 @@ defineTool({ name: '__flow_open', description: 'Synthetic provisional creator', 
     fixture.started.push(`open-${args.tabAlias}`);
     await fixture.wait(`open-${args.tabAlias}`, signal);
     if (fixture.fail === args.tabAlias) throw Object.assign(new Error('navigation failed'), { code: 'NAVIGATION_FAILED' });
-    return { id };
+    return bindCreatedTabResult({ tabRef: args.tabAlias, title: tab.title, url: tab.url, active: false }, id);
   },
 });
 for (const action of [false, true]) defineTool({ name: action ? '__flow_action' : '__flow_read', description: 'Synthetic tab-local work', page: 'tab',
   behavior: action ? { parallelTab: true } : { parallelRead: true },
-  parameters: { type: 'object', properties: { tabId: { type: 'number' } }, required: ['tabId'] },
+  parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] } }, required: ['tabRef'] },
   async execute(args, signal, context) {
     const tab = fixture.tabs.get(args.tabId), key = `${action ? 'action' : 'read'}-${tab.title}`;
     const permitted = await getToolRuntimeDependencies(context).sessions.resolveTargetTab({ sessionId: 'flow', runId: 'run', signal,
@@ -54,15 +55,16 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
     async query() { return [...tabs.values()]; },
   };
   chrome.tabs = tabsApi;
+  const isRunCurrent = (_sessionId, runId) => runId === 'run' && !controller.signal.aborted;
   sessions = createSessionTabs({ supervisor: {
-    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent: () => !controller.signal.aborted,
+    getRuntime: id => id === 'flow' ? state : null, runtimeEntries: () => [['flow', state]], isRunCurrent,
     setRuntime: (_id, next) => { Object.assign(state, next); return state; },
   }, tabsApi, storage: chrome.storage.local, ready: async () => {}, normalizeSessionId: String,
   setRuntime(_id, patch) { Object.assign(state, patch); writes.push({ owned: [...state.ownedTabIds], working: state.workingTabId }); return state; },
   persistRuntime: async () => {}, broadcast() {}, now: () => 'fixed', logger: { warn() {} },
   loadSecurityGuardrails: async () => ({}),
   });
-  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent: () => !controller.signal.aborted,
+  const runtime = createToolRuntime({ sessions: { ...sessions, isRunCurrent,
     async commitCreatedTab(input) {
       const pendingTab = [...tabs.values()].find(tab => tab.title === failCommit);
       if (pendingTab && !state.ownedTabIds.includes(pendingTab.id) && state.ownedTabIds.length === 1)
@@ -99,8 +101,9 @@ function setup({ serial = false, hold = [], fail, failCommit, stopAt, stopEffect
   const effects = [], apply = agent._applyToolResultEffects.bind(agent);
   agent._applyToolResultEffects = async (name, result, isError) => {
     effects.push({ name, result, isError, working: state.workingTabId, owned: [...state.ownedTabIds] });
-    if (stopEffects && result.id === 97) controller.abort();
-    const gate = `effects:${name}:${result.tabId ?? result.id ?? result._tabId}`;
+    if (stopEffects && createdTabResultId(result) === 97) controller.abort();
+    const lane = name === 'run_script' ? scriptContexts.at(-1)?.tabId : createdTabResultId(result) ?? result.tabId;
+    const gate = `effects:${name}:${lane}`;
     if (hold.includes(gate)) await fixture.wait(gate, controller.signal);
     return apply(name, result, isError);
   };
@@ -282,6 +285,15 @@ test('hidden Skill script shares the barrier and tabRef protocol', async () => {
   assert.deepEqual(f.siteChanges, [{ name: 'run_skill_script', working: 97 }]);
   const serial = setup({ serial: true, scriptFixtures: true });
   assert.deepEqual(result, serial.snapshot(await serial.run(input)));
+});
+
+test('a parallel open commits when the session has no agent run', async () => {
+  const f = setup(), identity = { sessionId: 'flow', runId: '' };
+  const result = await f.runtime.execute('__flow_open', { tabAlias: 'a' }, f.controller.signal,
+    { ...identity, deferToolCommit: true, deferCreatedTabSelection: true });
+  await f.runtime.commitToolResult(result, f.controller.signal, identity);
+  assert.deepEqual(f.state.ownedTabIds, [97]);
+  assert.equal(f.tabs.size, 1);
 });
 
 test('copied results and foreign runs cannot use or settle a private creation permit', async () => {

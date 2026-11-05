@@ -106,25 +106,27 @@ snapshot. Any build-time capability can use these fields through `qz.registerToo
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
 marks a tool that may touch global resources. Skill/plugin tools (`source: "plugin"`) are always barriers;
 manifest fields cannot opt them into parallel execution. `run_skill_script` remains a barrier.
-`run_script` declares `parallelTab: true` and a barrier predicate: inner mode or code that may use
-host tools is a barrier; no-tools page code uses the normal tab lane. Omitting `target` means page,
-and `mutatesPage` controls effects rather than classification. The capability's conservative static
+`run_script` declares `parallelTab: true` and a barrier predicate: execution without `tabRef` or code
+that may use host tools is a barrier; no-tools page code uses the normal tab lane. Supplying `tabRef`
+selects page execution, and `mutatesPage` controls effects rather than classification. The capability's conservative static
 classifier also selects bridge installation. Input/args-only code needs no bridge. Unknown syntax
 stays a barrier; missing tool access in a no-bridge invocation returns an error without replay.
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 
-Core page tools declare numeric `tabId` internally; their model schemas expose only `tabRef`
-(integer or string). The host accepts numeric browser IDs, numeric strings and Session-scoped
+Core page tools declare `tabRef` (integer or string) in their schemas; the host resolves it to
+numeric `tabId` for internal execution. The host accepts returned IDs and Session-scoped
 `open_tab.tabAlias` names. Aliases survive model turns and worker restarts until their tab closes.
 Legacy numeric `tabId` input remains compatible; supplying both selectors requires the same target.
 Alias reservations reject live or pending duplicates before browser creation. Existing aliases are
 pinned when admitting a batch; new aliases resolve from earlier creators in its `tool_calls` array.
 Place each creator before its consumers. Readers can use a completed creator's private execution
 permit before its ownership is published; actions await the creator's commit. The runtime carries
-numeric targets and opaque authority through normal safety checks. Session ownership and working-tab
-selection publish only at ordered commit. Cancellation closes uncommitted creations. The host resolves aliases at direct-runtime boundaries too, and rejects unknown names without
-falling back to the working tab. UID and explicit page selectors must target the same tab. See [batch ordering and failure
+numeric targets and opaque authority through normal safety checks. Session ownership and recent-page
+state publish only at ordered commit. Cancellation closes uncommitted creations. The host resolves aliases at direct-runtime boundaries too, and rejects unknown names without
+using an implicit target. A page-independent call validates a supplied `tabRef` and then discards it;
+it does not select, claim, or wait for that page. Page tools require their target
+parameter, including coordinate actions and image collection. UID and explicit page selectors must target the same tab. See [batch ordering and failure
 semantics](../../docs/architecture.md#tool-and-skill-execution).
 
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies
@@ -133,7 +135,8 @@ updates. Use concise `pending` text naming the unfinished work. `behavior.timeou
 host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
 
-Tools pass serializable results to renderers. Package imports are limited to their own files, pinned
+Tools return business data; `bindToolResultPresentation` from `#sdk/background/tools` keeps display
+metadata beside that result until the host builds the renderer event. Package imports are limited to their own files, pinned
 npm dependencies, and `#sdk/*`. Type checking applies each runtime's constraints to its dependency
 graph and requires every TypeScript file to be reachable from a contribution declaration.
 
@@ -287,12 +290,12 @@ activation. An explicit `load_skill` can load any enabled Skill by name. Resourc
 package. The framework marks embedded Skills read-only; removing the capability removes them on the
 next build.
 
-Page Skill tools (`runtime: "page"` or omitted, with `needsPage !== false`) receive an optional
-`tabRef` parameter. Use `tabRef` in `plugin.json` and calls, with `type: ["integer", "string"]`:
-a task-owned tab alias, a positive integer ID, or a numeric string. Omit it to use the task's working
-tab; unknown aliases fail. The host resolves it before running the script. Legacy installed parameter
-declarations normalize at read time without changing their stored packages. Other runtimes and
-`needsPage: false` receive no page-targeting parameter.
+Page Skill tools (`runtime: "page"` or omitted, with `needsPage !== false`) and host tools declaring
+`needsPage: true` require `tabRef`. Use `tabRef` in `plugin.json` and calls, with
+`type: ["integer", "string"]`: a task-owned alias or a reference returned by `open_tab` or `list_tabs`.
+Unknown aliases fail. The host resolves the reference before execution. Legacy installed parameter
+declarations normalize at read time without changing their stored packages. Page-independent tools
+receive no page-targeting parameter.
 
 For controlled Background execution, add `skillHosts` and use `registerSkillHost` to bind a
 registered manifest tool to a `target` or implement `execute(args, context)`; these options are

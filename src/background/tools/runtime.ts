@@ -1,3 +1,6 @@
+import { createdTabResultId } from "../../shared/contracts/page-observation.js";
+import { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
 import { resolveTabReference, tabReferenceError } from "./tab-reference.js";
 import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
@@ -37,7 +40,7 @@ import { summarizeToolArgsForTrace } from "./trace-summary.js";
 import { createToolRegistry, isCoreToolSnapshot, withCommonToolParameters } from "./registry.js";
 import { ensureToolBrowserPermission } from "./browser-permissions.js";
 import { selectSkillResults } from "../skills/skill-selection.js";
-import { assertPageUrlAccessible } from "./page-access.js";
+import { assertHtmlPage, assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle } from "./behavior.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
@@ -45,7 +48,7 @@ import { assertScriptPageLifecycle } from "./behavior.js";
  */
 
 import { ToolExecutionError, isMissingRequiredValue, validateToolSchema } from "./arguments.js";
-import { DEFAULT_TOOL_TIMEOUT, resolveTimeout, scriptTimeout } from "./timing.js";
+import { DEFAULT_TOOL_TIMEOUT, documentHostTimeout, resolveTimeout, scriptTimeout } from "./timing.js";
 import { formatTab, getEffectiveTabUrl, isPageTab, isPageTabUrl, isLocalFileUrl } from "../../shared/tab-utils.js";
 import { getSecurityGuardrails, matchBlockedUrl } from "../../shared/security-guardrails.js";
 import {
@@ -73,6 +76,7 @@ import {
   getSkillToolDefinition,
   getSkillToolParameters,
   getHostCoreToolTarget,
+  isDocumentHostTool,
   isSkillPageTool,
   isSkillToolActive,
   listSkillMcpServers,
@@ -89,11 +93,11 @@ import { callMcpServerTool, inspectMcpServer } from "../mcp/mcp-client.js";
 // initialization and validates its selected document again in element-runtime.
 // ---------------------------------------------------------------------------
 
-async function contentDeadline<T>(operation: Promise<T>, tabId: number, ms: number): Promise<T> {
+async function contentDeadline<T>(operation: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([operation, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out", { tabId })), ms);
+      timer = setTimeout(() => reject(new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content initialization timed out")), ms);
     })]);
   } finally { clearTimeout(timer); }
 }
@@ -116,23 +120,31 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
   try {
     if (!force) {
       try {
-        const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), tabId, 150));
-        if (response?.ok === true) return response;
+        const response = record(await contentDeadline(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), 150));
+        if (response?.ok === true && typeof response.contentType === "string" && response.elementRefs === 1) return response;
       } catch(_e) {
         // Inject the content script when it is missing.
       }
     }
     signal?.throwIfAborted();
-    await withContentSignal(chrome.scripting.executeScript({
-      target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
-      world: "ISOLATED",
-      files: ["content/article-extractor.js", "content/content-script.js"],
-      injectImmediately: true,
-    }), signal);
+    try {
+      await withContentSignal(chrome.scripting.executeScript({
+        target: force ? { tabId, allFrames: true } : { tabId, frameIds: [0] },
+        world: "ISOLATED",
+        files: ["content/article-extractor.js", "content/content-script.js"],
+        injectImmediately: true,
+      }), signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (/cannot access|cannot be scripted|extensions gallery|missing host permission/i.test(errorMessage(error))) {
+        throw new ToolExecutionError("PAGE_CONTENT_UNAVAILABLE", t("toolError.PAGE_CONTENT_UNAVAILABLE.message"));
+      }
+      throw error;
+    }
     signal?.throwIfAborted();
     const response = record(await withContentSignal(chrome.tabs.sendMessage<Fields, unknown>(tabId, { action: "ping" }, { frameId: 0 }), signal));
     if (response?.ok !== true) {
-      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabId, response });
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "Content script did not acknowledge ping", { tabRef: context.requestedTabRef });
     }
     return response;
   } finally {
@@ -144,7 +156,7 @@ async function ensureContentScript(tabId: number, force = false, context: ToolCo
 // This wait runs inside the caller's deadline and signal.
 async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
   while (true) {
-    if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page", { tabId });
+    if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for the page");
     const tab = await chrome.tabs.get(tabId);
     // Chrome can drop pendingUrl when the initial blank commits while the target
     // request is still in flight. Its loading status still warrants a bounded wait.
@@ -156,10 +168,12 @@ async function waitForPageCommit(tabId: number, signal?: AbortSignal) {
 
 export async function sendToContent(tabId: number | undefined, action: string, params: Fields = {}, context: ToolContext = {}): Promise<unknown> {
   if (!tabId) {
-    throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Content script calls require the current session workingTabId or an explicit owned tabId", { action });
+    throw makeSessionTabTargetError("TAB_REF_REQUIRED", { toolName: action }, context);
   }
-  await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
+  await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
+  assertHtmlPage((await chrome.tabs.get(tabId)).url);
   const presence = await ensureContentScript(tabId, false, context);
+  assertHtmlPage(presence.url, presence.contentType);
   if (presence.documentReady === false) {
     const finishReadiness = context.measurePhase?.("readiness");
     try {
@@ -167,7 +181,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     } finally { finishReadiness?.(); }
   }
   context.signal?.throwIfAborted();
-  await assertTabAllowedBySecurityGuardrails(tabId, { tool: "content_script", action });
+  await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
   context.signal?.throwIfAborted();
   const finishPhase = context.measurePhase?.("extraction");
   try {
@@ -176,7 +190,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     if (response == null) {
       throw new ToolExecutionError("EMPTY_CONTENT_RESPONSE", `Content script returned empty response for ${action}`, {
         action,
-        tabId,
+        tabRef: context.requestedTabRef,
       });
     }
     return response;
@@ -184,7 +198,7 @@ export async function sendToContent(tabId: number | undefined, action: string, p
     if (err instanceof ToolExecutionError) throw err;
     throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script ${action} failed: ${errorMessage(err)}`, {
       action,
-      tabId,
+      tabRef: context.requestedTabRef,
     });
   } finally {
     finishPhase?.();
@@ -228,7 +242,7 @@ export function handleRunScriptInnerRuntimeMessage(message: Fields = {}) {
 
 export async function captureTabScreenshot(tabId: number, options: ScreenshotOptions = {}, context: ToolContext = {}) {
   if (!capabilityBridges.captureTabScreenshot) {
-    throw new ToolExecutionError("MEDIA_RUNTIME_NOT_READY", "Media runtime is not initialized", { tabId });
+    throw new ToolExecutionError("MEDIA_RUNTIME_NOT_READY", "Media runtime is not initialized", { tabRef: context.requestedTabRef });
   }
   return await capabilityBridges.captureTabScreenshot(tabId, options, context);
 }
@@ -244,6 +258,11 @@ interface DeferredToolState {
   discard(): Promise<void>;
 }
 const deferredToolStates = new WeakMap<object, DeferredToolState>();
+/** Sidebar metadata travels separately from the model's business result. */
+export function getToolResultPageContext(result: unknown): Fields {
+  return { ...getToolResultPresentation(result) };
+}
+
 function deferredState(result: unknown, context: ToolContext) {
   const ticket = isRecord(result) ? deferredToolStates.get(result) : undefined;
   return ticket && ticket.context.sessionId === context.sessionId && ticket.context.runId === context.runId
@@ -255,7 +274,8 @@ async function settleToolState(result: unknown, context: ToolContext, signal?: A
   ticket.settling = true;
   try {
     if (signal) {
-      if (signal.aborted || ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", context.runId || "") === false)
+      const runId = String(context.runId || "");
+      if (signal.aborted || (runId && ticket.authority.sessions?.isRunCurrent?.(context.sessionId || "", runId) === false))
         throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before ordered commit");
       await ticket.commit(signal);
     }
@@ -294,6 +314,7 @@ export function createToolRuntime({
     snapshot: coreToolDefinitions.snapshot,
     getSchemas: getToolSchemas,
     getIdentity: getToolIdentity,
+    getToolResultPageContext,
     getModelPolicy: (name: string, options: ToolOptions = {}) => resolveToolDefinition(name, options)?.model,
     hasUidElementTargets,
     element: elementRuntime,
@@ -366,10 +387,11 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     plugin: entry.plugin,
     ...(renderer?.type === "selection" ? { selectionRenderer: renderer } : {}),
     validateArgs: args => {
-      if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
+      if (isDocumentHostTool(entry.tool)) documentHostTimeout(args, runtimeName);
+      else if (isSkillScriptTool(entry.tool)) scriptTimeout(args, runtimeName);
       return hostDefinition?.validateArgs?.(args);
     },
-    timeout: isSkillPageScriptTool(entry.tool) ? 0 : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
+    timeout: isSkillPageScriptTool(entry.tool) ? 0 : isDocumentHostTool(entry.tool) ? documentHostTimeout : isSkillScriptTool(entry.tool) ? scriptTimeout : DEFAULT_TOOL_TIMEOUT,
     legacyTimeoutMs: !isSkillScriptTool(entry.tool),
     execute: (args, signal, context) => executeSkillTool(name, args, signal, context,
       (nestedName, nestedArgs, nestedSignal, nestedContext = {}) => executeTool(
@@ -393,8 +415,23 @@ export function getParallelReadTab(name: string, args: unknown, options: ToolOpt
   return !definition || isToolBarrier(definition, input) ? null : parallelReadTab(definition, input);
 }
 
+function canonicalToolArgs(definition: RuntimeTool, input: Fields): Fields {
+  if (!definition.argumentAliases && !definition.argumentValueAliases) return input;
+  const next = { ...input };
+  for (const [alias, canonical] of Object.entries(definition.argumentAliases || {})) {
+    if (!Object.hasOwn(next, canonical) && Object.hasOwn(next, alias)) next[canonical] = next[alias];
+    delete next[alias];
+  }
+  for (const [field, aliases] of Object.entries(definition.argumentValueAliases || {})) {
+    const value = next[field];
+    if (typeof value === "string" && Object.hasOwn(aliases, value)) next[field] = aliases[value];
+  }
+  return next;
+}
+
 /** Keep non-uid targets too: mixed calls cannot safely use a single uid's tab lane. */
 function elementTargetsOf(definition: RuntimeTool, input: Fields): unknown[] {
+  input = canonicalToolArgs(definition, input);
   const values = ["target", "selector", "root"]
     .filter(key => definition.parameters.properties[key])
     .map(key => input[key])
@@ -427,12 +464,12 @@ function parallelReadTab(definition: RuntimeTool, input: Fields): number | null 
 export function getBatchTabPolicy(name: string, args: unknown, options: ToolOptions = {}): ToolBatchTabPolicy | null {
   const definition = resolveToolDefinition(name, options);
   if (!definition) return null;
-  const input = record(args), barrier = isToolBarrier(definition, input);
-  if (definition.workingTab === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: !barrier } : {}) };
+  const input = canonicalToolArgs(definition, record(args)), barrier = isToolBarrier(definition, input);
+  if (definition.tabLifecycle === "created") return { kind: "create", ...(definition.behavior?.parallelOpen ? { parallel: !barrier } : {}) };
   const pageAccess = resolvePageAccess(definition, input);
   const targets = pageAccess ? elementTargetsOf(definition, input) : [];
   if (targets.some(isUidElementTarget)) {
-    // A uid pins its registered tab: schedule the call on that lane, never the working tab.
+    // A uid pins its registered tab; the explicit page reference must agree with it.
     // Unknown or cross-tab uid sets keep the conservative commit barrier.
     const lane = elementRuntime.elementUidTabId(targets);
     if (lane == null) return { kind: "target", implicit: false, observation: false };
@@ -445,7 +482,7 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
     return barrier ? { kind: "barrier" } : null;
   }
   // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
-  return { kind: "target", implicit: input.tabId == null,
+  return { kind: "target", implicit: input.tabId == null && !Object.hasOwn(input, "tabRef"),
     observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
     ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}) };
 }
@@ -516,9 +553,12 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       signal: commitSignal, reservation: aliasReservation, tabId });
   };
   const timing = createToolPhaseTiming(name, context);
-  context = withToolRuntimeContext({ ...context, measurePhase: timing.start }, getToolRuntimeDependencies(context));
+  const requestedTabRef = record(args).tabRef;
+  context = withToolRuntimeContext({ ...context, measurePhase: timing.start,
+    requestedTabRef: typeof requestedTabRef === "string" || typeof requestedTabRef === "number" ? requestedTabRef : undefined,
+  }, getToolRuntimeDependencies(context));
   const language = isCoreToolSnapshot(context.toolRegistrySnapshot) ? context.toolRegistrySnapshot.language : context.language || getLanguage();
-  let effectiveArgs = args;
+  let effectiveArgs = record(args);
   let definition: RuntimeTool | null = null;
   let parameters: ToolSchema = { type: "object", properties: {} };
   const traceTool = shouldTraceDiagnosticTool(name);
@@ -541,28 +581,38 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       throw new ToolExecutionError("UNKNOWN_TOOL", `Unknown tool: ${name}`, { name });
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
+    if (isRecord(args)) args = canonicalToolArgs(definition, args);
+    if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+    if (resolvePageAccess(definition, args) && !Object.hasOwn(args, "tabRef") && args.tabId == null) {
+      throw makeSessionTabTargetError("TAB_REF_REQUIRED", { toolName: name }, context);
+    }
     parameters = resolvedPageParameters(definition);
     if (Object.hasOwn(record(args), "tabRef")) {
-      if (!definition.page || !parameters.properties.tabId || !resolvePageAccess(definition, record(args))) {
-        throw tabReferenceError("invalid_reference", record(args).tabRef, language);
-      }
       const { tabRef, ...input } = record(args);
-      const tabId = resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
+      const tabId = parent?.reservation && parent.tabId === input.tabId && record(context.createdTabResult).tabRef === tabRef
+        ? parent.tabId : resolveTabReference(tabRef, authority.sessions?.getTabAliases?.(context.sessionId || "") || {}, language);
       if (input.tabId != null && input.tabId !== tabId) throw tabReferenceError("conflicting_target", tabRef, language);
-      args = { ...input, tabId };
+      // A reference is valid independently of whether this call uses a page.
+      args = resolvePageAccess(definition, { ...input, tabId }) ? { ...input, tabId } : input;
     }
     const uidTargets = elementTargetsOf(definition, record(args)).filter(isUidElementTarget);
-    if (uidTargets.length && record(args).tabId != null && elementRuntime.elementUidTabId(uidTargets) !== record(args).tabId) {
-      throw tabReferenceError("conflicting_target", record(args).tabId, language);
+    uidTargets.forEach(target => elementRuntime.assertKnownElementUid(target));
+    if (record(args).tabId != null && uidTargets.some(target => {
+      const tabId = elementRuntime.elementUidTabId([target]);
+      return tabId != null && tabId !== record(args).tabId;
+    })) {
+      throw tabReferenceError("conflicting_target", context.requestedTabRef, language);
     }
-    if (record(args).tabAlias != null && (definition.workingTab !== "created" || !isTabAlias(record(args).tabAlias))) {
+    if (record(args).tabAlias != null && (definition.tabLifecycle !== "created" || !isTabAlias(record(args).tabAlias))) {
       throw tabReferenceError("invalid_alias", record(args).tabAlias, language);
     }
-    effectiveArgs = withWorkingTabDefault(definition, args, parameters, context);
-    effectiveArgs = withTimeoutAliases(effectiveArgs, definition);
-    validateToolArgs(name, effectiveArgs, parameters, definition.defaultableFields);
+    effectiveArgs = record(args);
+    effectiveArgs = record(withTimeoutAliases(effectiveArgs, definition));
+    const validationArgs = definition.parameters.properties.tabRef && effectiveArgs.tabId != null
+      ? { ...effectiveArgs, tabRef: requestedTabRef ?? effectiveArgs.tabId } : effectiveArgs;
+    validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
     if (typeof definition.validateArgs === "function") definition.validateArgs(effectiveArgs);
-    validateToolSchema(name, effectiveArgs, parameters);
+    validateToolSchema(name, validationArgs, definition.parameters);
     await assertToolAllowedForSession(definition, context);
     const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
       needsCommittedPage(definition, effectiveArgs));
@@ -572,7 +622,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     await assertToolTargetAllowedBySecurityGuardrails(definition, executionArgs, context, securityGuardrails);
     if (executionArgs.tabAlias != null) {
       if (!authority.sessions?.reserveTabAlias || !authority.sessions.commitTabAlias || !authority.sessions.discardTabAlias) {
-        throw makeSessionTabTargetError("CDP_SESSION_RUNTIME_UNAVAILABLE", { toolName: name });
+        throw makeSessionTabTargetError("CDP_SESSION_RUNTIME_UNAVAILABLE", { toolName: name }, context);
       }
       aliasReservation = await authority.sessions.reserveTabAlias({ sessionId: context.sessionId || "", runId: context.runId,
         signal, alias: String(executionArgs.tabAlias) });
@@ -605,7 +655,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
           if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
             callContext.prepareCreatedTab = async tab => {
               const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
-              if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", { tabId: tab.id });
+              if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", {}, context);
               pending = { tabId: Number(tab.id), reservation: reserved.reservation };
               if (signal.aborted) { await discard(); throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted during tab creation"); }
               return withExecutionAuthority(callContext, authority, reserved.reservation, Number(tab.id));
@@ -614,11 +664,11 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
           const pageAccess = resolvePageAccess(selectedDefinition, args);
           if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
           const policy = selectedDefinition.behavior?.timeoutResult;
-          if (policy?.kind === "action") reportPartial({ tabId: args.tabId, status: "unconfirmed" }, policy.pending);
+          if (policy?.kind === "action") reportPartial({ status: "unconfirmed" }, policy.pending);
           if (policy?.kind === "read" && Number(args.tabId) > 0
             && !elementTargetsOf(selectedDefinition, args).some(isUidElementTarget)) {
             const tabId = Number(args.tabId);
-            reportPartial({ tabId }, policy.pending);
+            reportPartial({}, policy.pending);
           }
           if (needsCommittedPage(selectedDefinition, args) && Number(args.tabId) > 0) {
             await waitForPageCommit(Number(args.tabId), signal);
@@ -637,10 +687,10 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         signal,
         timeoutMs,
         async (partial, timeoutError) => {
-          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context); }
+          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context, inferToolPageId(selectedDefinition, executionArgs) || undefined); }
           catch (error) {
-            if (selectedDefinition.workingTab === "created" && Number(partial.result.tabId) > 0) {
-              try { await chrome.tabs.remove(Number(partial.result.tabId)); } catch { /* Already closed. */ }
+            if (selectedDefinition.tabLifecycle === "created" && Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId) > 0) {
+              try { await chrome.tabs.remove(Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId)); } catch { /* Already closed. */ }
             }
             throw error;
           }
@@ -649,7 +699,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         definition.behavior?.timeoutTrace,
       );
     } catch (err) {
-      await attachPageContextToToolError(definition, executionArgs, err);
+      await rememberToolPageContext(definition, executionArgs, err);
       throw err;
     }
     if (definition.selectionRenderer) {
@@ -659,39 +709,38 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     const finishPostprocess = context.measurePhase?.("postprocess");
     try {
-      const enrichedResult = await attachPageContextToToolResult(definition, executionArgs, result);
-      const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(enrichedResult, { toolName: name })));
-      if (aliasReservation && isRecord(localizedResult)) localizedResult.tabAlias = executionArgs.tabAlias;
-      if (!signal?.aborted && !(record(localizedResult).error || record(localizedResult).ok === false || record(localizedResult).isError === true)) {
+      const localizedResult = copyToolEffects(result, withLanguage(language, () => localizeToolFailurePayload(result, { toolName: name })));
+      await rememberToolPageContext(definition, executionArgs, localizedResult);
+      if (!signal?.aborted && !isToolFailure(localizedResult)) {
         issueToolEffects(localizedResult, definition.effects?.(executionArgs, localizedResult) || [], context);
         if (context.deferToolCommit && definition.source === "core" && isRecord(localizedResult)) {
           const selected = definition;
           deferredToolStates.set(localizedResult, { toolName: name, context, authority, ...pending, discard,
             async commit(commitSignal) {
               if (pending) {
-                await assertTabAllowedBySecurityGuardrails(pending.tabId, { tool: name, source: "batch_commit" });
+                await assertTabAllowedBySecurityGuardrails(pending.tabId, { tabRef: context.requestedTabRef });
                 const committed = await authority.sessions?.commitCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId,
                   signal: commitSignal, reservation: pending.reservation });
-                if (!committed?.ok) throw makeSessionTabTargetError(committed?.code || "SESSION_TAB_UNAVAILABLE", { toolName: name, tabId: pending.tabId });
-              } else await recordWorkingTabFromTool(selected, executionArgs, localizedResult,
+                if (!committed?.ok) throw makeSessionTabTargetError(committed?.code || "SESSION_TAB_UNAVAILABLE", { toolName: name }, context);
+              } else await recordToolPage(selected, executionArgs, localizedResult,
                 withToolRuntimeContext({ ...context, preserveWorkingTab: false }, authority), commitSignal);
-              commitAlias(Number(record(localizedResult).tabId ?? record(localizedResult).id), commitSignal);
+              commitAlias(Number(createdTabResultId(localizedResult) ?? record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), commitSignal);
             },
           });
           transferred = true;
         } else {
-          await recordWorkingTabFromTool(definition, executionArgs, localizedResult, context, signal);
-          commitAlias(Number(record(localizedResult).tabId ?? record(localizedResult).id), signal);
+          await recordToolPage(definition, executionArgs, localizedResult, context, signal);
+          commitAlias(Number(createdTabResultId(localizedResult) ?? record(localizedResult).tabRef ?? record(localizedResult).tabId ?? record(localizedResult).id), signal);
         }
       }
       if (traceTool) {
-        const ok = !(localizedResult && typeof localizedResult === "object" && record(localizedResult).error);
+        const ok = !isToolFailure(localizedResult);
         toolTrace(`[tool] done name=${name} ok=${ok ? 1 : 0} durationMs=${Date.now() - startedAtMs} result=${summarizeToolArgsForTrace(localizedResult)}`);
       }
       return localizedResult;
     } finally { finishPostprocess?.(); }
   } catch (err) {
-    attachToolRetryContext(err, parameters, effectiveArgs);
+    attachToolRetryContext(err, definition?.parameters || parameters, { ...effectiveArgs, tabRef: context.requestedTabRef });
     const localized = withLanguage(language, () => localizeToolFailureError(err, { toolName: name }));
     if (traceTool) {
       toolTrace(`[tool] error name=${name} code=${record(localized).code || record(err).code || ""} label=${record(localized).codeLabel || ""} message=${record(localized).message || record(err).message || err} durationMs=${Date.now() - startedAtMs} details=${summarizeToolArgsForTrace(record(localized).details || record(err).details || {})}`);
@@ -837,7 +886,7 @@ async function assertToolTargetAllowedBySecurityGuardrails(definition: RuntimeTo
   if (!hasSecurityGuardrailRules(guardrails)) return;
 
   for (const url of collectGuardrailCandidateUrls(args)) {
-    assertUrlAllowedBySecurityGuardrails(url, guardrails, { tool: name, source: "args" });
+    assertUrlAllowedBySecurityGuardrails(url, guardrails, { tabRef: context.requestedTabRef });
   }
 
   if (!resolvePageAccess(definition, args) || resolvePageAccess(definition, args) === "tab") return;
@@ -852,14 +901,12 @@ async function assertToolTargetAllowedBySecurityGuardrails(definition: RuntimeTo
   }
 
   const tabId = resolveGuardrailTargetTabId(args, context);
-  if (tabId) await assertTabAllowedBySecurityGuardrails(tabId, { tool: name, source: "tab" }, guardrails);
+  if (tabId) await assertTabAllowedBySecurityGuardrails(tabId, { tool: name, source: "tab", tabRef: context.requestedTabRef }, guardrails);
 }
 
 function resolveGuardrailTargetTabId(args: Fields = {}, context: ToolContext = {}) {
   const explicit = Number(args?.tabId ?? args?._tabId);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  const working = Number(context?.workingTabId);
-  if (Number.isFinite(working) && working > 0) return working;
   return null;
 }
 
@@ -891,7 +938,7 @@ async function assertTabAllowedBySecurityGuardrails(tabId: number, details: Fiel
   }
   const url = getEffectiveTabUrl(tab);
   if (isLocalFileUrl(url)) await assertPageUrlAccessible(url);
-  return assertUrlAllowedBySecurityGuardrails(url, rules, { ...details, tabId: Number(tabId) });
+  return assertUrlAllowedBySecurityGuardrails(url, rules, details);
 }
 
 function assertUrlAllowedBySecurityGuardrails(url: string, guardrails: unknown, details: Fields = {}) {
@@ -912,7 +959,7 @@ function makeSecurityGuardrailBlockedError(match: NonNullable<ReturnType<typeof 
     "SECURITY_GUARDRAIL_BLOCKED",
     t("security.blockedLabel", { label: String(label) }),
     {
-      ...details,
+      ...(details.tabRef != null ? { tabRef: details.tabRef } : {}),
       blockedType: match.type || "domain",
       blockedDomain: match.domain || undefined,
       blockedPattern: match.pattern || undefined,
@@ -930,36 +977,38 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext) {
+async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext, selectedTabId?: number) {
   let result = partial.result;
   let pending = partial.pending;
   const kind = definition.behavior?.timeoutResult?.kind;
-  const tabId = Number(result.tabId || result.id);
+  const tabId = Number(selectedTabId || createdTabResultId(result) || result.tabRef || result.tabId || result.id);
   if (tabId > 0) {
-    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
     const before = record(result.pageState);
     const pageState = await readPartialPageState(tabId, before, context);
-    await assertTabAllowedBySecurityGuardrails(tabId, { tool: definition.name, source: "timeout" });
+    await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
     const oldDocument = result.documentId || before.documentId;
     const changed = (oldDocument && pageState.documentId && oldDocument !== pageState.documentId)
       || (before.url && before.url !== pageState.url);
     if (changed && kind === "read") {
-      result = { tabId };
+      result = {};
       pending = "current document content";
     }
-    result = { ...result, pageState };
+    result = { ...result, pageState: { readyState: pageState.readyState, url: pageState.url, title: pageState.title, status: pageState.status, loading: pageState.loading, pendingUrl: pageState.pendingUrl } };
     if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
-  if (kind === "action") result = { ...result, error: timeoutError.message, code: timeoutError.code, details: timeoutError.details,
-    status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false,
-    note: withLanguage(language, () => toolT("actionTimeout")) };
+  if (kind === "action") result = { ...toolError(timeoutError.code, timeoutError.message, {
+    hint: withLanguage(language, () => toolT("actionTimeout")),
+    details: { ...timeoutError.details, ...(Array.isArray(result.trace) ? { trace: result.trace } : {}),
+      status: "unconfirmed", mayHaveTakenEffect: true, automaticReplay: false },
+  }) };
   // Only a fully validated successful screenshot can grant coordinates.
   if (result._image) {
     const { screenshotId: _id, coordinateSpace: _coordinates, ...observation } = result;
     result = { ...observation, actionable: false };
   }
-  return { ...result, incomplete: { reason: "timeout", pending } };
+  return copyToolEffects(partial.result, kind === "action" ? result : { ...result, incomplete: { reason: "timeout", pending } });
 }
 
 function resolveToolTimeoutMs(definition: RuntimeTool, args: Fields = {}) {
@@ -999,7 +1048,7 @@ async function assertToolAllowedForSession(definition: RuntimeTool, context: Too
   if (!sessionId || typeof sessions?.canManageSessions !== "function") return;
   const allowed = await sessions.canManageSessions(sessionId);
   if (allowed === false) {
-    throw new ToolExecutionError(restriction.code, restriction.message, { sessionId });
+    throw new ToolExecutionError(restriction.code, restriction.message);
   }
 }
 
@@ -1015,8 +1064,8 @@ function needsCommittedPage(definition: RuntimeTool, args: Fields) {
 
 function shouldResolveSessionTabTarget(definition: RuntimeTool, args: Fields = {}) {
   const targets = elementTargetsOf(definition, args);
-  // UID resolution checks each registered tab. Mixed calls still need the default
-  // tab's ownership check for their CSS targets, without assigning it to the UIDs.
+  // UID resolution validates each registered element. Mixed calls also validate
+  // the explicitly requested page for their CSS targets.
   return Boolean(resolvePageAccess(definition, args))
     && (!targets.some(isUidElementTarget) || targets.some(target => !isUidElementTarget(target)));
 }
@@ -1030,18 +1079,14 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
   const explicitTabId = Number(input.tabId ?? (hasUidTargets ? undefined : input._tabId));
   const targetTabId = Number.isFinite(explicitTabId) && explicitTabId > 0
     ? explicitTabId
-    : Number(context.workingTabId);
+    : NaN;
   const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
   if (!sessionId || !Number.isFinite(targetTabId) || targetTabId <= 0) {
-    throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", {
-      toolName,
-      sessionId,
-      tabId: Number.isFinite(targetTabId) && targetTabId > 0 ? targetTabId : null,
-      workingTabId: Number(context.workingTabId) || null,
-    });
+    throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName }, context);
   }
 
-  const resolved = await getToolRuntimeDependencies(context).sessions?.resolveTargetTab?.({
+  const sessions = getToolRuntimeDependencies(context).sessions;
+  const target = {
     sessionId,
     runId: context.runId,
     signal,
@@ -1051,19 +1096,19 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
     readOnly: resolvePageAccess(definition, input) === "readOnly",
     tabOnly: resolvePageAccess(definition, input) === "tab",
     allowLoadingBlank,
-  });
+  };
+  let resolved = await sessions?.resolveTargetTab?.(target);
+  if (resolved?.ok && resolved.claimRequired && !resolved.readOnlyAccess) {
+    resolved = await sessions?.resolveTargetTab?.({ ...target, checkOnly: false });
+  }
   if (!resolved?.ok) {
     throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
       toolName,
-      sessionId,
-      tabId: targetTabId,
-      ownerSessionId: resolved?.ownerSessionId || "",
-      reason: resolved?.reason || "",
       message: resolved?.error || "",
-    });
+    }, context);
   }
   if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
-    throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", { toolName, sessionId, tabId: targetTabId });
+    throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", { toolName }, context);
   }
   if (!hasUidTargets) input.tabId = Number(resolved.tabId || targetTabId);
   if (resolved.readOnlyAccess === true && resolved.ownedByCurrentTask === false) {
@@ -1073,34 +1118,22 @@ async function withSessionOwnedTarget(definition: RuntimeTool, args: Fields, _pa
   return input;
 }
 
-function makeSessionTabTargetError(code: string, details: Fields = {}) {
+function makeSessionTabTargetError(code: string, details: Fields = {}, context: ToolContext = {}) {
   const toolName = details.toolName || "tool";
-  const message = details.message || (
-    code === "SESSION_TAB_FOREIGN"
-      ? t("browser.foreignTab")
-      : code === "SESSION_TAB_UNOWNED"
-        ? t("browser.tabUnowned")
-        : t("browser.noUsableWorkingTab")
-  );
-  return new ToolExecutionError(code, `${toolName}: ${message}`, details);
+  const publicCode = code === "SESSION_TAB_TARGET_REQUIRED" ? "TAB_REF_REQUIRED" : code;
+  const message = publicCode === "TAB_REF_REQUIRED" ? t("toolError.TAB_REF_REQUIRED.message")
+    : details.message || (code === "SESSION_TAB_FOREIGN" ? t("browser.foreignTab") : t("browser.tabUnowned"));
+  const error = new ToolExecutionError(publicCode, `${toolName}: ${message}`, {
+    ...(details.target ? { target: details.target } : {}),
+    ...(context.requestedTabRef != null ? { tabRef: context.requestedTabRef } : {}),
+  });
+  if (publicCode === "TAB_REF_REQUIRED") error.hint = t("toolError.TAB_REF_REQUIRED.hint");
+  return error;
 }
 
-function withWorkingTabDefault(definition: RuntimeTool, args: unknown, parameters: ToolSchema, context: ToolContext = {}) {
-  const input = isRecord(args) ? { ...args } : args;
-  if (!isRecord(input)) return input;
-  if (!resolvePageAccess(definition, input)) return input;
-  if (!parameters?.properties?.tabId || input.tabId != null) return input;
-  if (elementTargetsOf(definition, input).some(isUidElementTarget)) return input;
-  const workingTabId = Number(context.workingTabId);
-  if (Number.isFinite(workingTabId) && workingTabId > 0) {
-    input.tabId = workingTabId;
-  }
-  return input;
-}
-
-async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = {}, result: unknown = {}, context: ToolContext = {}, signal?: AbortSignal) {
+async function recordToolPage(definition: RuntimeTool, args: Fields = {}, result: unknown = {}, context: ToolContext = {}, signal?: AbortSignal) {
   const toolName = definition.name;
-  const role = typeof definition.workingTab === "function" ? definition.workingTab(args) : definition.workingTab;
+  const role = typeof definition.tabLifecycle === "function" ? definition.tabLifecycle(args) : definition.tabLifecycle;
   const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (!sessionId || !sessions) return;
@@ -1117,10 +1150,9 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
     return;
   }
 
-  const tabId = inferWorkingTabId(definition, args, result);
+  const tabId = inferToolPageId(definition, args, result);
   if (!tabId) return;
-  // A uid has no explicit tabId, so a read-only look at an unclaimed tab never
-  // sets _readOnlyTabAccess. That look must not become the working tab.
+  // Read-only observation must not claim a page outside this task.
   if (elementTargetsOf(definition, args).some(isUidElementTarget)
     && resolvePageAccess(definition, args) === "readOnly"
     && !elementRuntime.taskTabIds(context).includes(tabId)) return;
@@ -1157,47 +1189,27 @@ async function recordWorkingTabFromTool(definition: RuntimeTool, args: Fields = 
   });
 }
 
-function inferWorkingTabId(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {
+function inferToolPageId(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {
   if (result && typeof result === "object") {
-    const resultTabId = Number(record(result).tabId);
+    const resultTabId = Number(createdTabResultId(result));
     if (Number.isFinite(resultTabId) && resultTabId > 0) return resultTabId;
-    if (definition.workingTab === "created") {
-      const openedId = Number(record(result).id);
+    if (definition.tabLifecycle === "created") {
+      const openedId = Number(record(result).tabRef ?? record(result).tabId ?? record(result).id);
       if (Number.isFinite(openedId) && openedId > 0) return openedId;
     }
   }
 
   const argTabId = Number(args?.tabId);
   if (Number.isFinite(argTabId) && argTabId > 0) return argTabId;
-  return null;
+  return elementRuntime.elementUidTabId(elementTargetsOf(definition, args).filter(isUidElementTarget));
 }
 
-async function attachPageContextToToolResult(definition: RuntimeTool, args: Fields = {}, result: unknown = {}) {
-  if (!isRecord(result)) return result;
-  const page = await resolveToolPageContext(definition, args, result);
-  if (!page) return result;
-  return {
-    ...result,
-    _tabId: page.tabId,
-    _pageTitle: typeof result._pageTitle === "string" ? result._pageTitle : page.title,
-    _pageUrl: typeof result._pageUrl === "string" ? result._pageUrl : page.url,
+async function rememberToolPageContext(definition: RuntimeTool, args: Fields, result: unknown) {
+  if (!result || typeof result !== "object") return;
+  const page = await resolveToolPageContext(definition, args, record(result));
+  if (page) bindToolResultPresentation(result, { _pageTitle: page.title, _pageUrl: page.url,
     ...(capabilityBridges.describePage ? { _pageContext: capabilityBridges.describePage(page.tabId) } : {}),
-  };
-}
-
-async function attachPageContextToToolError(definition: RuntimeTool, args: Fields = {}, input: unknown) {
-  if (!input || typeof input !== "object") return;
-  const err = record(input);
-  const details = record(err.details);
-  const page = await resolveToolPageContext(definition, args, details);
-  if (!page) return;
-  err.details = {
-    ...details,
-    _tabId: page.tabId,
-    _pageTitle: details._pageTitle || page.title,
-    _pageUrl: details._pageUrl || page.url,
-    ...(capabilityBridges.describePage ? { _pageContext: capabilityBridges.describePage(page.tabId) } : {}),
-  };
+    ...getToolResultPresentation(result) });
 }
 
 async function getTabPageState(tabId: unknown) {
@@ -1269,7 +1281,7 @@ async function prepareKnownPageNavigation({
   const targetUrl = normalizePageNavigationUrl(url, baseUrl || pageBefore?.url || "");
   if (!targetUrl || !isMeaningfulKnownNavigationTarget(pageBefore?.url || "", targetUrl)) return null;
   await assertPageUrlAccessible(targetUrl);
-  assertUrlAllowedBySecurityGuardrails(targetUrl, guardrails, { tool: toolName, source, tabId });
+  assertUrlAllowedBySecurityGuardrails(targetUrl, guardrails, { tool: toolName, source, tabRef: context.requestedTabRef });
   const rateLimitMatch = resolveUrlNavigationOpenRateLimit(targetUrl, guardrails);
   const rateLimit = await enforceSiteOpenRateLimitForUrl({
     url: targetUrl,
@@ -1295,15 +1307,14 @@ function commitObservedPageNavigation({
 }: { pageBefore?: PageState; pageAfter?: PageState; prepared?: PreparedNavigation | null; guardrails?: Partial<SecurityGuardrails>; toolName?: string; tabId?: unknown } = {}) {
   const afterUrl = normalizePageNavigationUrl(pageAfter?.url || "");
   if (!afterUrl || !isMeaningfulNavigationChange(pageBefore?.url || "", afterUrl)) return null;
-  assertUrlAllowedBySecurityGuardrails(afterUrl, guardrails, { tool: toolName, source: "page_after", tabId });
+  assertUrlAllowedBySecurityGuardrails(afterUrl, guardrails, { tool: toolName, source: "page_after" });
   const afterMatch = resolveUrlNavigationOpenRateLimit(afterUrl, guardrails);
   if (!afterMatch || sameRateLimitMatch(prepared?.rateLimitMatch, afterMatch)) {
-    return { url: afterUrl, rateLimitRecorded: false };
+    return { url: afterUrl };
   }
   const recorded = recordSiteOpenRateLimitForUrl({ url: afterUrl, guardrails });
   return {
     url: afterUrl,
-    rateLimitRecorded: Boolean(recorded),
     rateLimit: recorded
       ? {
           host: recorded.host,
@@ -1339,7 +1350,7 @@ function clickPointReady(inspection: ElementReply = {}): inspection is ElementRe
   return true;
 }
 
-function clickNotReadyResult({ target, selector, index, inspection, originalInspection, resolved }: { target: string; selector: string; index: number; inspection: ElementReply; originalInspection: ElementReply; resolved: ElementReply | null }) {
+function clickNotReadyResult({ target, inspection }: { target: string; selector: string; index: number; inspection: ElementReply; originalInspection: ElementReply; resolved: ElementReply | null }) {
   const state = inspection?.state || {};
   const code = inspection?.disabled
     ? "ELEMENT_DISABLED"
@@ -1348,27 +1359,14 @@ function clickNotReadyResult({ target, selector, index, inspection, originalInsp
       : state.obscuredAtCenter
         ? "ELEMENT_OBSCURED"
         : "CLICK_POINT_OUT_OF_VIEWPORT";
-  return {
-    error: `Element is not ready for click: ${selector}[${index}]`,
-    code,
-    details: {
-      target,
-      selector,
-      index,
-      rect: inspection?.rect,
-      state,
-      resolved,
-      originalRect: originalInspection?.rect,
-      originalState: originalInspection?.state,
-    },
-    element: inspection,
-    originalElement: originalInspection && originalInspection !== inspection ? originalInspection : undefined,
+  return toolError(code, `Element is not ready for click: ${target}`, {
+    details: { target },
     hint: "Refresh candidates with find_elements or inspect_element. If the element is offscreen, retry after scroll or use a visible link/button target.",
-  };
+  });
 }
 
 async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}, result: Fields = {}) {
-  const tabId = inferWorkingTabId(definition, args, result);
+  const tabId = inferToolPageId(definition, args, result);
   if (!tabId) return null;
   try {
     const tab = await chrome.tabs.get(tabId);
@@ -1376,7 +1374,7 @@ async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}
     const formattedTab = formatTab(tab, { titleLimit: 120 });
     return {
       tabId,
-      title: String(formattedTab.title || result?.title || ""),
+      title: String(result?.title ?? formattedTab.title ?? ""),
       url: isPageTab(tab) ? formattedTab.url : (resultUrl || formattedTab.url),
     };
   } catch (_err) {
@@ -1390,55 +1388,16 @@ async function resolveToolPageContext(definition: RuntimeTool, args: Fields = {}
 }
 
 function validateToolArgs(name: string, args: unknown, parameters: ToolSchema, defaultableFields: readonly string[] = []): asserts args is Fields {
-  if (!isRecord(args)) {
-    throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`, {
-      name,
-      ...compactToolArgShape(args),
-    });
+  if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+  const details = { ...(args.tabRef != null ? { tabRef: args.tabRef } : {}), ...(args.target ? { target: args.target } : {}) };
+  const missing = (parameters.required || []).filter(key => isMissingRequiredValue(args[key]) && !defaultableFields.includes(key));
+  if (missing.length) throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
+    ...details, missing, expected: Object.fromEntries(missing.filter(key => parameters.properties[key]).map(key => [key, parameters.properties[key]])),
+  });
+  const alternatives = requiredAnyOfGroups(parameters.anyOf);
+  if (alternatives.length && !alternatives.some(group => group.every(key => !isMissingRequiredValue(args[key])))) {
+    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: expected one of required field groups: ${alternatives.map(group => group.join(" + ")).join(" or ")}`, details);
   }
-
-  const missing = (parameters.required || []).filter((key) => (
-    isMissingRequiredValue(args[key]) && !defaultableFields.includes(key)
-  ));
-  if (missing.length > 0) {
-    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
-      name,
-      missing,
-      expected: compactMissingToolArgSchemas(parameters, missing),
-      ...compactToolArgShape(args),
-    });
-  }
-
-  const requiredAlternatives = requiredAnyOfGroups(parameters.anyOf);
-  if (requiredAlternatives.length && !requiredAlternatives.some(group => group.every(key => !isMissingRequiredValue(args[key])))) {
-    throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: expected one of required field groups: ${requiredAlternatives.map(group => group.join(" + ")).join(" or ")}`, {
-      name,
-      missingAnyOf: requiredAlternatives,
-      ...compactToolArgShape(args),
-    });
-  }
-}
-
-function compactMissingToolArgSchemas(parameters: ToolParameter = {}, missing: readonly string[] = []) {
-  const properties = parameters?.properties && typeof parameters.properties === "object"
-    ? parameters.properties
-    : {};
-  return Object.fromEntries(missing
-    .filter(key => properties[key] && typeof properties[key] === "object")
-    .map(key => [key, compactToolArgSchema(properties[key])]));
-}
-
-function compactToolArgSchema(schema: ToolParameter = {}): Fields {
-  const out: Fields = {};
-  for (const key of ["type", "enum", "description", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
-    if (schema[key] === undefined) continue;
-    out[key] = key === "description" ? String(schema[key]).slice(0, 500) : schema[key];
-  }
-  if (Array.isArray(schema.required)) out.required = schema.required.slice(0, 30);
-  if (schema.items && typeof schema.items === "object") {
-    out.items = compactToolArgSchema(schema.items);
-  }
-  return out;
 }
 
 function attachToolRetryContext(input: unknown, parameters: ToolParameter = {}, args: unknown = {}) {
@@ -1484,23 +1443,6 @@ function isRetrySafeToolArg(value: unknown, schema: ToolParameter = {}) {
   return true;
 }
 
-function compactToolArgShape(args: unknown) {
-  if (isRecord(args)) {
-    return {
-      providedKeys: Object.keys(args).slice(0, 50),
-      argSummary: summarizeToolArgsForTrace(args),
-    };
-  }
-  if (typeof args === "string") {
-    return {
-      argType: "string",
-      argChars: args.length,
-      argPreview: args.length > 200 ? `${args.slice(0, 200)}…` : args,
-    };
-  }
-  if (Array.isArray(args)) return { argType: "array", itemCount: args.length };
-  return { argType: args == null ? String(args) : typeof args };
-}
 
 function requiredAnyOfGroups(anyOf: unknown = []): string[][] {
   return (Array.isArray(anyOf) ? anyOf : [])
@@ -1552,7 +1494,7 @@ async function authorizeRunCdpTab({ tabId, sessionId, context = {} }: { tabId: n
     throw new ToolExecutionError(
       "CDP_SESSION_RUNTIME_UNAVAILABLE",
       "CDP page access requires the current Session tab runtime",
-      { tabId, sessionId, runId },
+      { tabRef: context.requestedTabRef },
     );
   }
   const resolved = await sessions.resolveTargetTab({
@@ -1567,23 +1509,16 @@ async function authorizeRunCdpTab({ tabId, sessionId, context = {} }: { tabId: n
   if (!resolved?.ok) {
     throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
       toolName: "CDP",
-      sessionId,
-      tabId,
-      ownerSessionId: resolved?.ownerSessionId || "",
-      reason: resolved?.reason || "",
       message: resolved?.error || "",
-    });
+    }, context);
   }
   if (resolved.ownedByCurrentTask === false || resolved.claimRequired === true) {
     throw makeSessionTabTargetError(
       resolved.ownerSessionId ? "SESSION_TAB_FOREIGN" : "SESSION_TAB_UNOWNED",
       {
         toolName: "CDP",
-        sessionId,
-        tabId,
-        ownerSessionId: resolved.ownerSessionId || "",
-        reason: resolved.reason || "tab_not_owned_by_current_session",
       },
+      context,
     );
   }
   return resolved;

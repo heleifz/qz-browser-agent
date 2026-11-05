@@ -7,6 +7,8 @@ export interface SessionMetadata {
   title?: string;
   titleSource?: string;
   source?: string;
+  /** Durable retry marker; tool admission rejects a Session while retention removes its stores. */
+  driveRetentionPending?: boolean;
   automationId?: string;
   automationRunId?: string;
   createdAt?: string;

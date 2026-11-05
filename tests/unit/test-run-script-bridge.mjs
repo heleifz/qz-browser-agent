@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { assertScriptPageLifecycle } from "../../src/background/tools/behavior.js";
 import {
   createRunScriptArtifactCollector,
@@ -46,7 +47,7 @@ const toolRuntime = {
     if (name === "throws") throw Object.assign(new Error("exploded"), { code: "EXPLODED" });
     if (name === "store_alias") return { table: args.table, inserted: 2, totalRows: 2 };
     if (name === "act_on_screen") {
-      return {
+      return bindToolResultPresentation({
         feedbackAvailable: args.returnScreenshot === true,
         coordinateBasisReady: true,
         returnScreenshot: args.returnScreenshot,
@@ -54,12 +55,13 @@ const toolRuntime = {
           _image: "data:image/jpeg;base64,YWN0aW9u",
           _imageDetail: "high",
         } : {}),
+      }, {
         _display: {
           type: "imageWithAction",
           beforeImage: "data:image/jpeg;base64,YmVmb3Jl",
           afterImage: "data:image/jpeg;base64,YWZ0ZXI=",
         },
-      };
+      });
     }
     if (name === "screenshot") {
       return {
@@ -128,7 +130,7 @@ assert.equal(schemaContexts.at(-1).runProfile.id, "frozen-profile");
 assert.equal(schemaContexts.at(-1).skillToolRegistrySnapshot, skillToolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).toolRegistrySnapshot, toolRegistrySnapshot);
 assert.equal(schemaContexts.at(-1).language, "en");
-assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(schemaContexts.at(-1).dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(schemaContexts.at(-1).loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 
 const tooDeep = await bridge.handleToolCall({
@@ -229,11 +231,11 @@ assert.equal(stored.artifacts[0].table, "rows");
 assert.equal(appended.length, 1);
 assert.equal(appended[0].artifacts[0].totalRows, 2);
 assert.deepEqual(refreshes[0], ["s1", { action: "artifacts", touchSession: true, delay: 400 }]);
-assert.equal(executions.at(-1).context.workingTabId, 31);
+assert.equal(executions.at(-1).context.workingTabId, undefined);
 assert.equal(executions.at(-1).context.senderTabId, 9);
 assert.equal(executions.at(-1).context.runScriptToolDepth, 2);
 assert.equal(executions.at(-1).context.skillToolRegistrySnapshot, skillToolRegistrySnapshot);
-assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://example.test/current");
+assert.equal(executions.at(-1).context.dynamicContext.pageUrl, "https://stale.test/");
 assert.deepEqual(executions.at(-1).context.loadedPluginSkillNames, ["agent-skill", "runtime-skill"]);
 assert.equal(nestedResults.at(-1).toolName, "store_alias");
 assert.equal(nestedResults.at(-1).runId, "run-current");
@@ -319,5 +321,127 @@ assert.equal((await activationBridge.handleToolCall({
   sessionId: "s1",
   runId: "run-current",
 })).ok, true);
+
+const driveExecutions = [];
+const driveBridge = createRunScriptBridge({
+  supervisor: {
+    isRunCurrent: (_sessionId, runId) => ["run-current", "opaque-direct-run", "drive-native-looking-run"].includes(runId),
+    hasAgent: () => false,
+    getAbortSignal: () => controller.signal,
+  },
+  getRuntime: () => ({ status: "running" }),
+  isTerminalRuntimeForRun: () => false,
+  canManageSessions: async () => true,
+  buildRunProfile: async () => ({}),
+  getRunToolContext: async (_sessionId, runId) => ({ externalDrive: runId === "opaque-direct-run" }),
+  toolRuntime: {
+    resolveDefinition: () => ({ behavior: {} }),
+    getSchemas: () => [
+      { function: { name: "open_tab", description: "Open a tab\nsecond", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } } },
+      { function: { name: "read_dom", description: "Read", parameters: { type: "object" } } },
+      { function: { name: "ask_llm", description: "Ask", parameters: { type: "object" } } },
+    ],
+    getTabAliases: () => ({ page: 7 }),
+    async execute(name, args, _signal, context) {
+      if (name === "get_ax_tree") {
+        const error = new Error("built-in alias");
+        error.code = "BATCH_TAB_REFERENCE_ERROR";
+        error.details = { reason: "no_alias", tabRef: "page" };
+        throw error;
+      }
+      driveExecutions.push(name);
+      if (name === "list_tabs") {
+        if (context.externalDrive === true && args.scope !== "all") return {
+          tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }], count: 1, foreign: 1,
+        };
+        return [
+          { tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false },
+          { tabRef: 8, title: "Other", url: "https://httpbin.org/robots.txt", active: false },
+        ];
+      }
+      return { ok: true };
+    },
+  },
+  collectArtifacts: () => [],
+});
+const blockedAsk = await driveBridge.handleToolCall({
+  toolName: "ask_llm",
+  args: { prompt: "hi" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(blockedAsk.ok, false);
+assert.equal(blockedAsk.code, "DRIVE_TOOL_FORBIDDEN");
+assert.deepEqual(driveExecutions, []);
+const driveList = await driveBridge.handleToolCall({
+  toolName: "__list_tools__",
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.deepEqual(driveList.result.tools, [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }]);
+const missingPage = await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(missingPage.ok, false);
+assert.equal(missingPage.code, "TAB_REF_REQUIRED");
+assert.deepEqual(driveExecutions, []);
+assert.equal((await driveBridge.handleToolCall({
+  toolName: "read_dom",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+})).ok, true);
+assert.deepEqual(driveExecutions, ["read_dom"]);
+const driveTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.deepEqual(driveTabs.result, {
+  tabs: [{ tabRef: "page", title: "Owned", url: "https://httpbin.org/html", active: false }],
+  count: 1,
+  foreign: 1,
+});
+assert.equal("width" in driveTabs.result, false);
+const allTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: { scope: "all" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(Array.isArray(allTabs.result), true);
+assert.equal(allTabs.result.length, 2);
+assert.equal(allTabs.result[0].tabRef, "page");
+const plainTabs = await driveBridge.handleToolCall({
+  toolName: "list_tabs",
+  args: {},
+  sessionId: "s1",
+  runId: "drive-native-looking-run",
+});
+assert.equal(Array.isArray(plainTabs.result), true);
+assert.equal(plainTabs.result[1].tabRef, 8);
+const driveAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "opaque-direct-run",
+});
+assert.equal(driveAlias.ok, false);
+assert.equal(driveAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.match(driveAlias.message, /list_tabs/);
+assert.match(driveAlias.message, /list_tabs/);
+assert.doesNotMatch(driveAlias.message, /省略 tabRef|omit tabRef/i);
+const builtInAlias = await driveBridge.handleToolCall({
+  toolName: "get_ax_tree",
+  args: { tabRef: "page" },
+  sessionId: "s1",
+  runId: "drive-native-looking-run",
+});
+assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
+assert.doesNotMatch(builtInAlias.message, /省略 tabRef|omit tabRef/i);
+assert.match(builtInAlias.message, /no page alias yet|还没有页面别名/);
 
 console.log("run_script bridge tests passed");

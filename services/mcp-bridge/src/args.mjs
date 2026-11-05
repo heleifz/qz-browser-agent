@@ -1,10 +1,14 @@
 import { parseArgs } from "node:util";
 import { QzError } from "./client.mjs";
 import { browserName } from "./browser-registry.mjs";
-import { COMMANDS, commandOptions } from "./commands.mjs";
+import { COMMANDS, DRIVE_SESSION_REQUIRED, EXEC_JSON_MESSAGE, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
-  throw new QzError("invalid_arguments", message);
+  throw new QzError("INVALID_ARGUMENTS", message);
+}
+
+function requireDriveSession(command, options) {
+  if (!String(options.session || "").trim()) invalid(`qz ${command} requires --session <id>. ${DRIVE_SESSION_REQUIRED}`);
 }
 
 function helpTopic(parts) {
@@ -26,6 +30,7 @@ export function parseCommand(argv) {
       parent: { type: "string" }, port: { type: "string" }, name: { type: "string" }, "no-open": { type: "boolean" },
       wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
       json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
+      lang: { type: "string" }, profile: { type: "string" }, tab: { type: "string" },
       help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
     } });
   } catch (error) { invalid(error.message); }
@@ -70,6 +75,8 @@ export function parseCommand(argv) {
   }
   if (options.filename !== undefined && !options.filename.trim()) invalid("--filename requires a non-empty name.");
   if (options.scope !== undefined && !["all", "global", "site", "resident"].includes(options.scope)) invalid("--scope must be all, global, site, or resident.");
+  if (options.profile !== undefined && !["full", "drive"].includes(options.profile)) invalid("--profile must be full or drive.");
+  if (options.lang !== undefined && !options.lang.trim()) invalid("--lang requires a value.");
   if (options.client !== undefined) {
     options["client-id"] = options.client;
     delete options.client;
@@ -141,6 +148,25 @@ export function parseCommand(argv) {
     id = words[0];
     if (command === "submit") options.args = words[1];
     if (command === "watch") options.wait = true;
+  } else if (command === "exec") {
+    if (words.length > 1) options.payloadError = EXEC_JSON_MESSAGE;
+    else options.payload = words[0] ?? "-";
+    requireDriveSession("exec", options);
+  } else if (command === "script") {
+    if (words.length > 1) invalid("Use qz script --session ID --tab TABREF [FILE|-].");
+    if (!String(options.tab || "").trim()) invalid("qz script requires --tab TABREF. Pass an alias or a tabRef returned by open_tab/list_tabs.");
+    requireDriveSession("script", options);
+    options.file = words[0] ?? "-";
+  } else if (command === "tools") {
+    if (words.length > 1 || (words.length === 1 && !words[0].trim())) invalid("Use qz tools --session ID [NAME].");
+    requireDriveSession("tools", options);
+    id = words[0];
+  } else if (command === "session") {
+    action = words[0] || "";
+    if (action !== "create" || words.length !== 1) invalid("Use qz session create --title TITLE.");
+    if (!String(options.title || "").trim()) invalid("qz session create requires --title TITLE. Choose a readable task title.");
+  } else if (command === "skill") {
+    if (words.length) invalid("Use qz skill.");
   } else if (command === "tasks") {
     if (words.length) invalid("Use qz tasks to list tasks, qz create PROMPT, qz show ID, or qz cancel ID.");
     action = "list";

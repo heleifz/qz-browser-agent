@@ -9,9 +9,12 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
   const doc = page.document;
   if (!doc) throw new Error("Firefox page command has no document");
 
-  const state = page.__qzFirefoxPage || (page.__qzFirefoxPage = {
+  const state = page.__qzFirefoxPage?.version === 2 ? page.__qzFirefoxPage : (page.__qzFirefoxPage = {
+    version: 2,
     next: 1,
+    nextObject: 0,
     nodes: new Map(),
+    nodeIds: new WeakMap(),
     objects: new Map(),
     mouseTarget: null,
     touchTarget: null,
@@ -19,13 +22,21 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
 
   const idFor = (node: DomNode | null | undefined): number => {
     if (!node) return 0;
-    for (const [id, value] of state.nodes) if (value === node) return id;
-    const id = state.next;
-    state.next += 1;
-    state.nodes.set(id, node);
+    const existing = state.nodeIds.get(node);
+    if (existing) return existing;
+    const id = state.next++;
+    state.nodeIds.set(node, id);
+    state.nodes.set(id, new WeakRef(node));
+    if (id % 256 === 0) for (const [key, reference] of state.nodes) if (!reference.deref()) state.nodes.delete(key);
     return id;
   };
-  const nodeFor = (id: number): DomNode | null => state.nodes.get(Number(id)) || null;
+  const retainObject = (value: DomNode | (DomNode | null)[], group = "") => {
+    state.nextObject = (state.nextObject || 0) + 1;
+    const objectId = `ff-object-${state.nextObject}`;
+    state.objects.set(objectId, Array.isArray(value) ? { node: null, nodes: value, group } : { node: value, group });
+    return objectId;
+  };
+  const nodeFor = (id: number): DomNode | null => state.nodes.get(Number(id))?.deref() || null;
   const asList = (nodes: ArrayLike<DomNode> | null | undefined): DomNode[] => {
     const out: DomNode[] = [];
     const length = Number(nodes?.length || 0);
@@ -47,7 +58,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     catch { return { type: "object", description: String(value) }; }
   };
   const failed = (error: unknown) => {
-    const text = error instanceof Error ? error.message : String(error);
+    const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     return { exceptionDetails: { text, exception: { type: "object", subtype: "error", description: text } } };
   };
   const invoke = async (declaration: string, target: unknown, args: unknown[], awaitPromise: boolean) => {
@@ -522,14 +533,13 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       case "resolve": {
         const node = nodeFor(command.backendNodeId);
         if (!node) throw new Error("No node with given id found");
-        const objectId = `ff-node-${command.backendNodeId}`;
-        state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
+        const objectId = retainObject(node, String(command.objectGroup || ""));
         return { object: { type: "object", subtype: "node", objectId, description: String(node.nodeName || "") } };
       }
       case "probe": {
         let extensionId = "";
         try { extensionId = String(page.chrome?.runtime?.id || ""); } catch { extensionId = ""; }
-        return { result: remote({ extensionId, bridge: typeof page.__qzInvoke === "function" }) };
+        return { result: remote({ extensionId, bridge: typeof page.__qzInvoke === "function", elementRefs: page.__qzElementRefVersion === 1 }) };
       }
       case "invoke": {
         const bound = state.objects.get(String(command.objectId || ""));
@@ -540,11 +550,22 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         if (command.awaitPromise !== false && value && typeof (value as Promise<unknown>).then === "function") value = await value;
         if (command.returnByValue === false && value && typeof value === "object" && "nodeType" in value && value.nodeType === 1) {
           const node = value as DomNode;
-          const objectId = `ff-node-${idFor(node)}`;
-          state.objects.set(objectId, { node, group: String(command.objectGroup || "") });
+          const objectId = retainObject(node, String(command.objectGroup || ""));
           return { result: { type: "object", subtype: "node", objectId } };
         }
+        if (command.returnByValue === false && Array.isArray(value)) {
+          const objectId = retainObject(value as (DomNode | null)[], String(command.objectGroup || ""));
+          return { result: { type: "object", subtype: "array", objectId } };
+        }
         return { result: remote(value) };
+      }
+      case "properties": {
+        const bound = state.objects.get(command.objectId);
+        return { result: (bound?.nodes || []).map((node: DomNode | null, index: number) => {
+          if (!node || typeof node.nodeType !== "number") return { name: String(index), value: remote(node) };
+          const objectId = retainObject(node, bound?.group || "");
+          return { name: String(index), value: { type: "object", subtype: "node", objectId } };
+        }) };
       }
       case "call": {
         const bound = state.objects.get(String(command.objectId || ""));
@@ -705,6 +726,7 @@ export type PageCommand =
   | { op: "call"; objectId: string; functionDeclaration: string; arguments?: { value?: unknown }[]; awaitPromise?: boolean }
   | { op: "probe" }
   | { op: "invoke"; objectId: string; payload?: unknown; awaitPromise?: boolean; returnByValue?: boolean; objectGroup?: string }
+  | { op: "properties"; objectId: string }
   | { op: "evaluate"; expression: string; awaitPromise?: boolean }
   | { op: "release"; objectGroup?: string }
   | { op: "ax"; depth?: number }
@@ -768,10 +790,11 @@ interface PageScope {
   addEventListener?(type: string, listener: (event: unknown) => void): void;
   MutationObserver?: new (callback: () => void) => { observe(target: DomNode, options: { attributes: boolean; attributeFilter: string[] }): void };
   chrome?: { runtime?: { id?: string; sendMessage?(message: unknown): void } };
-  __qzInvoke?: (this: unknown, node: DomNode, payload: unknown) => unknown;
+  __qzInvoke?: (this: unknown, node: DomNode | null, payload: unknown) => unknown;
+  __qzElementRefVersion?: number;
   __qzExtensionInputEvents?: { add(value: object): void };
   __qzFirefoxPage?: {
-    next: number; nodes: Map<number, DomNode>; objects: Map<string, { node: DomNode; group: string }>;
+    version: number; next: number; nextObject?: number; nodes: Map<number, WeakRef<DomNode>>; nodeIds: WeakMap<DomNode, number>; objects: Map<string, { node: DomNode | null; nodes?: (DomNode | null)[]; group: string }>;
     mouseTarget: DomNode | null; touchTarget: DomNode | null;
   };
 }

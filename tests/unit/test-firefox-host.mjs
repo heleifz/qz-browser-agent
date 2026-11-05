@@ -1314,6 +1314,23 @@ test("product text stays on the Chrome sentence outside a Firefox extension page
   }
 });
 
+test("Firefox evaluation retains the native SyntaxError without losing its page context", async () => {
+  const document = { nodeType: 9, nodeName: "#document", title: "Syntax", documentElement: {}, defaultView: {} };
+  await withPage(document, async () => {
+    const browser = debuggerBrowser();
+    installFirefoxDebugger(browser);
+    await browser.debugger.attach({ tabId: 8 }, "1.3");
+    const failed = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", {
+      expression: "(async () => { const value = ; })()", awaitPromise: true, returnByValue: true,
+    });
+    assert.match(failed.exceptionDetails.exception.description, /^SyntaxError:/);
+    assert.match(failed.exceptionDetails.text, /SyntaxError:/);
+    assert.equal(failed.result, undefined);
+    const valid = await browser.debugger.sendCommand({ tabId: 8 }, "Runtime.evaluate", { expression: "1+2", returnByValue: true });
+    assert.equal(valid.result.value, 3, "invalid syntax leaves the page context usable");
+  });
+});
+
 test("isolated content calls run without compiling a function", async () => {
   const nativeFunction = globalThis.Function;
   let compiled = 0;
@@ -1468,10 +1485,9 @@ test("Firefox viewport geometry batches 4000 nodes in one page injection", async
     await browser.debugger.attach({ tabId: 9 }, "1.3");
     const send = (method, params) => browser.debugger.sendCommand({ tabId: 9 }, method, params);
     await send("DOM.getDocument");
-    const nodes = Array.from({ length: 4000 }, (_, index) => ({ nodeId: String(index + 1), backendDOMNodeId: index + 1 }));
-    for (const [index, node] of nodes.entries()) globalThis.__qzFirefoxPage.nodes.set(node.backendDOMNodeId, {
-      getBoundingClientRect: () => ({ x: 0, y: index * 12, width: 100, height: 10 }),
-    });
+    const nodes = Array.from({ length: 4000 }, (_, index) => ({ nodeId: String(index + 1), backendDOMNodeId: index + 1,
+      element: { getBoundingClientRect: () => ({ x: 0, y: index * 12, width: 100, height: 10 }) } }));
+    for (const node of nodes) globalThis.__qzFirefoxPage.nodes.set(node.backendDOMNodeId, new WeakRef(node.element));
     injections = 0;
     let next = 0;
     const start = performance.now();
@@ -1489,8 +1505,8 @@ test("Firefox viewport geometry batches 4000 nodes in one page injection", async
     assert.equal([...bands.values()].filter(band => band === "inside").length, 50);
     assert.equal(bands.get("4000"), "below");
     console.log(JSON.stringify({ measurement: "Firefox host/page-command in Node", nodes: 4000, beforeInjections: 4000, afterInjections: 1, beforeMs, afterMs }));
-    globalThis.__qzFirefoxPage.nodes.set(4001, { getBoundingClientRect() { throw new Error("detached"); } });
-    globalThis.__qzFirefoxPage.nodes.set(4002, { getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) });
+    globalThis.__qzFirefoxPage.nodes.set(4001, new WeakRef({ getBoundingClientRect() { throw new Error("detached"); } }));
+    globalThis.__qzFirefoxPage.nodes.set(4002, new WeakRef({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }) }));
     const partial = await send("DOM.getNodeRects", { backendNodeIds: [4001, 4002, 4002, 9999] });
     assert.deepEqual(partial.rects, [{ backendNodeId: 4002, x: 0, y: 0, width: 0, height: 0 }]);
   });

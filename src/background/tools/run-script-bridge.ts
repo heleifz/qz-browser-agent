@@ -1,3 +1,6 @@
+import { copyToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
+import { isToolFailure, toolError } from "../../shared/contracts/tool-error.js";
+import { type DriveToolObservation, driveToolSignature, isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall } from "../mcp/external-drive.js";
 import { t } from "../../shared/i18n/backend.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
@@ -5,7 +8,7 @@ import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/art
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
 import type { RegisteredTool } from "./registry.js";
-import type { ToolBehavior } from "../../shared/contracts/tool.js";
+import type { ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
 type Fields = Record<string, unknown>;
 interface RunScriptToolContext extends ToolContext { loadedPluginSkillNames?: unknown; skillToolRegistrySnapshot?: unknown }
@@ -16,13 +19,15 @@ interface BridgeHost {
   getRuntime(sessionId: string): Fields | null | undefined;
   isTerminalRuntimeForRun?(runtime: Fields | null | undefined, runId: string): boolean;
   canManageSessions(sessionId: string): Promise<boolean>;
-  buildRunProfile(input: { sessionId: string; canManageSessions: boolean | undefined }): Promise<NonNullable<ToolContext["runProfile"]>>;
+  buildRunProfile(input: { sessionId: string; canManageSessions: boolean | undefined; externalDrive: boolean }): Promise<NonNullable<ToolContext["runProfile"]>>;
   getRunToolContext?(sessionId: string, runId: string): Promise<RunScriptToolContext | null>;
+  recordDriveTool?(input: DriveToolObservation): Promise<unknown>;
   applyNestedToolResult?(input: { sessionId: string; runId: string; toolName: string; args: Fields; result: unknown; isError: boolean }): Promise<unknown>;
   toolRuntime: {
     getSchemas(context: ToolContext): RegisteredTool["schema"][];
-    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior> } | null;
+    resolveDefinition(name: string, options: { skillToolRegistrySnapshot?: unknown; toolRegistrySnapshot?: unknown; language?: string }): { behavior?: Readonly<ToolBehavior>; model?: Readonly<ToolModelPolicy> } | null;
     execute(name: string, args: unknown, signal: AbortSignal | undefined, context: ToolContext): Promise<unknown>;
+    getTabAliases?(sessionId: string): Readonly<Record<string, number>>;
   };
   collectArtifacts(name: string, args: Fields, result: unknown): Fields[];
   appendArtifacts?(input: { sessionId: string; runId: string; toolCallId: string; sourceTool: string; artifacts: Fields[] }): Promise<unknown>;
@@ -51,6 +56,7 @@ export function createRunScriptBridge({
   buildRunProfile,
   getRunToolContext = async () => null,
   applyNestedToolResult = async () => false,
+  recordDriveTool,
   toolRuntime,
   collectArtifacts,
   appendArtifacts = async () => {},
@@ -66,6 +72,26 @@ export function createRunScriptBridge({
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
 
   async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}) {
+    let rawResult: unknown, externalDrive = false;
+    const response = await executeToolCall(message, sender, result => { rawResult = result; }, mode => { externalDrive = mode; });
+    const sessionId = normalizeSessionId(message.sessionId);
+    const runId = String(message.runId || "").trim();
+    const name = String(message.toolName || "").trim();
+    const parent = getToolCallParent(message.parentCallId, sessionId, runId);
+    if (recordDriveTool && externalDrive && name && name !== "__list_tools__"
+      && plainObject(response).code !== "RUN_STOPPED" && supervisor.isRunCurrent(sessionId, runId)
+      && (message.parentCallId === undefined || parent && !parent.signal?.aborted)) {
+      try {
+        await recordDriveTool({ sessionId, runId, name, args: plainObject(message.args),
+          result: rawResult ?? response.result ?? response, isError: response.isError === true });
+      } catch (error) {
+        logger.debug("[轻舟] persist nested drive tool failed:", error instanceof Error ? error.message : error);
+      }
+    }
+    return response;
+  }
+
+  async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown) => void, observeMode: (externalDrive: boolean) => void) {
     await ready();
     let language = getLanguage();
     const respondFailure = (payload: unknown, options: { toolName?: string } = {}) =>
@@ -89,40 +115,61 @@ export function createRunScriptBridge({
       : parent?.signal && runSignal ? AbortSignal.any([parent.signal, runSignal]) : parent?.signal || runSignal || undefined;
     const stoppedError = stoppedBridgeError(sessionId, runId, toolName, signal);
     if (stoppedError) return respondFailure(stoppedError, { toolName });
-
-    if (toolName === "__list_tools__") {
-      const toolContext = await resolveToolContext(sessionId, runId);
-      language = toolContext.language || language;
-      const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
-      if (contextStopped) return respondFailure(contextStopped, { toolName });
-      return {
-        ok: true,
-        result: {
-          tools: toolRuntime.getSchemas(toolContext).map(schema => ({
-            name: schema.function?.name || "",
-            description: schema.function?.description || "",
-            parameters: schema.function?.parameters || {},
-          })),
-        },
-        isError: false,
-      };
-    }
-
-    const depth = Math.max(0, Math.floor(Number(message.depth) || 0));
-    if (depth > 3) {
-      return respondFailure({
-        error: `run_script nested tool call depth exceeded while calling ${toolName}`,
-        code: "RUN_SCRIPT_TOOL_DEPTH_EXCEEDED",
-        details: { toolName, depth, maxDepth: 3 },
-      }, { toolName });
-    }
-
     try {
-      const toolContext = await resolveToolContext(sessionId, runId);
+      const toolContext = await resolveToolContext(sessionId, runId, parent, observeMode);
       language = toolContext.language || language;
       const contextStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (contextStopped) return respondFailure(contextStopped, { toolName });
-      const toolArgs = plainObject(message.args);
+      const driveRun = toolContext.externalDrive === true;
+      if (driveRun && toolName !== "__list_tools__" && isDriveToolForbidden(toolName)) {
+        return respondFailure({
+          error: t("drive.toolForbidden", { name: toolName }),
+          code: "DRIVE_TOOL_FORBIDDEN",
+          details: { toolName },
+        }, { toolName });
+      }
+
+      if (toolName === "__list_tools__") {
+        const tools = [];
+        for (const schema of toolRuntime.getSchemas(toolContext)) {
+          const name = schema.function?.name || "";
+          if (!name || (driveRun && !isDriveToolDefault(name))) continue;
+          tools.push(driveRun
+            ? driveToolSignature({
+              name,
+              description: schema.function?.description || "",
+              parameters: schema.function?.parameters || {},
+            })
+            : {
+              name,
+              description: schema.function?.description || "",
+              parameters: schema.function?.parameters || {},
+            });
+        }
+        return {
+          ok: true,
+          result: { tools },
+          isError: false,
+        };
+      }
+
+      const depth = Math.max(0, Math.floor(Number(message.depth) || 0));
+      if (depth > 3) {
+        return respondFailure({
+          error: `run_script nested tool call depth exceeded while calling ${toolName}`,
+          code: "RUN_SCRIPT_TOOL_DEPTH_EXCEEDED",
+          details: { toolName, depth, maxDepth: 3 },
+        }, { toolName });
+      }
+
+      let toolArgs = plainObject(message.args);
+      if (driveRun && toolName !== "__list_tools__") {
+        const prepared = prepareDriveToolCall(toolName, toolArgs);
+        if (!prepared.ok) {
+          return respondFailure(prepared.error, { toolName });
+        }
+        toolArgs = prepared.args;
+      }
       const definition = toolRuntime.resolveDefinition(toolName, { skillToolRegistrySnapshot: toolContext.skillToolRegistrySnapshot, toolRegistrySnapshot: toolContext.toolRegistrySnapshot, language: toolContext.language });
       const result = await toolRuntime.execute(toolName, toolArgs, signal, {
         ...toolContext,
@@ -135,8 +182,9 @@ export function createRunScriptBridge({
       // A host or zero-timeout handler may complete after its run was revoked.
       const executionStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (executionStopped) return respondFailure(executionStopped, { toolName });
+      observe(result);
       const output = plainObject(result);
-      const isError = output.ok === false || output.isError === true || output.error != null;
+      const isError = isToolFailure(output);
       await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
       const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
       if (resultStopped) return respondFailure(resultStopped, { toolName });
@@ -159,13 +207,14 @@ export function createRunScriptBridge({
           logger?.debug?.("[轻舟] record run_script resource artifacts failed:", error instanceof Error ? error.message : error);
         }
       }
+      const modelResult = definition?.model?.projectResult ? definition.model.projectResult(result) : result;
       const observation = nestedObservation(definition?.behavior, toolArgs, result);
       return {
         ok: true,
-        result: stripNestedToolPresentation(result, Boolean(observation)),
+        result: omitObservationImage(modelResult, Boolean(observation)),
         ...(observation ? { observation } : {}),
         artifacts,
-        isError: Boolean(output.error),
+        isError: false,
       };
     } catch (error) {
       const failure = plainObject(error);
@@ -173,39 +222,37 @@ export function createRunScriptBridge({
         toolName,
         code: failure.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
       })));
-      return respondFailure({
+      return respondFailure(copyToolResultPresentation(error, {
         error: localized?.message || String(localized || error),
         code: localized?.code || failure.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
-        codeLabel: localized?.codeLabel,
+        hint: localized.hint || failure.hint,
         details: localized?.details || failure.details || { toolName },
-      }, { toolName });
+      }), { toolName });
     }
   }
 
-  async function resolveToolContext(sessionId: string, runId: string): Promise<ToolContext> {
+  async function resolveToolContext(sessionId: string, runId: string, parent: ToolContext | undefined, observeMode: (externalDrive: boolean) => void): Promise<ToolContext> {
     const runtime = plainObject(getRuntime(sessionId));
-    const runContext = await getRunToolContext(sessionId, runId) || {};
+    const runContext = { ...parent, ...await getRunToolContext(sessionId, runId) };
+    const externalDrive = (parent?.externalDrive ?? runContext.externalDrive) === true;
+    observeMode(externalDrive);
     const snapshotContext = plainObject(runContext.dynamicContext);
-    const workingTab = pageTab(runtime.workingTab) || pageTab(snapshotContext.workingTab);
     const dynamicContext = {
       ...snapshotContext,
-      workingTab,
-      pageUrl: String(runtime.workingUrl || workingTab?.url || snapshotContext.pageUrl || ""),
       taskSiteTabs: Array.isArray(runtime.visitedTaskSites)
         ? runtime.visitedTaskSites.map(pageTab).filter(value => value !== null)
         : (Array.isArray(snapshotContext.taskSiteTabs) ? snapshotContext.taskSiteTabs.map(pageTab).filter(value => value !== null) : []),
     };
     const canManage = runContext.runProfile ? undefined : await canManageSessions(sessionId);
     return {
-      workingTab,
-      workingTabId: positiveNumber(runtime.workingTabId || workingTab?.id) || null,
+      externalDrive,
       sourceWindowId: positiveNumber(snapshotContext.sourceWindowId) || null,
       dynamicContext,
       loadedPluginSkillNames: mergeStringLists(
         runContext.loadedPluginSkillNames,
         runtime.loadedPluginSkillNames,
       ),
-      runProfile: runContext.runProfile || await buildRunProfile({ sessionId, canManageSessions: canManage }),
+      runProfile: runContext.runProfile || await buildRunProfile({ sessionId, canManageSessions: canManage, externalDrive }),
       skillToolRegistrySnapshot: runContext.skillToolRegistrySnapshot || null,
       toolRegistrySnapshot: runContext.toolRegistrySnapshot, language: runContext.language,
     };
@@ -228,11 +275,10 @@ export function createRunScriptBridge({
   return Object.freeze({ handleToolCall });
 }
 
-function stripNestedToolPresentation(result: unknown, stripImage = false) {
+function omitObservationImage(result: unknown, stripImage = false) {
   if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const { _display, ...rest } = plainObject(result);
-  if (!stripImage) return rest;
-  const { _image, _imageDetail, ...withoutImage } = rest;
+  if (!stripImage) return result;
+  const { _image, _imageDetail, ...withoutImage } = plainObject(result);
   return withoutImage;
 }
 
@@ -256,17 +302,13 @@ function failureResponse(payload: unknown, { toolName = "" } = {}) {
     code: input.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
     isError: true,
   }));
-  const details = plainObject(localized?.details, plainObject(input.details, { toolName }));
-  return {
-    ok: false,
-    error: localized?.error || localized?.message || String(input.error || input.message || "run_script tool bridge failed"),
-    code: localized?.code || input.code || "RUN_SCRIPT_TOOL_CALL_FAILED",
-    codeLabel: localized?.codeLabel,
-    diagnostic: localized?.diagnostic,
-    details,
-    result: localized,
-    isError: true,
-  };
+  const failure = copyToolResultPresentation(payload, toolError(String(localized.code || input.code || "RUN_SCRIPT_TOOL_CALL_FAILED"),
+    String(localized.message || localized.error || input.message || input.error || "Script tool call failed."), {
+      hint: typeof localized.hint === "string" ? localized.hint : typeof input.hint === "string" ? input.hint : undefined,
+      details: plainObject(localized.details || input.details),
+    }));
+  return { ok: false, ...failure, result: failure, isError: true };
+
 }
 
 function plainObject(value: unknown, fallback?: Fields): Fields;

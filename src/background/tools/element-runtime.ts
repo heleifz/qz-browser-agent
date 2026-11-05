@@ -1,8 +1,11 @@
+import { toolError, isToolFailure, pageErrorDetails } from "../../shared/contracts/tool-error.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
 import type { createCdpRuntime } from './cdp-runtime.js';
 import { openChildFrame } from './child-frames.js';
+import { createElementObservation, type ElementObservation } from "../../shared/contracts/element-observation.js";
+
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
   index?: number; imageSrc?: string; imageIndex?: number;   backendNodeId?: number; role?: string; name?: string; createdAt?: number;
@@ -12,7 +15,7 @@ export interface ElementReference {
 interface ElementRuntimeHost {
   ToolExecutionError: ToolErrorConstructor;
   getToolRuntimeDependencies: GetToolRuntimeDependencies;
-  makeSessionTabTargetError(code: string, details: Record<string, unknown>): Error;
+  makeSessionTabTargetError(code: string, details: Record<string, unknown>, context?: ToolContext): Error;
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
   sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
@@ -116,13 +119,15 @@ export function createElementRuntime({
 // ---------------------------------------------------------------------------
 
 const elementRefRegistry = new Map<string, ElementReference>();
+const nodeRefRegistry = new Map<string, string>();
+let elementSequence = 0;
 const ELEMENT_REF_TTL_MS = 30 * 60 * 1000;
 const ELEMENT_REF_MAX = 5000;
 const ELEMENT_TARGET_GRAMMAR = 'target = "uid:" <element_uid> | "css:" <css_selector>';
 function getElementTargetExamples() {
 return [
   "uid:t5493.000001.12",
-  "uid:t5493.000001.i3",
+  "uid:t5493.000001.13",
   `css:button[aria-label="${t("nextPageSelector")}"]`,
   'css:a[href*="page=2"]',
   'css:input[name="q"]',
@@ -179,13 +184,32 @@ function makeElementUid(snapshotId: string, seq: number, mark = "") {
   return `${snapshotId}.${mark}${seq}`;
 }
 
+function nodeKey(ref: ElementReference) {
+  return [ref.sessionId || "", ref.tabId, ref.frameId || "", ref.loaderId || ref.documentId || "", ref.snapshotId || "", ref.backendNodeId].join("\n");
+}
+
 function registerElementRef(ref: ElementReference) {
   if (!ref?.uid) return;
   cleanupElementRefs();
-  elementRefRegistry.set(ref.uid, {
-    ...ref,
-    createdAt: Date.now(),
-  });
+  const previous = elementRefRegistry.get(ref.uid);
+  if (previous && nodeRefRegistry.get(nodeKey(previous)) === ref.uid) nodeRefRegistry.delete(nodeKey(previous));
+  elementRefRegistry.set(ref.uid, { ...ref, createdAt: Date.now() });
+  if (Number(ref.backendNodeId) > 0) nodeRefRegistry.set(nodeKey(ref), ref.uid);
+}
+
+/** All producers use this registration path; a CSS fallback is never advertised as a node UID. */
+function registerElementBinding(ref: ElementReference): ElementReference & { target: string } {
+  const backendNodeId = Number(ref.backendNodeId);
+  if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) {
+    return { ...ref, uid: undefined, target: elementTargetForSelector(ref.selector) };
+  }
+  cleanupElementRefs();
+  const snapshotId = String(ref.snapshotId || makeSnapshotId(Number(ref.tabId), { sessionId: ref.sessionId }));
+  const scoped = { ...ref, snapshotId };
+  const existing = nodeRefRegistry.get(nodeKey(scoped));
+  const uid = existing || makeElementUid(snapshotId, ++elementSequence);
+  registerElementRef({ ...scoped, backendNodeId, uid });
+  return { ...scoped, backendNodeId, uid, target: elementTargetForUid(uid) };
 }
 
 function cleanupElementRefs() {
@@ -193,12 +217,15 @@ function cleanupElementRefs() {
   for (const [uid, ref] of elementRefRegistry.entries()) {
     if (now - Number(ref.createdAt || 0) > ELEMENT_REF_TTL_MS) {
       elementRefRegistry.delete(uid);
+      if (nodeRefRegistry.get(nodeKey(ref)) === uid) nodeRefRegistry.delete(nodeKey(ref));
     }
   }
   while (elementRefRegistry.size > ELEMENT_REF_MAX) {
     const first = elementRefRegistry.keys().next().value;
     if (!first) break;
+    const ref = elementRefRegistry.get(first)!;
     elementRefRegistry.delete(first);
+    if (nodeRefRegistry.get(nodeKey(ref)) === first) nodeRefRegistry.delete(nodeKey(ref));
   }
 }
 
@@ -232,6 +259,7 @@ function parseElementTarget(target = "") {
   const value = separator >= 0 ? raw.slice(separator + 1).trim() : "";
   if (kind === "uid" && value) return { uid: value, selector: "" };
   if (kind === "css" && value) return { uid: "", selector: value };
+  if (kind !== "uid" && kind !== "css") return { uid: "", selector: raw };
   throw new ToolExecutionError("INVALID_ELEMENT_TARGET", `Invalid element target: ${raw}`, {
     target: raw,
     expected: ELEMENT_TARGET_GRAMMAR,
@@ -239,61 +267,96 @@ function parseElementTarget(target = "") {
   });
 }
 
-async function addElementTargetsToFindResult(result: unknown, tabId?: number, context: ToolContext = {}, scope?: Pick<ElementReference, "frameId" | "loaderId">) {
+async function addElementTargetsToFindResult(result: unknown, tabId?: number, context: ToolContext = {}, scope?: ElementReference) {
   if (!isRecord(result)) return result;
+  if (isToolFailure(result)) return toolError(String(result.code || "ELEMENT_QUERY_FAILED"), String(result.message || result.error), {
+    hint: typeof result.hint === "string" ? result.hint : "Pass a valid target. Use get_ax_tree or find_elements to refresh element references before retrying.",
+    ...(typeof record(result.details).target === "string" ? { details: { target: record(result.details).target } } : {}),
+  });
+  if (!tabId) return result;
   const items = Array.isArray(result.results) ? result.results : Array.isArray(result.elements) ? result.elements : [result];
-  const tokens = items.filter(isRecord).map(item => item._elementRef).filter((token): token is string => typeof token === "string" && !!token);
-  const bound = tokens.length && tabId ? await bindFindElementRefs(tabId, tokens, context, scope) : new Map<string, ElementReference>();
-  const snapshotId = bound.size && tabId ? makeSnapshotId(tabId, context) : "";
-  let sequence = 0;
-  const addTarget = (item: unknown) => {
-    if (!isRecord(item)) return item;
-    let candidate = item;
-    if (typeof item._elementRef === "string") {
-      const { _elementRef, ...summary } = item;
-      const ref = bound.get(_elementRef);
-      if (!ref) return { ...summary, actionable: false };
-      const uid = makeElementUid(snapshotId, ++sequence);
-      registerElementRef({ ...ref, uid, tabId, sessionId: context.sessionId });
-      candidate = { ...summary, uid };
-    }
-    const target = candidate.target || elementTargetForUid(candidate.uid) || elementTargetForSelector(candidate.selector);
-    return target ? { ...candidate, target } : candidate;
+  const candidates = items.filter(isRecord).flatMap(item => [item, ...[item.parent, item.form].filter(isRecord)]);
+  const bindings = await bindElementReferences(tabId, candidates, context, scope);
+  const byItem = new Map(candidates.map((item, index) => [item, bindings[index]]));
+  const addTarget = (item: unknown): ElementObservation | null => {
+    if (!isRecord(item)) return null;
+    const target = byItem.get(item)?.target;
+    const observation = createElementObservation(item, target);
+    if (!target) observation.actionable = false;
+    if (Object.hasOwn(item, 'parent')) observation.parent = addTarget(item.parent);
+    if (Object.hasOwn(item, 'form')) observation.form = addTarget(item.form);
+    return observation;
   };
-  if (Array.isArray(result.results)) {
-    return { ...result, results: result.results.map(addTarget) };
-  }
-  if (Array.isArray(result.elements)) {
-    return { ...result, elements: result.elements.map(addTarget) };
-  }
+  if (Array.isArray(result.results)) return { ...result, results: result.results.map(addTarget) };
+  if (Array.isArray(result.elements)) return { ...result, elements: result.elements.map(addTarget) };
   return addTarget(result);
 }
 
-async function bindFindElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: Pick<ElementReference, "frameId" | "loaderId">) {
+/** One binding/registration pipeline for Content observations, image candidates and AX anchors. */
+async function bindElementReferences(tabId: number, candidates: readonly ElementReference[], context: ToolContext = {}, scope?: ElementReference) {
+  context.signal?.throwIfAborted();
+  if (!candidates.length) return [];
+  const documentId = scope?.documentId || await readMainDocumentId(tabId);
+  let pageUrl = scope?.pageUrl || "";
+  try { if (!pageUrl) pageUrl = getEffectiveTabUrl(await chrome.tabs.get(tabId)); } catch { /* Binding enforces access separately. */ }
+  const tokens = [...new Set(candidates.map(item => item._elementRef).filter((value): value is string => typeof value === "string" && Boolean(value)))];
+  const bound = tokens.length ? await bindContentElementRefs(tabId, tokens, context, scope) : new Map<string, ElementReference>();
+  const selectorCandidates = candidates.filter(item => !item._elementRef && !Number(item.backendNodeId) && item.selector);
+  let selected = { loaderId: scope?.loaderId || "", ids: [] as number[] };
+  if (selectorCandidates.length) {
+    try { selected = await bindBackendNodes(tabId, selectorCandidates.map(item => String(item.selector)), context, scope); }
+    catch (error) {
+      if (!["SESSION_TAB_UNOWNED", "SESSION_TAB_FOREIGN"].includes(String(record(error).code || ""))) throw error;
+    }
+  }
+  const selectorBindings = new Map(selectorCandidates.map((item, index) => [item, selected.ids[index] || 0]));
+  context.signal?.throwIfAborted();
+  const snapshotId = makeSnapshotId(tabId, context);
+  return candidates.map(item => {
+    const binding = typeof item._elementRef === "string" ? bound.get(item._elementRef) : null;
+    return registerElementBinding({ ...item, ...binding, tabId, sessionId: context.sessionId, pageUrl, documentId, snapshotId,
+      frameId: binding?.frameId || scope?.frameId,
+      loaderId: binding?.loaderId || item.loaderId || selected.loaderId,
+      backendNodeId: binding?.backendNodeId || item.backendNodeId || selectorBindings.get(item) || undefined });
+  });
+}
+
+async function bindContentElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: ElementReference) {
   const objectGroup = `${OBJECT_GROUP}-find-${makeSnapshotId(tabId, context)}`;
   try {
     return await withDebugger(tabId, async (_target, send) => {
       const child = scope?.frameId ? await openChildFrame(send, scope.frameId) : null;
-      if (scope?.frameId && !child) throw staleElement(scope.frameId);
+      if (scope?.frameId && !child) throw staleElement(scope.uid || scope.target);
       const nodeSend = child?.send || send;
       const frame = child || record(record(record(await send("Page.getFrameTree")).frameTree).frame);
       const frameId = String(frame.id || "");
       const loaderId = String(frame.loaderId || "");
-      if (scope?.loaderId && scope.loaderId !== loaderId) throw staleElement(scope.frameId);
+      if (scope?.loaderId && scope.loaderId !== loaderId) throw staleElement(scope.uid || scope.target);
       const contextId = await contentContextId(tabId, nodeSend, frameId, child?.sessionId || "", context);
       const bound = new Map<string, ElementReference>();
       try {
-        for (const token of tokens) {
+        for (let offset = 0; offset < tokens.length; offset += 100) {
+          context.signal?.throwIfAborted();
+          const chunk = tokens.slice(offset, offset + 100);
           const remote = record(await nodeSend("Runtime.callFunctionOn", {
             executionContextId: contextId, objectGroup, awaitPromise: true, returnByValue: false,
             functionDeclaration: ISOLATED_CONTENT_INVOKE,
-            arguments: [{ value: { action: "resolveFindElement", elementRef: token } }],
+            arguments: [{ value: { action: "resolveElementRefs", elementRefs: chunk } }],
           }));
+          if (remote.exceptionDetails) throw staleElement(chunk[0]);
           const object = record(remote.result);
-          if (remote.exceptionDetails || object.subtype !== "node" || !object.objectId) continue;
-          const described = record(await nodeSend("DOM.describeNode", { objectId: object.objectId }));
-          const backendNodeId = Number(record(described.node).backendNodeId || 0);
-          if (backendNodeId) bound.set(token, { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
+          if (object.subtype !== "array" || !object.objectId) continue;
+          const properties = record(await nodeSend("Runtime.getProperties", { objectId: object.objectId, ownProperties: true }));
+          const nodes = (Array.isArray(properties.result) ? properties.result : []).map(record)
+            .filter(property => /^\d+$/.test(String(property.name)) && record(property.value).subtype === "node");
+          // One context and one object group per batch; at most eight node descriptions in flight.
+          for (let start = 0; start < nodes.length; start += 8) await Promise.all(nodes.slice(start, start + 8).map(async property => {
+            const token = chunk[Number(property.name)];
+            if (!token) return;
+            const described = record(await nodeSend("DOM.describeNode", { objectId: record(property.value).objectId }));
+            const backendNodeId = Number(record(described.node).backendNodeId || 0);
+            if (backendNodeId) bound.set(token, { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
+          }));
         }
         if (await frameLoaderId(nodeSend, frameId) !== loaderId) throw staleElement(frameId);
         return bound;
@@ -302,8 +365,8 @@ async function bindFindElementRefs(tabId: number, tokens: string[], context: Too
       }
     }, context);
   } catch (error) {
-    if (isCdpFallbackForbiddenError(error)) throw error;
-    // Do not advertise an actionable hit when its original node cannot be bound.
+    const code = String(record(error).code || "");
+    if ((isCdpFallbackForbiddenError(error) && !["SESSION_TAB_UNOWNED", "SESSION_TAB_FOREIGN"].includes(code)) || code.startsWith("STALE_ELEMENT_UID")) throw error;
     return new Map<string, ElementReference>();
   }
 }
@@ -311,9 +374,9 @@ async function bindFindElementRefs(tabId: number, tokens: string[], context: Too
 async function resolveSelectorTarget(tabId: number | undefined, selector = "", index = 0, context: ToolContext = {}) {
   const raw = String(selector || "").trim();
   if (!raw) return { tabId, selector: "" };
-  if (!isElementTarget(raw)) return { tabId, selector: raw };
+  if (!isElementTarget(raw)) return { tabId, selector: raw, target: elementTargetForSelector(raw) };
   const parsed = parseElementTarget(raw);
-  if (parsed.selector) return { tabId, selector: parsed.selector };
+  if (parsed.selector) return { tabId, selector: parsed.selector, target: elementTargetForSelector(parsed.selector) };
   const ref = await resolveElementReference(tabId, { target: raw, index }, context);
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
 }
@@ -361,11 +424,7 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
       );
     }
     if (Number(matched) !== Number(ref.tabId)) {
-      throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${matched}`, {
-        target: elementTargetForUid(requestedUid),
-        tabId: matched,
-        refTabId: ref.tabId,
-      });
+      throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", "Element target belongs to a different page. Get a fresh target from this page.", pageErrorDetails(context, elementTargetForUid(requestedUid)));
     }
   }
 
@@ -375,24 +434,17 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     throw new ToolExecutionError(
       "ELEMENT_UID_SESSION_MISMATCH",
       `Element target belongs to another session. Take a fresh get_ax_tree snapshot in this session, then retry.`,
-      { target: elementTargetForUid(requestedUid), sessionId: currentSessionId, refSessionId },
+      pageErrorDetails(context, elementTargetForUid(requestedUid)),
     );
   }
 
   // Reject an explicit mismatch before resolving ownership can select or claim that tab.
   if (tabId && Number(tabId) !== Number(ref.tabId)) {
-    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", `Element target belongs to tab ${ref.tabId}, not tab ${tabId}`, {
-      target: elementTargetForUid(requestedUid),
-      tabId,
-      refTabId: ref.tabId,
-    });
+    throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", "Element target belongs to a different page. Get a fresh target from this page.", pageErrorDetails(context, elementTargetForUid(requestedUid)));
   }
   const resolvedTabId = Number(ref.tabId);
   if (!Number.isFinite(resolvedTabId) || resolvedTabId <= 0) {
-    throw new ToolExecutionError("MISSING_TAB_ID", `Element target has no usable tabId: uid:${requestedUid}`, {
-      target: elementTargetForUid(requestedUid),
-      refTabId: ref.tabId,
-    });
+    throw new ToolExecutionError("MISSING_TAB_REF", `Element target has no usable page reference: uid:${requestedUid}`, pageErrorDetails(context, elementTargetForUid(requestedUid)));
   }
   const sessions = getToolRuntimeDependencies(context).sessions;
   if (currentSessionId && typeof sessions?.resolveTargetTab === "function") {
@@ -408,18 +460,16 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     });
     if (!resolved?.ok) {
       throw makeSessionTabTargetError(resolved?.code || "SESSION_TAB_TARGET_DENIED", {
-        toolName: "element_uid_reference",
-        sessionId: currentSessionId,
-        tabId: resolvedTabId,
-        ownerSessionId: resolved?.ownerSessionId || "",
+        toolName: "element",
+        target: elementTargetForUid(requestedUid),
         reason: resolved?.reason || "",
         message: resolved?.error || "",
-      });
+      }, context);
     }
     if ((context.preserveWorkingTab || context.deferToolCommit) && resolved.claimRequired && !resolved.readOnlyAccess) {
       throw makeSessionTabTargetError("SESSION_TAB_UNOWNED", {
-        toolName: "element_uid_reference", sessionId: currentSessionId, tabId: resolvedTabId,
-      });
+        toolName: "element", target: elementTargetForUid(requestedUid),
+      }, context);
     }
   }
   // Security guardrails gate before any page probe, including the read-only document id.
@@ -434,36 +484,21 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     }
   }
   const urlChanged = Boolean(ref.pageUrl && currentUrl && !samePageUrl(currentUrl, ref.pageUrl));
+  const previousPageError = () => new ToolExecutionError('STALE_ELEMENT_UID_PAGE_CHANGED',
+    'Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.',
+    pageErrorDetails(context, elementTargetForUid(requestedUid)));
   const storedDocumentId = String(ref.documentId || "");
   if (storedDocumentId) {
     const currentDocumentId = await readMainDocumentId(resolvedTabId);
     // A title redirect or history.replaceState keeps the document; a real navigation replaces it.
     if (currentDocumentId && currentDocumentId !== storedDocumentId) {
-      if (urlChanged) {
-        throw new ToolExecutionError(
-          "STALE_ELEMENT_UID_PAGE_CHANGED",
-          `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
-          { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
-        );
-      }
+      if (urlChanged) throw previousPageError();
       throw staleElement(requestedUid);
     }
     // A changed URL string is positive evidence the page changed; only a matching live
     // document disproves it. A missing probe cannot, so the strict verdict stands.
-    if (urlChanged && !currentDocumentId) {
-      throw new ToolExecutionError(
-        "STALE_ELEMENT_UID_PAGE_CHANGED",
-        `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
-        { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
-      );
-    }
-  } else if (urlChanged) {
-    throw new ToolExecutionError(
-      "STALE_ELEMENT_UID_PAGE_CHANGED",
-      `Element target belongs to a previous page state. Take a fresh get_ax_tree snapshot, then retry.`,
-      { target: elementTargetForUid(requestedUid), tabId: resolvedTabId, currentUrl, snapshotUrl: ref.pageUrl },
-    );
-  }
+    if (urlChanged && !currentDocumentId) throw previousPageError();
+  } else if (urlChanged) throw previousPageError();
   const backendNodeId = Number(ref.backendNodeId || 0);
   return {
     tabId: resolvedTabId,
@@ -473,6 +508,12 @@ async function resolveElementReference(tabId: number | undefined, { target = "",
     target: elementTargetForUid(requestedUid),
     ref,
   };
+}
+
+function assertKnownElementUid(target: unknown) {
+  cleanupElementRefs();
+  const uid = normalizeElementUid(parseElementTarget(String(target || "")).uid);
+  if (!uid || !elementRefRegistry.has(uid)) throw staleElement(target);
 }
 
 function normalizeElementUid(uid: unknown) {
@@ -583,7 +624,7 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
     const selector = requested || route.selector;
     const requestedIndex = Number(params.index);
     const index = Number.isInteger(requestedIndex) && requestedIndex >= 0 ? requestedIndex : route.index;
-    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action);
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action, context);
   };
   return run(call);
 }
@@ -612,7 +653,7 @@ async function readMainDocumentId(tabId: number) {
 
 async function withElement<T>(tabId: number | undefined, binding: { tabId?: number; uid?: string; target?: string; ref?: ElementReference }, context: ToolContext, run: (send: CdpCommand, call: ElementCaller) => Promise<T>) {
   const id = Number(binding.tabId || tabId);
-  if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_ID", "Element target has no usable tabId", { target: binding.target || "" });
+  if (!Number.isInteger(id) || id <= 0) throw new ToolExecutionError("MISSING_TAB_REF", "Element target has no usable page reference", { target: binding.target || "" });
   const objectGroup = `${OBJECT_GROUP}-${id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return withDebugger(id, async (_target, send) => {
     const requestedFrameId = String(binding.ref?.frameId || "");
@@ -657,10 +698,13 @@ async function objectFromBackend(send: CdpCommand, binding: { target?: string; r
   try {
     const resolved = record(await send("DOM.resolveNode", { backendNodeId, executionContextId: contextId, objectGroup }));
     const objectId = String(record(resolved.object).objectId || "");
-    if (!objectId) throw staleElement(binding.target || "");
+    if (!objectId) throw staleElement(binding.target || "", "node_unavailable");
     return objectId;
   } catch (err) {
-    if (isCdpFallbackForbiddenError(err) || err instanceof ToolExecutionError) throw err;
+    if (isCdpFallbackForbiddenError(err)) throw err;
+    const message = String(record(err).message || err);
+    if (/no node with|could not find node|node.*(?:detached|not found)/i.test(message)) throw staleElement(binding.target || "", "node_unavailable");
+    if (err instanceof ToolExecutionError) throw err;
     throw staleElement(binding.target || "");
   }
 }
@@ -707,7 +751,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
         const current = isolatedContexts(tabId, sessionId)?.get(frameId);
         const still = current?.get(contextIdentity(candidate));
         const selected = !result.exceptionDetails && Boolean(chrome.runtime.id)
-          && value.extensionId === chrome.runtime.id && value.bridge === true
+          && value.extensionId === chrome.runtime.id && value.bridge === true && value.elementRefs === true
           && current === candidates && still?.id === candidate.id && still.uniqueId === candidate.uniqueId;
         if (selected) return candidate.id;
       } catch (error) {
@@ -730,7 +774,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   await initializeContentScript(tabId, context);
   await discover();
   id = await select();
-  if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", { tabId });
+  if (!id) throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", "The page script is not ready to read or interact with this page.", pageErrorDetails(context));
   return id;
 }
 
@@ -744,24 +788,26 @@ async function invokeBound(send: CdpCommand, objectId: string, action: string, p
     }));
     const details = record(remote.exceptionDetails);
     if (details.text || details.exception) {
-      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), { action });
+      throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), pageErrorDetails(context));
     }
-    return asElementReply(record(remote.result).value, action);
+    return asElementReply(record(remote.result).value, action, context);
   } finally { finishPhase?.(); }
 }
 
-function asElementReply(value: unknown, action: string) {
+function asElementReply(value: unknown, action: string, context: ToolContext = {}) {
   const reply = record(value);
   const code = String(reply.code || "");
   if (code === "STALE_ELEMENT_UID" || code === "STALE_ELEMENT_UID_PAGE_CHANGED") {
-    throw new ToolExecutionError(code, String(reply.error || code), { action });
+    throw new ToolExecutionError(code, String(reply.error || code), pageErrorDetails(context));
   }
-  if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, { action });
+  if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, pageErrorDetails(context));
   return reply;
 }
 
-function staleElement(target: unknown) {
-  return new ToolExecutionError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", { target });
+function staleElement(target: unknown, reason = "") {
+  const value = String(target || '');
+  const handle = /^(uid|css):/.test(value) ? value : value ? `uid:${value}` : undefined;
+  return new ToolExecutionError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", { target: handle, ...(reason ? { reason } : {}) });
 }
 
 function samePageUrl(a: unknown, b: unknown) {
@@ -777,10 +823,13 @@ function samePageUrl(a: unknown, b: unknown) {
     makeSnapshotId,
     makeElementUid,
     registerElementRef,
+    registerElementBinding,
+    bindElementReferences,
     elementTargetForUid,
     elementTargetForSelector,
     elementTargetForRef,
     elementUidTabId,
+    assertKnownElementUid,
     isUidElementTarget,
     resolveSelectorTarget,
     resolveElementReference,

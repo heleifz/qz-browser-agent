@@ -1,4 +1,6 @@
 const request = ["timeout", "client"];
+export const EXEC_JSON_MESSAGE = "Pass one JSON object with name and args, or with calls. Quote it safely by piping stdin: qz exec --session ID <<'JSON'";
+export const DRIVE_SESSION_REQUIRED = "Pass the sessionId from qz session create.";
 const waiting = [...request, "wait", "stream"];
 const output = ["json", "plain", "no-color", "help"];
 const filename = options => options.filename ? { filename: options.filename } : {};
@@ -109,8 +111,48 @@ export const COMMANDS = {
   status: { options: [], summary: "Check the connection",
     help: ["qz status", "Show the local service and browser connection status."],
   },
-  mcp: { options: [], summary: "Print the MCP URL",
-    help: ["qz mcp [--json]", "Print the running service's MCP URL for an external agent.", "Run qz connect first."],
+  session: { options: [...request, "title"], summary: "Create a direct-drive session",
+    help: ["qz session create --title TITLE", "Create a direct-drive session with a readable title and print sessionId on stdout.",
+      "Use that id on every later qz script --session ID, qz exec --session ID, and qz tools --session ID call.",
+      "Those commands do not create a session, and they do not reuse the previous one.",
+      'qz session create --title "Inspect example page"'],
+    actions: { create: route("qingzhou_create_drive_session", ({ options }) => ({ title: options.title.trim() })) },
+  },
+  script: { options: [...request, "session", "tab"], summary: "Run one page script",
+    help: ["qz script --session ID --tab TABREF [FILE|-]", "Run an async JavaScript function on that page. stdout is only the returned value.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
+      "--tab takes an alias or a tabRef returned by open_tab/list_tabs. qz script --session ID --tab TABREF - reads stdin.",
+      "--timeout sets the script timeout in seconds (0 < seconds <= 3600) and defaults to 120. The request waits 60 seconds longer.",
+      "For page changes use qz exec --session ID with run_script and args.mutatesPage:true.",
+      "Failures use {code,message,hint?,details?}; script locations and trace are in details. Thrown/transport failures print JSON with --json, or stderr on a terminal.",
+      "qz script --session ID --tab page page.js", "qz script --session ID --tab page - <<'JS'"],
+  },
+  tools: { options: [...request, "session"], summary: "List browser tool signatures",
+    help: ["qz tools --session ID [NAME]", "List compact tool signatures, or show one tool.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
+      "Blacklisted direct-drive tools are omitted for a drive session.",
+      "qz tools --session ID", "qz tools --session ID open_tab"],
+  },
+  skill: { options: ["lang"], summary: "Print the browser guide",
+    help: ["qz skill", "Print browser usage instructions without connecting.",
+      "Install or update that skill with npx skills add alibaba/qz-browser-agent -g.",
+      "qz --help prints the same guide after the command list."],
+  },
+  exec: { options: [...request, "session"], summary: "Run one browser tool or one batch",
+    help: [
+      "qz exec --session ID [JSON|-]",
+      "Run an existing browser tool through the connected browser. This is transport for qingzhou_execute_tool. It does not add tools or start a model.",
+      "--session is required. Create it with qz session create and pass that sessionId.",
+      EXEC_JSON_MESSAGE,
+      "stdout is JSON. Exit 0 when the tool succeeds, 2 when the arguments are invalid, and 1 when the tool fails.",
+      "Single-tool data is result.result; a successful run_script value is result.result.result. Batch rows are result.results; inspect each isError.",
+      "--timeout sets the client wait (default 180 seconds). run_script requests wait at least args.timeout + 60 seconds; limits.timeoutSeconds remains the batch execution budget.",
+      "qz session create",
+    ],
+  },
+  mcp: { options: ["profile"], summary: "Print the MCP URL",
+    help: ["qz mcp [--profile full|drive] [--json]", "Print the MCP URL. The default catalog is the direct-drive set.",
+      "--profile full prints the task and diagnostic catalog.", "Run qz connect first."],
   },
   install: { options: [], summary: "Install the Chrome extension",
     help: ["qz install", "Open qz in the Chrome Web Store.", "Click Add to Chrome, then run qz connect."],
@@ -118,7 +160,7 @@ export const COMMANDS = {
   stop: { options: [], summary: "Stop the local service",
     help: ["qz stop", "Stop the local service and disconnect all browsers.", "Use qz cancel TASK_ID to stop a task.", "qz connect"],
   },
-  help: { options: [] },
+  help: { options: ["lang"] },
 };
 
 export function commandOptions(command, action = "list") {

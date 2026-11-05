@@ -53,6 +53,8 @@
       "properties": {
         "limit": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Limit"},
         "excludeSessionId": {"default": "", "title": "Excludesessionid", "type": "string"},
+        "scope": {"type": "string", "description": "session returns one session. Omit it to list tasks."},
+        "sessionId": {"type": "string", "description": "Session to return when scope is session."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -264,11 +266,12 @@
   },
   {
     "name": "qingzhou_stop_session",
-    "description": "停止轻舟会话运行。",
+    "description": "结束会话。直驱会话结束后不能再执行工具，无需再 close_tab；默认关闭它创建的标签，用户原有或接管的标签保留。显式 keepTabs:true 保留全部标签。",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
         "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
+        "keepTabs": {"title": "Keeptabs", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -279,10 +282,10 @@
   },
   {
     "name": "qingzhou_list_tools",
-    "description": "列出当前 session 可用的轻舟内置工具和插件工具 schema。",
+    "description": "List default direct-drive tool signatures; sessionId is optional. Inspect loaded Skill tools by name with qingzhou_get_tool and sessionId. This call never creates a session.",
     "inputSchema": {
       "properties": {
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
@@ -338,19 +341,53 @@
     }
   },
   {
+    "name": "qingzhou_create_drive_session",
+    "description": "Create one direct-drive session with a readable title and return sessionId, title, and status. Pass that id on every tool execution. This does not start a model.",
+    "inputSchema": {
+      "required": ["title"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "pattern": "\\S", "description": "Readable task title."},
+        "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
+        "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
+      },
+      "title": "qingzhou_create_drive_sessionArguments",
+      "type": "object"
+    }
+  },
+  {
     "name": "qingzhou_execute_tool",
-    "description": "直接执行轻舟工具，用于系统 skill/plugin 调试。依赖 Agent 生命周期的页面工具请传当前 runId；wait=false 时后台执行并立即返回 jobId。",
+    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools.",
     "inputSchema": {
       "properties": {
         "name": {"title": "Name", "type": "string"},
         "args": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Args"},
-        "sessionId": {"default": "default", "title": "Sessionid", "type": "string"},
-        "runId": {"default": "", "title": "Runid", "type": "string"},
+        "calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name"],
+            "properties": {
+              "id": {"type": "string"},
+              "name": {"type": "string"},
+              "args": {"type": "object", "additionalProperties": true}
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeoutSeconds": {"type": "number"},
+            "maxCalls": {"type": "number"}
+          }
+        },
+        "sessionId": {"title": "Sessionid", "type": "string"},
         "wait": {"default": true, "title": "Wait", "type": "boolean"},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },
-      "required": ["name"],
+      "required": ["sessionId"],
       "title": "qingzhou_execute_toolArguments",
       "type": "object"
     }
@@ -372,12 +409,12 @@
   },
   {
     "name": "qingzhou_get_tool",
-    "description": "Read one browser tool's description and input schema by exact name in the selected task's context.",
+    "description": "Read a tool by exact name without a session. Pass sessionId for a loaded Skill tool. Direct drive returns a compact signature and description; this call never creates a session.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {"type": "string", "minLength": 1},
-        "sessionId": {"type": "string", "default": "default"},
+        "sessionId": {"type": "string"},
         "timeoutSeconds": {"type": ["number", "null"], "default": null},
         "clientId": {"type": "string", "default": ""}
       },

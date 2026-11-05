@@ -24,7 +24,7 @@ for (const mode of ['development', 'production']) {
           scriptTimeoutProperty: { type: 'number' },
           evaluateCdpScript: (_tabId, parameters) => window.evaluateCdpExpression(parameters),
         });
-        window.runPageScript = code => definitions.get('run_script').execute({ code, target: 'page', tabId: 17, timeout: 5 }, undefined,
+        window.runPageScript = code => definitions.get('run_script').execute({ code, tabId: 17, timeout: 5 }, undefined,
           { sessionId: 'browser-task', runId: 'browser-run' });
       });
     });
@@ -59,7 +59,7 @@ for (const mode of ['development', 'production']) {
       expect(bridged.result.ok).toBe(true);
       expect(bridged.result.result).toEqual({ accepted: true });
       expect(bridged.call).toMatchObject({ toolName: 'echo', sessionId: 'browser-task', runId: 'browser-run', depth: 1,
-        args: { tabId: 17, element: result.result.button } });
+        args: { element: result.result.button } });
     });
 
     test('native browser request surfaces block and recover without leaving wrappers installed', async ({ page }) => {
@@ -84,13 +84,13 @@ for (const mode of ['development', 'production']) {
           beacon: navigator.sendBeacon === originals.beacon, console: console.log === originals.log,
         } };
       });
-      expect(result.blocked.map(value => [value.ok, value.code, value.details.source])).toEqual([
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'fetch'],
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'XMLHttpRequest.open'],
-        [false, 'SECURITY_GUARDRAIL_BLOCKED', 'navigator.sendBeacon'],
+      expect(result.blocked.map(value => [value.code, value.details.action])).toEqual([
+        ['SECURITY_GUARDRAIL_BLOCKED', 'fetch'],
+        ['SECURITY_GUARDRAIL_BLOCKED', 'XMLHttpRequest.open'],
+        ['SECURITY_GUARDRAIL_BLOCKED', 'navigator.sendBeacon'],
       ]);
       expect(result.allowed).toMatchObject({ ok: true, result: 'allowed' });
-      expect(result.failed).toMatchObject({ ok: false, code: 'SCRIPT_EVALUATION_FAILED' });
+      expect(result.failed).toMatchObject({ code: 'SCRIPT_EVALUATION_FAILED', message: expect.stringContaining('intentional script failure') });
       expect(result.restored).toEqual({ fetch: true, xhr: true, beacon: true, console: true });
       expect(requests).toEqual(['https://blocked.test/allowed/fetch']);
     });

@@ -9,9 +9,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(v
 const send = (message: InnerWorkerOutput) => self.postMessage(message);
 const pendingToolCalls = new Map<string, ToolCall>();
 const pendingFetchCalls = new Map<string, FetchCall>();
+const liveInnerTraces = new Map<string, TraceRow[]>();
 
 self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
   const data = event.data || {};
+  if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    const rows = liveInnerTraces.get(requestId) || [];
+    send({ type: "trace_snapshot", requestId, trace: rows.slice(-5) });
+    return;
+  }
   if (data.type === "execute") {
     runInnerScript(data).catch((error) => {
       send({
@@ -31,9 +38,9 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
       return;
     }
     if (!response.ok) {
-      const error: ScriptFailure = new Error(response.error || ("tools." + call.toolName + " bridge failed"));
+      const error: ScriptFailure = new Error(response.message || response.error || ("tools." + call.toolName + " bridge failed"));
       if (response.code) error.code = response.code;
-      if (response.diagnostic) error.diagnostic = response.diagnostic;
+      if (response.hint) error.hint = response.hint;
       if (response.details) error.details = response.details;
       call.reject(error);
       return;
@@ -62,13 +69,15 @@ self.onmessage = (event: MessageEvent<InnerWorkerInput>) => {
 async function runInnerScript(payload: WorkerExecute) {
   const startedAt = Date.now();
   const traceRows: TraceRow[] = [];
+  const requestId = String(payload.requestId || "");
+  if (requestId) liveInnerTraces.set(requestId, traceRows);
   const artifacts: unknown[] = [];
   const source = String(payload.source || "");
   const input = payload.scriptArgs && typeof payload.scriptArgs === "object" ? payload.scriptArgs : {};
   const args = input;
   const tabId = null;
   let seq = 0;
-  pushTrace("inner.start", [{ sourceLength: source.length }]);
+  pushTrace("script.start", [{ sourceLength: source.length }]);
 
   function traceText(value: unknown) {
     try {
@@ -166,6 +175,7 @@ async function runInnerScript(payload: WorkerExecute) {
       result: makeEnvelope(false, null, error, traceRows, artifacts, startedAt),
     });
   } finally {
+    if (requestId) liveInnerTraces.delete(requestId);
     restoreSecurity();
     if (payload.fetchBridge === true) self.fetch = originalFetch;
     restoreConsole();
@@ -286,7 +296,6 @@ function decorateSyntaxError(error: unknown, source: string) {
   annotated.code = "SCRIPT_SYNTAX_ERROR";
   const hints = findSuspiciousSourceTokens(source);
   annotated.details = {
-    reason: "inner",
     sourcePreview: summarizeSourceForError(source),
     suspiciousTokens: hints,
   };
@@ -357,7 +366,8 @@ function makeEnvelope(ok: boolean, result: unknown, thrown: unknown, traceRows: 
   if (!ok) {
     out.error = error?.stack || error?.message || String(error || "Script evaluation failed");
     out.code = error?.code || "SCRIPT_EVALUATION_FAILED";
-    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : { reason: "inner" });
+    if (error?.hint) out.hint = error.hint;
+    out.details = safeValueForMessage(error?.details && typeof error.details === "object" ? error.details : {});
     if (error?.diagnostic && typeof error.diagnostic === "object") out.diagnostic = safeValueForMessage(error.diagnostic);
   } else if (result === undefined) {
     out.message = "Script completed successfully but returned undefined. Put an expression at the end or use return to inspect a value.";

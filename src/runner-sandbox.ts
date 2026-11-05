@@ -29,6 +29,9 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
       callId: data.callId,
       response: data.response,
     });
+  } else if (data.type === "trace_snapshot") {
+    const requestId = String(data.requestId || "");
+    workers.get(requestId)?.postMessage({ type: "trace_snapshot", requestId });
   } else if (data.type === "cancel") {
     cancelWorkerRun(String(data.requestId || ""));
   }
@@ -67,7 +70,7 @@ function startWorkerRun(data: Record<string, unknown>) {
         engine: "offscreen_inner",
         execution_world: "inner",
         error: errorMessage(err),
-        code: "INNER_RUNNER_WORKER_CREATE_FAILED",
+        code: "SCRIPT_CONTEXT_UNAVAILABLE",
         trace: [{ time: new Date().toISOString(), level: "error", message: errorMessage(err) }],
         elapsedMs: 0,
       },
@@ -115,6 +118,15 @@ function startWorkerRun(data: Record<string, unknown>) {
       }, "*");
       return;
     }
+    if (message.type === "trace_snapshot") {
+      parent.postMessage({
+        source: SANDBOX_SOURCE,
+        type: "trace_snapshot",
+        requestId,
+        trace: Array.isArray(message.trace) ? message.trace.slice(-5) : [],
+      }, "*");
+      return;
+    }
     if (message.type === "result") {
       workers.delete(requestId);
       worker.terminate();
@@ -152,8 +164,8 @@ function startWorkerRun(data: Record<string, unknown>) {
         resultType: "error",
         engine: "offscreen_inner",
         execution_world: "inner",
-        error: event.message || "Inner runner worker failed",
-        code: "INNER_RUNNER_WORKER_ERROR",
+        error: event.message || "Script execution failed",
+        code: "SCRIPT_CONTEXT_UNAVAILABLE",
         trace: [],
         elapsedMs: 0,
       },

@@ -60,7 +60,7 @@ test("one lazy command scope shares initialization across concurrent and later r
     firstRequest.abort();
     await delay(20);
     assert.equal((await call(bridge.endpoint, "qingzhou_bridge_status", {}, { timeoutMs: 1000 })).connected, true);
-    await assert.rejects(call("http://127.0.0.1:1", "qingzhou_bridge_status", {}), error => error.code === "connection_changed");
+    await assert.rejects(call("http://127.0.0.1:1", "qingzhou_bridge_status", {}), error => error.code === "CONNECTION_CHANGED");
   });
   assertOneSession(traffic, 3);
 });
@@ -68,7 +68,7 @@ test("one lazy command scope shares initialization across concurrent and later r
 test("read-only local commands and invalid arguments never initialize MCP", async t => {
   const { deps, traffic } = await fixture(t);
   for (const argv of [["status"], ["mcp"], ["help"]]) await runCli(argv, deps);
-  await assert.rejects(runCli(["create"], deps), error => error.code === "invalid_arguments");
+  await assert.rejects(runCli(["create"], deps), error => error.code === "INVALID_ARGUMENTS");
   assert.equal(traffic.length, 0);
 });
 
@@ -115,7 +115,7 @@ test("cancelling an in-flight watch closes its session and preserves the browser
   assert.equal(request.method, "get_session_snapshot");
   controller.abort();
   assert.equal(await pending, 130);
-  assert.equal(JSON.parse(output).error.code, "interrupted");
+  assert.equal(JSON.parse(output).code, "INTERRUPTED");
   assert.equal(bridge.state.inflight.size, 0);
   assert.equal(completeBrowser(bridge.state, request.id, { ok: true, result: snapshot("completed") }), false);
   assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), []);
@@ -155,7 +155,7 @@ test("failed initialization is retained instead of reconnecting inside a command
   let attempts = 0;
   const fetch = async () => { attempts++; return new Response("unavailable", { status: 503 }); };
   await withToolClient(async call => {
-    for (let i = 0; i < 2; i++) await assert.rejects(call("http://127.0.0.1:1", "qingzhou_bridge_status", {}, { fetch }), error => error.code === "connection_error" && /unavailable/.test(error.message));
+    for (let i = 0; i < 2; i++) await assert.rejects(call("http://127.0.0.1:1", "qingzhou_bridge_status", {}, { fetch }), error => error.code === "CONNECTION_ERROR" && /unavailable/.test(error.message));
   });
   assert.equal(attempts, 1);
 });
@@ -199,7 +199,7 @@ test("the whole MCP handshake is bounded when the initialized notification never
     const started = Date.now();
     await assert.rejects(withToolClient(call => call("http://127.0.0.1:1", "qingzhou_bridge_status", {}, {
       fetch, signal: controller.signal, timeoutMs: cancelled ? 1000 : 50,
-    })), error => error.code === "connection_error" && (cancelled ? error.name === "AbortError" : /handshake timed out/.test(error.message)));
+    })), error => error.code === "CONNECTION_ERROR" && (cancelled ? error.name === "AbortError" : /handshake timed out/.test(error.message)));
     assert.equal(initialized, 1);
     assert.equal(cleanupAborted, true);
     assert.ok(Date.now() - started < 500);
@@ -222,7 +222,7 @@ test("connect reports an initialization failure immediately without opening Chro
   await assert.rejects(runCli(["connect"], {
     ensureDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1 }, status: { clients: [{ clientId: "browser" }] } } }),
     openBrowser: () => assert.fail("a protocol failure must not open Chrome"),
-  }), error => error.code === "connection_error");
+  }), error => error.code === "CONNECTION_ERROR");
   assert.equal(initializations, 1);
   assert.ok(Date.now() - started < 1000);
 });

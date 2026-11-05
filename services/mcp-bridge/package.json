@@ -5,7 +5,10 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "bin": { "qz": "src/bin.mjs" },
-  "files": ["src/*.mjs", "src/catalog.json", "README.md", "LICENSE"],
+  "files": ["src/*.mjs", "src/catalog.json", "src/qz-drive-SKILL.md", "README.md", "LICENSE"],
+  "scripts": {
+    "prepack": "cp ../../skills/qz-browser-agent/SKILL.md src/qz-drive-SKILL.md"
+  },
   "license": "Apache-2.0",
   "homepage": "https://alibaba.github.io/qz-browser-agent/",
   "bugs": { "url": "https://github.com/alibaba/qz-browser-agent/issues" },

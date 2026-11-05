@@ -8,20 +8,23 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
 export async function buildRunProfile({
   sessionId = "",
   canManageSessions = true,
+  externalDrive = false,
   config,
   platformInfo = {},
-}: { sessionId?: string; canManageSessions?: boolean; config: RuntimeConfig; platformInfo?: { os?: string } }) {
+}: { sessionId?: string; canManageSessions?: boolean; externalDrive?: boolean; config: RuntimeConfig; platformInfo?: { os?: string } }) {
   const llmConfig = config;
   const detectedPlatformInfo = platformInfo;
   const maxOutputTokens = resolveRunProfileMaxOutputTokens(
     await getBundledModelMaxOutputTokens(llmConfig),
   );
-  const vision = llmConfig.vision === true;
+  const configuredVision = llmConfig.vision === true;
+  // An external client decides whether it can read images. Qingzhou's own model setting does not hide them.
+  const imageTools = externalDrive || configuredVision;
   const sessionKind = canManageSessions ? "user" : "restricted";
   const disabledTools = [];
 
   if (!canManageSessions) disabledTools.push("manage_sessions", "manage_goal");
-  if (!vision) disabledTools.push("screenshot", "act_on_screen", "read_image");
+  if (!imageTools) disabledTools.push("screenshot", "act_on_screen", "read_image");
 
   return {
     version: 1,
@@ -35,17 +38,17 @@ export async function buildRunProfile({
       id: String(llmConfig.model || ""),
       provider: String(llmConfig.provider || ""),
       endpoint: String(llmConfig.endpoint || ""),
-      vision,
+      vision: configuredVision,
       toolCalling: llmConfig.toolCalling !== false,
       contextWindow: Number(llmConfig.contextWindow) || null,
       trimOldToolResults: llmConfig.trimOldToolResults !== false,
       maxOutputTokens,
     },
     features: {
-      imageInput: vision,
-      screenshots: vision,
+      imageInput: imageTools,
+      screenshots: imageTools,
       goalTracking: !!canManageSessions,
-      toolImages: vision,
+      toolImages: imageTools,
       sessionTools: !!canManageSessions,
       toolCalling: llmConfig.toolCalling !== false,
     },

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Worker } from "node:worker_threads";
 import { transformSync } from "esbuild";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -68,8 +69,8 @@ assert.match(source, /QZ_SCRIPT_RUNTIME\.installSecurityGuards\(__qzSecurityGuar
 assert.match(source, /const safeInput = __qzSafeValueForMessage\(input \|\| \{\}\)/, "page runtime should sanitize tool args before window.postMessage");
 assert.match(source, /const __qzSafeResult = ok && result !== undefined \? __qzSafeValueForMessage\(result\) : null/, "page runtime should sanitize returned script results before CDP serialization");
 assert.match(runScriptBridge, /function failureResponse\(/, "run_script tool bridge should have one failure response contract");
-assert.match(runScriptBridge, /const respondFailure[\s\S]*withLanguage\(language, \(\) => failureResponse\(payload, options\)\)/, "run language scopes must retain the shared failure response contract");
-assert.match(runScriptBridge, /const isError = output.ok === false \|\| output.isError === true \|\| output.error != null[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
+assert.match(runScriptBridge, /const respondFailure[\s\S]*withLanguage\(language, \(\) => failureResponse\(payload, options\)/, "run language scopes must retain the shared failure response contract");
+assert.match(runScriptBridge, /const isError = isToolFailure\(output\)[\s\S]*await applyNestedToolResult\([\s\S]*if \(isError\)[\s\S]*respondFailure\(result/, "run_script tool bridge should record and reject tool failure payloads instead of resolving error objects");
 assert.match(runScriptBridge, /catch \(error\)[\s\S]*return respondFailure\(/, "run_script tool bridge should reject thrown tool errors");
 assert.doesNotMatch(serviceWorker, /ok:\s*true,\s*[\r\n\s]*result:\s*localizeToolFailurePayload\(\{[\s\S]*RUN_SCRIPT_TOOL_CALL_FAILED/, "run_script tool bridge must not wrap failed tool calls as successful responses");
 assert.match(source, /if \(!response\.ok\)[\s\S]*reject\(bridgeError\)/, "page run_script tools should reject failed bridge responses");
@@ -110,6 +111,37 @@ assert.ok(
   (source.match(/world:\s*"ISOLATED"/g) || []).length >= 2,
   "internal chrome.scripting bridges should execute in the isolated world so page CSP cannot block bridge code",
 );
+assert.doesNotMatch(source, /qz-run-script-trace/, "page scripts must not broadcast trace rows");
+assert.match(source, /Object\.defineProperty\(__qzPromise, "__qzTrace"/, "page traces stay on the promise held by CDP");
+assert.doesNotMatch(innerWorkerSource, /script_trace/, "inner traces stay in the worker until one snapshot");
+assert.match(innerWorkerSource, /liveInnerTraces/, "inner traces stay addressable for the timeout snapshot");
+{
+  const hung = wrapRunScriptSource("async () => { for (let i = 0; i < 8; i += 1) trace('row-' + i); await new Promise(() => {}); }");
+  const worker = new Worker(`
+    const { parentPort } = require('node:worker_threads');
+    globalThis.self = globalThis;
+    globalThis.location = { href: 'https://fixture.test/' };
+    self.postMessage = value => parentPort.postMessage(value);
+    parentPort.on('message', data => self.onmessage({ data }));
+    ${compiledWorker}
+  `, { eval: true, execArgv: [] });
+  const seen = [];
+  try {
+    const snapshot = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("trace snapshot timed out")), 5000);
+      worker.on("message", message => {
+        seen.push(message.type);
+        if (message.type === "trace_snapshot") { clearTimeout(timer); resolve(message.trace); }
+      });
+      worker.postMessage({ type: "execute", requestId: "hung", source: hung });
+      worker.postMessage({ type: "trace_snapshot", requestId: "hung" });
+    });
+    assert.deepEqual(snapshot.map(row => row.message), ["row-3", "row-4", "row-5", "row-6", "row-7"]);
+    assert.equal(seen.includes("script_trace"), false);
+  } finally {
+    await worker.terminate();
+  }
+}
 
 console.log("run_script result contract tests passed");
 

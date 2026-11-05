@@ -197,7 +197,7 @@ async function runCase(original, iteration) {
   let sessionId;
   try {
     const created = await until(() => { if (observer.error) throw observer.error; if (observer.settled && !observer.created) throw new Error("Creation ended before exposing a task ID"); return observer.created; }, "task admission");
-    sessionId = created.session?.id || created.sessionId; assert.ok(sessionId); entry.sessionId = sessionId; activeSessions.add(sessionId);
+    sessionId = created.session?.sessionId || created.sessionId; assert.ok(sessionId); entry.sessionId = sessionId; activeSessions.add(sessionId);
     report.current.sessionId = sessionId; stage = "execution"; persist();
     if (test.kind === "steer") {
       await delay(2000);

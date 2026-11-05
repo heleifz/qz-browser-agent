@@ -1,271 +1,195 @@
 ---
 name: qz-browser-agent
-description: Delegate complete browser tasks to qz, an autonomous agent in the user's browser. Use when a separate agent should plan and carry out the browser work, such as cross-site research, comparisons, structured data collection, or multi-step web workflows. Provide the goal and expected deliverable; qz executes the task and returns results or questions that need user input.
+description: Drive the connected browser through the qz CLI. Create one session per task, then pass its sessionId and an explicit tabRef to page tools. Do not configure a qz model. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
-# qz
+<!-- qz-drive-guide:en -->
+Do not configure a qz model.
 
-## Suitable tasks
+The external agent plans the work and drives the connected browser. Do not start a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
 
-- Research several sources, reconcile their claims, and return a cited comparison.
-- Collect and filter information across listings or pages into a reusable table,
-  CSV, Excel file, or image collection.
-- Complete an authorized workflow in the user's existing browser session and
-  return its outcome or a question requiring their decision.
+## Install and connect
 
-## Check the runtime environment
-
-Run the CLI on the machine where Chrome and the qz extension are installed.
-It connects to a local service; a cloud shell alone cannot reach the user's
-desktop browser. On first use, check Node.js 22 or later and the browser connection:
+Install or update the skill:
 
 ```sh
+npx skills add alibaba/qz-browser-agent -g
+```
+
+Here `qz` abbreviates `npx --yes qz-browser-agent@latest`; a global CLI install is optional. In Bash/Zsh define the function below. In PowerShell replace qz with the full npx invocation. Run connection commands on the machine with the extension, using Node.js 22 or later:
+
+```sh
+qz() { npx --yes qz-browser-agent@latest "$@"; }
 node --version
-npx --yes qz-browser-agent@latest status --json
+qz status --json
+qz connect
 ```
 
-Check `result.connected` and `result.browsers`. If the intended Profile is not online,
-get its pairing URL:
+Read result.connected and result.browsers. When disconnected, run qz connect, not model configuration. It starts the local service and opens pairing in the default browser; ask the user to confirm once. It reuses the only online browser. If the extension is missing, qz install opens the store; ask the user to install it, finish the first-use notice, and pair.
+
+To select a Profile:
 
 ```sh
-npx --yes qz-browser-agent@latest connect --no-open --json
+qz connect --no-open --name work --json
 ```
 
-This starts or reuses the service and immediately returns `result.url`, `endpoint`,
-`mcpUrl`, and `opened: false`. Open that exact URL in the user-selected Profile where
-qz is installed. For macOS Chrome, set `QZ_PAIRING_URL` to `result.url` and
-`QZ_PROFILE_DIRECTORY` to the known profile directory, then run:
+Open result.url in the user-selected Profile with the extension. On macOS Chrome, set QZ_PAIRING_URL and QZ_PROFILE_DIRECTORY, then:
 
 ```sh
 open -na "Google Chrome" --args --profile-directory="$QZ_PROFILE_DIRECTORY" "$QZ_PAIRING_URL"
 ```
 
-For an existing custom Chrome data directory, also pass
-`--user-data-dir="$QZ_USER_DATA_DIR"` with that directory's path. Use the browser
-and Profile the user selected; ask if the target is unclear. Other platform examples
-are in the [shell pairing guide](https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md#pair-a-selected-browser-from-the-shell).
+Add --user-data-dir for a custom data directory. Compare qz browsers --json before and after pairing, keep the new clientId, and pass --client CLIENT_UUID on later commands. Selection is required with several online browsers; do not combine --client with connect --no-open/--name. --name labels the Profile opening the URL; otherwise preserve its name or allocate default, browser-2, etc. Pair one Profile at a time.
 
-Add `--name work` to the URL command to assign that identifier to the Profile that
-opens it, including renaming an existing connection. Without a name, qz preserves
-the Profile's registered name or allocates `default`, `browser-2`, and so on.
-The URL response only confirms that the service is ready. Run `browsers --json`
-after opening it; read `result.browsers` and choose the intended online entry's
-`clientId` UUID. If it has not appeared, check the target Profile's first-use data
-notice and connection error before creating a task.
+For connection failures inspect the address in status. connect --port selects a port only before service startup; a running service keeps its address. The user must still confirm pairing. For incompatible upgrades, finish current tasks, qz stop, update/reload every extension, then qz connect. stop disconnects all browsers; it is **not task cleanup**.
 
-For several unpaired Profiles, bind one at a time. Compare `browsers --json` before
-and after opening each URL, then record the newly online UUID beside that Profile's
-path before opening the next. Reuse this Profile-to-UUID mapping throughout the task.
+qz skill returns this guide. Read once when starting a task, not every turn.
 
-Ordinary `connect --json` opens the system's default browser when pairing is needed
-and reuses a sole online browser otherwise. `connect --name work` opens the named URL
-and returns immediately; verify the pairing with `browsers --json` as above.
+## One task uses one session
 
-If the extension is missing, direct the user to the
-[Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm)
-and ask them to click **Add to Chrome** in the intended Profile.
-`npx --yes qz-browser-agent@latest install` opens the store listing.
-For manual installation, use the ZIP from the
-[latest GitHub release](https://github.com/alibaba/qz-browser-agent/releases/latest)
-and follow its loading instructions. After installation, have them complete the
-first-use data notice and configure their model in qz, then open the pairing URL
-in that Profile and check `browsers --json` again.
+Run `qz session create --title "Inspect example page"` first; a readable title is required, and omitting it exits 2. stdout prints `sessionId <id>`. With --json, read result.sessionId. Each create makes a new session without starting a model.
 
-`CLIENT_UUID` below means the selected Profile's UUID. Carry it with each task ID
-and include `--client CLIENT_UUID` in every task, settings, and resource command.
-This keeps follow-ups, watches, answers, and exports in the same browser. `--client` selects an already connected browser and cannot
-be combined with `connect --no-open` or `connect --name`. Reconnect an offline
-target by opening the pairing URL in that same Profile, or through its
-**qz Settings → Advanced → Connect CLI**. All Profiles share one local service.
+Every later `qz script --session ID`, `qz exec --session ID`, and `qz tools --session ID` call uses that ID. Missing `--session` exits 2 and does not create or reuse a session. An unknown ID returns DRIVE_SESSION_NOT_FOUND: check the ID and browser selection, never invent an ID. A new task creates again; independent parallel tasks use separate sessions. The CLI does not resume the previous session implicitly.
 
-For ordinary connection failures, qz pauses after three attempts. After a browser or
-background restart, it may first wait once for the previous connection to expire.
-Retry through the same Profile's pairing URL or Settings. Compare its local address
-with the endpoint in `status --json`;
-`connect --port PORT` requests a custom port. An existing service keeps its current
-address. Changing the address alone does not connect until the user clicks **Connect CLI**.
+### Copyable golden path (Bash/Zsh)
 
-Use the current CLI and extension together. For `upgrade_required` or
-`MCP_CONNECTION_INCOMPATIBLE`, use the latest CLI, wait for current tasks to finish,
-run `npx --yes qz-browser-agent@latest stop`, update and reload the extension in every
-connected browser, then pair again.
-Explain that `stop` disconnects **all** browsers before stopping an existing service.
-To disconnect one browser, use its Settings. To reclaim a deleted Profile's name,
-use `browsers forget NAME_OR_UUID` after confirming the registration is offline.
-
-Once connected, check the model configuration on first use or after a provider error:
+Connect and define qz as above. With several browsers, add --client CLIENT_UUID to the npx invocation inside that function. Stop after any failed step:
 
 ```sh
-npx --yes qz-browser-agent@latest settings get --client CLIENT_UUID --json
+CREATED=$(qz session create --title "Inspect example page" --json) || exit 1
+SID=$(printf '%s' "$CREATED" | node -e 'const x=JSON.parse(require("fs").readFileSync(0,"utf8")); if(!x.ok || !x.result.sessionId) process.exit(1); console.log(x.result.sessionId)') || exit 1
+qz exec --session "$SID" <<'JSON'
+{"calls":[
+  {"id":"open","name":"open_tab","args":{"url":"https://example.com","tabAlias":"page"}},
+  {"id":"read","name":"get_ax_tree","args":{"tabRef":"page","scope":"viewport","limit":40}}
+]}
+JSON
+test "$?" -eq 0 || exit 1
+# Inspect every isError in the batch before continuing.
+qz script --session "$SID" --tab page --json - <<'JS'
+async () => {
+  // Read the example page's title and URL to verify its content.
+  return { title: document.title, href: location.href };
+}
+JS
 ```
 
-Inspect `result.config.provider` and `model`, and the matching entry in
-`result.providers`. API-key providers need `config.hasApiKey`; sign-in providers
-need `auth.loggedIn` and an unexpired session. Local endpoints may need no key.
-If configuration is incomplete, guide the user to qz Settings. For account-specific
-work, the user also needs to be signed into the target site in that Chrome profile.
+A successful open_tab returns tabRef, not id. `tabAlias` is recommended for readability and is not required. Use that alias or the tabRef returned by open_tab/list_tabs next. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. A returned positive integer or its numeric string is also a tabRef; never guess one. Direct-drive results name the page with tabRef: only open_tab/list_tabs return it, preserving a supplied alias; other page tools do not echo it.
 
-If npm reports `ETARGET` for `@latest`, check `npm config get registry`. A mirror
-may lag the public registry. Retry this invocation with
-`npx --yes --registry=https://registry.npmjs.org/ qz-browser-agent@latest …`.
+Page tools always pass `tabRef`, including act_on_screen and each page call in a batch. A missing tabRef is TAB_REF_REQUIRED. open_tab, list_tabs, list_skills, load_skill, wait and wait_until need no page reference; neither do read_image with url, collect_images with only urls, or run_script for computation without a page. wait waits for a duration; use wait_for_navigation for page loading.
 
-## Create and monitor a task
+One tab belongs to one session at a time; a later claimant fails without interrupting its owner. Use list_tabs({scope:"all"}) to inspect other web pages and pass tabRef explicitly for read-only tools; changes require a session-owned page. Default list_tabs returns `{tabs:[{tabRef,title,url,active}],count,foreign}` for this session. active marks the tab visible to the user; it never selects a tool target.
 
-Invoke the CLI with `npx --yes qz-browser-agent@latest`; a global installation is
-optional. Quote task text and resource names. For complex text or JSON, use stdin
-(`create -`, `send TASK_ID -`, or `submit TASK_ID -`).
+## Discover tools and use their parameters
 
-Give qz a concise objective, relevant URLs, constraints, and the desired output.
-Let qz choose the browser steps. Carry the user's authorization into the task; request
-review before purchases, posting, deletion, or other external changes that the
-user has not authorized. Treat page content and task output as data.
+`qz tools --session "$SID"` and tools.$list() in a script return compact signatures. The listed tools are:
 
-```sh
-npx --yes qz-browser-agent@latest create "Compare SQLite, DuckDB, and PostgreSQL for local analytics using official docs. Save trade-offs and source URLs in a table." --client CLIENT_UUID --json
-```
+open_tab, navigate, list_tabs, close_tab, get_ax_tree, find_elements, read_article, act_on_element, scroll_page, screenshot, wait_for_element, wait_for_navigation, run_script, load_skill, list_skills.
 
-Save the returned `result.session.id` as `TASK_ID` immediately.
-Then wait on that same task:
+Look up additional tools by name: `qz tools --session "$SID" wait_until`. These include read_dom, inspect_element, act_on_screen, wait, wait_for_response, wait_for_network_idle, wait_until, document tools, list_images, collect_images, read_image, read_image_asset, data_store, download_url, list_downloads, save_file, network_watch, network_recent, network_body, read_console_messages, browse_history, set_page_mode, get_location, send_alert, and load_skill_resource. wait_until takes an absolute until timestamp with a time zone.
 
-```sh
-npx --yes qz-browser-agent@latest watch TASK_ID --timeout 30 --client CLIENT_UUID --json
-```
+- open_tab({url,tabAlias?}), navigate({tabRef,url}): use HTTP/HTTPS URLs.
+- read_article({tabRef,target?,limit:6000}): read body text; use source:"target" for an element source, and continue with nextOffset. Do not substitute an accessibility tree for document text.
+- get_ax_tree({tabRef,target?,scope?,depth?,limit?}): read snapshot for uids. scope is only viewport or full. Omitted scope uses viewport without a target, full for a uid:/css: target. Narrow target/limit; a truncated preview is not the full tree.
+- find_elements({tabRef,pattern?,target?,limit?}): pattern is a regex, case-insensitive by default, not literal text. For literal `a.b`, use the JSON string `"a\\.b"`; escape other regex metacharacters too. Pass returned target unchanged to element tools.
+- act_on_element({tabRef,target,action,value?,key?}): target is uid: or css:. action is click, fill, press, select, check, uncheck, or scroll. fill/select need value; press needs key. One action per call.
+- wait_for_element({tabRef,target,timeout?,absent?}): prefer uid:, with css: as fallback. Check found for ordinary waits. absent:true means the original node was removed or is invisible; found:false also occurs on success, so inspect timedOut to distinguish timeout from disappearance.
+- wait_for_navigation({tabRef,timeout?,fromUrl?,fromTitle?}): wait for loading to finish, not for a URL change. An already loaded tab immediately returns already_complete, which does not prove the preceding action succeeded. Supply fromUrl to compute urlChanged and read the page to verify state.
 
-Set the calling shell's timeout longer than the CLI deadline, for example 45 seconds
-for this 30-second watch. Repeat bounded watches while work is running. After a timeout,
-run the returned recovery command with the same `TASK_ID` and browser UUID; when using
-bounded shell calls, keep `--timeout 30`. Use `show` when you need to inspect the task or read
-a pending question again.
+Navigation, same-URL reloads and DOM replacement can invalidate uids. On stale references, run find_elements again or read a small get_ax_tree and use a fresh target; do not repeatedly submit the old uid. Reuse returned uid: targets first; use css: targets when no uid is available. One button does not need a full tree, list_tabs, and screenshot. Use screenshots only when semantic tools are insufficient; image bytes stay out of JSON. Omit target for the viewport; pass a uid: or css: target for an element. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read. ToolError is never truncated.
 
-JSON stdout is one envelope: `{ "ok": true, "result": ... }` or
-`{ "ok": false, "error": { "code": ..., "message": ... } }`.
+Use returned target values unchanged. A target is `uid:t<tab>.<snap>.<n>` or `css:...`; rect is `{x,y,width,height}`. AX, find_elements, list_images, inspect_element and wait_for_element return targets accepted by act_on_element, inspect_element and screenshot.
 
-| Command (`--json`) | Task ID | Task status |
-| --- | --- | --- |
-| `create` | `result.session.id` | Observe with `watch` after creation |
-| `create --wait` | `result.session.id` | `result.snapshot.status` |
-| `show` | `result.sessionId` | `result.status` |
-| `watch` | `result.sessionId` | `result.snapshot.status` |
+## calls is a batch, not a transaction
 
-For `show`, read `result.input` for pending questions, `result.transcript` for
-responses, and `result.artifacts` for outputs. Waited commands return the task
-snapshot in `result.snapshot`; read its `input` and `transcript` fields.
-On failure, read `error.code`, `error.message`, and any supplied recovery fields:
-`error.sessionId`, `error.command`, or `error.url`.
+Use each call's id to match its entry in results. Fixed-alias open/read calls may share a batch. Split requests when the next step requires an unknown uid, fileId or docModelId. Inspect each results item's isError. Failures do not roll back completed actions; do not blindly replay the entire batch. At most 10 items, and only one in-flight batch per session.
 
-For `task_not_found` or `task_deleted`, check the task ID and selected browser with
-`tasks --client CLIENT_UUID --json` and `browsers --json`. Locate the task before
-watching it again. These errors mean the task is absent from the selected browser.
-
-`show` returns a compact recent history. For an unabridged final response, use
-`watch` and read `result.snapshot.transcript`. Snapshots can contain large tool
-results: save JSON to a temporary file and extract status, input, assistant text,
-and artifact metadata before displaying it. Read tool details from that file as needed.
-
-`watch`, `--wait`, and `--stream` follow the same task across successive runs, including
-accepted follow-ups and steering messages. Successful completion requires `completed`
-with empty queues. Report `error`, `failed`, `aborted`, `cancelled`, or `interrupted`
-and inspect the reason instead of waiting again. `waiting_user`
-means the task needs input. Use `show` and check `result.input.waiting` and its current request.
-`ok: true` on `show` means the read succeeded, not that the task finished.
-Review the deliverable against the requested outcome, then return the findings,
-source links, and any file/table identifiers. Request missing evidence or corrections
-through a follow-up in the same task.
-
-Timeout or Ctrl-C ends observation; the browser task continues. Keep its ID and
-resume with the returned `watch` command in the same browser. Observation never resends
-messages. If creation lost its response, use `tasks --client CLIENT_UUID --json` to locate
-the task before creating another. After an uncertain `send` or `submit`, inspect the
-conversation before repeating that action.
-
-## Questions and permission requests
-
-`show` exposes the current request in `result.input`, including `waitId`, the
-question, form field IDs, option values, and `responseTemplate` when a CLI response
-is supported. Relay the question and choices to the user. Fill
-`result.input.responseTemplate.answers` from their answer, preserving field IDs
-and option values; multi-choice fields use arrays. Submit the answers object via stdin.
-
-Bash / Zsh:
+For a two-page comparison:
 
 ```sh
-npx --yes qz-browser-agent@latest submit TASK_ID - --wait-id WAIT_ID --client CLIENT_UUID --json <<'JSON'
-{"city":"Hangzhou"}
+qz exec --session "$SID" <<'JSON'
+{"calls":[
+  {"id":"a-open","name":"open_tab","args":{"url":"https://example.com/a","tabAlias":"a"}},
+  {"id":"a-read","name":"read_article","args":{"tabRef":"a","limit":4000}},
+  {"id":"b-open","name":"open_tab","args":{"url":"https://example.com/b","tabAlias":"b"}},
+  {"id":"b-read","name":"read_article","args":{"tabRef":"b","limit":4000}}
+]}
 JSON
 ```
 
-PowerShell 7.3+ (Windows):
+## Page scripts and three timeout budgets
 
-```powershell
-@'
-{"city":"Hangzhou"}
-'@ | npx --yes qz-browser-agent@latest submit TASK_ID - --wait-id WAIT_ID --client CLIENT_UUID --json
-```
+`qz script --session ID` always runs in the page named by required `--tab`. With `qz exec --session ID`, run_script with tabRef runs in that page; without tabRef it runs JavaScript computation or tool orchestration without document/window. Each nested page tool still passes tabRef. Use calls for independent operations; do not nest another run_script string.
 
-For permission requests:
+`qz script --session "$SID" --tab page page.js` reads a local file. Page code is a single `async () => { ... }` function expression: no IIFE, main(), or return outside a function. Start with a comment naming the page, action and purpose. Scripts can access document/window, input/args, tools/tool and trace/log. tabRef is a call argument, not an injected script variable; nested page tool calls explicitly pass an alias too. Page execution does not provide Node.js, fs, process or require.
+
+CLI script has no mutatesPage option. For page changes use exec with mutatesPage:true:
 
 ```sh
-npx --yes qz-browser-agent@latest approve TASK_ID --wait-id WAIT_ID --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest reject TASK_ID --wait-id WAIT_ID --client CLIENT_UUID --json
+qz exec --session "$SID" <<'JSON'
+{"name":"run_script","args":{"tabRef":"page","timeout":30,"mutatesPage":true,"code":"async () => { document.querySelector('#query').value = 'example'; return {changed:true}; }"}}
+JSON
 ```
 
-The `city` field is illustrative: use the current template. Bind the response to
-the `waitId` you read. A rejected response can have `ok: true` but
-`result.accepted: false`; read `result.code` and `result.input` to correct it.
-`result.requiresUserAction: true` means the user must act in Chrome.
-Show consent notices to the user before approving on their instruction.
-For native Chrome permissions, relay the supplied instructions and ask the user to
-click in the qz side panel; a CLI approval cannot grant browser permission.
+Prefer act_on_element for forms/clicks. Perform clicks or navigation that unload the page as separate ordinary tool calls, then read the page again.
 
-Resume observing after the response. Watches stay active during input waits, and
-JSON-mode input notices appear on stderr.
+All three budgets are seconds:
 
-## Continue or stop
+1. args.timeout is required and limits script execution. <=0 means no script deadline; >0 is its maximum duration. CLI script defaults to 120; its --timeout sets this deadline and accepts only >0 and <=3600.
+2. limits.timeoutSeconds limits the entire calls batch's execution, not client waiting. Expiry yields DRIVE_BATCH_TIMEOUT without a rollback guarantee.
+3. CLI exec --timeout sets request waiting, default 180. It waits at least the longest script timeout in that request plus 60, preserving a longer client setting. Script timeout<=0 uses a request upper bound of 86400. Neither args.timeout nor limits.timeoutSeconds is rewritten. Allow enough total request time for several serial scripts; the external agent's shell deadline must also be longer.
+
+Do not hide a request timeout with sleep. On BRIDGE_REQUEST_TIMEOUT inspect the call and page before resending. For load-more work, process a few pages per step, return count/cursor, and stop on no growth. Script execution can still time out; inspect completed work before continuing.
+
+## PDF: load the document Skill first
+
+Discover and load the Skill before using its document tools. PDF viewers do not support body reads or page actions. On PDF_PAGE_UNSUPPORTED or blocked script injection, use qingzhou-documents tools with the original PDF URL, not CORS proxies or online viewers. The URL and IDs below are placeholders: replace the URL, then read each response before filling the next command. Never send FILE_ID/DOC_MODEL_ID literally.
 
 ```sh
-npx --yes qz-browser-agent@latest send TASK_ID "Add deployment constraints to the comparison." --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest send TASK_ID "Focus on single-machine analytics." --steer --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest cancel TASK_ID --client CLIENT_UUID --json
+qz exec --session "$SID" '{"name":"list_skills","args":{}}'
+qz exec --session "$SID" '{"name":"load_skill","args":{"name":"qingzhou-documents"}}'
+qz exec --session "$SID" '{"name":"qingzhou_documents__document_fetch","args":{"url":"https://example.com/report.pdf"}}'
+# Copy result.result.fileId into FILE_ID below.
+qz exec --session "$SID" '{"name":"qingzhou_documents__document_parse","args":{"fileId":"FILE_ID"}}'
+# Copy result.result.docModelId into DOC_MODEL_ID below.
+qz exec --session "$SID" '{"name":"qingzhou_documents__document_read_chunk","args":{"docModelId":"DOC_MODEL_ID","chunkIndex":0}}'
 ```
 
-`send` continues the existing task; a busy task queues a follow-up. `--steer`
-updates an active run at its next safe boundary. A nonwaiting send returns a
-`result.clientMessageId` confirming acceptance. Add `--wait --timeout 30` to follow the
-task until its work completes and its queues are empty. Removing an unconsumed follow-up
-or steering message removes that work from the wait; observation can complete once the
-remaining execution ends and the queues are empty.
-`--stream` also shows responses from the submitted message onward, including later runs.
-If that wait expires, execute the returned `watch` command using the same `TASK_ID` and
-browser UUID; keep `--timeout 30` when using a bounded shell call.
-`cancel` stops the task. Use it when the user asks to stop, not as timeout recovery.
-`stop` disconnects the shared local service
-and all its clients; ordinary task completion needs no service shutdown.
+Follow read_chunk's next value only as needed. fileId/docModelId belong to this session. For PDF resources packaged in another Skill, load_skill_resource({name,path}) returns docModelId directly; read chunks without fetching/parsing again. Keep the qingzhou_documents__ prefix.
 
-## Data, images, Skills, and settings
+## CLI results
 
-Use `--help` on the relevant command for additional options.
+Examples omit metadata such as clientId/runId.
 
-```sh
-npx --yes qz-browser-agent@latest data list --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest data export "TABLE_NAME" --format csv --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest data export "TABLE_NAME" --format xlsx --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest images list --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest images export "COLLECTION_NAME" --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest skills list --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest skills show "SKILL_NAME" --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest skills export "SKILL_NAME" --client CLIENT_UUID --json
-npx --yes qz-browser-agent@latest settings get --client CLIENT_UUID --json
-```
+| Command | Success: script returns 7 | Tool failure (script syntax) | Thrown/transport failure |
+| --- | --- | --- | --- |
+| qz script --session ID --tab page --json | `7` | `{"code":"SCRIPT_EVALUATION_FAILED","message":"SyntaxError: Unexpected token","details":{"line":2,"column":4}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
+| qz exec --session ID | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"ok":true,"result":7}}}` | `{"ok":true,"result":{"toolName":"run_script","sessionId":"S","result":{"code":"SCRIPT_EVALUATION_FAILED","message":"…"}}}` | `{"code":"DRIVE_SESSION_NOT_FOUND","message":"…"}` |
 
-Use exact names from the lists. Exports use Chrome downloads and report status,
-download ID, and filename/path when available; image collections export as ZIP.
-Use `data delete NAME` or `images delete NAME` only for user-requested cleanup.
-`skills` here manages Skills inside qz; the external `npx skills add` installer is
-a separate command. Only user-installed qz Skills can be exported.
+script stdout is the returned value. exec script values are at result.result.result; ordinary tool data, such as open_tab, is at result.result; batches are at result.results. An exec outer ok:true means transport success, not tool success; inspect the body and each isError. CLI exit 0 means success, 1 tool/transport failure, 2 invalid arguments. Errors use `{code,message,hint?,details?}`; details carries locations and trace information. Thrown failures on an interactive terminal without --json go to stderr. Keep supplied error text, location and stack summaries rather than replacing them with a generic error. Handle a truncation envelope directly instead of unwrapping it as an ordinary return value.
 
-`settings get` returns editable fields and redacted credentials. Change settings
-only as requested, using `settings set KEY VALUE` or a JSON patch via stdin.
-Keep credentials out of command arguments and logs. `automations list` and
-`automations run ID` inspect or run an existing scheduled task.
+## Finish, reconnect and recover
 
-Command reference: https://github.com/alibaba/qz-browser-agent/blob/main/docs/cli.md
+A CLI process exiting **does not immediately close its business tabs**. The next process in the same task explicitly passes the same sessionId. After business calls finish, about 30 minutes of idle time triggers cleanup while the extension runtime is running; process exit is not proof that cleanup completed.
+
+Finish with `qz cancel "$SID"`: it ends the session and cleans up tabs; do not call close_tab afterward. close_tab closes individual tabs only while the session is active. Further tool execution returns DRIVE_SESSION_ENDED; create a new session for a new task. Do not use global qz stop for task cleanup.
+
+Cleanup closes tabs opened by this session. It preserves pre-existing tabs and tabs handed back to the user. If the user activates a task tab, automation stops on that tab and the tab stays open. For a new task or a later day, run qz connect and create a new session.
+
+Change one thing per retry and retain the error code and sentence:
+
+- Disconnected: qz connect, no loop and no model setup.
+- DRIVE_SESSION_REQUIRED: create first and pass its ID. DRIVE_SESSION_NOT_FOUND: check the ID/browser; create for a new task.
+- DRIVE_SESSION_ENDED: the session has ended; no further tab cleanup calls are needed. Create for a new task.
+- DRIVE_SESSION_OCCUPIED: the ID belongs to an ordinary task; create a new session.
+- DRIVE_SESSION_BUSY: a call is in flight. Wait for that batch to finish.
+- DRIVE_ARGUMENTS / DRIVE_TOO_MANY_CALLS: name or calls, not both; each row needs id/name and object args; at most 10 calls.
+- TAB_REF_REQUIRED: supply this session's explicit tabRef. BATCH_TAB_REFERENCE_ERROR: check aliases, open-before-read order, and session identity. no_alias occurs only when an alias was passed but no matching alias exists in this session.
+- SESSION_TAB_UNOWNED: use this session's page or open_tab first.
+- UNKNOWN_TOOL: start with `qz tools --session "$SID"`, inspect by name or load the matching Skill.
+- DRIVE_TOOL_FORBIDDEN: choose an available tool from `qz tools --session "$SID"`.
+- DRIVE_BATCH_TIMEOUT: inspect completed results before raising the budget/splitting steps. OPERATION_ABORTED: inspect the page before retrying.
+- Login/challenge: stop and ask the user to sign in in this browser, then retry.
+
+The side panel for a drive session is view-only. Use browser tools for page content; use the shell for local files.
+<!-- qz-drive-guide:end -->

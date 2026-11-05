@@ -92,6 +92,20 @@ assert.equal(recent.results[0].durationMs, 200);
 
 const body = await definitions.get("network_body").execute({ tabId: 4, requestId: "r1" }, null, runOne);
 assert.equal(body.body, "body-4");
+assert.equal(Object.hasOwn(body, "tabId"), false);
+
+const missingBody = await definitions.get("network_body").execute({ tabId: 4, requestId: "missing" }, null, runOne);
+assert.equal(missingBody.code, "NETWORK_REQUEST_NOT_FOUND");
+assert.match(missingBody.message, /missing/);
+assert.match(missingBody.hint, /network_recent/);
+assert.deepEqual(missingBody.details, { requestId: "missing" });
+assert.deepEqual(Object.keys(missingBody).sort(), ["code", "message", "hint", "details"].sort());
+
+const invalidFilter = await definitions.get("network_recent").execute({ tabId: 4, urlPattern: "[" }, null, runOne);
+assert.equal(invalidFilter.code, "INVALID_REGEX");
+assert.match(invalidFilter.message, /regular expression/i);
+assert.match(invalidFilter.hint, /pattern/);
+assert.deepEqual(Object.keys(invalidFilter).sort(), ["code", "message", "hint", "details"].sort());
 
 await definitions.get("read_console_messages").execute({ tabId: 4, reset: true }, null, runOne);
 emit("Runtime.consoleAPICalled", {

@@ -151,6 +151,13 @@ export function createSessionRepository({
       const sessions = await listMetadata();
       const id = normalizeSessionId(input.id) || genSessionId();
       const existing = sessions[id];
+      if (existing?.driveRetentionPending === true) throw new DeletedSessionWriteError(id);
+      const requestedSource = normalizeSessionSource(input.source);
+      const currentSource = normalizeSessionSource(existing?.source);
+      if (existing && requestedSource === "external-drive" && currentSource !== "external-drive") {
+        throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
+      }
+      if (existing && requestedSource === "external-drive" && currentSource === "external-drive") return existing;
       const now = nowBeijingDateTime();
       const requestedParent = normalizeParentSessionId(input.parentSessionId);
       const parentSessionId = existing?.parentSessionId
@@ -162,6 +169,7 @@ export function createSessionRepository({
         titleSource: existing?.titleSource || normalizeTitleSource(input.titleSource, parentSessionId),
         parentSessionId,
         source: normalizeSessionSource(input.source || existing?.source),
+        driveGroupTitle: normalizeDriveGroupTitle(input.driveGroupTitle || existing?.driveGroupTitle),
         automationId: normalizeSessionId(input.automationId || existing?.automationId),
         automationRunId: normalizeSessionId(input.automationRunId || existing?.automationRunId),
         listSummary: normalizeSessionListSummary(
@@ -217,35 +225,54 @@ export function createSessionRepository({
     });
   }
 
-  function deleteSession(sessionId: string) {
+  function beginDeletion(sessionId: string) {
     const id = requireSessionId(sessionId);
     deletedSessionIds.add(id);
     transcriptBases.delete(id);
     transcriptPending.delete(id);
+  }
+
+  function deleteSession(sessionId: string, { strict = false } = {}) {
+    const id = requireSessionId(sessionId);
+    beginDeletion(id);
     return metadataQueue.run(async () => {
       // A create queued before this delete may have cleared the eager tombstone.
-      // Reassert it at the serialized deletion boundary so late writes stay rejected.
-      deletedSessionIds.add(id);
+      beginDeletion(id);
       const sessions = await listMetadata();
       const existed = Boolean(sessions[id]);
-      const parentId = normalizeParentSessionId(sessions[id]?.parentSessionId);
-      delete sessions[id];
-      for (const session of Object.values(sessions)) {
-        if (normalizeParentSessionId(session.parentSessionId) === id) session.parentSessionId = parentId;
+      const removeMetadata = async () => {
+        const parentId = normalizeParentSessionId(sessions[id]?.parentSessionId);
+        delete sessions[id];
+        for (const session of Object.values(sessions)) {
+          if (normalizeParentSessionId(session.parentSessionId) === id) session.parentSessionId = parentId;
+        }
+        await storageArea.set({ [SESSIONS_KEY]: sessions });
+      };
+      const cleanup = async (label: string, operation: () => Promise<unknown>) => {
+        if (strict) await operation();
+        else await operation().catch(error => console.warn(`[轻舟] deleted Session ${label} cleanup failed`, error));
+      };
+      // Retention keeps its pending metadata until every store has been cleaned, so failure is retryable.
+      if (!strict) await removeMetadata();
+      await cleanup("record", () => recordQueues.run(id, () => storageArea.remove([
+        recordKey(id), transcriptCheckpointKey(id), `_session_import_dedup_${id}`,
+      ])));
+      await cleanup("conversation", () => conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))));
+      await cleanup("runtime", () => deleteRuntime(id));
+      if (strict) {
+        const values = await storageArea.get(LEGACY_SESSION_RUNTIME_KEY);
+        const legacy = { ...record(values[LEGACY_SESSION_RUNTIME_KEY]) };
+        if (Object.hasOwn(legacy, id)) {
+          delete legacy[id];
+          await storageArea.set({ [LEGACY_SESSION_RUNTIME_KEY]: legacy });
+        }
       }
-      await storageArea.set({ [SESSIONS_KEY]: sessions });
-      await recordQueues.run(id, () => storageArea.remove([
-        recordKey(id),
-        transcriptCheckpointKey(id),
-        `_session_import_dedup_${id}`, // Obsolete cache from older builds.
-      ])).catch(error => console.warn("[轻舟] deleted Session record cleanup failed", error));
-      await conversationQueues.run(id, () => storageArea.remove(activeConversationKey(id))).catch(error => console.warn("[轻舟] deleted Session conversation cleanup failed", error));
-      await deleteRuntime(id).catch(error => console.warn("[轻舟] deleted Session runtime cleanup failed", error));
       imagePersistence.forgetSession(id);
-      await imagePersistence.sweep().catch(error => console.warn("[轻舟] deleted Session image cleanup failed", error));
+      await cleanup("image", () => imagePersistence.sweep(strict ? id : ""));
+      if (strict) await removeMetadata();
       return { sessionId: id, deleted: true, existed };
     }).catch(error => {
-      deletedSessionIds.delete(id);
+      if (!strict) deletedSessionIds.delete(id);
       throw error;
     });
   }
@@ -525,6 +552,7 @@ export function createSessionRepository({
     patchMetadata,
     updateMetadata,
     deleteSession,
+    beginDeletion,
     readRecord,
     writeRecord,
     writeTranscriptCheckpoint,
@@ -642,6 +670,8 @@ function normalizeMetadataMap(value: unknown): Record<string, SessionMetadata> {
 function cleanMetadata<T extends Fields>(session: T): T {
   const next = { ...session };
   if (!next.source) delete next.source;
+  if (!next.driveGroupTitle) delete next.driveGroupTitle;
+  delete next.keepDriveTabs;
   if (!next.automationId) delete next.automationId;
   if (!next.automationRunId) delete next.automationRunId;
   return next;
@@ -654,7 +684,12 @@ function normalizeTitleSource(value: unknown, parentSessionId: unknown) {
 }
 
 function normalizeSessionSource(value: unknown) {
-  return String(value || "").trim() === "automation" ? "automation" : "";
+  const source = String(value || "").trim();
+  return source === "automation" || source === "external-drive" ? source : "";
+}
+
+function normalizeDriveGroupTitle(value: unknown) {
+  return String(value || "").replace(/\s+/gu, " ").trim().slice(0, 80);
 }
 
 function hasListSummary(summary: SessionListSummary | null | undefined) {

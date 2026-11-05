@@ -1,3 +1,4 @@
+import { isToolFailure } from "../contracts/tool-error.js";
 import { t } from "../i18n/backend.js";
 import { CURRENT_SESSION_VERSION, CURRENT_SESSION_RECORD_VERSION, SESSION_RECORD_TYPE, assertSessionRecordReadable, assertConversationReadable } from "./session-format.js";
 import { isBeijingDateTime, nowBeijingDateTime } from "../time-utils.js";
@@ -177,7 +178,7 @@ export function transcriptFromConversation(saved: unknown) {
         name: call?.name || "tool",
         args: call?.args || {},
         result,
-        isError: Boolean(result && typeof result === "object" && record(result).error),
+        isError: isToolFailure(result),
         image: null,
         ...normalizeTranscriptTiming({
           timestamp: call?.timestamp || entry.timestamp,

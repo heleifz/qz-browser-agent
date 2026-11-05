@@ -96,11 +96,15 @@ await Promise.all([
 ]);
 assert.equal(calls.filter(call => call[0] === "attach" && call[1] === 8).length, 1, "concurrent first use must coalesce attach");
 
+const commandsBeforeConflict = calls.filter(call => call[0] === "command").length;
 await assert.rejects(
-  runtime.sendCdp(7, "Page.enable", {}, runB),
-  error => error?.code === "CDP_TAB_LEASE_CONFLICT" && error?.details?.currentRunId === "run-a",
+  runtime.sendCdp(7, "Page.enable", {}, { ...runB, requestedTabRef: "claimed-page" }),
+  error => error?.code === "CDP_TAB_LEASE_CONFLICT"
+    && JSON.stringify(error.details) === JSON.stringify({ tabRef: "claimed-page" }),
   "another run must not steal an attached tab",
 );
+assert.equal(calls.filter(call => call[0] === "command").length, commandsBeforeConflict);
+assert.deepEqual(runtime.getDebuggerRun(7), { ...runA, connectionId: firstConnection });
 await assert.rejects(
   runtime.sendCdp(99, "Page.enable", {}, runA),
   error => error?.code === "SESSION_TAB_FOREIGN",
@@ -151,10 +155,12 @@ assert.ok(calls.some(call => call[1] === 12 && call[2] === "Runtime.terminateExe
 
 harness.setCommandHandler(async () => { throw new Error("boom"); });
 await assert.rejects(
-  runtime.sendCdp(13, "Page.crash", {}, runA),
-  error => error?.code === "CDP_COMMAND_FAILED" && error?.details?.method === "Page.crash",
+  runtime.sendCdp(13, "Page.crash", {}, { ...runA, requestedTabRef: "broken-page" }),
+  error => error?.code === "CDP_COMMAND_FAILED"
+    && JSON.stringify(error.details) === JSON.stringify({ tabRef: "broken-page" }),
 );
 
+assert.ok(calls.some(call => call[0] === "command" && call[1] === 13 && call[2] === "Page.crash"));
 harness.setCommandHandler(async (_target, method) => ({ method }));
 const temporary = await runtime.withTemporaryDebugger(20, async (_target, send) => send("Page.enable"), "pdf");
 assert.equal(temporary.method, "Page.enable");

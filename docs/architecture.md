@@ -183,6 +183,15 @@ tombstone that rejects late writes. Stop preserves accepted steering and follow-
 delete clear them. A new run receives a new epoch.
 Reset completes after the empty model conversation, display history, and reset runtime are persisted.
 
+[Drive retention](../src/background/session/drive-retention.ts) keeps the 200 most recently active
+external-drive records. Older running or admitted Sessions remain protected until work settles.
+Creation, tool settlement, stop and startup request coalesced background cleanup. A guarded removal
+rechecks activity inside the Session command queue before revoking admission. The optional metadata
+flag `driveRetentionPending` keeps interrupted cleanup retryable; a missing flag means no pending cleanup.
+Strict removal deletes Session-owned documents, artifacts, resource links, transcript/checkpoint/runtime
+keys and unreferenced history images before removing metadata. Failures retry after 30 seconds and on
+startup. Global Data tables, gallery assets and downloaded files remain independent user resources.
+
 [Session codecs](../src/shared/session/session-codec.ts) normalize historical records when reading.
 The repository validates record and conversation versions before selecting or replacing a copy. The
 [format contract](../src/shared/session/session-format.ts) defines supported versions and errors.
@@ -220,8 +229,9 @@ reads and writes. Use the [Data](../src/sdk/shared/data.ts) and
 
 ## Pages, debugger connections, and scripts
 
-[Session tabs](../src/background/session/tabs.ts) owns the working tab and claimed tabs. Page tools
-resolve targets through it. Parent and child Sessions have separate runs and tabs; creating,
+[Session tabs](../src/background/session/tabs.ts) owns claimed tabs and validates explicit page references.
+Active tabs describe user visibility; recent-page state supports presentation, never default targeting.
+Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
@@ -496,6 +506,25 @@ effect-failed producers yield `BATCH_TAB_DEPENDENCY_FAILED` for their consumers,
 that executed speculatively before the producer's commit failed. Independent pages continue. Browser
 operations already issued may still finish after cancellation; closed provisional tabs and revoked
 run authority prevent their late publication.
+
+Element observations use one registry and public handle, `target: "uid:…"` (or `css:…` when binding fails).
+Content supplies short-lived references to the observed nodes. Background resolves batches of at most
+100 references in the owning frame, bounds concurrent node descriptions to eight, and registers backend
+node identities with document and Session scope. AX nodes use the same registration helper. Firefox
+keeps separate remote-object handles per object group and uses weak node indexing.
+
+[Element observations](../src/shared/contracts/element-observation.ts) are constructed by the binding
+owner from business fields and registered targets. AX, images and screenshots share the Rect contract;
+[ToolError](../src/shared/contracts/tool-error.ts) carries code, message, optional hint and public details.
+Page presentation metadata and numeric creation receipts stay in private maps. Arbitrary script return
+values, page content and user-owned Data rows remain intact. Element and range parameters expose
+`target`; retired argument names and the old `read_article.source` value normalize before validation.
+New image-collection rows store `target` and `tabRef`.
+
+Direct-drive catalogs omit implicit task-page selection tools. Every page operation requires an explicit
+`tabRef`; `list_tabs.active` still identifies the tab visible to the user and never selects a tool target.
+MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
+metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.
 
 [Effect tickets](../src/background/tools/effects.ts)
 come from trusted registrations. Shared [security

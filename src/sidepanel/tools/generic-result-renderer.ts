@@ -393,10 +393,7 @@ function appendReadableResult(parent: HTMLElement, toolName: string, result: unk
 export function appendErrorSection(parent: HTMLElement, value: unknown) {
   const input = value && typeof value === "object" ? value : { error: String(value || t("unknownError")) };
   const error = record(localizeToolFailurePayload(input, { isError: true }));
-  const message = localizeToolFailureText(error.error || error.message || t("toolFailed"), {
-    code: error.code,
-    details: error.details,
-  });
+  const message = String(error.error || error.message || t("toolFailed"));
   const codeLabel = error.codeLabel || localizeToolFailureCode(error.code);
   const rawCode = String(error.code || "").trim();
   const codeText = codeLabel || rawCode;

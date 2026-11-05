@@ -68,8 +68,8 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
     "Restricted sessions receive one goal prohibition without root goal instructions");
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
-  assert.ok(system.includes('runtime:"inner"'));
-  assert.ok(system.includes('network.allowedOrigins'));
+  assert.match(system, en ? /Omit tabRef from run_script[\s\S]*without a DOM/ : /run_script 不传 tabRef 时执行无 DOM/);
+  assert.match(system, en ? /Each nested page tool must specify its own tabRef/ : /每个嵌套页面工具仍要显式传入自己的 tabRef/);
   assert.equal(imageMessages.length, vision ? 2 : 1);
   if (en) assert.doesNotMatch(JSON.stringify(imageMessages), /\p{Script=Han}/u);
   if (vision) assert.equal(imageMessages[1].content[1].image_url.url, image);
@@ -113,7 +113,7 @@ const rendered = [
   prompts.COMPACT_SYSTEM_PROMPT, prompts.COMPACT_USER_PROMPT, titleMessages[0].content,
 ].join("\n");
 if (en) assert.doesNotMatch(rendered, /\p{Script=Han}/u);
-else assert.match(rendered, /当前任务工作标签页/);
+else assert.match(rendered, /当前任务最近访问的标签页/);
 
 assert.ok(context.formatDynamicContext({ tracker: { mode: "pagination", current: 3, total: 5, unit: "pages" } })
   .includes(en ? "Progress: 3/5 pages" : "进度: 3/5pages"));

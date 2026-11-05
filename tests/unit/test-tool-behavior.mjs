@@ -9,6 +9,7 @@ import { findBuiltinSkill } from "../../src/shared/skills/builtin-skills.js";
 import { parseSkillManifest, findSkillManifestResource } from "../../src/shared/skills/skill-manifest.js";
 import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
 import { clearTraceLog, getTraceLog } from "../../src/background/trace.js";
+import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 globalThis.chrome = {
   runtime: { getURL: path => path },
@@ -35,7 +36,7 @@ const bridge = createRunScriptBridge({
   toolRuntime: runtime,
   collectArtifacts: () => [],
 });
-const nested = (toolName, args = {}, tabId = 31) => bridge.handleToolCall({ ...context, toolName, args }, { tab: { id: tabId } });
+const nested = (toolName, args = {}, tabId = 31) => bridge.handleToolCall({ ...context, toolName, args: { tabRef: args.tabId ?? tabId, ...args } }, { tab: { id: tabId } });
 
 test("a newly named tool declares unload behavior once for direct script and forwarded host execution", async () => {
   let calls = 0;
@@ -50,31 +51,41 @@ test("a newly named tool declares unload behavior once for direct script and for
   assert.equal(targets.length, before, "invalid arguments must fail before target ownership work");
   const denied = await nested("__custom_page_action", { action: "leave" });
   assert.equal(denied.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED");
-  assert.equal(denied.details.targetTabId, 31);
+  assert.deepEqual(denied.details, { action: "leave", submit: false });
+  assert.equal(Object.hasOwn(denied.details, "targetTabId"), false);
+  assert.equal(Object.hasOwn(denied.details, "sourceTabId"), false);
   assert.equal(calls, 0);
-  await assert.rejects(runtime.execute("__custom_page_action", { action: "leave" }, undefined,
+  await assert.rejects(runtime.execute("__custom_page_action", { action: "leave", tabRef: 31 }, undefined,
     { ...scriptContext, source: "plugin_host" }), { code: "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED" });
   assert.equal((await nested("__custom_page_action", { action: "leave", tabId: 99 })).code, "SESSION_TAB_FOREIGN");
   assert.equal(calls, 0, "lifecycle policy cannot grant ownership");
   assert.equal((await nested("__custom_page_action", { action: "stay" })).ok, true);
   assert.equal((await nested("__custom_page_action", { action: "leave", tabId: 32 })).ok, true);
-  await runtime.execute("__custom_page_action", { action: "leave" }, undefined, { ...context, senderTabId: 31 });
+  await runtime.execute("__custom_page_action", { action: "leave", tabRef: 31 }, undefined, { ...context, senderTabId: 31 });
   assert.equal(calls, 3, "ordinary calls and other owned tabs retain their established behavior");
 });
 
 test("built-in unload declarations retain navigation, closing, click, submit and key protection", async () => {
+  runtime.element.registerElementRef({ uid: 'known', tabId: 31, sessionId: 'session', backendNodeId: 42 });
   for (const [name, args] of [
     ["navigate", { url: "https://example.test/next" }],
     ["close_tab", { tabId: 31 }],
     ["act_on_element", { target: "css:button", action: "click" }],
-    ["act_on_element", { target: "uid:unknown", action: "click" }],
+    ["act_on_element", { target: "uid:known", action: "click" }],
     ["act_on_element", { target: "css:input", action: "fill", value: "search", submit: true }],
     ...["Enter", "Return", "Space"].map(key => ["act_on_element", { target: "css:input", action: "press", key }]),
   ]) {
     const result = await nested(name, args);
     assert.equal(result.code, "RUN_SCRIPT_SELF_UNLOADING_TOOL_BLOCKED", `${name} ${JSON.stringify(args)}`);
-    assert.equal(result.details.sourceTabId, 31);
+    assert.deepEqual(result.details, {
+      ...(args.action ? { action: args.action } : {}),
+      ...(args.key || args.value ? { key: args.key || args.value } : {}),
+      submit: args.submit === true,
+    });
+    assert.equal(Object.hasOwn(result.details, "sourceTabId"), false);
+    assert.equal(Object.hasOwn(result.details, "targetTabId"), false);
   }
+  assert.equal((await nested('act_on_element', { target: 'uid:unknown', action: 'click' })).code, 'STALE_ELEMENT_UID');
   const policy = runtime.resolveDefinition("act_on_element").behavior.mayUnloadPage;
   assert.equal(policy({ action: "press", value: "Enter" }), true);
   for (const args of [{ action: "fill", submit: false }, { action: "press", key: "Tab" }, { action: "check" }, { action: "scroll" }]) {
@@ -86,18 +97,21 @@ test("new observation tools promote images only through trusted definitions and 
   let calls = 0;
   const image = "data:image/png;base64,b2JzZXJ2YXRpb24=";
   const parameters = { type: "object", properties: { observe: { type: "boolean" } } };
-  const execute = () => { calls++; return { _image: image, _imageDetail: "high", _display: { image }, behavior: { nestedObservation: true } }; };
+  const execute = () => { calls++; return bindToolResultPresentation(
+    { _image: image, _imageDetail: "high", _display: { label: "business value" }, behavior: { nestedObservation: true } },
+    { _display: { image } }); };
   tools.defineTool({ name: "__custom_observe", description: "Test", parameters,
     behavior: { nestedObservation: args => args.observe === true }, execute });
   tools.defineTool({ name: "__ordinary_image", description: "Test", parameters, execute });
   const promoted = await nested("__custom_observe", { observe: true });
   assert.deepEqual(promoted.observation, { _image: image, _imageDetail: "high" });
   assert.equal(promoted.result._image, undefined);
-  assert.equal(promoted.result._display, undefined);
+  assert.deepEqual(promoted.result._display, { label: "business value" }, "business fields survive separately bound host presentation");
   for (const [name, args] of [["__custom_observe", { observe: false }], ["__ordinary_image", { observe: true }]]) {
     const result = await nested(name, args);
     assert.equal(result.observation, undefined, "an ordinary result cannot declare its own observation role");
     assert.equal(result.result._image, image);
+    assert.deepEqual(result.result._display, { label: "business value" });
   }
   currentRun = false;
   assert.equal((await nested("__custom_observe", { observe: true })).code, "RUN_STOPPED");
@@ -109,7 +123,7 @@ test("new observation tools promote images only through trusted definitions and 
 
 test("external plugins cannot declare behavior, while trusted host aliases inherit their core target", () => {
   const registry = createToolRegistry(); let hostDecisions = 0;
-  registry.defineTool({ ...tools.resolveToolDefinition("manage_settings"), workingTab: 'created',
+  registry.defineTool({ ...tools.resolveToolDefinition("manage_settings"), tabLifecycle: 'created',
     behavior: { barrier: () => { hostDecisions++; return false; }, nestedObservation: true, mayUnloadPage: true, parallelRead: true },
   });
   const toolRegistrySnapshot = registry.snapshot();
@@ -148,7 +162,7 @@ test('capability declarations alone place new tool names into the same graph, wi
   qz.registerTool({ ...base, name: 'sample_local', behavior: { parallelTab: true } });
   qz.registerTool({ ...base, name: 'sample_read', behavior: { parallelRead: true } });
   qz.registerTool({ ...base, name: 'sample_barrier', behavior: { parallelTab: true, parallelRead: true, barrier: true } });
-  qz.registerTool({ ...base, name: 'sample_creator', workingTab: 'created', behavior: { parallelOpen: true, barrier: true } });
+  qz.registerTool({ ...base, name: 'sample_creator', tabLifecycle: 'created', behavior: { parallelOpen: true, barrier: true } });
   qz.registerTool({ name: 'sample_global', description: 'Global', behavior: { barrier: true },
     parameters: { type: 'object', properties: {} }, execute: () => ({}) });
   const lookup = { toolRegistrySnapshot: registry.snapshot() };
@@ -174,18 +188,20 @@ test('capability declarations alone place new tool names into the same graph, wi
   releases.get(4)(); await run; assert.deepEqual(committed, [1, 2, 3, 4]);
 });
 
-test('script declarations select no-tools page lanes and keep other script forms as barriers', () => {
+test('script declarations parallelize simple explicit page work and keep orchestration as a barrier', () => {
   assert.equal(typeof runtime.resolveDefinition('run_script').behavior.barrier, 'function');
   assert.equal(runtime.resolveDefinition('run_skill_script').behavior.barrier, true);
-  for (const name of ['run_script', 'run_skill_script']) for (const target of [undefined, 'page', 'inner']) {
+  for (const name of ['run_script', 'run_skill_script']) {
     for (const mutatesPage of [false, true]) for (const code of ['42', 'return input.value + args.extra', 'tools.$list()', 'eval(input.code)', 'async () => {', undefined]) {
-      const args = { target, mutatesPage, tabRef: 'a', code, args: { value: 1, extra: 2 } };
+      const args = { mutatesPage, tabRef: 'a', code, args: { value: 1, extra: 2 } };
       const safe = name === 'run_script' && (code === '42' || code === 'return input.value + args.extra');
-      assert.deepEqual(runtime.getBatchTabPolicy(name, args), target === 'inner' ? { kind: 'barrier' }
-        : { kind: 'target', implicit: true, observation: false, ...(name === 'run_script' ? { parallel: safe } : {}) });
+      assert.deepEqual(runtime.getBatchTabPolicy(name, args),
+        { kind: 'target', implicit: false, observation: false, ...(name === 'run_script' ? { parallel: safe } : {}) });
       assert.equal(runtime.getParallelReadTab(name, { ...args, tabId: 1 }), null);
     }
   }
+  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { code: 'return await tools.list_tabs();' }), { kind: 'barrier' });
+  assert.deepEqual(runtime.getBatchTabPolicy('run_skill_script', { target: 'inner', code: 'return 42', tabRef: 'a' }), { kind: 'barrier' }, 'hidden worker compatibility retains its own scheduling boundary');
 });
 
 test('a barrier predicate is evaluated once per planned call; throwing predicates fail closed', async () => {
@@ -211,7 +227,7 @@ test('a barrier predicate is evaluated once per planned call; throwing predicate
   assert.deepEqual(contexts.map(c => c.preserveWorkingTab), [true, false, false]);
 });
 
-test('uid targets pin their registered tab for batch planning and working-tab defaults', async () => {
+test('UID targets retain their batch lanes while runtime requires an agreeing explicit page', async () => {
   const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('uid-fixture') };
   const parameters = { type: 'object', properties: {
     target: { type: 'string' }, targets: { type: 'array', items: { type: 'string' } }, tabId: { type: 'number' },
@@ -277,14 +293,16 @@ test('uid targets pin their registered tab for batch planning and working-tab de
     behavior: { uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) },
     execute: args => { received = args; return { ok: true }; } });
   const resolveCallsBefore = targets.length;
-  await runtime.execute('__uid_working_tab', { targets: ['uid:t41.0000a1.1'] }, undefined, context);
-  assert.equal(received.tabId, undefined, 'a uid call must not inherit the working tab');
-  assert.equal(targets.length, resolveCallsBefore, 'a uid call claims no extra tab ownership upstream');
-  await runtime.execute('__uid_working_tab', { targets: ['css:img'] }, undefined, context);
-  assert.equal(received.tabId, 31, 'non-uid targets keep the working-tab default');
-  await runtime.execute('__uid_working_tab', { targets: ['css:img', 'uid:t41.0000a1.1'] }, undefined, context);
-  assert.equal(targets.at(-1).tabId, 31, 'mixed calls still authorize the CSS default tab');
-  assert.equal(received.tabId, undefined, 'that CSS default must not be injected into uid arguments');
+  await runtime.execute('__uid_working_tab', { tabRef: 41, targets: ['uid:t41.0000a1.1'] }, undefined, context);
+  assert.equal(received.tabId, 41, 'explicit reference agrees with the registered UID page');
+  assert.equal(targets.length, resolveCallsBefore, 'UID resolution does not claim an extra page upstream');
+  await runtime.execute('__uid_working_tab', { tabRef: 31, targets: ['css:img'] }, undefined, context);
+  assert.equal(received.tabId, 31, 'CSS uses the explicit caller page');
+  await runtime.execute('__uid_working_tab', { tabRef: 41, targets: ['css:img', 'uid:t41.0000a1.1'] }, undefined, context);
+  assert.equal(targets.at(-1).tabId, 41, 'mixed calls authorize the explicit page');
+  assert.equal(received.tabId, 41);
+  await assert.rejects(runtime.execute('__uid_working_tab', { targets: ['uid:t41.0000a1.1'] }, undefined, context),
+    { code: 'TAB_REF_REQUIRED' }, 'even a registered UID does not replace the required page reference');
   await runtime.execute('__uid_working_tab', { target: 'uid:t41.0000a1.1', tabRef: 41 }, undefined, context);
   assert.equal(received.tabId, 41, 'an agreeing tabRef and UID resolve to the same browser tab');
   await assert.rejects(runtime.execute('__uid_working_tab', { target: 'uid:t41.0000a1.1', tabRef: 42 }, undefined, context),
@@ -295,7 +313,7 @@ test('uid targets pin their registered tab for batch planning and working-tab de
     { targets: ['css:img', 'uid:t41.0000a1.1'], _tabId: 31 },
   ]) {
     await assert.rejects(runtime.execute('__uid_working_tab', args, undefined, { ...context, workingTabId: 99 }),
-      { code: args.tabId != null ? 'BATCH_TAB_REFERENCE_ERROR' : 'SESSION_TAB_FOREIGN' }, 'a uid cannot smuggle a CSS read onto a foreign tab');
+      { code: args.tabId != null ? 'BATCH_TAB_REFERENCE_ERROR' : 'TAB_REF_REQUIRED' }, 'a uid cannot smuggle a CSS read onto a foreign tab');
   }
   assert.equal(received, null);
 });
@@ -325,54 +343,24 @@ test('a uid lane anchors later tab creation to its ordered working-tab selection
     'an open must wait for a uid-selected tab in another window just as it waits for a numeric target');
 });
 
-test('page-context enrichment leaves uid-targeted calls on their registered tabs', async () => {
-  const registry = createToolRegistry(), qz = { registerTool: registry.forCapability('uid-enrich-fixture') };
-  qz.registerTool({ name: 'uid_probe', description: 'Fixture', page: 'owned',
-    parameters: { type: 'object', properties: {
-      target: { type: 'string' }, selector: { type: 'string' }, root: { type: 'string' },
-      targets: { type: 'array', items: { type: 'string' } }, tabId: { type: 'number' },
-    } },
-    behavior: { uidTargets: args => (Array.isArray(args.targets) ? args.targets : []) }, execute: () => ({}) });
-  const lookup = { toolRegistrySnapshot: registry.snapshot() };
-  const agent = new Agent('enrich', createTestAgentOptions({
-    tools: {
-      getSchemas: () => [], getIdentity: () => ({}),
-      getModelPolicy: () => ({ pageContext: 'working' }),
-      hasUidElementTargets: (name, args) => tools.hasUidElementTargets(name, args, lookup),
-      execute: async () => ({}),
-    },
-    browserContext: { getTab: async id => ({ id, url: 'https://example.test/working', title: 'Working' }) },
-  }));
-  const toolContext = { workingTabId: 31 };
-  const uidArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['uid:t41.0000a1.1'] }, toolContext);
-  assert.equal(uidArgs.tabId, undefined, 'the working tab must not override a uid target');
-  assert.equal(uidArgs._tabId, undefined);
-  assert.equal(uidArgs._pageUrl, undefined);
-  for (const args of [
-    { target: 'uid:t41.0000a1.1' },
-    { selector: 'uid:t41.0000a1.1' },
-    { root: 'uid:t41.0000a1.1' },
-    { targets: ['css:img', null, 'uid:t41.0000a1.1'] },
-  ]) {
-    assert.deepEqual(await agent._enrichToolCallArgsWithPageContext('uid_probe', args, toolContext), args);
-  }
-  for (const [name, args] of [
+test('Agent preserves explicit element and page references without adding a default page', async () => {
+  const executed = [];
+  const agent = new Agent('elements', createTestAgentOptions({ tools: {
+    getSchemas: () => [], getIdentity: () => ({}),
+    execute: async (_name, args) => { executed.push(args); return { text: 'observed' }; },
+  }, browserContext: { getTab: async () => assert.fail('there is no implicit target to look up') } }));
+  agent._dynamicContextSnapshot = { workingTab: { id: 31 }, userVisibleTab: { id: 32 } };
+  const inputs = [
     ['read_image', { target: 'uid:t41.0000a1.1' }],
-    ['act_on_element', { target: 'uid:t41.0000a1.1', action: 'click' }],
-    ['act_on_element', { target: 'uid:t41.0000a1.1', action: 'fill', value: 'text' }],
-    ['read_dom', { selector: 'uid:t41.0000a1.1' }],
-    ['get_ax_tree', { root: 'uid:t41.0000a1.1' }],
+    ['act_on_element', { target: 'uid:t41.0000a1.1', action: 'click', tabRef: 41 }],
+    ['read_dom', { target: 'css:body' }],
+    ['get_ax_tree', {}],
     ['collect_images', { targets: ['uid:t41.0000a1.1', 'uid:t42.0000b1.1'] }],
-  ]) {
-    agent._tools.hasUidElementTargets = tools.hasUidElementTargets;
-    assert.deepEqual(await agent._enrichToolCallArgsWithPageContext(name, args, toolContext), args, name);
-  }
-  agent._tools.hasUidElementTargets = (name, args) => tools.hasUidElementTargets(name, args, lookup);
-  const cssArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['css:img'] }, toolContext);
-  assert.equal(cssArgs.tabId, 31, 'page-context enrichment still applies without uids');
-  assert.equal(cssArgs._pageUrl, 'https://example.test/working');
-  const explicitArgs = await agent._enrichToolCallArgsWithPageContext('uid_probe', { targets: ['uid:t41.0000a1.1'], tabId: 42 }, toolContext);
-  assert.equal(explicitArgs.tabId, 42, 'an explicit tab survives enrichment for the uid mismatch check');
+  ];
+  for (const [name, args] of inputs) await agent._executeToolCalls([{ id: name, function: {
+    name, arguments: JSON.stringify(args),
+  } }], new AbortController().signal);
+  assert.deepEqual(executed, inputs.map(([, args]) => args));
 });
 
 test("custom timeout diagnostic declarations retain the runtime's abort signal and trace fields", async () => {

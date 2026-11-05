@@ -398,7 +398,7 @@ test("result posting carries the exact pairing, instance and worker fence; error
   f.setRequests([{ id: "error-id", method: "get_skill" }]); await r.connect(); await until(() => f.calls.some(c => c.path.endsWith("/result")));
   const result = f.calls.find(c => c.path.endsWith("/result")).body, pair = f.calls.find(c => c.path.endsWith("/pair")).body;
   assert.equal(result.connectionId, pair.connectionId); assert.equal(result.instanceId, "instance-a"); assert.equal(result.pairingToken, pair.pairingToken);
-  assert.equal(result.code, "SKILL_NOT_FOUND"); assert.deepEqual(result.details, { name: "fixture" });
+  assert.equal(result.error.code, "SKILL_NOT_FOUND"); assert.deepEqual(result.error.details, { name: "fixture" });
 });
 
 test("ambiguous Skill errors pass candidate identities through the extension bridge", async t => {
@@ -414,8 +414,8 @@ test("ambiguous Skill errors pass candidate identities through the extension bri
   await r.connect();
   await until(() => f.calls.some(c => c.path.endsWith("/result")));
   const result = f.calls.find(c => c.path.endsWith("/result")).body;
-  assert.equal(result.code, "SKILL_NAME_AMBIGUOUS");
-  assert.deepEqual(result.details, { name: "Shared title", candidates });
+  assert.equal(result.error.code, "SKILL_NAME_AMBIGUOUS");
+  assert.deepEqual(result.error.details, { name: "Shared title", candidates });
 });
 
 test("pair credentials are durable before networking and survive a lost pairing response", async t => {
@@ -518,8 +518,8 @@ test("public error details retain download recovery fields and strip arbitrary c
   f.setRequests([{ id: "download", method: "list_downloads" }, { id: "provider", method: "create_session" }]); await r.connect();
   await until(() => f.calls.filter(c => c.path.endsWith("/result")).length === 2);
   const results = f.calls.filter(c => c.path.endsWith("/result")).map(c => c.body);
-  assert.deepEqual(results[0].details, { downloadId: 42, filename: "report.zip", reason: "USER_CANCELED" });
-  assert.deepEqual(results[1].details, {}); assert.equal(JSON.stringify(results).includes("private-key"), false);
+  assert.deepEqual(results[0].error.details, { downloadId: 42, filename: "report.zip", reason: "USER_CANCELED" });
+  assert.deepEqual(results[1].error.details, undefined); assert.equal(JSON.stringify(results).includes("private-key"), false);
 });
 
 

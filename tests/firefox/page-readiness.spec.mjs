@@ -11,7 +11,7 @@ test("page readers wait for initial navigation before extracting", async ({ fire
   const url = `http://127.0.0.1:${server.address().port}/slow`;
   let tabId;
   const readers = [
-    ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", { selector: "button" }],
+    ["read_article", { limit: 1200 }], ["read_dom", {}], ["find_elements", { target: "button" }],
     ["inspect_element", { target: "css:article" }], ["list_images", {}],
     ["get_ax_tree", {}], ["screenshot", {}],
   ];
@@ -27,7 +27,9 @@ test("page readers wait for initial navigation before extracting", async ({ fire
     for (const [name, args] of readers) {
       const result = await callTool(session, name, { ...args, tabId, timeout: 0.1 });
       if (name === "list_images") expect(result.code, JSON.stringify(result)).toBe("TOOL_TIMEOUT");
-      else expect(result, JSON.stringify(result)).toMatchObject({ tabId, incomplete: { reason: "timeout" } });
+      else expect(result, JSON.stringify(result)).toMatchObject({ incomplete: { reason: "timeout" } });
+      expect(result).not.toHaveProperty("tabId");
+      expect(result).not.toHaveProperty("tabRef");
       expect(await session.extension("background", `return (await view.chrome.tabs.get(${tabId})).status;`)).toBe("loading");
     }
     for (const response of held.splice(0)) {
@@ -36,7 +38,7 @@ test("page readers wait for initial navigation before extracting", async ({ fire
     }
     for (const [name, args] of readers) {
       const result = await callTool(session, name, { ...args, tabId, timeout: 5 });
-      expect(result, `${name}: ${JSON.stringify(result)}`).not.toHaveProperty("error");
+      expect(result, `${name}: ${JSON.stringify(result)}`).not.toHaveProperty("message");
       expect(result).not.toHaveProperty("incomplete");
       if (name === "read_article" || name === "read_dom" || name === "inspect_element") expect(JSON.stringify(result)).toContain("Firefox loaded article");
       if (name === "find_elements" || name === "get_ax_tree") expect(JSON.stringify(result)).toContain("Loaded action");
@@ -58,7 +60,7 @@ function callTool(session, name, args) {
       return JSON.parse(JSON.stringify(result));
     } catch (error) {
       const failure = Cu.waiveXrays(error);
-      return { code: String(failure.code || ""), error: String(failure.message || failure) };
+      return { code: String(failure.code || ""), message: String(failure.message || failure) };
     }
   `);
 }

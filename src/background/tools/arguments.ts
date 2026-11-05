@@ -1,9 +1,16 @@
+import { toolError, toolErrorDetails, type ToolErrorDetails } from "../../shared/contracts/tool-error.js";
+
 /** Pure argument validation, before tab ownership, permissions, or execution. */
 export class ToolExecutionError extends Error {
-  constructor(public code: string, message: string, public details: Record<string, unknown> = {}) {
+  details: ToolErrorDetails;
+  constructor(public code: string, message: string, details: unknown = {}) {
     super(message);
     this.name = "ToolExecutionError";
+    this.code = code.toUpperCase();
+    this.details = toolErrorDetails(details);
   }
+  hint?: string;
+  toJSON() { return toolError(this.code, this.message, { hint: this.hint, details: this.details }); }
 }
 
 export function isMissingRequiredValue(value: unknown): boolean {
@@ -24,7 +31,7 @@ export function requireToolFields(
 
 export function throwMissingToolArgs(name: string, missing: readonly string[], args: object, details: Record<string, unknown> = {}): never {
   throw new ToolExecutionError("MISSING_REQUIRED_ARGUMENTS", `Invalid arguments for ${name}: missing required field(s): ${missing.join(", ")}`, {
-    name, missing, ...details, providedKeys: Object.keys(args).slice(0, 50),
+    name, missing, ...details,
   });
 }
 

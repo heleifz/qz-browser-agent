@@ -1,7 +1,9 @@
+import { pageErrorDetails } from "../../shared/contracts/tool-error.js";
 import type { ToolContext, ToolErrorConstructor } from '../../sdk/background.js';
 import type { CdpCommand } from '../../sdk/background/browser.js';
 import { forgetIsolatedContexts } from './isolated-contexts.js';
 import { forgetChildFrames } from './child-frames.js';
+import { publishTimeoutTrace } from './script-timeout-trace.js';
 export type { CdpCommand };
 interface CdpOwner { key: string; kind: 'run' | 'temporary' | 'session'; sessionId: string; runId: string }
 interface CdpState {
@@ -73,7 +75,7 @@ export function createCdpRuntime({
 
   async function ensureDebugger(tabId: unknown, context: ToolContext = {}): Promise<CdpState> {
     const owner = runOwner(tabId, context);
-    const id = positiveTabId(tabId);
+    const id = positiveTabId(tabId, context);
     assertRunCurrent(owner, id, context);
     const current = tabs.get(id);
     if (current?.recoveryPromise) await current.recoveryPromise;
@@ -113,20 +115,18 @@ export function createCdpRuntime({
       reattachPrompts.set(ownerKey, prompt);
     }
     const approved = await prompt;
-    if (!approved) throw runReleasedError(detached[0].tabId, sessionId, runId);
+    if (!approved) throw runReleasedError(context);
     for (const entry of tabs.values()) if (entry.ownerKey === ownerKey) entry.userDetached = false;
   }
 
   async function ensureForOwner(tabId: unknown, owner: CdpOwner, context: ToolContext = {}): Promise<CdpState> {
-    const id = positiveTabId(tabId);
+    const id = positiveTabId(tabId, context);
     if (typeof assertTabAllowedBySecurityGuardrails === "function") {
       await assertTabAllowedBySecurityGuardrails(id, { tool: "debugger", source: "cdp" });
     }
     assertRunCurrent(owner, id, context);
     if (!debuggerApi?.attach || !debuggerApi?.sendCommand || !debuggerApi?.detach) {
-      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", "chrome.debugger API is unavailable in this environment", {
-        tabId: id,
-      });
+      throw new ToolExecutionError("DEBUGGER_UNAVAILABLE", "chrome.debugger API is unavailable in this environment", pageErrorDetails(context));
     }
 
     let state = tabs.get(id);
@@ -142,7 +142,7 @@ export function createCdpRuntime({
     }
     if (state && state.ownerKey !== owner.key) {
       if (state.ownerKind === "session" && owner.kind === "run" && state.sessionId === owner.sessionId) {
-        if (state.runId === owner.runId) throw runReleasedError(id, owner.sessionId, owner.runId);
+        if (state.runId === owner.runId) throw runReleasedError(context);
         // An idle retained connection may be borrowed only after fresh Session authorization.
         state.ownerKey = owner.key;
         state.ownerKind = owner.kind;
@@ -150,15 +150,7 @@ export function createCdpRuntime({
       } else {
         throw new ToolExecutionError(
           "CDP_TAB_LEASE_CONFLICT",
-          `Tab ${id} is already attached by another active operation`,
-          {
-            tabId: id,
-            sessionId: owner.sessionId || "",
-            runId: owner.runId || "",
-            currentSessionId: state.sessionId || "",
-            currentRunId: state.runId || "",
-            currentOwnerKind: state.ownerKind,
-          },
+          "The requested page is already controlled by another active operation", pageErrorDetails(context),
         );
       }
     }
@@ -195,18 +187,15 @@ export function createCdpRuntime({
           state.connectionId = ++connectionSeq;
         } catch (err) {
           if (tabs.get(id) === state) tabs.delete(id);
-          assertStateActive(state);
-          throw new ToolExecutionError("DEBUGGER_ATTACH_FAILED", `Failed to attach debugger to tab ${id}: ${String(record(err).message || err)}`, {
-            tabId: id,
-            message: String(record(err).message || err),
-          });
+          assertStateActive(state, context);
+          throw new ToolExecutionError("DEBUGGER_ATTACH_FAILED", `Failed to acquire browser control: ${String(record(err).message || err)}`, pageErrorDetails(context));
         } finally {
           state.attachPromise = null;
         }
       })();
     }
     await state.attachPromise;
-    assertStateActive(state);
+    assertStateActive(state, context);
     if (tabs.get(id) !== state || !state.attached) {
       if (state.detachPromise) await state.detachPromise;
       assertRunCurrent(owner, id, context);
@@ -222,49 +211,60 @@ export function createCdpRuntime({
       return await sendForState(state, method, params, check, "", context);
     } catch (err) {
       if (record(err).code === "CDP_RUN_RELEASED") throw err;
-      throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, {
-        tabId: state.tabId,
-        method,
-        params,
-        message: String(record(err).message || err),
-      });
+      throw new ToolExecutionError("CDP_COMMAND_FAILED", `${method} failed: ${String(record(err).message || err)}`, pageErrorDetails(context));
     }
   }
 
   async function evaluateCdpScript(tabId: unknown, params: Record<string, unknown> = {}, signal?: AbortSignal, context: ToolContext = {}) {
     if (signal?.aborted) {
-      throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", {
-        tabId,
-        engine: "cdp",
-      });
+      throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", pageErrorDetails(context));
     }
 
     const state = await ensureDebugger(tabId, context);
     const check = commandAccess(state, context);
     const ownerKey = state.ownerKey;
     if (signal?.aborted) {
-      throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", {
-        tabId,
-        engine: "cdp",
-      });
+      throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", pageErrorDetails(context));
     }
     let abortHandler: (() => void) | null = null;
     let aborted = false;
+    let scriptPromiseId = "";
+    const expression = typeof params.expression === "string" ? params.expression : "";
+    const liveTrace = expression.includes('Object.defineProperty(__qzPromise, "__qzTrace"');
+    const canCommand = () => state.ownerKey === ownerKey && state.attached && !state.releasing;
+
+    const readLiveScriptTrace = (): Promise<unknown[]> => {
+      const finishRead = context.measurePhase?.("cdp");
+      const read = debuggerApi.sendCommand(state.target, "Runtime.callFunctionOn", {
+        objectId: scriptPromiseId,
+        functionDeclaration: "function(){ const rows = this && this.__qzTrace; return Array.isArray(rows) ? rows.slice(-5) : []; }",
+        returnByValue: true,
+      }).then(snapshot => {
+        const value = record(record(snapshot).result).value;
+        return Array.isArray(value) ? value.slice(-5) : [];
+      }).catch(() => [] as unknown[]).finally(() => finishRead?.());
+      return read.finally(() => {
+        if (!canCommand()) return undefined;
+        const finishTerminate = context.measurePhase?.("cdp");
+        return debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
+          .finally(() => finishTerminate?.()).catch(() => undefined);
+      });
+    };
 
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
         abortHandler = () => {
           aborted = true;
+          const timedOut = record(signal.reason).code === "TOOL_TIMEOUT";
           // A late abort must not terminate the next run on this retained connection.
-          if (state.ownerKey === ownerKey && state.attached && !state.releasing) {
+          if (timedOut && liveTrace && scriptPromiseId && canCommand()) {
+            publishTimeoutTrace(signal, readLiveScriptTrace());
+          } else if (canCommand()) {
             const finishPhase = context.measurePhase?.("cdp");
             debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
               .finally(() => finishPhase?.()).catch(() => {});
           }
-          reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running script", {
-            tabId: state.tabId,
-            engine: "cdp",
-          }));
+          reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while running script", pageErrorDetails(context)));
         };
         signal.addEventListener("abort", abortHandler, { once: true });
       })
@@ -282,9 +282,11 @@ export function createCdpRuntime({
     };
 
     try {
-      const evalResult = await runCommand("Runtime.evaluate", params);
+      const evaluateParams = liveTrace ? { ...params, awaitPromise: false, returnByValue: false } : params;
+      const evalResult = await runCommand("Runtime.evaluate", evaluateParams);
       const result = record(evalResult).result;
-      if (params?.awaitPromise && isCdpPromiseResult(result)) {
+      if ((params?.awaitPromise || liveTrace) && isCdpPromiseResult(result)) {
+        if (liveTrace) scriptPromiseId = result.objectId;
         return await runCommand("Runtime.awaitPromise", {
           promiseObjectId: result.objectId,
           returnByValue: params.returnByValue !== false,
@@ -294,12 +296,7 @@ export function createCdpRuntime({
       return evalResult;
     } catch (err) {
       if (aborted || ["OPERATION_ABORTED", "CDP_RUN_RELEASED"].includes(String(record(err).code || ""))) throw err;
-      throw new ToolExecutionError("CDP_COMMAND_FAILED", `Runtime.evaluate failed: ${String(record(err).message || err)}`, {
-        tabId: state.tabId,
-        method: "Runtime.evaluate",
-        params,
-        message: String(record(err).message || err),
-      });
+      throw new ToolExecutionError("CDP_COMMAND_FAILED", `Runtime.evaluate failed: ${String(record(err).message || err)}`, pageErrorDetails(context));
     } finally {
       if (signal && abortHandler) signal.removeEventListener("abort", abortHandler);
     }
@@ -387,7 +384,7 @@ export function createCdpRuntime({
 
   function setDebuggerRetention(tabId: number, retained: boolean, context: ToolContext, restore?: (send: CdpCommand) => Promise<void>) {
     const state = tabs.get(tabId);
-    if (!state) throw runReleasedError(tabId, context.sessionId || "", context.runId || "");
+    if (!state) throw runReleasedError(context);
     commandAccess(state, context)();
     state.retained = retained;
     state.restore = retained ? restore || null : null;
@@ -400,7 +397,7 @@ export function createCdpRuntime({
     const check = () => {
       assertStateActive(state);
       if (tabs.get(state.tabId) !== state || !state.retained || state.restore !== restore) {
-        throw runReleasedError(state.tabId, state.sessionId, state.runId);
+        throw runReleasedError();
       }
     };
     try {
@@ -420,7 +417,7 @@ export function createCdpRuntime({
       const connection = state.connectionId;
       const checkConnection = () => {
         check();
-        if (!state.attached || state.connectionId !== connection) throw runReleasedError(state.tabId, state.sessionId, state.runId);
+        if (!state.attached || state.connectionId !== connection) throw runReleasedError();
       };
       await restore(bindSend(state, checkConnection));
       checkConnection();
@@ -481,8 +478,7 @@ export function createCdpRuntime({
     if (!sessionId || !runId) {
       throw new ToolExecutionError(
         "CDP_RUN_CONTEXT_REQUIRED",
-        "CDP page access requires the current Session and Agent run",
-        { tabId: Number(tabId) || null, sessionId, runId },
+        "CDP page access requires the current Session and Agent run", pageErrorDetails(context),
       );
     }
     return {
@@ -494,27 +490,27 @@ export function createCdpRuntime({
   }
 
   function assertRunCurrent(owner: CdpOwner, tabId: number, context: ToolContext = {}) {
-    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", { tabId });
+    if (context.signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Tool call was cancelled", pageErrorDetails(context));
     if (owner?.kind !== "run") return;
     if (typeof isRunCurrent === "function" && isRunCurrent({
       sessionId: owner.sessionId,
       runId: owner.runId,
       context,
     })) return;
-    throw runReleasedError(tabId, owner.sessionId, owner.runId);
+    throw runReleasedError(context);
   }
 
-  function assertStateActive(state: CdpState) {
+  function assertStateActive(state: CdpState, context: ToolContext = {}) {
     if (!state?.releasing) return;
-    throw runReleasedError(state.tabId, state.sessionId, state.runId);
+    throw runReleasedError(context);
   }
 
   function commandAccess(state: CdpState, context: ToolContext) {
     const owner = runOwner(state.tabId, context);
     const connectionId = state.connectionId;
     return () => {
-      assertStateActive(state);
-      if (state.ownerKey !== owner.key || !state.attached || state.connectionId !== connectionId) throw runReleasedError(state.tabId, owner.sessionId, owner.runId);
+      assertStateActive(state, context);
+      if (state.ownerKey !== owner.key || !state.attached || state.connectionId !== connectionId) throw runReleasedError(context);
       assertRunCurrent(owner, state.tabId, context);
     };
   }
@@ -528,21 +524,21 @@ export function createCdpRuntime({
   }
 
   async function sendForState(state: CdpState, method: string, params: Record<string, unknown> = {}, check = () => {}, sessionId = "", context: ToolContext = {}) {
-    assertStateActive(state);
+    assertStateActive(state, context);
     check();
     const finishPhase = context.measurePhase?.("cdp");
     try {
       const target = sessionId ? { ...state.target, sessionId } : state.target;
       const result = await (debuggerApi.sendCommandWithScope
         ? debuggerApi.sendCommandWithScope(target, method, params, {
-          signal: context.signal, check: () => { assertStateActive(state); check(); },
+          signal: context.signal, check: () => { assertStateActive(state, context); check(); },
         })
         : debuggerApi.sendCommand(target, method, params));
-      assertStateActive(state);
+      assertStateActive(state, context);
       check();
       return result;
     } catch (error) {
-      assertStateActive(state);
+      assertStateActive(state, context);
       check();
       throw error;
     } finally {
@@ -550,20 +546,17 @@ export function createCdpRuntime({
     }
   }
 
-  function runReleasedError(tabId: unknown, sessionId: string, runId: string) {
+  function runReleasedError(context: ToolContext = {}) {
     return new ToolExecutionError(
       "CDP_RUN_RELEASED",
-      "The Agent run has ended and can no longer acquire browser control",
-      { tabId: Number(tabId) || null, sessionId, runId },
+      "The Agent run has ended and can no longer acquire browser control", pageErrorDetails(context),
     );
   }
 
-  function positiveTabId(tabId: unknown) {
+  function positiveTabId(tabId: unknown, context: ToolContext = {}) {
     const id = Number(tabId);
     if (!Number.isInteger(id) || id <= 0) {
-      throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "CDP requires a valid tabId", {
-        tabId: Number.isFinite(id) ? id : null,
-      });
+      throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", "Page access requires a valid tabRef", pageErrorDetails(context));
     }
     return id;
   }

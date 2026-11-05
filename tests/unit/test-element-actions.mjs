@@ -22,7 +22,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
   } };
   const state = { value: "old", checked };
   let execute, onCommand = async () => {}, onContent = async () => {};
-  const inspection = () => ({ tag: "input", type: checked === undefined ? "text" : "checkbox",
+  const inspection = () => ({ selector: "#target", tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
     clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
   const content = async (action, params) => {
@@ -66,7 +66,11 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
       return callback({}, send);
     },
   });
-  return { commands, messages, observations, controller, state, receipts, inspection,
+  const observation = () => ({ target: "css:#target", tag: "input", type: checked === undefined ? "text" : "checkbox",
+    editable: checked === undefined, disabled: false, readOnly: false, focused: true, value: state.value,
+    ...(state.checked === undefined ? {} : { checked: state.checked }),
+    clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
+  return { commands, messages, observations, controller, state, receipts, inspection, observation,
     call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
@@ -230,7 +234,8 @@ for (const method of ["href_navigation", "content_fallback"]) {
         assert.equal(result.method, method);
         assert.equal(result.navigationPending, false);
         assert.equal(result.navigated, outcome === "already loading" ? null : outcome === "committed");
-        assert.equal(result.pageAfter.url, result._pageUrl);
+        assert.equal(result.pageAfter.url, outcome === "committed" ? href : "https://example.test/");
+        assert.equal(result._pageUrl, undefined);
         assert.equal(requests, 1);
         assert.equal(f.messages.filter(message => message.action === "actOnElement").length, hidden ? 0 : 1);
         assert.equal(navigationListeners.size, 0);
@@ -263,15 +268,15 @@ test('CSS select succeeds without a debugger connection or attachment permission
   assert.deepEqual(f.commands, []);
 });
 
-const pressFields = ["action", "target", "selector", "uid", "index", "tabId", "key", "pressed", "method", "inputDelivered", "element"];
-const navigationFields = ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated", "_pageUrl", "_pageTitle"];
+const pressFields = ["action", "target", "index", "key", "pressed", "method", "inputDelivered", "element"];
+const navigationFields = ["pageBefore", "pageAfter", "urlChanged", "titleChanged", "navigationPending", "navigated"];
 
 for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
   for (const hidden of [false, true]) test(`press ${JSON.stringify(args)} observes before input (hidden=${hidden}) and appends navigation`, async t => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
     const pageBefore = { url: "https://example.test/", title: "Fixture" };
     const pageAfter = hidden ? pageBefore : { url: "https://example.test/done", title: "Done" };
-    const observedNavigation = hidden ? null : { url: pageAfter.url, rateLimitRecorded: false };
+    const observedNavigation = hidden ? null : { url: pageAfter.url };
     const f = fixture({ hidden, observedNavigation });
     let changed = false;
     t.mock.method(chrome.tabs, "get", async () => ({ ...(changed ? pageAfter : pageBefore), status: "complete" }));
@@ -287,10 +292,10 @@ for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
     const result = await pending;
     assert.deepEqual(Object.keys(result), [...pressFields, ...navigationFields, ...(hidden ? [] : ["observedNavigation"])]);
     assert.deepEqual(result, {
-      action: "press", target: "css:#target", selector: "#target", uid: undefined, index: 0, tabId: 7,
-      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(),
+      action: "press", target: "css:#target", index: 0,
+      key: args.key || args.value, pressed: true, method: "cdp", inputDelivered: true, element: f.observation(),
       pageBefore, pageAfter, urlChanged: !hidden, titleChanged: !hidden, navigationPending: false, navigated: !hidden,
-      _pageUrl: pageAfter.url, _pageTitle: pageAfter.title, ...(observedNavigation ? { observedNavigation } : {}),
+      ...(observedNavigation ? { observedNavigation } : {}),
     });
     assert.equal(added.mock.callCount(), 1);
     assert.equal(f.observations.length, 1);
@@ -310,10 +315,10 @@ for (const key of ["Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Meta+Enter", "Esca
     t.mock.method(chrome.tabs, "get", () => { throw new Error("non-Enter must not probe navigation"); });
     // A supplied key wins over value:'Enter'. No timer is advanced in this test.
     const result = await f.call({ action: "press", key, value: "Enter" });
-    assert.equal(JSON.stringify(result), JSON.stringify({
-      action: "press", target: "css:#target", selector: "#target", index: 0, tabId: 7,
-      key, pressed: true, method: "cdp", inputDelivered: true, element: f.inspection(),
-    }));
+    assert.deepEqual(result, {
+      action: "press", target: "css:#target", index: 0,
+      key, pressed: true, method: "cdp", inputDelivered: true, element: f.observation(),
+    });
     assert.deepEqual(Object.keys(result), pressFields);
     assert.equal(added.mock.callCount(), 0);
     assert.equal(f.observations.length, 0);
@@ -405,7 +410,9 @@ test("press Enter disposes on a confirmed focusing-click miss without sending th
   const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
   const result = await f.call({ action: "press", key: "Enter" });
   assert.equal(result.code, "INPUT_NOT_DELIVERED");
-  assert.equal(result.inputDelivered, false);
+  assert.equal(result.details.inputDelivered, false);
+  assert.equal(result.message.length > 0, true);
+  assert.equal(result.hint.length > 0, true);
   assert.equal(added.mock.callCount(), 1);
   assert.equal("pageBefore" in result, false);
   assert.equal(f.commands.some(command => command.method === "Input.dispatchKeyEvent"), false);
@@ -435,7 +442,7 @@ test("press Enter observation failure after dispatch disposes without replay", a
 for (const outcome of ["success", "error reply", "throw", "cancel", "observation failure"]) {
   test(`press Enter Content fallback observes once and disposes on ${outcome}`, async t => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-    const observedNavigation = { url: "https://example.test/done", rateLimitRecorded: false };
+    const observedNavigation = { url: "https://example.test/done" };
     const f = fixture({ observedNavigation });
     let inspections = 0, fallbackCalls = 0;
     f.onContent(action => {
@@ -459,14 +466,22 @@ for (const outcome of ["success", "error reply", "throw", "cancel", "observation
     if (rejected) await rejected;
     else {
       const result = await pending;
-      assert.equal(result.method, outcome === "error reply" ? "content_failed" : "content_fallback");
-      assert.equal(result.navigated, true);
-      assert.equal(result.urlChanged, true);
-      assert.equal(result.navigationPending, false);
-      assert.equal(result._pageUrl, observedNavigation.url);
-      assert.deepEqual(result.observedNavigation, observedNavigation);
-      assert.deepEqual(Object.keys(result).slice(-9), [...navigationFields, "observedNavigation"]);
-      assert.equal("submitDispatched" in result, false);
+      if (outcome === "error reply") {
+        assert.equal(result.code, "NOT_EDITABLE");
+        assert.equal(result.message, "Not editable");
+        assert.deepEqual(result.details, { target: "css:#target", action: "press" });
+        assert.match(result.hint, /find_elements/);
+        assert.deepEqual(Object.keys(result).sort(), ["code", "message", "hint", "details"].sort());
+      } else {
+        assert.equal(result.method, "content_fallback");
+        assert.equal(result.navigated, true);
+        assert.equal(result.urlChanged, true);
+        assert.equal(result.navigationPending, false);
+        assert.equal(result.pageAfter.url, observedNavigation.url);
+        assert.deepEqual(result.observedNavigation, observedNavigation);
+        for (const key of [...navigationFields, "observedNavigation"]) assert.equal(Object.hasOwn(result, key), true, key);
+        assert.equal("submitDispatched" in result, false);
+      }
     }
     assert.equal(fallbackCalls, 1);
     assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
@@ -527,7 +542,8 @@ for (const submit of [false, true]) test(`ordinary fill keeps its result without
   assert.equal(result.submitDispatched, submit);
   assert.equal(result.value, "new");
   assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
-  assert.deepEqual(Object.keys(result.element).sort(), ["checked", "clickablePoint", "clickablePointInViewport", "disabled", "editable", "focused", "inViewport", "readOnly", "tag", "type", "value"].sort());
+  assert.deepEqual(result.element, f.observation());
+  assert.equal(result.element.target, "css:#target");
   assert.equal(f.messages.some(message => message.action === "refreshElementFill" || message.action === "releaseElementFill"), false);
   assertNoReplay(f);
 });

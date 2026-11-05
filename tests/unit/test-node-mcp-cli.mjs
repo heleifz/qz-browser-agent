@@ -26,7 +26,7 @@ test("CLI status and MCP URL are read-only; commands explain missing connections
   const dependencies = { findDaemon: async () => null, ensureDaemon: () => assert.fail("read must not start service"), openBrowser: () => assert.fail("read must not open a browser") };
   assert.deepEqual(await runCli(["status"], dependencies), { result: { running: false, connected: false } });
   for (const args of [["mcp"], ["show", "one"], ["send", "one", "Continue"], ["tasks"]]) {
-    await assert.rejects(runCli(args, dependencies), error => error.code === "not_connected");
+    await assert.rejects(runCli(args, dependencies), error => error.code === "NOT_CONNECTED");
   }
   assert.deepEqual(await runCli(["mcp"], { findDaemon: async () => running }), { text: `${endpoint}/mcp\n` });
   assert.deepEqual(await runCli(["mcp", "--json"], { findDaemon: async () => running }), { result: { url: `${endpoint}/mcp` } });
@@ -38,6 +38,7 @@ test("CLI maps task commands to current MCP methods", async () => {
     callTool: async (...values) => { calls.push(values); return { sessionId: "task-1" }; } };
   for (const [args, method, parameters] of [
     [["tasks"], "qingzhou_list_sessions", {}],
+    [["session", "create", "--title", "Inspect example page"], "qingzhou_create_drive_session", { title: "Inspect example page" }],
     [["create", "Read this page", "--title", "A"], "qingzhou_create_session", { title: "A", firstMessage: "Read this page" }],
     [["show", "task-1"], "qingzhou_get_session_snapshot", { sessionId: "task-1" }],
     [["cancel", "task-1"], "qingzhou_stop_session", { sessionId: "task-1" }],
@@ -47,22 +48,22 @@ test("CLI maps task commands to current MCP methods", async () => {
     for (const [key, value] of Object.entries(parameters)) assert.deepEqual(calls.at(-1)[2][key], value);
     assert.equal(calls.at(-1)[2].clientId, "browser-1");
   }
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
 });
 
 test("invalid arguments cannot open a connection or execute a tool", async () => {
   const dependencies = { findDaemon: () => assert.fail("must validate first") };
-  for (const args of [["call", "navigate"], ["call", "navigate", "--session", "one", "[]"],
+  for (const args of [["session", "create"], ["session", "create", "--title", "  "], ["call", "navigate"], ["call", "navigate", "--session", "one", "[]"],
     ["call", "navigate", "--session", "one", "bad"], ["cancel"], ["status", "extra"], ["tools", "--timeout", "NaN"]]) {
-    await assert.rejects(runCli(args, dependencies), error => error.code === "invalid_arguments");
+    await assert.rejects(runCli(args, dependencies), error => error.code === "INVALID_ARGUMENTS");
   }
   let output = "";
   const code = await main(["create"], {
     ...dependencies, stdout: { write(value) { output += value; } },
   });
   assert.equal(code, 2);
-  const error = JSON.parse(output).error;
-  assert.equal(error.code, "invalid_arguments");
+  const error = JSON.parse(output);
+  assert.equal(error.code, "INVALID_ARGUMENTS");
   assert.match(error.message, /prompt/i);
   assert.match(error.hint, /npm run qz --/);
   assert.equal(Object.hasOwn(error, "install"), false);
@@ -101,7 +102,7 @@ test("connect verifies browser replies, recovers an idle poller, and respects an
       if (!opened) throw new QzError("BRIDGE_REQUEST_TIMEOUT", "The browser lease remains, but its poller is idle");
     },
   };
-  await assert.rejects(runCli(["connect", "--client", "browser-1"], dependencies), error => error.code === "client_offline");
+  await assert.rejects(runCli(["connect", "--client", "browser-1"], dependencies), error => error.code === "CLIENT_OFFLINE");
   assert.equal(opened, false);
   probes.length = 0;
   assert.equal((await runCli(["connect"], dependencies)).result.connected, true);
@@ -124,7 +125,7 @@ test("connect never reports a stale lease as success and abort does not open a p
     openBrowser: async () => { opens++; },
     callTool: async () => { throw new QzError("BRIDGE_REQUEST_TIMEOUT", "browser did not reply"); },
   };
-  await assert.rejects(runCli(["connect", "--timeout", "0.05"], dependencies), error => error.code === "connection_pending");
+  await assert.rejects(runCli(["connect", "--timeout", "0.05"], dependencies), error => error.code === "CONNECTION_PENDING");
   assert.equal(opens, 1);
   const controller = new AbortController();
   dependencies.callTool = async () => { controller.abort(); throw controller.signal.reason; };
@@ -156,11 +157,11 @@ test("install opens the Chrome Web Store and failures always include URL and set
   assert.deepEqual(opened, [INSTALL_URL]);
   assert.equal(result.result.opened, true);
   let output = "";
-  const code = await main(["install"], { stdout: { write(value) { output += value; } }, openBrowser: async url => { throw Object.assign(new Error("No browser"), { code: "browser_open_failed", details: { url } }); } });
+  const code = await main(["install"], { stdout: { write(value) { output += value; } }, openBrowser: async url => { throw Object.assign(new Error("No browser"), { code: "BROWSER_OPEN_FAILED", details: { url } }); } });
   assert.equal(code, 1);
-  const error = JSON.parse(output).error;
-  assert.equal(error.url, INSTALL_URL);
-  assert.equal(error.guide, GUIDE_URL);
+  const error = JSON.parse(output);
+  assert.equal(error.details.url, INSTALL_URL);
+  assert.equal(error.details.guide, GUIDE_URL);
   assert.match(error.hint, /qz install/);
   assert.doesNotMatch(error.hint, /qz install qz/);
 });
@@ -173,7 +174,7 @@ test("browser launcher uses argument arrays and reports spawn failures", async (
   assert.deepEqual(launch, { command: "open", args: [INSTALL_URL] });
   await assert.rejects(openBrowser(INSTALL_URL, { spawnProcess: () => {
     const child = new EventEmitter(); queueMicrotask(() => child.emit("error", new Error("missing"))); return child;
-  } }), error => error.code === "browser_open_failed" && error.details.url === INSTALL_URL);
+  } }), error => error.code === "BROWSER_OPEN_FAILED" && error.details.url === INSTALL_URL);
 });
 
 test("local transport rejects remote endpoints and redirects", async t => {
@@ -181,7 +182,7 @@ test("local transport rejects remote endpoints and redirects", async t => {
   const server = createServer((_req, res) => { res.writeHead(307, { location: "https://example.com" }); res.end(); });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  await assert.rejects(localFetch(`http://127.0.0.1:${server.address().port}/mcp`), error => error.code === "redirect_blocked");
+  await assert.rejects(localFetch(`http://127.0.0.1:${server.address().port}/mcp`), error => error.code === "REDIRECT_BLOCKED");
 });
 
 for (const action of ["cancel", "abort"]) for (const phase of ["between chunks", "pending first read", "pending second read"]) {
@@ -251,7 +252,7 @@ test("a timed-out task mutation is not submitted again", async t => {
   await server.state.poll(client, { timeoutMs: 1 });
   const record = { endpoint: server.endpoint, health: await readHealth(server.endpoint) };
   const assertion = assert.rejects(runCli(["send", "task-a", "Ask for a city.", "--timeout", "0.15"],
-    { findDaemon: async () => record }), error => error.code === -32001 || error.code === "tool_error");
+    { findDaemon: async () => record }), error => error.code === -32001 || error.code === "TOOL_ERROR");
   const [request] = await server.state.poll(client, { timeoutMs: 2000 });
   assert.equal(request.method, "send_message");
   assert.equal(request.params.text, "Ask for a city.");
@@ -315,7 +316,7 @@ for (const caller of ["CLI", "MCP"]) test(`${caller} executes timeout recovery t
   await reply("send_message", { accepted: true, clientMessageId: "accepted-message", disposition: "started" });
   await reply("get_session_snapshot", snapshot("run-1", "running"));
   const failure = await sending;
-  assert.equal(failure.code, "timeout");
+  assert.equal(failure.code, "TIMEOUT");
   assert.equal(failure.details.sessionId, sessionId);
   assert.equal(failure.details.clientId, client.id);
   assert.equal(server.state.pending.size, 0);
@@ -502,7 +503,7 @@ test("three independent CLI connect processes share one daemon and leave it runn
         openBrowser: async () => {},
       });
     } catch (error) {
-      if (error.code !== 'connection_pending') throw error;
+      if (error.code !== 'CONNECTION_PENDING') throw error;
     }
     console.log(JSON.stringify({ processId: running.processId, instanceId: running.instanceId, endpoint: running.endpoint }));
   `;
@@ -572,8 +573,8 @@ test("failed startup releases its lock and active lock owners are never displace
   const ownerFile = join(paths.lock, `${process.pid}-${randomUUID()}.json`);
   const owner = { processId: process.pid, id: "test-owner" };
   await writeFile(ownerFile, JSON.stringify(owner));
-  await assert.rejects(ensureDaemon({ ...options, timeoutMs: 20 }), error => error.code === "connection_busy");
-  await assert.rejects(stopDaemon({ ...options, timeoutMs: 20 }), error => error.code === "connection_busy");
+  await assert.rejects(ensureDaemon({ ...options, timeoutMs: 20 }), error => error.code === "CONNECTION_BUSY");
+  await assert.rejects(stopDaemon({ ...options, timeoutMs: 20 }), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
   await rm(paths.lock, { recursive: true });
   const started = await ensureDaemon(options);
@@ -649,7 +650,7 @@ test("Windows EPERM contention preserves a live lock owner", async t => {
   mockLockFilesystem(t, { async rename() {
     throw Object.assign(new Error("Windows destination collision"), { code: "EPERM" });
   } });
-  await assert.rejects(stopDaemon(options), error => error.code === "connection_busy");
+  await assert.rejects(stopDaemon(options), error => error.code === "CONNECTION_BUSY");
   assert.deepEqual(JSON.parse(await readFile(ownerFile, "utf8")), owner);
   assert.deepEqual(await fs.readdir(stateDir), [basename(paths.lock)]);
 });
@@ -708,7 +709,7 @@ test("timed-out startup stops its delayed child before a retry can create anothe
       process.once("SIGTERM", () => { void running.close().then(() => process.exit(0)); });`;
     child = spawn(executable, ["--input-type=module", "-e", code], spawnOptions);
     return child;
-  } }), error => error.code === "start_failed");
+  } }), error => error.code === "START_FAILED");
   assert.ok(child.exitCode !== null || child.signalCode !== null, "startup must reap its child before releasing the lock");
   const retry = await ensureDaemon(options);
   await delay(450);
@@ -734,7 +735,7 @@ test("failed startup can force-stop its own unresponsive child and removes only 
       await startManagedBridge(${JSON.stringify({ stateFile: args[2], scopeId: args[3], buildId: args[5], instanceId: args[6], port: 0 })});`;
     child = spawn(executable, ["--input-type=module", "-e", code], spawnOptions);
     return child;
-  } }), error => error.code === "connection_unavailable");
+  } }), error => error.code === "CONNECTION_UNAVAILABLE");
   // Windows terminates on SIGTERM even when the child installs a signal handler.
   assert.equal(child.signalCode, process.platform === "win32" ? "SIGTERM" : "SIGKILL",
     "only the owned failed-startup child can be force-stopped");
@@ -759,7 +760,7 @@ test("startup cleanup preserves a different live service and its state record", 
     child = spawn(executable, ["-e", "setInterval(() => {}, 1000)"], spawnOptions);
     child.once("spawn", () => { restored = writeFile(paths.state, JSON.stringify(managed.record)); });
     return child;
-  } }), error => error.code === "start_failed" && /claimed the startup state/.test(error.message));
+  } }), error => error.code === "START_FAILED" && /claimed the startup state/.test(error.message));
   assert.ok(child.exitCode !== null || child.signalCode !== null);
   assert.equal((await readHealth(managed.endpoint)).instanceId, managed.record.instanceId);
   assert.deepEqual(JSON.parse(await readFile(paths.state, "utf8")), managed.record);
@@ -793,7 +794,7 @@ test("a transient health failure preserves the running service and cannot start 
   await assert.rejects(ensureDaemon({ ...options,
     readHealth: async () => { throw new Error("injected unavailable health endpoint"); },
     spawnProcess: () => { starts += 1; assert.fail("a live unresponsive service must not be duplicated"); },
-  }), error => error.code === "connection_unavailable" && error.details.processId === process.pid);
+  }), error => error.code === "CONNECTION_UNAVAILABLE" && error.details.processId === process.pid);
   assert.equal(starts, 0);
   assert.equal((await findDaemon(options)).instanceId, managed.record.instanceId);
 });

@@ -139,9 +139,9 @@ Use qz to find this week's hottest AI agent projects on GitHub and send me a wee
 
 ## Make your agents actually good at browsing
 
-Agents like Grok Bot, Claude Code, Codex, and pi can hand web tasks to qz. qz runs them in your browser's side panel, where you can watch every step, then returns the results so your agent can keep going.
+Agents like Grok Bot, Claude Code, Codex, and pi can drive your connected browser directly. This one Skill is the direct-drive guide: open a tab, read the page, and act with `qz script` or MCP. When you want qz's built-in agent to plan the task, that same Skill points at `references/create-task.md`.
 
-1. **Install the Skill** so your agent knows how to use qz.
+1. **Install this Skill.** It is the direct-drive guide.
    ```bash
    npx skills add alibaba/qz-browser-agent -g
    ```

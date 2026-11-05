@@ -1,3 +1,4 @@
+import { toolError } from "../../shared/contracts/tool-error.js";
 import type { CliConnectionInput, CliConnectionStatus } from "../../shared/mcp-connection.js";
 import { RECONNECT_ALARM } from "../../shared/reconnect-alarm.js";
 import {
@@ -431,11 +432,20 @@ class QingzhouMcpBridgeRuntime {
       try {
         this.check(generation);
         if (!this.deps.dispatch) throw new Error("qz dispatcher is unavailable");
-        const result = await bounded(Promise.resolve(this.deps.dispatch({ id, method: String(request.method || ""), params: record(request.params), raw: request, signal })), signal,
-          Math.max(1000, Math.min(600_000, Number(request.timeoutMs) || config.requestTimeoutMs)));
+        const requestAbort = new AbortController();
+        const abortRequest = (reason?: unknown) => {
+          if (!requestAbort.signal.aborted) requestAbort.abort(reason);
+        };
+        signal.addEventListener("abort", () => abortRequest(signal.reason), { once: true });
+        const dispatchSignal = AbortSignal.any([signal, requestAbort.signal]);
+        const result = await bounded(Promise.resolve(this.deps.dispatch({ id, method: String(request.method || ""), params: record(request.params), raw: request, signal: dispatchSignal })), signal,
+          Math.max(1000, Math.min(600_000, Number(request.timeoutMs) || config.requestTimeoutMs)),
+          () => abortRequest(failure("BRIDGE_REQUEST_TIMEOUT", "The browser operation timed out.")));
         payload = { ok: true, result };
       } catch (error) {
-        payload = { ok: false, error: error instanceof Error ? error.message : String(error), code: record(error).code || "", details: errorDetails(error) };
+        payload = { ok: false, error: toolError(String(record(error).code || "TOOL_EXECUTION_FAILED"), error instanceof Error ? error.message : String(error), {
+          hint: typeof record(error).hint === "string" ? String(record(error).hint) : undefined, details: errorDetails(error),
+        }) };
       }
       this.check(generation);
       // Results are bound to the exact service/worker lease that dequeued the request.
@@ -465,11 +475,14 @@ class QingzhouMcpBridgeRuntime {
   }
 }
 
-function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number): Promise<T> {
+function bounded<T>(promise: Promise<T>, signal: AbortSignal, ms: number, onTimeout?: () => void): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason || cancelled());
   return new Promise((resolve, reject) => {
     const onAbort = () => finish(signal.reason || cancelled());
-    const timer = setTimeout(() => finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry.")), ms);
+    const timer = setTimeout(() => {
+      try { onTimeout?.(); } catch { /* The caller still observes this timeout. */ }
+      finish(failure("MCP_CONNECTION_UNAVAILABLE", "The local service timed out. Run qz connect to retry."));
+    }, ms);
     const finish = (error: unknown, value?: T) => {
       clearTimeout(timer); signal.removeEventListener("abort", onAbort);
       if (error) reject(error); else resolve(value as T);
@@ -489,6 +502,6 @@ function errorDetails(error: unknown) {
     };
   }
   const keys = value.code === "DOWNLOAD_INTERRUPTED" ? ["downloadId", "filename", "reason"]
-    : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : [];
+    : value.code === "SKILL_NOT_FOUND" ? ["name"] : value.code === "SKILL_RESOURCE_NOT_FOUND" ? ["name", "path"] : ["tabRef", "target", "line", "column"];
   return Object.fromEntries(keys.filter(key => typeof details[key] === "string" || typeof details[key] === "number").map(key => [key, details[key]]));
 }

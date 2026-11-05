@@ -41,12 +41,19 @@ try {
     const scriptPath = bundle ? 'background/service-worker.js' : 'capabilities/script/tools.js';
     const scriptCode = await readFile(join(outputDir, scriptPath), 'utf8');
     const scriptFindings = cdpFindings(scriptCode, scriptPath);
-    assert.equal(scriptFindings.length, bundle ? 10 : 3);
+    assert.equal(scriptFindings.length, bundle ? 11 : 3);
     assert.ok(scriptFindings.every(item => item.reviewed));
     assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
     assert.notEqual(mutatedScriptCode, scriptCode);
     assert.equal(cdpFindings(mutatedScriptCode, scriptPath).filter(item => !item.reviewed).length, 2);
+    const implicitTarget = scriptCode.replaceAll(/const resolvedTabId(\d*) = resolveRunScriptTargetTabId(\d*)\(tabId\d*\);/gu,
+      'const resolvedTabId$1 = resolveRunScriptTargetTabId$2(context.workingTabId);');
+    assert.notEqual(implicitTarget, scriptCode);
+    const implicitTargetFindings = inspectJavaScript(implicitTarget, scriptPath).findings;
+    assert.equal(implicitTargetFindings.some(item => item.rule === 'syntax'), false);
+    assert.equal(implicitTargetFindings.filter(item => item.rule === 'cdp-execution' && !item.reviewed).length, 1,
+      'introducing an implicit page target requires a new factory review');
     assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
 
     if (!bundle) {

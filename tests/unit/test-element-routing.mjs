@@ -83,7 +83,7 @@ const element = createElementRuntime({
         if (resolveNodeError) throw resolveNodeError;
         return { object: { objectId: "bound-node" } };
       }
-      if (method === "Runtime.evaluate") return { result: { value: { extensionId: "extension-id", bridge: true } } };
+      if (method === "Runtime.evaluate") return { result: { value: { extensionId: "extension-id", bridge: true, elementRefs: true } } };
       if (method === "Runtime.callFunctionOn") {
         const payload = params.arguments?.[0]?.value || {};
         contentCalls.push({ tabId, action: payload.action, selector: payload.selector, index: payload.index, via: "node" });
@@ -176,7 +176,7 @@ test("selector-only uid click, fill, check, and read use the stored selector", a
   assert.equal(callsSince(before).some(call => call.action === "resolveCheckTarget" && call.selector === "input.agree" && call.index === 3), true);
 
   state.kind = "button";
-  const read = await tools.get("read_dom").execute({ tabId: 5, selector: readTarget, limit: 20 }, undefined, context);
+  const read = await tools.get("read_dom").execute({ tabId: 5, target: readTarget, limit: 20 }, undefined, context);
   assert.equal(read.content, "scoped-text");
   assert.equal(callsSince(before).some(call => call.action === "readDom" && call.selector === "main.article" && call.index === 4), true);
   assert.equal(callsSince(before).some(call => call.selector === "body"), false);
@@ -187,7 +187,7 @@ test("a uid with neither a node nor a selector fails before reading the page", a
   const target = register("t5.00aa02.1", {});
   const before = contentCalls.length;
   await assert.rejects(
-    tools.get("read_dom").execute({ tabId: 5, selector: target, limit: 20 }, undefined, context),
+    tools.get("read_dom").execute({ tabId: 5, target, limit: 20 }, undefined, context),
     error => error?.code === "STALE_ELEMENT_UID",
   );
   assert.equal(contentCalls.length, before);
@@ -204,7 +204,7 @@ test("a deleted node is not operated through the replacement's selector", async 
   const before = contentCalls.length;
   try {
     await assert.rejects(
-      tools.get("read_dom").execute({ tabId: 5, selector: target, limit: 20 }, undefined, context),
+      tools.get("read_dom").execute({ tabId: 5, target, limit: 20 }, undefined, context),
       error => error?.code === "STALE_ELEMENT_UID",
     );
     await assert.rejects(

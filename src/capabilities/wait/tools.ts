@@ -2,6 +2,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
 import { delayTimeout, pageWaitTimeout } from "#sdk/background/tools";
+import { isCdpFallbackForbiddenError, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
 
 import {
@@ -19,28 +20,17 @@ interface WaitDependencies {
   registerTool: RegisterTool;
   getToolRuntimeDependencies(context: ToolContext): { sessions?: Partial<UserWaitRuntime> | null; emit?: ((event: ToolEvent) => void) | null };
   captureTabScreenshot(tabId: number, options: { format: "jpeg" | "png"; quality: number }, context: ToolContext): Promise<{ dataUrl: string; method?: string }>;
-  sendToContent(tabId: number | undefined, action: string, args: Record<string, unknown>): Promise<unknown>;
+  sendToContent(tabId: number | undefined, action: string, args: Record<string, unknown>, context?: ToolContext): Promise<unknown>;
+  element: Pick<ElementAccess, "resolveSelectorTarget" | "callElement" | "addElementTargetsToFindResult" | "elementTargetForSelector">;
 }
 type QuestionField = Record<string, unknown>;
 interface NavigationResult { status: string; waited: boolean; url?: string; title?: string }
 
 /** Human waits and page waits share the same declarative execution contract. */
-export function registerWaitTools({ registerTool, getToolRuntimeDependencies, captureTabScreenshot, sendToContent }: WaitDependencies) {
+export function registerWaitTools({ registerTool, getToolRuntimeDependencies, captureTabScreenshot, sendToContent, element }: WaitDependencies) {
 const WAIT_MAX_DELAY_MS = 2 * 60 * 60 * 1000;
 const WAIT_CLOCK_RECHECK_MS = 30 * 1000;
 const ZONED_ISO_DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/;
-
-function normalizeWaitSelector(selector = "") {
-  const raw = String(selector || "").trim();
-  if (/^css:/i.test(raw)) return raw.slice(raw.indexOf(":") + 1).trim();
-  if (/^uid:/i.test(raw)) {
-    throw new ToolExecutionError("INVALID_ELEMENT_TARGET", t("waitForElementSelectorSupportsRawCssOrCss"), {
-      selector: raw,
-      expected: "selector = <css_selector> | css:<css_selector>",
-    });
-  }
-  return raw;
-}
 
 function secondsToMs(value: unknown, fallbackMs: number) {
   const n = Number(value);
@@ -249,7 +239,7 @@ function normalizeQuestionForm({ title = "", message = "", fields = [], submitLa
 
 registerTool({
   name: "wait_for_user",
-  model: { pageContext: "working" },
+  model: { pageContext: "explicit" },
   get description() { return toolT("waitForUserDescription"); },
   get parameters() { return {
     type: "object",
@@ -259,14 +249,14 @@ registerTool({
         type: "string",
         description: toolT("waitForUserMessage"),
       },
-      tabId: {
-        type: "number",
+      tabRef: {
+        type: ["integer", "string"],
         description: toolT("waitForUserTabId"),
       },
     },
     required: ["message"],
   } as const; },
-  page: args => args.tabId == null ? false : "owned",
+  page: args => args.tabRef != null || args.tabId != null ? "owned" : false,
   timeout: 0,
   execute: async ({ message, tabId }, signal, context = {}) => {
     const runtime = getToolRuntimeDependencies(context);
@@ -275,7 +265,7 @@ registerTool({
     const sessionId = normalizeSessionId(context.sessionId);
     const runId = String(context.runId || "").trim();
     const waitId = createWaitId(sessionId);
-    const targetTabId = Number(tabId || context.workingTabId);
+    const targetTabId = Number(tabId);
 
     // Notify the Side Panel to display the waiting state.
     emit({
@@ -302,7 +292,6 @@ registerTool({
       return {
         continued: true,
         reason: waitResult.reason,
-        tabId: Number.isFinite(targetTabId) && targetTabId > 0 ? targetTabId : undefined,
         note: toolT("userContinuedNoImages"),
       };
     }
@@ -314,7 +303,6 @@ registerTool({
           _image: shot.dataUrl,
           continued: true,
           reason: waitResult.reason,
-          tabId: effectiveTabId,
           screenshotMethod: shot.method,
           note: toolT("userContinuedWithImage"),
         };
@@ -434,12 +422,13 @@ registerTool({
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("waitForNavigationTabId") },
+      tabRef: { type: ["integer", "string"], description: toolT("waitForNavigationTabId") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       screenshot: { type: "boolean", description: toolT("waitForNavigationScreenshot") },
       fromUrl: { type: "string", description: toolT("waitForNavigationFromUrl") },
       fromTitle: { type: "string", description: toolT("waitForNavigationFromTitle") },
     },
+    required: ["tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
@@ -447,7 +436,7 @@ registerTool({
     const { tabId, timeout = 10, screenshot = false, fromUrl = "", fromTitle = "" } = input;
     const { timeoutMs } = input as Record<string, unknown>;
     const timeoutMsValue = timeoutMs != null ? Math.max(0, Number(timeoutMs) || 0) : secondsToMs(timeout, 10000);
-    if (!tabId) throw new ToolExecutionError("SESSION_TAB_TARGET_REQUIRED", t("currentTaskHasNoWorkingTab"));
+    if (!tabId) throw new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef for the page to wait for.");
 
     // Wait for loading.
     const tab = await chrome.tabs.get(tabId);
@@ -460,7 +449,7 @@ registerTool({
         const onAbort = () => {
           chrome.tabs.onUpdated.removeListener(listener);
           clearTimeout(timer);
-          reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for navigation", { tabId }));
+          reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for navigation", {}));
         };
         signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -497,7 +486,6 @@ registerTool({
 
     if (!screenshot || !canReturnImages(context)) {
       return {
-        tabId,
         ...navResult,
         ...(inputFromUrl ? { fromUrl: inputFromUrl } : {}),
         ...(inputFromTitle ? { fromTitle: inputFromTitle } : {}),
@@ -514,7 +502,6 @@ registerTool({
       const shot = await captureTabScreenshot(tabId, { format: "jpeg", quality: 70 }, context);
       return {
         _image: shot.dataUrl,
-        tabId,
         screenshotMethod: shot.method,
         ...navResult,
         ...(inputFromUrl ? { fromUrl: inputFromUrl } : {}),
@@ -526,7 +513,6 @@ registerTool({
       };
     } catch(_e) {
       return {
-        tabId,
         ...navResult,
         ...(inputFromUrl ? { fromUrl: inputFromUrl } : {}),
         ...(inputFromTitle ? { fromTitle: inputFromTitle } : {}),
@@ -539,52 +525,61 @@ registerTool({
 
 registerTool({
   name: "wait_for_element",
+  argumentAliases: { selector: "target" },
   get description() { return toolT("waitForElementDescription"); },
   get parameters() { return {
     type: "object",
     properties: {
-      tabId: { type: "number", description: toolT("waitForElementTabId") },
-      selector: { type: "string", description: toolT("waitForElementSelector") },
+      tabRef: { type: ["integer", "string"], description: toolT("waitForElementTabId") },
+      target: { type: "string", description: toolT("waitForElementSelector") },
       absent: { type: "boolean", description: toolT("waitForElementAbsent") },
       timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
       intervalSeconds: { type: "number", description: toolT("waitForElementIntervalSeconds") },
     },
-    required: ["selector"],
+    required: ["target", "tabRef"],
   } as const; },
   page: "owned",
   timeout: pageWaitTimeout,
-  execute: async (input, signal) => {
-    let { selector } = input;
-    const { tabId, absent = false, timeout = 10, intervalSeconds = 0.5 } = input;
+  execute: async (input, signal, context = {}) => {
+    const { tabId, target, absent = false, timeout = 10, intervalSeconds = 0.5 } = input;
     const { timeoutMs, interval } = input as Record<string, unknown>;
-    selector = normalizeWaitSelector(selector);
+    const callContext = context; // Preserve the host's non-enumerable execution authority.
+    const binding = await element.resolveSelectorTarget(tabId, target, 0, callContext);
+    const selector = binding.selector || binding.ref?.selector || "";
+    const reference = binding.target || element.elementTargetForSelector(selector);
     const waitTimeoutMs = timeoutMs != null ? Math.max(0, Number(timeoutMs) || 0) : secondsToMs(timeout, 10000);
     const intervalMs = interval != null ? Math.max(0, Number(interval) || 0) : secondsToMs(intervalSeconds, 500);
     const deadline = Date.now() + waitTimeoutMs;
-
     while (Date.now() < deadline) {
-      if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting for element", { selector });
-
+      signal?.throwIfAborted();
+      let result: Record<string, unknown>;
       try {
-        const result = await sendToContent(tabId, "querySelector", {
-          selector,
-          limit: 1,
-        });
-        const found = Array.isArray(result) && result.length > 0;
-
-        if (absent ? !found : found) {
-          return {
-            found: !absent,
-            selector,
-            element: found && Array.isArray(result) ? result[0] : null,
-          };
+        const params = { selector: binding.selector, visibleOnly: Boolean(binding.uid) };
+        result = (binding.uid
+          ? await element.callElement(binding.tabId, binding, "elementPresence", params, callContext)
+          : await sendToContent(binding.tabId, "elementPresence", params, callContext)) as Record<string, unknown>;
+        if (result?.error) throw new ToolExecutionError(String(result.code || "CONTENT_SCRIPT_MESSAGE_FAILED"), String(result.error));
+        if (!result || typeof result.found !== "boolean") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element presence response");
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        const details = error && typeof error === "object" && "details" in error ? error.details as Record<string, unknown> : {};
+        if (binding.uid && code === "STALE_ELEMENT_UID" && details.reason === "node_unavailable") result = { found: false };
+        else {
+          if (signal?.aborted || isCdpFallbackForbiddenError(error)
+            || !["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) throw error;
+          await waitDelay(Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
+          continue;
         }
-      } catch(_e) { /* The page may still be initializing. */ }
-
-      await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      const found = result?.found === true;
+      if (absent ? !found : found) {
+        const observed = found ? await element.addElementTargetsToFindResult(result.element, binding.tabId, callContext, binding.ref) : null;
+        const target = observed && typeof observed === "object" && "target" in observed ? observed.target : reference;
+        return { found: !absent, target, element: observed };
+      }
+      await waitDelay(Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
     }
-
-    return { found: false, selector, timedOut: true };
+    return { found: false, target: reference, timedOut: true };
   },
 });
 

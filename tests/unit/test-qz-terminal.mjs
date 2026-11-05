@@ -10,7 +10,7 @@ import { defaultShell, optionTerminator, shellArgument, shellQuote } from "../..
 import { parseCommand } from "../../services/mcp-bridge/src/args.mjs";
 
 const taskId = "2d02892a-1111-4222-8333-0123456789ab";
-const task = { id: taskId, title: "杭州网页研究与城市景点整理", status: "running", running: true };
+const task = { sessionId: taskId, title: "杭州网页研究与城市景点整理", status: "running", running: true };
 const parsed = action => ({ command: "tasks", action });
 const snapshot = {
   sessionId: taskId, session: task, status: "completed", runtime: { status: "completed" },
@@ -52,13 +52,16 @@ test("help recommends direct creation, optional titles, waiting, and contextual 
   assert.match(renderHelp("send"), /next safe boundary/);
   assert.match(renderHelp("send"), /next run/);
   for (const name of ["", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "stop", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
-    assert.doesNotMatch(renderHelp(name), /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
+    // General help appends the browser guide. Chrome's documented --args flag is
+    // not a qz CLI option; validate removed options only in the command reference.
+    const commandReference = renderHelp(name).split("Do not configure a qz model.")[0];
+    assert.doesNotMatch(commandReference, /qz run|qz tasks (create|list|get|stop)|Legacy|--prompt|--args|--client-id/);
     for (const width of [40, 80]) fits(renderHelp(name, { width }), width);
   }
 });
 
 test("task lists preserve complete IDs and real statuses at wide and narrow widths", () => {
-  const sessions = [task, { ...task, id: "second", title: "Compare 👩🏽‍💻 laptops", status: "waiting_user", running: true }];
+  const sessions = [task, { ...task, sessionId: "second", title: "Compare 👩🏽‍💻 laptops", status: "waiting_user", running: true }];
   for (const width of [40, 80]) {
     const result = renderResult(parsed("list"), { sessions }, { width });
     assert.match(result, /Tasks · 2/);
@@ -313,7 +316,7 @@ test("OSC strings use BEL and both string terminators, including C1 and unfinish
 });
 
 test("errors retain actionable details and respect plain and color output", () => {
-  const payload = { ok: false, error: { code: "connection_pending", message: "Open the connection page in Chrome.",
+  const payload = { ok: false, error: { code: "CONNECTION_PENDING", message: "Open the connection page in Chrome.",
     url: "http://127.0.0.1:18765/qz-connect", hint: "Then run qz connect again.", guide: "https://example.com/guide" } };
   const plain = renderError(payload, { width: 40 });
   assert.match(plain, /Waiting for Chrome/);
@@ -327,7 +330,7 @@ test("errors retain actionable details and respect plain and color output", () =
 });
 
 test("suggested shell commands use placeholders for untrusted identifiers", () => {
-  const output = renderResult(parsed("create"), { session: { id: "task; touch /tmp/bad", title: "Task" }, started: true });
+  const output = renderResult(parsed("create"), { session: { sessionId: "task; touch /tmp/bad", title: "Task" }, started: true });
   assert.match(output, /Task  task; touch \/tmp\/bad/);
   assert.match(output, /qz show TASK_ID/);
   assert.match(output, /qz cancel TASK_ID/);
@@ -339,8 +342,8 @@ test("suggested shell commands use placeholders for untrusted identifiers", () =
 test("help advertises task-centric commands and omits removed CLI entry points", () => {
   for (const topic of ["", "show", "submit", "skills"]) {
     const help = renderHelp(topic);
-    assert.doesNotMatch(help, /qz (?:input|tools|call|logs|downloads)\b/);
-    assert.doesNotMatch(help, /^\s+(?:input|tools|call|logs|downloads)\s/m);
+    assert.doesNotMatch(help, /qz (?:input|call|logs|downloads)\b/);
+    assert.doesNotMatch(help, /^\s+(?:input|call|logs|downloads)\s/m);
   }
   assert.match(renderHelp("show"), /TASK_ID/);
 });

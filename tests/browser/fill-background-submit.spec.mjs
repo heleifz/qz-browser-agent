@@ -91,7 +91,7 @@ for (const pageName of ['keylog.html', 'form.html']) {
             },
           });
           globalThis.qa = {
-            call: (name, args) => runtime.execute(name, args, undefined, {
+            call: (name, args) => runtime.execute(name, name === 'open_tab' ? args : { tabRef: args.tabId ?? tabId, ...args }, undefined, {
               sessionId: 'qa-fill', runId: 'run', workingTabId: tabId,
               runProfile: { platform: { os: 'linux' } },
             }),
