@@ -44,7 +44,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-02-element-references";
+  const QZ_CONTENT_VERSION = "2026-11-05-element-readiness";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -808,9 +808,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
   }
 
-  function queryElement(selector: unknown, index: number, clickTarget = false) {
+  function queryElement(selector: unknown, index: number, clickTarget = false, readinessOnly = false) {
     const query = queryAll(selector);
-    if (query.error) return { ...query.error, interactable: getInteractableElements() };
+    if (query.error) return readinessOnly ? query.error : { ...query.error, interactable: getInteractableElements() };
     let element = selector instanceof Element ? query.elements[0] : query.elements[index];
     if (!element) {
       return {
@@ -819,11 +819,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           index,
           matched: query.elements.length,
         }),
-        interactable: getInteractableElements(),
+        ...(readinessOnly ? {} : { interactable: getInteractableElements() }),
       };
     }
     if (clickTarget) {
-      const resolved = resolveClickTarget(element);
+      const resolved = resolveClickTarget(element, readinessOnly);
       if ("error" in resolved) return resolved;
       element = resolved.element;
     }
@@ -1793,6 +1793,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         parent: el.parentElement ? { ...inspection.parent, _elementRef: rememberElement(el.parentElement) } : null };
     },
 
+    readElementReadiness({ selector, index = 0, clickTarget = false, elementAction = "" }) {
+      const targetResult = queryElement(selector, index, clickTarget, true);
+      if ("error" in targetResult) return targetResult;
+      return elementAction === "check" || elementAction === "uncheck"
+        ? checkTargetReadiness(targetResult.element, false)
+        : getElementReadiness(targetResult.element);
+    },
+
     scrollElementIntoView({ selector, index = 0, block = "center", clickTarget = false }) {
       const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
@@ -2048,30 +2056,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     },
 
     resolveCheckTarget({ selector, index = 0, scroll = true }) {
-      const targetResult = queryElement(selector, index);
+      const targetResult = queryElement(selector, index, false, true);
       if ("error" in targetResult) return targetResult;
-      const { element: el } = targetResult;
-      if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) {
-        return toolError("NOT_CHECKABLE_ELEMENT", "Element is not a checkbox or radio", getElementSummary(el));
-      }
-      if (isDisabled(el)) return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
-      const labels = [...(el.labels || [])].filter(label => label.control === el);
-      for (const candidate of [el, ...labels]) {
-        if (scroll) candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
-        const inspection = getElementInspection(candidate);
-        const point = inspection.clickablePoint;
-        if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
-        let hit = point && elementAtPoint(candidate, point.x, point.y);
-        if (!hit || (hit !== el && hit !== candidate && !candidate.contains(hit))) continue;
-        // Label activation excludes nested links and other independent controls.
-        while (hit && hit !== candidate && hit !== el) {
-          if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
-          hit = hit.parentElement;
-        }
-        if (hit !== candidate && hit !== el) continue;
-        return { ...getElementInspection(el), element: inspection };
-      }
-      return getElementInspection(el);
+      return checkTargetReadiness(targetResult.element, scroll);
     },
 
     actOnElement({ selector, index = 0, action, elementAction = "", value = "", key = "", submit = false }) {
@@ -2504,7 +2491,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     el.dispatchEvent(new KeyboardEvent("keyup", common));
   }
 
-  function resolveClickTarget(el: Element) {
+  function resolveClickTarget(el: Element, readinessOnly = false) {
     const visibleSelf = clickablePointFor(el);
     if (visibleSelf) {
       return { element: el, point: visibleSelf, href: getHref(el) || undefined };
@@ -2515,7 +2502,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     const labels = "labels" in el ? el.labels as NodeListOf<HTMLLabelElement> | null : null;
     if (!isDisabled(el)) for (const label of labels || []) {
       if (label.control !== el) continue;
-      label.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      if (!readinessOnly) label.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
       const point = clickablePointFor(label);
       if (!point) continue;
       let hit = elementAtPoint(label, point.x, point.y);
@@ -2548,8 +2535,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     if (href) return { element: el, point: null, href, navigateUrl: href };
 
     return {
-      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable box and no href to navigate", getElementSummary(el)),
-      interactable: getInteractableElements(),
+      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable box and no href to navigate", readinessOnly ? getElementReadiness(el) : getElementSummary(el)),
+      ...(readinessOnly ? {} : { interactable: getInteractableElements() }),
     };
   }
 
@@ -2564,6 +2551,46 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       x: Math.round(rect.left + rect.width / 2),
       y: Math.round(rect.top + rect.height / 2),
     };
+  }
+
+  /** Repeated action preparation reads only state and geometry, never page descriptions. */
+  function getElementReadiness(el: Element) {
+    const rect = el.getBoundingClientRect();
+    const point = rect.width > 0 && rect.height > 0
+      ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } : null;
+    return {
+      tag: el.tagName.toLowerCase(), type: el.getAttribute("type") || "",
+      visible: isVisible(el), disabled: isDisabled(el), readOnly: isReadOnly(el), editable: isEditableElement(el),
+      checked: "checked" in el ? !!el.checked : undefined,
+      rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+      clickablePoint: point,
+      state: { inViewport: isInViewport(el), clickablePointInViewport: pointInViewport(point), obscuredAtCenter: isObscuredAtCenter(el) },
+    };
+  }
+
+  function checkTargetReadiness(el: Element, scroll: boolean) {
+    const control = getElementReadiness(el);
+    if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) {
+      return toolError("NOT_CHECKABLE_ELEMENT", "Element is not a checkbox or radio", control);
+    }
+    if (control.disabled) return toolError("ELEMENT_DISABLED", "Element is disabled", control);
+    const labels = [...(el.labels || [])].filter(label => label.control === el);
+    for (const candidate of [el, ...labels]) {
+      if (scroll) candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      const inspection = getElementReadiness(candidate);
+      const point = inspection.clickablePoint;
+      if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
+      let hit = point && elementAtPoint(candidate, point.x, point.y);
+      if (!hit || (hit !== el && hit !== candidate && !candidate.contains(hit))) continue;
+      // Label activation excludes nested links and other independent controls.
+      while (hit && hit !== candidate && hit !== el) {
+        if (hit.matches("a[href], button, input, select, textarea, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']")) break;
+        hit = hit.parentElement;
+      }
+      if (hit !== candidate && hit !== el) continue;
+      return { ...getElementReadiness(el), element: inspection };
+    }
+    return getElementReadiness(el);
   }
 
   function getElementSummary(el: Element, { selector = true, labels = true } = {}) {
@@ -3101,7 +3128,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     let element = elementFromNode(node);
     // A RootWebArea UID scopes document readers to that document, including iframe documents.
     if (!element && node instanceof Document && ["pageOverview", "readArticle", "readDom", "findElements",
-      "inspectElement", "listImageElements", "getElementScreenshotBounds", "elementPresence"].includes(payload?.action)) {
+      "inspectElement", "readElementReadiness", "listImageElements", "getElementScreenshotBounds", "elementPresence"].includes(payload?.action)) {
       element = node.body || node.documentElement;
     }
     const saved = token ? fillRoots.get(token) : undefined;

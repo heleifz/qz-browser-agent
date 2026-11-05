@@ -288,6 +288,7 @@ export function createRunScriptBridge({
     const canManage = runContext.runProfile ? undefined : await canManageSessions(sessionId);
     return {
       nestedToolScope: parent?.nestedToolScope,
+      deadlineAt: parent?.deadlineAt,
       externalDrive,
       sourceWindowId: positiveNumber(snapshotContext.sourceWindowId) || null,
       dynamicContext,

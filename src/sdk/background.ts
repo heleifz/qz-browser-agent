@@ -19,6 +19,8 @@ export interface ToolContext extends SkillActivationContext {
   requestedTabRef?: string | number;
   /** Call-scoped cancellation, including the tool deadline. */
   signal?: AbortSignal;
+  /** Host-owned absolute deadline shared by preparation and result observation. */
+  deadlineAt?: number;
   /** Host-owned, call-local presentation; never part of the business result. */
   resultPresentation?: ToolResultPresentation;
   /** Observation execution preserves the working tab; ordered commit may select the observed tab. */

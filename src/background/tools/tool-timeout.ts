@@ -10,7 +10,7 @@ export interface ToolPartialResult { result: Fields; pending: string }
 /** One deadline owns one partial slot. Late handlers have no authority to update it. */
 export async function runToolWithTimeout(
   name: string,
-  execute: (signal: AbortSignal, reportPartial: NonNullable<ToolContext["reportPartial"]>) => Promise<unknown>,
+  execute: (signal: AbortSignal, reportPartial: NonNullable<ToolContext["reportPartial"]>, deadlineAt: number) => Promise<unknown>,
   parentSignal: AbortSignal | undefined,
   timeoutMs: number,
   fallback: (partial: ToolPartialResult, error: ToolExecutionError) => Promise<unknown>,
@@ -19,6 +19,7 @@ export async function runToolWithTimeout(
 ): Promise<unknown> {
   const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while running ${name}`, { name });
   if (parentSignal?.aborted) throw cancelled();
+  const deadlineAt = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
   const controller = new AbortController();
   let partial: ToolPartialResult | undefined;
   let settled = false, timedOut = false;
@@ -56,7 +57,7 @@ export async function runToolWithTimeout(
   const never = () => new Promise<never>(() => {});
   const execution = Promise.resolve().then(() => {
     if (controller.signal.aborted) throw cancelled();
-    return execute(controller.signal, reportPartial);
+    return execute(controller.signal, reportPartial, deadlineAt);
   }).then(value => timedOut ? never() : value, error => timedOut ? never() : Promise.reject(error));
   try { return await Promise.race([execution, timeout, abort]); }
   finally {

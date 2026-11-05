@@ -8,7 +8,7 @@ export interface PreparedNavigation { url: string; rateLimitMatch?: unknown; rat
 
 /** Observe one action; never dispatch or replay it. Document IDs also distinguish same-URL reloads. */
 export async function beginPageNavigationObservation(tabId: number, signal?: AbortSignal,
-  { settleMs = 180, timeoutMs = 10_000, probeMs = 100 } = {}) {
+  { settleMs = 180, timeoutMs = 10_000, probeMs = 100, deadlineAt = Infinity } = {}) {
   let disposed = false, started = false;
   const cancelled = () => Object.assign(new ToolExecutionError("OPERATION_ABORTED", "Page navigation observation cancelled"), {
     hint: "Inspect the page state before retrying the action.",
@@ -54,9 +54,9 @@ export async function beginPageNavigationObservation(tabId: number, signal?: Abo
     async finish(pageBefore: PageState) {
       const dispatchPage = baseline ? { url: baseline.url || "", title: baseline.title || "" } : pageBefore;
       try {
-        // A prevented/default-free click stays fast. An in-flight navigation gets its own bounded wait.
-        await wait(new Promise<never>(() => {}), settleMs);
-        const deadline = Date.now() + timeoutMs;
+        // Leave one probe interval to return the receipt before the call's hard deadline.
+        const deadline = Math.min(Date.now() + timeoutMs, deadlineAt - probeMs);
+        await wait(new Promise<never>(() => {}), Math.min(settleMs, Math.max(0, deadline - Date.now())));
         let tab: chrome.tabs.Tab | null = null;
         let documentChanged: boolean | null = null;
         for (;;) {

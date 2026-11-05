@@ -14,10 +14,15 @@ guide](../src/capabilities/README.md). Development rules are in [AGENTS.md](../A
 
 Page tools prepare only the state they consume. Navigation returns after document commit;
 page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element observations
-read their current nodes. Element actions wait for their action-specific readiness within the call
-deadline before dispatching input; a stale UID requires a new observation. `evaluate({waitUntil:"commit"})` supports early observation and
-predicate waits. Content messaging does not wait for parsing. Preparation uses the call's
-cancellation signal and deadline; document replacement can retry preparation, never dispatched
+read their current nodes. Element actions poll lightweight readiness state, geometry, and hit tests
+within the call deadline; full inspection supplies presentation and navigation metadata once.
+Preparation defaults to at most 5 seconds inside the 20-second call budget; an explicit `timeout`
+sets the shared preparation and execution limit.
+Mouse presses recheck the target after moving the pointer. A stale UID requires a new observation.
+`evaluate({waitUntil:"commit"})` supports early observation and
+predicate waits. Content messaging does not wait for parsing. Preparation and navigation confirmation
+share the host's absolute call deadline and cancellation signal. Unfinished navigation returns
+`navigationPending` within that budget. Document replacement can retry preparation, never dispatched
 user code or input. Event waits arm before their trigger; triggered waits retain same-page ordering
 while their child tools acquire execution locks.
 

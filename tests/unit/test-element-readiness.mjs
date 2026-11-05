@@ -83,3 +83,25 @@ test("an abort while inspecting cannot return a ready element", async () => {
     inspect: async () => { controller.abort(reason); return { disabled: false }; },
   }), error => error === reason);
 });
+
+test("pointer confirmation waits again after a new overlay and moved geometry, within the original deadline", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  let moved = false, confirms = 0;
+  const pending = waitForElementReady({ target, deadline: 1500, stable: true, readiness: ready,
+    inspect: async () => ({ rect: rect(moved ? 40 : 0), disabled: false }),
+    confirm: async observed => { confirms++; moved = true; return confirms === 1 ? { rect: rect(40), disabled: true } : observed; },
+  });
+  await flush();
+  for (let i = 0; i < 3; i++) { t.mock.timers.tick(50); await flush(); }
+  assert.deepEqual(await pending, { rect: rect(40), disabled: false });
+  assert.equal(confirms, 2);
+});
+
+test("readiness defaults to one five-second budget", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const pending = waitForElementReady({ target, inspect: async () => ({ disabled: true }), readiness: ready });
+  const rejected = assert.rejects(pending, { code: "ELEMENT_NOT_READY" });
+  await flush();
+  t.mock.timers.tick(5000);
+  await rejected;
+});

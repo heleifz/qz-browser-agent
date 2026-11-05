@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { bindToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 import { assertScriptPageLifecycle } from "../../src/background/tools/behavior.js";
+import { withToolCallLifecycle } from "../../src/background/tools/call-lifecycle.js";
 import {
   createRunScriptArtifactCollector,
   createRunScriptBridge,
@@ -477,5 +478,15 @@ assert.match(builtInAlias.message, /no page alias yet|还没有页面别名/);
   assert.equal(new Set(holders).size, values.length);
   assert.deepEqual(parentPresentation, { _display: { parent: true } });
 }
+
+const parentDeadline = Date.now() + 5_000;
+await withToolCallLifecycle({ sessionId: "s1", runId: "run-current", deadlineAt: parentDeadline }, async parent => {
+  const child = await bridge.handleToolCall({ toolName: "read_dom", sessionId: "s1", runId: "run-current",
+    parentCallId: parent.toolExecutionId, deadlineAt: parentDeadline + 60_000 });
+  assert.equal(child.ok, true);
+  assert.equal(executions.at(-1).context.deadlineAt, parentDeadline, "the child inherits the host deadline, never a message-supplied budget");
+});
+await bridge.handleToolCall({ toolName: "read_dom", sessionId: "s1", runId: "run-current", deadlineAt: parentDeadline });
+assert.equal(executions.at(-1).context.deadlineAt, undefined, "an unrelated call must not inherit another parent's deadline");
 
 console.log("run_script bridge tests passed");

@@ -683,9 +683,11 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     try {
       result = await runToolWithTimeout(
         name,
-        async (signal, reportPartial) => {
+        async (signal, reportPartial, deadlineAt) => {
           const args = executionArgs;
-          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial, resultPresentation: context.resultPresentation ?? {} }, getToolRuntimeDependencies(context));
+          const callContext = withToolRuntimeContext({ ...context, signal, reportPartial,
+            deadlineAt: Math.min(deadlineAt, context.deadlineAt ?? Infinity),
+            resultPresentation: context.resultPresentation ?? {} }, getToolRuntimeDependencies(context));
           const releaseDebuggerExecution = beginDebuggerExecution(callContext);
           try {
             if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {

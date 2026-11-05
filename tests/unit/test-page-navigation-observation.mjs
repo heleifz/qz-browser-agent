@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import test from "node:test";
 import { beginPageNavigationObservation } from "../../src/background/tools/page-navigation.js";
+import { runToolWithTimeout } from "../../src/background/tools/tool-timeout.js";
 
 const before = { url: "https://example.test/form", title: "Form" };
 const after = { url: "https://example.test/done", title: "Done" };
@@ -39,6 +40,33 @@ function fixture(t) {
     },
   };
 }
+
+test("navigation confirmation uses the tool's remaining budget and returns pending before its hard timeout", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const f = fixture(t);
+  let finished = false, callSignal;
+  const pending = runToolWithTimeout("act_on_element", async (signal, _publish, deadlineAt) => {
+    callSignal = signal;
+    assert.equal(deadlineAt, 1100);
+    const observer = await f.start(signal, { timeoutMs: 10_000, deadlineAt });
+    t.mock.timers.tick(60); // Preparation and dispatch have already consumed this part of the call.
+    Object.assign(f.tab, { status: "loading", pendingUrl: after.url });
+    f.emit(7, { status: "loading" });
+    return observer.finish(before);
+  }, undefined, 100, () => { throw new Error("confirmation must not reach the hard timeout"); }, {})
+    .then(result => { finished = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  for (let tick = 0; !finished && tick < 40; tick++) {
+    t.mock.timers.tick(1);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  const result = await pending;
+  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigationStarted, true);
+  assert.equal(callSignal.aborted, false);
+  assert.ok(Date.now() < 1100);
+  assert.equal(f.listeners.size, 0);
+});
 
 test("an observed form navigation waits through loading and returns the committed page", async t => {
   const f = fixture(t);

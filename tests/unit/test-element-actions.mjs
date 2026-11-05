@@ -25,7 +25,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
   let execute, onCommand = async () => {}, onContent = async () => {};
   const inspection = () => ({ selector: "#target", tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
-    clickablePoint: hidden ? null : { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
+    clickablePoint: hidden ? null : state.clickablePoint || { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
   const content = async (action, params) => {
     messages.push({ action, params });
     const reply = await onContent(action, params);
@@ -74,7 +74,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     },
   });
   return { commands, messages, observations, controller, state, receipts, inspection,
-    call: args => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, context),
+    call: (args, overrides = {}) => execute({ tabId: 7, target: "css:#target", ...args }, controller.signal, { ...context, ...overrides }),
     onCommand: hook => { onCommand = hook; }, onContent: hook => { onContent = hook; } };
 }
 
@@ -123,7 +123,7 @@ test("cancellation during click preparation cannot dispatch a Content fallback",
   const f = fixture();
   let inspections = 0;
   f.onContent(action => {
-    if (action === "inspectElement" && ++inspections === 2) {
+    if (action === "readElementReadiness" && ++inspections === 2) {
       f.controller.abort();
       throw new Error("Content response lost during cancellation");
     }
@@ -179,7 +179,7 @@ test("page changes during click preparation form the baseline instead of being a
   let tab = { url: "https://example.test/", title: "Fixture", status: "complete" }, inspections = 0;
   chrome.tabs.get = async () => ({ ...tab });
   f.onContent(action => {
-    if (action === "inspectElement" && ++inspections === 2) {
+    if (action === "readElementReadiness" && ++inspections === 2) {
       tab = { url: "https://example.test/prepared", title: "Prepared", status: "loading" };
       for (const listener of navigationListeners) listener(7, { url: tab.url, status: "loading" });
     }
@@ -223,7 +223,7 @@ for (const method of ["href_navigation", "content_fallback"]) {
       };
       if (hidden) f.state.navigateUrl = href;
       f.onContent(action => {
-        if (!hidden && action === "inspectElement" && ++inspections === 2) throw new Error("CDP preparation failed");
+        if (!hidden && action === "readElementReadiness" && ++inspections === 2) throw new Error("CDP preparation failed");
         if (action === "actOnElement") { request(); f.state.navigated = true; f.state.href = href; }
       });
       try {
@@ -276,8 +276,8 @@ for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
     let changed = false;
     t.mock.method(chrome.tabs, "get", async () => ({ ...(changed ? pageAfter : pageBefore), status: "complete" }));
     const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
-    f.onCommand(method => {
-      if (!method.startsWith("Input.")) return;
+    f.onCommand((method, params) => {
+      if (!method.startsWith("Input.") || params.type === "mouseMoved") return;
       assert.equal(navigationListeners.size, 1, "observe before the focusing click as well as the key");
       changed = true;
     });
@@ -316,7 +316,7 @@ for (const boundary of ["mousePressed", "mouseReleased", "keyDown", "keyUp"]) {
   test(`press Enter disposes and never replays a lost ${boundary} response`, async () => {
     const f = fixture();
     f.onCommand((method, params) => {
-      if (!method.startsWith("Input.")) return;
+      if (!method.startsWith("Input.") || params.type === "mouseMoved") return;
       assert.equal(navigationListeners.size, 1);
       if (params.type === boundary) throw new Error("input response lost");
     });
@@ -432,7 +432,7 @@ for (const outcome of ["success", "error reply", "throw", "cancel", "observation
     const f = fixture({ observedNavigation });
     let inspections = 0, fallbackCalls = 0;
     f.onContent(action => {
-      if (action === "inspectElement" && ++inspections === 2) throw new Error("CDP preparation failed");
+      if (action === "readElementReadiness" && ++inspections === 2) throw new Error("CDP preparation failed");
       if (action !== "actOnElement") return;
       fallbackCalls++;
       assert.equal(navigationListeners.size, 1);
@@ -602,7 +602,7 @@ test("an iframe's resolved label stays on its original node-bound frame through 
   const label = { ...f.inspection(), selector: "#label", tag: "label", editable: false };
   f.onContent((action, params) => {
     if (action === "resolveClickTarget") return { resolvedSelector: "#label", element: label, originalElement: original };
-    if (action === "inspectElement" || action === "scrollElementIntoView") return { ...(params.clickTarget ? label : original) };
+    if (["inspectElement", "readElementReadiness", "scrollElementIntoView"].includes(action)) return { ...(params.clickTarget ? label : original) };
   });
   f.onCommand(method => {
     if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
@@ -611,8 +611,9 @@ test("an iframe's resolved label stays on its original node-bound frame through 
   });
   const clicked = await f.call({ target, action: "click" });
   assert.deepEqual(clicked, {});
-  assert.equal(f.messages.filter(message => message.params.clickTarget).length, 2,
-    "both scrolling and the final inspection resolve the click surface in the original frame");
+  assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView" && message.params.clickTarget).length, 1);
+  assert.equal(f.messages.filter(message => message.action === "readElementReadiness" && message.params.clickTarget).length, 3,
+    "readiness and the post-hover confirmation keep the original frame-bound click surface");
   const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
   assert.deepEqual([release.params.x, release.params.y], [28, 60]);
 });
@@ -645,7 +646,8 @@ test("an off-screen iframe click scrolls into the page viewport before dispatch"
   assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView").length, 1);
   const release = f.commands.find(command => command.method === "Input.dispatchMouseEvent" && command.params.type === "mouseReleased");
   assert.deepEqual([release.params.x, release.params.y], [28, 100]);
-  assert.equal(f.commands.filter(command => command.method === "Input.dispatchMouseEvent").length, 2);
+  assert.deepEqual(f.commands.filter(command => command.method === "Input.dispatchMouseEvent").map(command => command.params.type),
+    ["mouseMoved", "mousePressed", "mouseReleased"]);
 });
 
 test("an iframe click that stays outside the page viewport fails instead of reporting success", async () => {
@@ -766,6 +768,119 @@ test("a permanently obscured click times out without input or a Content fallback
   f.onContent(action => action === "resolveClickTarget"
     ? { error: "Covered", code: "NO_CLICKABLE_TARGET" } : undefined);
   await assert.rejects(f.call({ action: "click", timeout: 0.05 }), { code: "ELEMENT_NOT_READY" });
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
+  assertNoReplay(f);
+});
+
+for (const action of ["click", "check", "press", "double_click", "drag"]) {
+  test(`${action} waits after hover changes its hit target and uses the newly observed point`, async () => {
+    const f = fixture({ checked: action === "check" ? false : undefined });
+    let hovered = false, reveal;
+    f.onCommand((_method, params) => {
+      if (params.type === "mouseMoved" && !hovered) {
+        hovered = true;
+        f.state.state = { obscuredAtCenter: true };
+        f.state.clickablePoint = { x: 70, y: 80 };
+        reveal = setTimeout(() => { f.state.state = { obscuredAtCenter: false }; }, 60);
+      }
+      if (params.type === "mousePressed") {
+        assert.equal(f.state.state.obscuredAtCenter, false);
+        assert.deepEqual([params.x, params.y], [70, 80]);
+      }
+    });
+    try {
+      assert.deepEqual(await f.call({ action, key: "Escape", destination: { target: "css:#destination" }, timeout: 1 }), {});
+      assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, action === "double_click" ? 2 : 1);
+      assert.equal(f.messages.filter(message => message.action === "inspectElement").length, 1, "presentation reads a rich observation only once");
+      assertNoReplay(f);
+    } finally { clearTimeout(reveal); }
+  });
+
+  test(`${action} never presses through a persistent hover overlay or falls back after the deadline`, async () => {
+    const f = fixture({ checked: action === "check" ? false : undefined });
+    f.onCommand((_method, params) => {
+      if (params.type === "mouseMoved") f.state.state = { obscuredAtCenter: true };
+    });
+    await assert.rejects(f.call({ action, key: "Escape", destination: { target: "css:#destination" }, timeout: 0.1 }), { code: "ELEMENT_NOT_READY" });
+    assert.equal(f.commands.some(command => ["mousePressed", "keyDown", "rawKeyDown"].includes(command.params.type)), false);
+    assertNoReplay(f);
+  });
+}
+
+for (const action of ["click", "check", "press", "double_click", "drag"]) {
+  test(`${action} rejects CSS retargeting into a document loaded by hover`, async () => {
+    const f = fixture({ checked: action === "check" ? false : undefined });
+    f.onCommand((_method, params) => { if (params.type === "mouseMoved") f.state.documentId = "new-document"; });
+    await assert.rejects(f.call({ action, key: "Escape", destination: { target: "css:#destination" } }), { code: "STALE_ELEMENT_UID" });
+    assert.equal(f.commands.some(command => command.params.type === "mousePressed"), false);
+    assertNoReplay(f);
+  });
+}
+
+test("double click does not prepare or replay its first click when the second click becomes unsafe", async () => {
+  const f = fixture();
+  f.onCommand((_method, params) => {
+    if (params.type === "mouseReleased") f.state.state = { obscuredAtCenter: true };
+  });
+  await assert.rejects(f.call({ action: "double_click" }), { code: "ELEMENT_NOT_READY" });
+  assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+  assert.equal(f.commands.filter(command => command.params.type === "mouseMoved").length, 1);
+  assertNoReplay(f);
+});
+
+test("post-hover confirmation refreshes the containing iframe's offset before pressing", async () => {
+  const f = fixture({ frameId: "child", rejectUnbound: true });
+  let origin = 40, moved = false;
+  f.onCommand((method, params) => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(origin);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+    if (params.type === "mouseMoved" && !moved) { moved = true; origin = 140; }
+  });
+  assert.deepEqual(await f.call({ action: "click" }), {});
+  const pressed = f.commands.filter(command => command.params.type === "mousePressed");
+  assert.equal(pressed.length, 1);
+  assert.deepEqual([pressed[0].params.x, pressed[0].params.y], [28, 160]);
+  assertNoReplay(f);
+});
+
+test("action preparation uses the host's remaining deadline instead of starting another timeout", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const f = fixture();
+  f.state.disabled = true;
+  const pending = f.call({ action: "click", timeout: 20 }, { deadlineAt: 1100 });
+  const rejected = assert.rejects(pending, { code: "ELEMENT_NOT_READY" });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(100);
+  await rejected;
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
+  assertNoReplay(f);
+});
+
+test("drag refreshes a source that moved while its destination was becoming ready", async () => {
+  const f = fixture();
+  let destinations = 0;
+  f.onContent((action, params) => {
+    if (action !== "readElementReadiness" || params.selector !== "#destination") return;
+    if (++destinations === 2) f.state.clickablePoint = { x: 110, y: 40 };
+    return { ...f.inspection(), clickablePoint: { x: 240, y: 80 } };
+  });
+  assert.deepEqual(await f.call({ action: "drag", destination: { target: "css:#destination" } }), {});
+  const pressed = f.commands.filter(command => command.params.type === "mousePressed");
+  assert.equal(pressed.length, 1);
+  assert.deepEqual([pressed[0].params.x, pressed[0].params.y], [110, 40]);
+  assertNoReplay(f);
+});
+
+test("default preparation stops after five seconds even when the host allows twenty seconds for input", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+  const f = fixture();
+  f.state.disabled = true;
+  const pending = f.call({ action: "click" }, { deadlineAt: 21000 });
+  const rejected = assert.rejects(pending, { code: "ELEMENT_NOT_READY" });
+  await new Promise(setImmediate);
+  t.mock.timers.tick(5000);
+  await rejected;
   assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
   assertNoReplay(f);
 });
