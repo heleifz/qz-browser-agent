@@ -36,7 +36,7 @@ return await tools.read_article({ tabRef: "page", limit: 3000 });
 JS
 ```
 
-`open_tab`, `list_tabs`, and `wait_for_popup` return Tabs `{tabRef,url,title,active}`. Pass the optional `tabAlias` set on `open_tab` or a `tabRef` returned by those tools. Aliases use 1–64 letters, digits, underscores, or hyphens (not all digits), are preserved in the returned Tab, and expire when the tab closes. Returned positive integers or numeric strings are also valid `tabRef` values; never guess one. `active` marks the tab visible to the user and never selects a tool target. `set_page_mode` switches between `desktop` and `mobile` modes; a change reloads the page, so re-observe it afterward.
+`open_tab`, `list_tabs`, and `wait_for_popup` return Tabs `{tabRef,url,title,active}`. Pass the optional `tabAlias` set on `open_tab` or a `tabRef` returned by those tools. Aliases use 1–64 letters, digits, underscores, or hyphens (not all digits), are preserved in the returned Tab, and expire when the tab closes. Returned positive integers or numeric strings are also valid `tabRef` values; never guess one. Use `navigate({tabRef,url})` to load another URL in an existing task tab. `active` marks the tab visible to the user and never selects a tool target. `set_page_mode` switches between `desktop` and `mobile` modes; a change reloads the page, so re-observe it afterward.
 
 Page tools always pass tabRef on every call, including inside scripts. Omitting `tabRef` fails with `TAB_REF_REQUIRED`. One tab belongs to one session at a time: use `list_tabs({scope:"all"})` for read-only inspection of other tabs, and use a session-owned tab for actions or evaluation without interrupting another session's owner.
 
@@ -57,7 +57,8 @@ For in-page DOM or authenticated `fetch` access, call `evaluate` with an explici
 
 ```sh
 qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
-// Read a compact DOM summary from the page opened earlier.
+// Reuse the page opened earlier and read a compact DOM summary.
+await tools.navigate({ tabRef: "page", url: "https://example.org" });
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
