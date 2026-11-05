@@ -30,6 +30,7 @@ import { buildRunProfile, buildRunProfilePromptSection } from "./run-profile.js"
 import {
   buildCompactionPlan,
   compactThreshold,
+  DEFAULT_CONTEXT_RESERVE_TOKENS,
   createCompactMessage,
   estimateContextTokens,
   estimateToolSchemaTokens,
@@ -139,7 +140,6 @@ const MAX_EMPTY_LLM_ATTEMPTS = 2;
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONTEXT_WINDOW = 262000;
-const RESERVE_TOKENS = 16000;      // Reserved for the response
 const KEEP_RECENT_TOKENS = 40000;  // Recent tokens retained during compaction
 const TOOL_RESULT_RECENT_ROUNDS = 2;
 const IMAGE_MESSAGE_RECENT_LIMIT = 8;
@@ -1477,7 +1477,7 @@ export class Agent {
         messageTokens,
         inputTokens: tokens,
         contextWindow: this._contextWindow(),
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         maxKeepTokens: KEEP_RECENT_TOKENS,
         force,
         retainLatestRound: trigger === "manual" || trigger === "slash_command",
@@ -1487,7 +1487,7 @@ export class Agent {
     this._traceContextEstimate("compact_check", contextEstimate, {
       compactThreshold: plan.threshold,
       contextWindow: this._contextWindow(),
-      reserveTokens: RESERVE_TOKENS,
+      reserveTokens: this._reserveTokens(),
       toolSchemaCount: Array.isArray(toolSchemas) ? toolSchemas.length : 0,
       storedMessageCount: this.messages.length,
       sendMessageCount: contextEstimate.messageCount,
@@ -1583,7 +1583,7 @@ export class Agent {
       this._traceContextEstimate("compact_after", updatedEstimate, {
         compactThreshold: this._compactThreshold(),
         contextWindow: this._contextWindow(),
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         toolSchemaCount: Array.isArray(toolSchemas) ? toolSchemas.length : 0,
         storedMessageCount: this.messages.length,
         boundaryId: this._currentContextBoundaryId(),
@@ -2189,7 +2189,7 @@ export class Agent {
       snapshot = {
         contextUsageId: this._makeSpanId("ctx", ++this._contextUsageSeq),
         contextWindow,
-        reserveTokens: RESERVE_TOKENS,
+        reserveTokens: this._reserveTokens(),
         threshold: this._compactThreshold(),
         inputTokensEstimate: Math.ceil(estimate),
         messageCount: Math.max(0, Number(extra.messageCount) || 0),
@@ -2256,7 +2256,11 @@ export class Agent {
   }
 
   _compactThreshold(runProfile = this._runProfile) {
-    return compactThreshold(this._contextWindow(runProfile), RESERVE_TOKENS);
+    return compactThreshold(this._contextWindow(runProfile), this._reserveTokens(runProfile));
+  }
+
+  _reserveTokens(runProfile = this._runProfile) {
+    return Math.max(DEFAULT_CONTEXT_RESERVE_TOKENS, runProfile?.model?.outputReserveTokens || 0);
   }
 
   _makeSpanId(kind: string, id: unknown) {

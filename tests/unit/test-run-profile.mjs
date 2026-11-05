@@ -5,6 +5,7 @@ import { providers } from "@opencode-ai/models/snapshot";
 import {
   buildRunProfile,
   buildRunProfilePromptSection,
+  resolveOutputReserveTokens,
 } from "../../src/background/agent/run-profile.js";
 
 test("the first run loads the packaged directory before resolving its output limit", async t => {
@@ -149,4 +150,37 @@ test("custom run profiles use the supplied configuration without loading a direc
     const profile = await buildRunProfile({ config: { provider: "test", model: "test" }, platformInfo: { os: "linux" } });
     assert.deepEqual(profile.platform, { os: "linux", label: "Linux" });
   } finally { globalThis.chrome = originalChrome; }
+});
+
+test("output reserves follow transmitted limits without changing generation defaults", async () => {
+  const cases = [
+    { name: "uncapped 32K OpenAI", config: { provider: "custom", contextWindow: 32768 }, reserve: 0 },
+    { name: "OpenAI max_tokens", config: { provider: "custom", modelParameters: { max_tokens: 32768 } }, reserve: 32768 },
+    { name: "OpenAI completion limit", config: { provider: "custom", modelParameters: { max_completion_tokens: 65536 } }, reserve: 65536 },
+    { name: "Anthropic required default", config: { provider: "custom", customProtocol: "anthropic" }, reserve: 32768 },
+    { name: "Anthropic explicit limit", config: { provider: "custom", customProtocol: "anthropic", modelParameters: { max_tokens: 8192 } }, reserve: 8192 },
+    { name: "Codex uncapped", config: { provider: "openaicodex" }, reserve: 0 },
+    { name: "Codex explicit limit", config: { provider: "openaicodex", modelParameters: { max_output_tokens: 49152 } }, reserve: 49152 },
+    { name: "oversized explicit limit stays explicit", config: { provider: "custom", contextWindow: 16384, modelParameters: { max_tokens: 65536 } }, reserve: 65536 },
+  ];
+  for (const { name, config, reserve } of cases) {
+    const before = structuredClone(config);
+    const profile = await buildRunProfile({ config: { model: "unknown-test-model", ...config } });
+    assert.equal(profile.model.outputReserveTokens, reserve, name);
+    assert.equal(profile.model.maxOutputTokens, 32768, name);
+    assert.deepEqual(config, before, "budget planning must not rewrite user parameters");
+  }
+});
+
+test("output reserves retain provider policy and parameter precedence", () => {
+  const definition = { label: "Budget test", api: "openai-chat-completions", protocol: "openai", outputTokenParam: "max_tokens" };
+  const reserve = modelParameters => resolveOutputReserveTokens({ modelParameters }, definition, 32768);
+  assert.equal(reserve(), 32768);
+  assert.equal(reserve({ max_completion_tokens: 4096 }), 4096);
+  definition.requestDefaults = { max_tokens: 24000 };
+  assert.equal(reserve(), 24000);
+  assert.equal(reserve({ max_tokens: 48000 }), 48000);
+  definition.protocol = "anthropic";
+  definition.anthropicRequestDefaults = { max_tokens: 64000 };
+  assert.equal(reserve(), 32768, "Anthropic adapter replaces provider defaults with its required request limit");
 });

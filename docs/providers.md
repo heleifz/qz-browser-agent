@@ -96,6 +96,10 @@ or an explicit provider policy. This lets the service choose its default and avo
 `max_tokens` on models that accept only `max_completion_tokens`. Anthropic requests still supply
 their required `max_tokens` field.
 
+Compaction reserves the greater of 16,000 tokens and the output limit sent by the adapter. The run
+profile captures that limit from the same configuration as the request; an omitted limit retains
+the 16,000-token reserve. Compaction planning, send admission, and context usage share this budget.
+
 The Agent owns the bounded recovery budget, compaction and rollback of partial messages. A recovery
 request uses this budget with transport retries disabled. The [rate
 governor](../src/background/llm/provider-rate-governor.ts) shares queues and cooldowns across

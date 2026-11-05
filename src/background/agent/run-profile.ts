@@ -1,7 +1,8 @@
 import { t } from "./prompts/messages.js";
 import { getLocale } from "../../shared/i18n/index.js";
-import type { RuntimeConfig } from "../../sdk/background/providers.js";
+import type { ProviderDefinition, RuntimeConfig } from "../../sdk/background/providers.js";
 import { getBundledModelMaxOutputTokens } from "../../shared/models/model-capabilities.js";
+import { getProviderDef } from "../llm/provider-catalog.js";
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 32768;
 
@@ -43,6 +44,7 @@ export async function buildRunProfile({
       contextWindow: Number(llmConfig.contextWindow) || null,
       trimOldToolResults: llmConfig.trimOldToolResults !== false,
       maxOutputTokens,
+      outputReserveTokens: resolveOutputReserveTokens(llmConfig, getProviderDef(llmConfig), maxOutputTokens),
     },
     features: {
       imageInput: imageTools,
@@ -92,6 +94,25 @@ function resolveRunProfileMaxOutputTokens(modelLimit: unknown) {
     return Math.max(1024, Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.floor(limit)));
   }
   return DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
+export function resolveOutputReserveTokens(config: RuntimeConfig, provider: ProviderDefinition, maxOutputTokens: number) {
+  const parameters = config.modelParameters || {};
+  const positiveTokens = (value: unknown) => {
+    const tokens = Number(value);
+    return Number.isFinite(tokens) && tokens > 0 ? Math.ceil(tokens) : 0;
+  };
+  if (provider.protocol === "anthropic") {
+    return positiveTokens(Object.hasOwn(parameters, "max_tokens") ? parameters.max_tokens : maxOutputTokens);
+  }
+  if (provider.protocol === "openai-codex") return positiveTokens(parameters.max_output_tokens);
+  if (provider.protocol !== "openai") return 0;
+
+  const request = { ...provider.requestDefaults, ...parameters };
+  const keys = ["max_tokens", "max_completion_tokens", ...(provider.outputTokenParam ? [provider.outputTokenParam] : [])];
+  // Optional limits absent from the request must not consume the model's whole output allowance.
+  if (provider.outputTokenParam && !keys.some(key => Object.hasOwn(request, key))) return maxOutputTokens;
+  return Math.max(0, ...keys.map(key => positiveTokens(request[key])));
 }
 
 function buildPlatformProfile(platformInfo: { os?: string }) {
