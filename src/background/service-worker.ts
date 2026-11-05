@@ -879,20 +879,18 @@ const mcpManagement = createMcpManagementRuntime({
 });
 
 let mcpBridge: ReturnType<typeof startQingzhouMcpBridge> | undefined;
-const connectMcp = createMcpConnectPage({
+const mcpConnectPage = createMcpConnectPage({
   extensionId: chrome.runtime.id,
   assertConsent: dataConsent.assertAccepted,
   connect: (input, assertCurrent) => getMcpBridge().connect(input, assertCurrent),
+  status: () => mcpBridge?.status() || getQingzhouMcpConnectionStatus(),
   getTab: tabId => chrome.tabs.get(tabId),
 });
 
 const backgroundApi = createBackgroundApi({
   system: {
-    connectMcp,
-    mcpConnectionStatus: (sender: chrome.runtime.MessageSender) => {
-      assertMcpSettingsSender(sender, chrome.runtime.id);
-      return mcpBridge?.status() || getQingzhouMcpConnectionStatus();
-    },
+    connectMcp: mcpConnectPage.connect,
+    mcpConnectionStatus: mcpConnectPage.status,
     connectMcpFromSettings: (sender: chrome.runtime.MessageSender, input: CliConnectionInput) => {
       assertMcpSettingsSender(sender, chrome.runtime.id);
       return getMcpBridge().connect(input);

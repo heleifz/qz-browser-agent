@@ -51,7 +51,7 @@ export class BridgeState {
   }
 
   liveClients() {
-    return [...this.clients.values()].filter(client => now() - client.lastSeenAt <= client.pollLeaseSeconds);
+    return [...this.clients.values()].filter(client => client.pollLeaseSeconds > 0 && now() - client.lastSeenAt <= client.pollLeaseSeconds);
   }
 
   status() {
@@ -64,9 +64,13 @@ export class BridgeState {
       capabilities: client.capabilities || {},
       paired: Boolean(client.connectionId),
     })).sort((a, b) => a.clientId.localeCompare(b.clientId));
+    const connecting = [...this.clients.values()].filter(client => client.reconnectUntil > now()).map(client => ({
+      clientId: client.id, name: client.name, retryAfterMs: Math.ceil((client.reconnectUntil - now()) * 1000),
+    }));
     return {
       endpoint: this.endpoint, protocolVersion: PROTOCOL_VERSION, connected: clients.length > 0,
       clientCount: clients.length, clients, browsers: this.registry.list().map(entry => ({ ...entry, online: clients.some(client => client.clientId === entry.clientId) })), pending: this.pending.size, inflight: this.inflight.size,
+      ...(connecting.length ? { connecting } : {}),
       uptimeSeconds: rounded(now() - this.startedAt),
     };
   }
@@ -104,6 +108,10 @@ export class BridgeState {
       }
       const previous = this.clients.get(input.clientId);
       if (previous && this.liveClients().includes(previous) && previous.connectionId !== input.connectionId) {
+        if (sameToken(input.pairingToken, this.registry.entries.get(input.clientId)?.pairingToken)) {
+          previous.reconnectUntil = previous.lastSeenAt + previous.pollLeaseSeconds + 5;
+          this.events.emit("change");
+        }
         throw Object.assign(pairingError("BRIDGE_CLIENT_IN_USE", "This browser identity has an active connection. Wait for it to disconnect, or connect from a distinct browser profile."), {
           retryAfterMs: Math.max(1, Math.ceil((previous.lastSeenAt + previous.pollLeaseSeconds - now()) * 1000) + 1),
         });
@@ -112,7 +120,8 @@ export class BridgeState {
       this.closed.signal.throwIfAborted();
       if (previous?.connectionId !== input.connectionId) this.revokeClient(input.clientId);
       const client = this.clients.get(input.clientId) || { id: input.clientId, connectionId: input.connectionId, controller: new AbortController() };
-      Object.assign(client, { name: entry.name, lastSeenAt: now(), pollLeaseSeconds: 46 });
+      Object.assign(client, { name: entry.name, lastSeenAt: now(), pollLeaseSeconds: 46, reconnectUntil: 0,
+        leaseRevision: (client.leaseRevision || 0) + 1 });
       this.clients.set(client.id, client);
       this.events.emit("change");
       return { ok: true, ...entry, connectionId: input.connectionId, instanceId: this.instanceId };
@@ -218,29 +227,42 @@ export class BridgeState {
   }
 
   async poll(client, { timeoutMs = 30000, maxBatch = 4, signal } = {}) {
-    const info = await this.serializeRegistration(() => {
+    const { info, leaseRevision } = await this.serializeRegistration(() => {
       this.signal(signal).throwIfAborted();
       if (client.pairingVersion !== 1) throw pairingError("BRIDGE_PAIRING_REQUIRED", "Update qz to use the supported pairing protocol.");
       const info = this.authenticatedClient(client);
+      info.pollCount = (info.pollCount || 0) + 1;
       this.touchClient(info, client, timeoutMs);
-      return info;
+      return { info, leaseRevision: info.leaseRevision };
     });
     const activeSignal = AbortSignal.any([this.signal(signal), info.controller.signal]);
-    activeSignal.throwIfAborted();
-    const deadline = Date.now() + bounded(timeoutMs, 30000, 100, 60000);
-    const limit = Math.floor(bounded(maxBatch, 4, 1, 16));
-    while (true) {
+    try {
       activeSignal.throwIfAborted();
-      const requests = [];
-      for (const [id, request] of this.pending) {
-        if (requests.length >= limit) break;
-        if (request.client !== info) continue;
-        this.pending.delete(id);
-        this.inflight.set(id, request);
-        requests.push({ id, method: request.method, params: request.params, timeoutMs: request.timeoutMs });
+      const deadline = Date.now() + bounded(timeoutMs, 30000, 100, 60000);
+      const limit = Math.floor(bounded(maxBatch, 4, 1, 16));
+      while (true) {
+        activeSignal.throwIfAborted();
+        const requests = [];
+        for (const [id, request] of this.pending) {
+          if (requests.length >= limit) break;
+          if (request.client !== info) continue;
+          this.pending.delete(id);
+          this.inflight.set(id, request);
+          requests.push({ id, method: request.method, params: request.params, timeoutMs: request.timeoutMs });
+        }
+        if (requests.length || Date.now() >= deadline) {
+          info.leaseRevision += 1;
+          return requests;
+        }
+        await this.waitForChange(deadline - Date.now(), activeSignal);
       }
-      if (requests.length || Date.now() >= deadline) return requests;
-      await this.waitForChange(deadline - Date.now(), activeSignal);
+    } finally {
+      info.pollCount -= 1;
+      // A closed transport releases its lease, while issued work retains its result authority.
+      if (signal?.aborted && this.clients.get(info.id) === info && !info.pollCount && info.leaseRevision === leaseRevision) {
+        info.pollLeaseSeconds = 0;
+        this.events.emit("change");
+      }
     }
   }
 

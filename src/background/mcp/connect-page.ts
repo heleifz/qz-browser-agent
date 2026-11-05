@@ -5,12 +5,13 @@ interface ConnectDependencies {
   extensionId: string;
   assertConsent(): void;
   connect(input: CliConnectionInput, assertCurrent: () => Promise<void>): Promise<CliConnectionStatus>;
+  status(): Promise<CliConnectionStatus>;
   getTab(tabId: number): Promise<{ url?: string }>;
 }
 
 /** The endpoint comes from Chrome's sender identity, never from page-supplied parameters. */
 export function createMcpConnectPage(deps: ConnectDependencies) {
-  return async (sender: chrome.runtime.MessageSender) => {
+  async function source(sender: chrome.runtime.MessageSender) {
     deps.assertConsent();
     const url = connectionUrl(sender.url);
     if (sender.id !== deps.extensionId || sender.frameId !== 0 || !Number.isInteger(sender.tab?.id) || !url) {
@@ -23,15 +24,33 @@ export function createMcpConnectPage(deps: ConnectDependencies) {
       if (tab?.url !== sender.url) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
     };
     await assertCurrent();
+    return { url, assertCurrent };
+  }
+  async function connect(sender: chrome.runtime.MessageSender) {
+    const { url, assertCurrent } = await source(sender);
     const name = url.searchParams.get("name");
     if (url.searchParams.getAll("name").length > 1 || (name !== null && (!name || connectionName(name) !== name))) {
       throw failure("BRIDGE_NAME_INVALID", "Use one browser name containing letters, digits, underscores, or hyphens.");
     }
     const status = await deps.connect({ endpoint: url.origin, name: name ?? "" }, assertCurrent);
-    if (status.state !== "connected") throw failure(status.lastError?.code || "MCP_CONNECTION_UNAVAILABLE",
+    await assertCurrent();
+    if (status.endpoint !== url.origin) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
+    if (status.state === "paused" || status.state === "disconnected") throw failure(status.lastError?.code || "MCP_CONNECTION_UNAVAILABLE",
       status.lastError?.message || "The connection is pending. Run qz status to check it.");
-    return { connected: true, status };
-  };
+    return { connected: status.state === "connected", status };
+  }
+  async function status(sender: chrome.runtime.MessageSender) {
+    if (!connectionUrl(sender.url)) {
+      assertMcpSettingsSender(sender, deps.extensionId);
+      return deps.status();
+    }
+    const { url, assertCurrent } = await source(sender);
+    const current = await deps.status();
+    await assertCurrent();
+    if (current.endpoint !== url.origin) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
+    return current;
+  }
+  return { connect, status };
 }
 
 function connectionUrl(value: string | undefined) {

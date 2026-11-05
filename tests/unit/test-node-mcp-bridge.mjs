@@ -754,13 +754,16 @@ test("aborted long polls release their listeners and a fresh HTTP poll receives 
     await response;
     await waitUntil(() => bridge.state.events.listenerCount("change") === 0);
   }
-  assert.equal(bridge.state.status().clientCount, 1);
+  assert.equal(bridge.state.status().clientCount, 0, "closed polling transports release their live lease");
   const client = await withClient(t, bridge);
+  const polling = post(bridge, "/v1/qingzhou/poll", { client: { id: "restarted-browser", pollTimeoutMs: 1000 } });
+  await waitUntil(() => bridge.state.status().clientCount === 1);
   const running = client.callTool({ name: "qingzhou_call", arguments: {
     method: "ping", clientId: "restarted-browser", params: { recovered: true }, timeoutSeconds: 3,
   } });
-  const [request] = (await (await post(bridge, "/v1/qingzhou/poll", { client: { id: "restarted-browser", pollTimeoutMs: 1000 } })).json()).requests;
+  const [request] = (await (await polling).json()).requests;
   assert.ok(request);
+  assert.equal(bridge.state.status().clientCount, 1, "the same authenticated connection can resume polling");
   await post(bridge, "/v1/qingzhou/result", { requestId: request.id, clientId: "restarted-browser", ok: true, result: request.params });
   assert.deepEqual(unpack(await running), { recovered: true });
   assert.equal(bridge.state.pending.size, 0);

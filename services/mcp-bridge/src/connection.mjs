@@ -48,7 +48,8 @@ export function connectionUri(running, options = {}) {
 /** Select one responding identity; every later call in the command keeps that UUID. */
 export async function prepareConnection({ options = {}, timeoutSeconds = 30, sessionId = "", script = false } = {}, dependencies = {}) {
   const running = await prepareService({ options, script }, dependencies);
-  const deadline = Date.now() + Math.min(timeoutSeconds, 30) * 1000;
+  const startedAt = Date.now(), commandDeadline = startedAt + timeoutSeconds * 1000;
+  let deadline = Math.min(commandDeadline, startedAt + 30000), reconnectUntil = 0;
   const signal = dependencies.signal;
   const selector = options["client-id"];
   const registered = selector ? [...(running.health.status?.browsers || []), ...(running.health.status?.clients || [])]
@@ -90,13 +91,20 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
     });
     return "";
   };
+  const observeReconnect = health => {
+    const waiting = (health.status?.connecting || []).filter(client => !clientId || client.clientId === clientId);
+    const retryAfterMs = Math.max(0, ...waiting.map(client => Number.isFinite(client.retryAfterMs) ? client.retryAfterMs : 0));
+    reconnectUntil = retryAfterMs > 0 ? Math.min(commandDeadline, Date.now() + retryAfterMs) : 0;
+    deadline = Math.max(deadline, reconnectUntil);
+  };
+  observeReconnect(running.health);
   let selected = await locate(running.health);
   if (selected) return { running, clientId: selected };
   const attempted = [];
   let nextAttempt = 0, exhausted = Boolean(selector);
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    if (!exhausted && Date.now() >= nextAttempt) {
+    if (!exhausted && Date.now() >= Math.max(nextAttempt, reconnectUntil)) {
       try {
         const opened = await (dependencies.openConnectionBrowser || openConnectionBrowser)(uri, { signal, exclude: [...attempted] });
         attempted.push(opened.browser);
@@ -121,9 +129,10 @@ export async function prepareConnection({ options = {}, timeoutSeconds = 30, ses
     signal?.throwIfAborted();
     if (Date.now() >= deadline) break;
     if (running.instanceId && health.instanceId !== running.instanceId) throw new QzError("CONNECTION_CHANGED", "The local service changed during connection. Retry the command.");
+    observeReconnect(health);
     selected = await locate(health);
     if (selected) return { running: { ...running, health }, clientId: selected };
-    await delay(Math.max(1, Math.min(200, deadline - Date.now(), exhausted ? 200 : nextAttempt - Date.now())), undefined, { signal });
+    await delay(Math.max(1, Math.min(200, deadline - Date.now(), exhausted ? 200 : Math.max(nextAttempt, reconnectUntil) - Date.now())), undefined, { signal });
   }
   throw new QzError(selector ? "CLIENT_OFFLINE" : "CONNECTION_PENDING", `${selector ? "The selected browser is not responding." : "qz is waiting for its browser extension."} No browser operation was submitted.`, {
     stage: "browser-connection",

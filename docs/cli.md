@@ -114,9 +114,10 @@ do not restart compatible services. No submitted browser operation is replayed d
 Without an explicit selection, a new task uses the first responding browser. An existing session
 is located through read-only queries when several browsers are online; ambiguous ownership requires
 `--client NAME|UUID`. An explicit selection never falls back to another browser. With no online
-connection, the CLI tries installed Chrome, Firefox and Edge once each within one deadline. Pairing
-still requires the extension’s first-use notice and connection prompt. The connection page can be
-closed once `qz browsers` shows the intended profile online.
+connection, the CLI tries installed Chrome, Firefox and Edge once each within one deadline. When the
+service confirms a browser is reconnecting, the CLI waits for its lease recovery within the command's
+timeout before trying another browser. Pairing still requires the extension’s first-use notice and
+connection prompt. The connection page updates while reconnecting and can be closed once connected.
 
 To disconnect one browser, click **Disconnect: NAME** in its qz Settings. To cancel a task, use
 `qz cancel TASK_ID`, or `qz session cancel ID` for a direct-drive session, adding --client when needed.

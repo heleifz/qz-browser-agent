@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import fs, { mkdir, mkdtemp, readFile, writeFile, rm, stat, symlink } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -62,11 +63,22 @@ test("a live worker collision reports its remaining lease without extending it",
   t.after(() => state.close());
   const paired = await state.pair(identity(state));
   const next = { ...paired, connectionId: randomUUID() };
+  await assert.rejects(state.pair({ ...next, pairingToken: "wrong" }), code("BRIDGE_CLIENT_IN_USE"));
+  assert.equal(state.status().connecting, undefined, "unproven callers cannot delay browser discovery");
   await assert.rejects(state.pair(next), error => error.code === "BRIDGE_CLIENT_IN_USE" && error.retryAfterMs === 46001);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 51000 }]);
   t.mock.timers.tick(12000);
   await assert.rejects(state.pair(next), error => error.code === "BRIDGE_CLIENT_IN_USE" && error.retryAfterMs === 34001);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 39000 }], "repeated collisions do not extend the same lease");
   t.mock.timers.tick(34001);
+  assert.equal(state.status().clientCount, 0);
+  assert.deepEqual(state.status().connecting, [{ clientId: paired.clientId, name: paired.name, retryAfterMs: 4999 }], "startup remains observable after the old lease expires");
   assert.equal((await state.pair(next)).connectionId, next.connectionId);
+  assert.equal(state.status().connecting, undefined, "successful pairing clears pending recovery");
+
+  await assert.rejects(state.pair({ ...next, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+  t.mock.timers.tick(51000);
+  assert.equal(state.status().connecting, undefined, "abandoned recovery expires without extending discovery indefinitely");
 });
 
 test("pair HTTP errors return only the public remaining lease field", async t => {
@@ -82,6 +94,77 @@ test("pair HTTP errors return only the public remaining lease field", async t =>
   assert.equal(error.code, "BRIDGE_CLIENT_IN_USE");
   assert.ok(error.retryAfterMs > 0 && error.retryAfterMs <= 46001);
   assert.deepEqual(Object.keys(error).sort(), ["code", "error", "ok", "retryAfterMs"]);
+});
+
+test("a closed HTTP poll releases its lease without cancelling issued work and permits immediate browser restart", { timeout: 5000 }, async t => {
+  const bridge = await startBridge({ port: 0, connectWaitMs: 0 });
+  t.after(() => bridge.close());
+  const state = bridge.state, paired = await state.pair(identity(state));
+  const active = state.callExtension("evaluate", {}, { clientId: paired.clientId });
+  const [issued] = await poll(state, paired);
+  const owner = state.clients.get(paired.clientId), controller = new AbortController();
+  const admitted = once(state.events, "change");
+  const waiting = fetch(`${bridge.endpoint}/v1/qingzhou/poll`, {
+    method: "POST", headers: { "content-type": "application/json" }, signal: controller.signal,
+    body: JSON.stringify({ client: { ...paired, id: paired.clientId, pairingVersion: 1, pollTimeoutMs: 20000 } }),
+  }).catch(error => error);
+  await admitted;
+  assert.equal(state.liveClients().length, 1);
+  const expired = once(state.events, "change");
+  controller.abort();
+  await waiting; await expired;
+  assert.equal(state.liveClients().length, 0, "browser closure does not wait for the old lease timeout");
+  assert.equal(owner.controller.signal.aborted, false, "transport loss alone does not cancel admitted operations");
+  assert.equal(state.complete(issued.id, { ...paired, ok: true, result: "finished" }), true);
+  assert.equal(await active, "finished");
+
+  const response = await fetch(`${bridge.endpoint}/v1/qingzhou/pair`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...paired, connectionId: randomUUID() }),
+  });
+  assert.equal(response.status, 200);
+  const next = await response.json();
+  assert.notEqual(next.connectionId, paired.connectionId);
+  await assert.rejects(poll(state, paired), code("BRIDGE_PAIRING_REQUIRED"));
+  await assert.rejects(state.disconnect(paired), code("BRIDGE_PAIRING_REQUIRED"));
+  const task = state.callExtension("ping", {}, { clientId: next.clientId });
+  const [request] = await poll(state, next);
+  assert.equal(state.complete(request.id, { ...paired, ok: true, result: "stale" }), false);
+  assert.equal(state.complete(request.id, { ...next, ok: true, result: "current" }), true);
+  assert.equal(await task, "current");
+});
+
+test("overlapping polls release only an unrenewed lease when every transport closes", async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 100000 });
+  for (const reverse of [false, true]) {
+    const state = new BridgeState();
+    t.after(() => state.close());
+    const paired = await state.pair(identity(state));
+    const controllers = [new AbortController(), new AbortController()];
+    const pending = controllers.map(controller => poll(state, paired, { timeoutMs: 10000, signal: controller.signal }).catch(error => error));
+    await settle();
+    const first = reverse ? 1 : 0, last = reverse ? 0 : 1;
+    controllers[first].abort(); await pending[first];
+    assert.equal(state.liveClients().length, 1, "another active poll keeps the identity occupied");
+    await assert.rejects(state.pair({ ...paired, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+    controllers[last].abort(); await pending[last];
+    assert.equal(state.liveClients().length, 0, "the last closed poll expires the lease in either order");
+  }
+  for (const renewal of ["poll", "pair"]) {
+    const state = new BridgeState();
+    t.after(() => state.close());
+    const paired = await state.pair(identity(state)), controller = new AbortController();
+    const old = poll(state, paired, { timeoutMs: 10000, signal: controller.signal }).catch(error => error);
+    await settle();
+    if (renewal === "pair") await state.pair(paired);
+    else {
+      const current = poll(state, paired, { timeoutMs: 100 });
+      await settle(); t.mock.timers.tick(100); await current;
+    }
+    controller.abort(); await old;
+    assert.equal(state.liveClients().length, 1, `a late abort cannot erase a successful ${renewal}`);
+    await assert.rejects(state.pair({ ...paired, connectionId: randomUUID() }), code("BRIDGE_CLIENT_IN_USE"));
+  }
 });
 
 test("rename preserves the active lease, rejects conflicts, and exposes a public canonical poll identity", async t => {

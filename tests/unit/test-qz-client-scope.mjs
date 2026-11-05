@@ -1,5 +1,6 @@
 import { pairBrowser, completeBrowser } from "../support/paired-bridge.mjs";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
@@ -264,6 +265,78 @@ test("cancellation during service discovery prevents both startup and upgrade be
     }), error => error === reason);
   }
   assert.equal(traffic.length, 0);
+});
+
+test("a closed browser reconnects in Chrome without fallback or duplicate task creation", async t => {
+  const { bridge, browser, running, deps } = await fixture(t);
+  const closed = new AbortController();
+  const oldPoll = bridge.state.poll(browser, { timeoutMs: 20000, signal: closed.signal });
+  const stopped = assert.rejects(oldPoll, /browser closed/);
+  await delay(0);
+  closed.abort(new Error("browser closed"));
+  await stopped;
+  running.health = await readHealth(bridge.endpoint);
+  assert.equal(running.health.status.connected, false);
+
+  const reopened = Promise.withResolvers(), opened = [], methods = [];
+  const pending = runCli(["session", "create", "--title", "After restart", "--timeout", "2", "--json"], {
+    ...deps,
+    openConnectionBrowser: async (_uri, { exclude }) => {
+      assert.deepEqual(exclude, [], "Chrome reconnects before trying another browser");
+      opened.push("Chrome");
+      const paired = await bridge.state.pair({ ...browser, connectionId: randomUUID() });
+      reopened.resolve({ ...paired, id: paired.clientId, pairingVersion: 1 });
+      return { browser: "Chrome", opened: true };
+    },
+  });
+  const resumed = await Promise.race([reopened.promise, pending.then(() => assert.fail("expected browser launch"))]);
+  for (const method of ["ping", "create_drive_session"]) {
+    const [request] = await bridge.state.poll(resumed, { timeoutMs: 2000 });
+    assert.equal(request.method, method); methods.push(method);
+    assert.equal(bridge.state.complete(request.id, { ...resumed, ok: true,
+      result: method === "ping" ? { pong: true } : { sessionId: "restarted", title: "After restart", status: "idle" } }), true);
+  }
+  assert.equal((await pending).result.sessionId, "restarted");
+  assert.deepEqual(opened, ["Chrome"]);
+  assert.deepEqual(methods, ["ping", "create_drive_session"]);
+  assert.equal(bridge.state.pending.size + bridge.state.inflight.size, 0);
+});
+
+test("an authenticated reconnect waits for Chrome's lease within the caller's timeout", async t => {
+  for (const timeout of [45, 15]) await t.test(`${timeout}s budget`, async t => {
+    let now = 100000;
+    t.mock.method(Date, "now", () => now);
+    const readyAt = now + 35750, retryUntil = readyAt + 5000;
+    const browser = { clientId: "restarting-chrome", name: "work" };
+    const health = { protocolVersion: 1, features: { browserPairing: 1 }, status: { clients: [], browsers: [browser] } };
+    const running = { endpoint: "http://127.0.0.1:18765", health }, opened = [], methods = [];
+    const pending = runCli(["session", "create", "--title", "After lease", "--timeout", String(timeout), "--json"], {
+      findDaemon: async () => running,
+      openConnectionBrowser: async (_uri, { exclude }) => {
+        assert.deepEqual(exclude, [], "a confirmed reconnect must not open Firefox");
+        opened.push("Chrome"); return { browser: "Chrome", opened: true };
+      },
+      readHealth: async () => {
+        now += 5000;
+        return { ...health, status: { ...health.status, clients: now >= readyAt ? [browser] : [],
+          connecting: now < readyAt ? [{ ...browser, retryAfterMs: retryUntil - now }] : [] } };
+      },
+      callTool: async (_endpoint, name, args) => {
+        assert.equal(args.clientId, browser.clientId);
+        methods.push(name);
+        return name === "qingzhou_call" ? { pong: true } : { sessionId: "reconnected", title: "After lease", status: "idle" };
+      },
+    });
+    if (timeout === 45) {
+      assert.equal((await pending).result.sessionId, "reconnected");
+      assert.deepEqual(methods, ["qingzhou_call", "qingzhou_create_drive_session"]);
+    } else {
+      await assert.rejects(pending, error => error.code === "CONNECTION_PENDING" && error.details.operationSubmitted === false);
+      assert.deepEqual(methods, []);
+      assert.equal(now, 115000, "a reconnect never extends the caller's deadline");
+    }
+    assert.deepEqual(opened, ["Chrome"]);
+  });
 });
 
 test("automatic preparation tries Firefox after an unresponsive Chrome and stops before Edge", async t => {

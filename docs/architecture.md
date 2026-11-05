@@ -48,6 +48,12 @@ sets the stream's starting point. Failure, stopping, timeout, and cancellation e
 Observation only reads snapshots and never resubmits work. Task execution and persistence remain
 in the extension.
 
+A closed extension polling transport expires its connection lease while preserving issued-operation
+results until a replacement connection takes ownership. Other active polls and successful renewals
+protect their lease from stale cleanup. Authenticated replacement attempts expose a bounded recovery
+window so CLI preparation can await the same browser within its command deadline. The connection page
+observes status through its validated read-only route after starting a connection once.
+
 | Context | Entry and responsibility |
 | --- | --- |
 | Background | [service-worker.ts](../src/background/service-worker.ts) composes state owners, capabilities, transports, and Chrome listeners. |
@@ -204,7 +210,9 @@ startup. Global Data tables, gallery assets and downloaded files remain independ
 The repository validates record and conversation versions before selecting or replacing a copy. The
 [format contract](../src/shared/session/session-format.ts) defines supported versions and errors.
 List summaries and [artifact projections](../src/background/session/artifacts.ts) derive from
-records, transcripts, and resource stores.
+records, transcripts, and resource stores. Public Session tails (`last_messages` and `wait`) read
+committed model messages, preserving tool values and script receipts. UI transcripts contribute
+running-tool status and active user questions; historical tools without model messages expose status only.
 
 The transcript owner keeps completed history (H) separate from the current operation (C).
 Agent events update C; explicit `finish` moves it into H. Ordinary UI saves checkpoint state
@@ -542,6 +550,8 @@ keeps separate remote-object handles per object group and uses weak node indexin
 [Element observations](../src/shared/contracts/element-observation.ts) are constructed by the binding
 owner from business fields and registered targets. AX, images and screenshots share the Rect contract;
 [ToolError](../src/shared/contracts/tool-error.ts) carries code, message, optional hint and public details.
+Protocol v1 extension-to-service errors retain a string `error` and top-level `code`, `hint` and `details`
+for older CLI services. The current service accepts both wire shapes and normalizes them to ToolError.
 Page presentation metadata and numeric creation receipts stay in private maps. Arbitrary script return
 values, page content and user-owned Data rows remain intact. Element and range parameters expose
 `target`; retired argument names and the old `read_article.source` value normalize before validation.
