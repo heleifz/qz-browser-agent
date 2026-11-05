@@ -4,7 +4,7 @@ import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import type { ToolContext } from "#sdk/background";
 type DiagnosticsHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "makeSessionTabTargetError" | "sendCdp"
-  | "getDebuggerRun" | "secondsToMs" | "assertUrlAllowed">;
+  | "getDebuggerRun" | "retainDebugger" | "onDebuggerDetached" | "secondsToMs" | "assertUrlAllowed">;
 interface RemoteObject { type?: string; subtype?: string; value?: unknown; description?: string; unserializableValue?: string }
 interface CallFrame { functionName?: string; url?: string; lineNumber?: number; columnNumber?: number }
 interface StackTrace { callFrames?: CallFrame[] }
@@ -21,6 +21,7 @@ interface NetworkEvent {
 }
 interface Monitor { tabId: number; enabled: boolean; maxRecords: number; sessionId: string; runId: string }
 interface NetworkRecord {
+  connectionId: number;
   requestId: string; url: string; method: string; resourceType: string; requestHeaders: Record<string, string>;
   timestamp: number; wallTime: number | null; initiatorType: string; status: number | null; statusText: string;
   mimeType: string; responseHeaders: Record<string, string>; fromDiskCache: boolean; fromServiceWorker: boolean;
@@ -28,6 +29,7 @@ interface NetworkRecord {
   canceled: boolean; finished: boolean; remoteIPAddress?: string; responseTime?: number; endTime?: number;
 }
 interface NetworkMonitor extends Monitor {
+  connectionId: number; releaseWatch?: () => void;
   records: Map<string, NetworkRecord>; order: string[]; inFlight: Set<string>; waiters: Set<{ check(): void }>;
 }
 interface RecordFilter {
@@ -46,6 +48,8 @@ export function createDiagnosticsTools({
   makeSessionTabTargetError,
   sendCdp,
   getDebuggerRun,
+  retainDebugger,
+  onDebuggerDetached,
   secondsToMs,
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
 }: DiagnosticsHost) {
@@ -54,7 +58,11 @@ interface ConsoleRecord {
   stackTrace: ReturnType<typeof formatStackTrace>; args?: ReturnType<typeof formatRemoteObject>[];
   exception?: ReturnType<typeof formatRemoteObject>; level?: string;
 }
-interface ConsoleMonitor extends Monitor { connectionId: number; records: ConsoleRecord[] }
+interface ConsoleMonitor extends Monitor {
+  connectionId: number; records: ConsoleRecord[];
+  seen: Map<string, { count: number; timestamp: number }>; replay: Map<string, number>;
+  evictedBefore: number; replayBefore: number;
+}
 
 // ---------------------------------------------------------------------------
 // Network monitor: per-tab ring buffer over CDP Network events
@@ -67,12 +75,21 @@ const DEFAULT_BODY_LIMIT = 120000;
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
   if (source.sessionId || source.tabId == null || !method.startsWith("Network.")) return;
   const monitor = networkMonitors.get(source.tabId);
-  if (!monitor?.enabled) return;
+  if (!monitor || (!monitor.enabled && !monitor.waiters.size)) return;
+  const run = getDebuggerRun(source.tabId);
+  if (!run || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId || monitor.connectionId !== run.connectionId) return;
   handleNetworkEvent(monitor, method, params as NetworkEvent);
 });
 
 const consoleMonitors = new Map<number, ConsoleMonitor>();
 const DEFAULT_CONSOLE_LIMIT = 200;
+const CONSOLE_REPLAY_LIMIT = 1000;
+
+chrome.tabs?.onRemoved?.addListener(tabId => {
+  networkMonitors.get(tabId)?.releaseWatch?.();
+  networkMonitors.delete(tabId);
+  consoleMonitors.delete(tabId);
+});
 
 chrome.debugger?.onEvent?.addListener((source, method, params) => {
   if (source.sessionId || source.tabId == null
@@ -84,11 +101,16 @@ chrome.debugger?.onEvent?.addListener((source, method, params) => {
   handleConsoleEvent(monitor, method, params as ConsoleEvent);
 });
 
-chrome.debugger?.onDetach?.addListener((source) => {
-  if (source.tabId == null) return;
-  const networkMonitor = networkMonitors.get(source.tabId);
-  if (networkMonitor) networkMonitor.enabled = false;
-  consoleMonitors.delete(source.tabId);
+onDebuggerDetached((tabId, connectionId) => {
+  const networkMonitor = networkMonitors.get(tabId);
+  if (networkMonitor?.connectionId === connectionId) {
+    networkMonitor.enabled = false;
+    networkMonitor.releaseWatch?.();
+    networkMonitor.releaseWatch = undefined;
+    networkMonitor.inFlight.clear();
+  }
+  const consoleMonitor = consoleMonitors.get(tabId);
+  if (consoleMonitor?.connectionId === connectionId) consoleMonitor.enabled = false;
 });
 
 function getNetworkMonitor(tabId: number) {
@@ -100,6 +122,7 @@ function getNetworkMonitor(tabId: number) {
       maxRecords: DEFAULT_NETWORK_LIMIT,
       sessionId: "",
       runId: "",
+      connectionId: 0,
       records: new Map(),
       order: [],
       inFlight: new Set(),
@@ -114,16 +137,23 @@ function getConsoleMonitor(tabId: number) {
   const run = getDebuggerRun(tabId);
   if (!run) return null;
   let monitor = consoleMonitors.get(tabId);
-  if (!monitor || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId
-    || monitor.connectionId !== run.connectionId) {
+  if (!monitor || monitor.sessionId !== run.sessionId || monitor.runId !== run.runId) {
     monitor = {
       tabId,
       enabled: true,
       maxRecords: DEFAULT_CONSOLE_LIMIT,
       ...run,
       records: [],
+      seen: new Map(), replay: new Map(), evictedBefore: -Infinity, replayBefore: -Infinity,
     };
     consoleMonitors.set(tabId, monitor);
+  } else if (monitor.connectionId !== run.connectionId) {
+    monitor.connectionId = run.connectionId;
+    monitor.enabled = true;
+    // Runtime.enable replays old calls. Keep the bounded local history, including
+    // reset/eviction, while accepting new messages captured during disconnection.
+    monitor.replay = new Map([...monitor.seen].map(([key, entry]) => [key, entry.count]));
+    monitor.replayBefore = monitor.evictedBefore;
   }
   return monitor;
 }
@@ -175,6 +205,20 @@ function handleConsoleEvent(monitor: ConsoleMonitor, method: string, params: Con
 }
 
 function pushConsoleRecord(monitor: ConsoleMonitor, record: ConsoleRecord) {
+  const key = JSON.stringify(record);
+  const replayCount = monitor.replay.get(key) || 0;
+  if (replayCount) {
+    if (replayCount === 1) monitor.replay.delete(key);
+    else monitor.replay.set(key, replayCount - 1);
+    return;
+  }
+  if (record.timestamp <= monitor.replayBefore) return;
+  monitor.seen.set(key, { count: (monitor.seen.get(key)?.count || 0) + 1, timestamp: record.timestamp });
+  if (monitor.seen.size > CONSOLE_REPLAY_LIMIT) {
+    const oldest = monitor.seen.entries().next().value!;
+    monitor.evictedBefore = Math.max(monitor.evictedBefore, oldest[1].timestamp);
+    monitor.seen.delete(oldest[0]);
+  }
   monitor.records.push({
     ...record,
     level: normalizeConsoleLevel(record.type),
@@ -253,13 +297,16 @@ function resetNetworkMonitor(monitor: NetworkMonitor, maxRecords = monitor.maxRe
   monitor.inFlight.clear();
 }
 
-async function enableNetworkMonitor(tabId: number | undefined, { reset = false, maxRecords = DEFAULT_NETWORK_LIMIT } = {}, context: ToolContext = {}) {
+async function enableNetworkMonitor(tabId: number | undefined, { reset = false, maxRecords = DEFAULT_NETWORK_LIMIT, persistent = false } = {}, context: ToolContext = {}) {
   if (!tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "network_watch" });
 
   const monitor = getNetworkMonitor(tabId);
   const runChanged = monitor.sessionId !== String(context.sessionId || "")
     || monitor.runId !== String(context.runId || "");
   if (runChanged) {
+    monitor.enabled = false;
+    monitor.releaseWatch?.();
+    monitor.releaseWatch = undefined;
     resetNetworkMonitor(monitor, maxRecords);
     monitor.sessionId = String(context.sessionId || "");
     monitor.runId = String(context.runId || "");
@@ -271,7 +318,18 @@ async function enableNetworkMonitor(tabId: number | undefined, { reset = false, 
     maxTotalBufferSize: 50 * 1024 * 1024,
     maxResourceBufferSize: 10 * 1024 * 1024,
   }, context);
-  monitor.enabled = true;
+  const run = getDebuggerRun(tabId);
+  if (!run || run.sessionId !== context.sessionId || run.runId !== context.runId) {
+    throw new ToolExecutionError("CDP_RUN_RELEASED", "The Agent run no longer owns this debugger connection");
+  }
+  if (monitor.connectionId !== run.connectionId) {
+    monitor.releaseWatch?.();
+    monitor.releaseWatch = undefined;
+    monitor.inFlight.clear();
+    monitor.connectionId = run.connectionId;
+  }
+  if (persistent && !monitor.releaseWatch) monitor.releaseWatch = retainDebugger(tabId, "network", context);
+  if (persistent) monitor.enabled = true;
   return monitor;
 }
 
@@ -282,6 +340,7 @@ async function enablePreNavigationNetworkWatch(tabId: number, {
   const monitor = await enableNetworkMonitor(tabId, {
     reset: resetNetwork !== false,
     maxRecords: networkMaxRecords,
+    persistent: true,
   }, context);
   return {
     watching: true,
@@ -297,6 +356,7 @@ function handleNetworkEvent(monitor: NetworkMonitor, method: string, params: Net
   if (method === "Network.requestWillBeSent") {
     const requestId = params.requestId;
     const record: NetworkRecord = {
+      connectionId: monitor.connectionId,
       requestId,
       url: params.request?.url || "",
       method: params.request?.method || "",
@@ -508,15 +568,24 @@ registerTool({
     type: "object",
     properties: {
       tabRef: { type: ["integer", "string"], description: toolT("readConsoleMessagesTabId") },
+      enabled: { type: "boolean", description: toolT("networkWatchEnabled") },
       reset: { type: "boolean", description: toolT("networkWatchReset") },
       maxRecords: { type: "number", description: toolT("networkWatchMaxRecords") },
     },
     required: ["tabRef"],
   } as const; },
-  page: "owned",
+  page: args => args.enabled === false ? "tab" : "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, reset = true, maxRecords = DEFAULT_NETWORK_LIMIT }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords }, context);
+  execute: async ({ tabId, enabled = true, reset = true, maxRecords = DEFAULT_NETWORK_LIMIT }, _signal, context = {}) => {
+    if (!enabled) {
+      const monitor = tabId ? networkMonitors.get(tabId) : undefined;
+      if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) return { watching: false, records: 0, inFlight: 0 };
+      monitor.enabled = false;
+      monitor.releaseWatch?.();
+      monitor.releaseWatch = undefined;
+      return { watching: false, maxRecords: monitor.maxRecords, records: monitor.order.length, inFlight: monitor.inFlight.size };
+    }
+    const monitor = await enableNetworkMonitor(tabId, { reset, maxRecords, persistent: true }, context);
     return {
       watching: true,
       maxRecords: monitor.maxRecords,
@@ -547,7 +616,13 @@ registerTool({
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, limit = 20, ...filter }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+    const existing = tabId ? networkMonitors.get(tabId) : undefined;
+    let monitor = existing;
+    if (!monitor || monitor.sessionId !== context.sessionId || monitor.runId !== context.runId) {
+      monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
+      // Preserve first-read capture for this connection without retaining it.
+      monitor.enabled = true;
+    }
     const filtered = filterNetworkRecords(monitor, filter);
     if (filtered.error) {
       return toolError(filtered.code, `Invalid regular expression: ${filtered.message}`, {
@@ -583,11 +658,17 @@ registerTool({
   page: "owned",
   timeout: { defaultMs: 30000, maxMs: 300000 },
   execute: async ({ tabId, requestId, maxBytes = DEFAULT_BODY_LIMIT }, _signal, context = {}) => {
-    const monitor = await enableNetworkMonitor(tabId, { reset: false }, context);
-    const record = monitor.records.get(requestId);
-    if (!record) return toolError("NETWORK_REQUEST_NOT_FOUND", `Network request not found: ${requestId}`, {
+    const monitor = tabId ? networkMonitors.get(tabId) : undefined;
+    const record = monitor && monitor.sessionId === context.sessionId && monitor.runId === context.runId ? monitor.records.get(requestId) : undefined;
+    if (!monitor || !record) return toolError("NETWORK_REQUEST_NOT_FOUND", `Network request not found: ${requestId}`, {
       hint: "Use network_recent to choose a captured requestId, then retry network_body.", details: { requestId },
     });
+    const run = getDebuggerRun(monitor.tabId);
+    if (!run || run.sessionId !== context.sessionId || run.runId !== context.runId || record.connectionId !== run.connectionId) {
+      return toolError("NETWORK_RESPONSE_EXPIRED", "The response body belongs to a debugger connection that has closed.", {
+        hint: "Start network_watch before triggering the request and read network_body before stopping it, or use wait_for_response with includeBody:true.", details: { requestId },
+      });
+    }
     assertUrlAllowedBySecurityGuardrails(record.url, await getSecurityGuardrails(), { tool: "network_body", source: "request_url" });
     const body = await getNetworkBody(monitor.tabId, requestId, clampNumber(maxBytes, 1000, 1000000, DEFAULT_BODY_LIMIT), context);
     return { ...networkRecordSummary(record), ...body };
@@ -722,8 +803,18 @@ registerTool({
     defaultNetworkLimit: DEFAULT_NETWORK_LIMIT,
     enablePreNavigationNetworkWatch,
     releaseRun(sessionId: string, runId: string) {
-      for (const monitor of [...networkMonitors.values(), ...consoleMonitors.values()]) {
-        if (monitor.sessionId === sessionId && monitor.runId === runId) monitor.enabled = false;
+      for (const monitor of networkMonitors.values()) {
+        if (monitor.sessionId === sessionId && monitor.runId === runId) {
+          monitor.enabled = false;
+          monitor.releaseWatch?.();
+          networkMonitors.delete(monitor.tabId);
+        }
+      }
+      for (const monitor of consoleMonitors.values()) {
+        if (monitor.sessionId === sessionId && monitor.runId === runId) {
+          monitor.enabled = false;
+          consoleMonitors.delete(monitor.tabId);
+        }
       }
     },
   });

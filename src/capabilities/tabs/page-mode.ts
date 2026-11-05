@@ -82,7 +82,6 @@ export function createPageModeRuntime(host: ModeHost, states = new Map<number, M
             throw error;
           }
         }, context);
-        if (mode === "desktop") await host.releaseDebugger(tabId, context);
         return result;
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";

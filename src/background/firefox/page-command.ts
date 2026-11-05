@@ -666,7 +666,7 @@ export function firefoxConsoleMain(): void {
   let seq = 0;
   const push = (record: ConsoleRecord) => {
     seq += 1;
-    queue.push({ seq, record });
+    queue.push({ seq, record: { ...record, timestamp: Date.now() } });
     if (queue.length > 200) queue.shift();
     root.setAttribute?.("data-qz-console-queue", JSON.stringify(queue));
   };
@@ -692,10 +692,11 @@ export function firefoxConsoleMain(): void {
   });
 }
 
-export function firefoxConsoleBridge(): void {
+export function firefoxConsoleBridge(replay = false): void {
   const page = globalThis as unknown as PageScope;
   const root = page.document?.documentElement;
-  if (!root?.getAttribute || root.__qzConsoleBridge) return;
+  if (!root?.getAttribute || (root.__qzConsoleBridge && !replay)) return;
+  const installed = root.__qzConsoleBridge;
   root.__qzConsoleBridge = true;
   root.__qzConsoleSeen = 0;
   const flush = () => {
@@ -711,7 +712,7 @@ export function firefoxConsoleBridge(): void {
     root.__qzConsoleSeen = last;
   };
   const Observer = page.MutationObserver;
-  if (typeof Observer === "function") new Observer(flush).observe(root, { attributes: true, attributeFilter: ["data-qz-console-queue"] });
+  if (!installed && typeof Observer === "function") new Observer(flush).observe(root, { attributes: true, attributeFilter: ["data-qz-console-queue"] });
   flush();
 }
 
@@ -748,7 +749,7 @@ interface Ax {
   role?: { value: string }; name?: { value: string };
   properties?: { name: string; value: { value: unknown } }[];
 }
-interface ConsoleRecord { kind: "console" | "exception"; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
+interface ConsoleRecord { kind: "console" | "exception"; timestamp?: number; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
 interface DomNode {
   nodeType?: number; nodeName?: string; nodeValue?: string; textContent?: string; title?: string;
   childNodes?: ArrayLike<DomNode>; children?: ArrayLike<DomNode>;

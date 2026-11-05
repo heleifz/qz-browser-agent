@@ -68,7 +68,7 @@ for (const seed of seeds) {
       // Two real isolated profiles share one bridge; no injected CLI transport or findDaemon.
       for (const name of ['alpha', 'beta']) {
         const context = await chromium.launchPersistentContext(join(directory, name), {
-          headless: true, executablePath: chromium.executablePath(), ignoreDefaultArgs: ['--disable-extensions'],
+          headless: true, executablePath: process.env.CHROME_EXECUTABLE || chromium.executablePath(), ignoreDefaultArgs: ['--disable-extensions'],
           args: ['--disable-features=DisableLoadExtensionCommandLineSwitch', `--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
         });
         contexts.push(context);

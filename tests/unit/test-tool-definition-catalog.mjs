@@ -75,6 +75,7 @@ async function assertCoreMetadataCoverage() {
     const before = registered.size;
     register({
       skills: {}, models: {},
+      onDebuggerDetached() { return () => {}; },
       registerTool({ name }) {
         assert.ok(!registered.has(name), `${name} must not be registered twice`);
         registered.add(name);

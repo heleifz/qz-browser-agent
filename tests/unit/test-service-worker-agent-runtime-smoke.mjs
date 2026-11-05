@@ -40,6 +40,7 @@ const state = {
     },
   ],
   tabUpdates: [],
+  tabCreateGate: null,
   alarms: new Map(),
   llmFetches: [],
   networkRequests: [],
@@ -47,6 +48,7 @@ const state = {
   bridgeListToolsSessionId: "",
   bridgePolls: 0,
   bridgeResults: [],
+  bridgeRequests: [],
   skillStorageReads: 0,
   skillStorageGetFailures: 1,
   skillStorageGetGate: null,
@@ -196,12 +198,18 @@ try {
   const pluginRuntime = await import("../../src/background/skills/skill-tool-runtime.js");
 
   assert.equal(state.alarmsOnAlarm.length, 1, "only the automation alarm router should register before data consent");
+  const exportSender = { tab: { id: 3, windowId: 1, url: "file:///tmp/exported-session.html" } };
+  assert.deepEqual(await invokeRuntimeMessage({ type: "session_export_reveal_consent" }, exportSender),
+    { ok: true, needsConsent: true }, "an exported chat opens the panel and requires first-use consent");
+  assert.deepEqual(state.sidePanelOpens.at(-1), { windowId: 1 });
   const consentReply = await new Promise(resolve => state.runtimeOnMessage[0](
     { type: "accept_data_consent", version: 1 },
     { id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel/sidepanel.html") }, resolve,
   ));
   assert.equal(consentReply.ok, true);
   assert.equal(storageData.qz_data_consent.version, 1);
+  assert.deepEqual(await invokeRuntimeMessage({ type: "session_export_reveal_consent" }, exportSender),
+    { ok: true, needsConsent: false }, "the same import gesture proceeds after consent is accepted");
 
   assert.equal(state.alarmsOnAlarm.length, 2, "data consent should add the MCP reconnect listener alongside the automation router");
   for (const name of ["unrelated-alarm", "qingzhou-mcp-bridge-reconnect"]) {
@@ -722,6 +730,56 @@ try {
       "MCP list_tools should refresh the registry and preserve the loaded Skill tool",
     );
     assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), true, "a connected bridge should schedule its reconnect alarm");
+    const driveCall = async (method, params) => {
+      const id = `handoff-${state.bridgeResults.length}`;
+      state.bridgeRequests.push({ id, method, params });
+      await waitFor(() => state.bridgeResults.some(reply => reply.requestId === id), 5000);
+      const reply = state.bridgeResults.find(reply => reply.requestId === id);
+      assert.equal(reply.ok, true, JSON.stringify(reply.error));
+      return reply.result;
+    };
+    const drive = await driveCall("create_drive_session", { title: "Debugger handoff" });
+    const handoffTabs = {};
+    for (const name of ["idle", "canceled", "activated"]) {
+      const url = `https://smoke.example/handoff-${name}`;
+      const opened = await driveCall("execute_tool", {
+        sessionId: drive.sessionId, name: "open_tab", args: { url, tabAlias: name },
+      });
+      assert.equal(opened.result.tabRef, name);
+      handoffTabs[name] = state.tabs.find(tab => tab.url === url).id;
+    }
+    const creatingTab = deferred(), finishCreate = deferred();
+    state.tabCreateGate = { started: creatingTab.resolve, release: finishCreate.promise };
+    const pendingOpen = driveCall("execute_tool", {
+      sessionId: drive.sessionId, name: "open_tab", args: { url: "https://smoke.example/handoff-busy" },
+    });
+    await creatingTab.promise;
+    try {
+      for (const listener of chrome.tabs.onActivated._listeners) listener({ tabId: handoffTabs.idle });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(storageData[`_session_runtime_${drive.sessionId}`]?.driveHandoffTabIds || [], [],
+        "activation while a drive operation is busy does not hand its tab back to the user");
+    } finally { finishCreate.resolve(); }
+    await pendingOpen;
+    for (const listener of chrome.debugger.onDetach._listeners) {
+      listener({ tabId: handoffTabs.idle }, "target_closed");
+      listener({ tabId: 999999 }, "canceled_by_user");
+      listener({ tabId: 3 }, "canceled_by_user");
+      listener({ tabId: handoffTabs.canceled }, "canceled_by_user");
+    }
+    for (const listener of chrome.tabs.onActivated._listeners) {
+      listener({ tabId: 999999 });
+      listener({ tabId: 3 });
+      listener({ tabId: handoffTabs.activated });
+    }
+    await waitFor(() => storageData[`_session_runtime_${drive.sessionId}`]?.driveHandoffTabIds?.length === 2);
+    await driveCall("stop_session", { sessionId: drive.sessionId });
+    assert.equal(state.tabs.some(tab => tab.id === handoffTabs.idle), false,
+      "normal debugger release keeps a task-created tab eligible for task cleanup");
+    for (const name of ["canceled", "activated"]) assert.ok(state.tabs.some(tab => tab.id === handoffTabs[name]),
+      "a tab handed back to the user survives task cancellation");
+    assert.deepEqual(storageData[`_session_runtime_${sessionId}`]?.driveHandoffTabIds || [], [],
+      "ordinary Agent tabs never acquire external-drive handoff state");
   } finally {
     state.bridgeListToolsSessionId = "";
     await setMcpBridgeEnabled(false);
@@ -1001,6 +1059,39 @@ try {
   assert.equal([...state.alarms.keys()].some(name => /telemetry|update/i.test(name)), false, "startup never schedules removed remote services");
   assert.equal(state.networkRequests.some(url => /analytics\.example\.test|\/v1\/telemetry|\/v1\/updates|\/v1\/public\/skills/.test(url)), false, "legacy stored settings never reactivate collection or a directory service");
 
+  const lifecycleVersion = pluginRuntime.getSkillToolRegistrySnapshot().version;
+  const lifecycleReads = state.skillStorageReads;
+  for (const event of [chrome.runtime.onStartup, chrome.runtime.onInstalled]) {
+    assert.equal(event._listeners.length, 1);
+    event._listeners[0]();
+  }
+  await waitFor(() => pluginRuntime.getSkillToolRegistrySnapshot().version === lifecycleVersion + 2);
+  assert.equal(state.skillStorageReads, lifecycleReads + 2,
+    "startup and install each reload the persisted Skill registry");
+  assert.equal(state.alarmsOnAlarm.length, 2, "repeated lifecycle events do not register duplicate alarm handlers");
+  assert.equal(state.alarms.has("qingzhou-mcp-bridge-reconnect"), false,
+    "startup and install must not reconnect a disabled bridge");
+  const previousIndexedDB = globalThis.indexedDB;
+  const previousWarn = console.warn;
+  const documentCleanupError = new Error("document storage unavailable during deletion");
+  const documentCleanupWarnings = [];
+  globalThis.indexedDB = { open() { throw documentCleanupError; } };
+  console.warn = (...args) => {
+    if (args[0] === "[轻舟] deleted Session document cleanup failed") documentCleanupWarnings.push(args[1]);
+    else previousWarn(...args);
+  };
+  try {
+    await sendPortMessage(reconnectedPort, {
+      type: "delete_session", requestId: "delete-completed-runtime", sessionId,
+    }, message => message.type === "delete_session_result" && message.requestId === "delete-completed-runtime");
+  } finally {
+    globalThis.indexedDB = previousIndexedDB;
+    console.warn = previousWarn;
+  }
+  assert.deepEqual(documentCleanupWarnings, [documentCleanupError]);
+  assert.equal(storageData[storedSessionKey(sessionId)], undefined,
+    "deleting a stopped Agent session still removes its stored record when document cleanup fails");
+
   console.log("service worker agent runtime smoke tests passed");
 } finally {
   console.log = originalConsoleLog;
@@ -1108,6 +1199,12 @@ function createChromeMock() {
         return { ...tab };
       },
       async create(props = {}) {
+        if (state.tabCreateGate) {
+          const gate = state.tabCreateGate;
+          state.tabCreateGate = null;
+          gate.started();
+          await gate.release;
+        }
         const nextId = Math.max(0, ...state.tabs.map(tab => Number(tab.id) || 0)) + 1;
         const tab = {
           id: nextId,
@@ -1183,7 +1280,11 @@ function createChromeMock() {
       onCommand: makeEvent(state.commandsOnCommand),
     },
     scripting: {
-      async executeScript() {
+      async executeScript({ target, injectImmediately } = {}) {
+        if (injectImmediately && target?.frameIds?.[0] === 0) return [{
+          documentId: `document-${target.tabId}-${state.tabs.find(tab => tab.id === target.tabId)?.url}`,
+          result: null,
+        }];
         return [];
       },
     },
@@ -1198,6 +1299,7 @@ function createChromeMock() {
     },
     offscreen: {},
     debugger: {
+      onDetach: makeEvent(),
       async attach() {},
       async detach() {},
       async sendCommand() {
@@ -1341,6 +1443,7 @@ function createFetchMock(responses = []) {
             },
           }]
         : [];
+      requests.push(...state.bridgeRequests.splice(0));
       return Response.json({ requests, ...bridgeIdentity });
     }
     if (href === "http://127.0.0.1:18765/v1/qingzhou/result") {

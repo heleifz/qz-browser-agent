@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 
 const eventListeners = [];
 const detachListeners = [];
+const removedListeners = [];
 const debuggerCommands = [];
 const cdpCommands = [];
 let debuggerRun = null;
+let connectionId = 1;
+let activePins = 0;
 
 globalThis.chrome = {
+  tabs: { onRemoved: { addListener(listener) { removedListeners.push(listener); } } },
   storage: { local: { async get() { return {}; } } },
   debugger: {
     onEvent: { addListener(listener) { eventListeners.push(listener); } },
@@ -30,12 +34,18 @@ class ToolExecutionError extends Error {
 
 const definitions = new Map();
 const runtime = createDiagnosticsTools({
-  registerTool({ name, description: _description, parameters: _parameters, execute }) { definitions.set(name, { execute }); },
+  registerTool(definition) { definitions.set(definition.name, definition); },
   ToolExecutionError,
   makeSessionTabTargetError(code, details = {}) { return new ToolExecutionError(code, code, details); },
   getDebuggerRun: () => debuggerRun,
+  onDebuggerDetached(listener) { detachListeners.push(listener); return () => {}; },
+  retainDebugger() {
+    activePins++;
+    let released = false;
+    return () => { if (!released) { released = true; activePins--; } };
+  },
   async sendCdp(tabId, method, params, context) {
-    debuggerRun = { sessionId: context.sessionId, runId: context.runId, connectionId: 1 };
+    debuggerRun = { sessionId: context.sessionId, runId: context.runId, connectionId };
     cdpCommands.push([tabId, method, params, context]);
     if (method === "Network.getResponseBody") return { body: `body-${tabId}`, base64Encoded: false };
     return {};
@@ -57,8 +67,12 @@ assert.deepEqual([...definitions.keys()], [
 ]);
 
 const runOne = { sessionId: "s1", runId: "r1" };
+assert.equal(definitions.get("network_watch").parameters.properties.enabled.type, "boolean");
 await definitions.get("network_watch").execute({ tabId: 4, reset: true, maxRecords: 20 }, null, runOne);
 assert.ok(cdpCommands.some(call => call[1] === "Network.enable"));
+assert.equal(activePins, 1, "explicit monitoring survives idle periods between scripts");
+await definitions.get("network_watch").execute({ tabId: 4, reset: false }, null, runOne);
+assert.equal(activePins, 1, "repeated watch calls share one persistent hold");
 
 function emit(method, params) {
   for (const listener of eventListeners) listener({ tabId: 4 }, method, params);
@@ -163,14 +177,17 @@ await assert.rejects(definitions.get("wait_for_response").execute({
 }, undefined, { ...runOne, async invokeTool() { emitResponse("r4"); throw actionFailure; } }), error => error === actionFailure);
 
 runtime.releaseRun("other-session", runOne.runId);
+assert.equal(activePins, 1);
 emit("Runtime.consoleAPICalled", { type: "warning", args: [{ type: "string", value: "still watching" }], timestamp: 4 });
 runtime.releaseRun(runOne.sessionId, runOne.runId);
+assert.equal(activePins, 0, "terminal cleanup releases the network hold");
+debuggerRun = null;
 emit("Runtime.consoleAPICalled", { type: "warning", args: [{ type: "string", value: "late event" }], timestamp: 5 });
 emit("Network.requestWillBeSent", { requestId: "late", request: { url: "https://example.test/late", method: "GET" }, type: "Fetch", timestamp: 5 });
 const stoppedConsole = await definitions.get("read_console_messages").execute({ tabId: 4, level: "warning" }, null, runOne);
-assert.deepEqual(stoppedConsole.results.map(item => item.text).sort(), ["hello", "still watching"], "retained CDP must not append console events after run cleanup");
+assert.equal(stoppedConsole.totalBuffered, 0, "terminal run cleanup discards its console history");
 const stoppedNetwork = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, runOne);
-assert.equal(stoppedNetwork.records, 4, "late Network events are ignored even without a physical detach");
+assert.equal(stoppedNetwork.records, 0, "terminal run cleanup discards its network history");
 
 const nextRun = { sessionId: "s1", runId: "r2" };
 const afterRunChange = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, nextRun);
@@ -180,10 +197,72 @@ assert.equal(consoleAfterRunChange.records, 0, "a new Agent run must not inherit
 
 const idle = await definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.5 }, undefined, nextRun);
 assert.equal(idle.idle, true);
+assert.equal(activePins, 0, "network reads and waits do not retain idle connections");
 emit("Network.requestWillBeSent", { requestId: "pending", request: { url: "https://example.test/pending", method: "GET" }, timestamp: 7 });
 await assert.rejects(definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.01 }, undefined, nextRun), error => error.code === "TOOL_TIMEOUT" && Boolean(error.hint));
 
-detachListeners.forEach(listener => listener({ tabId: 4 }));
+debuggerRun = null;
+detachListeners.forEach(listener => listener(4, connectionId));
 assert.equal(runtime.defaultNetworkLimit, 200);
+
+const beforeDisabled = cdpCommands.length;
+const neverWatched = await definitions.get("network_watch").execute({ tabId: 99, enabled: false }, undefined, nextRun);
+assert.equal(neverWatched.watching, false);
+const stopped = await definitions.get("network_watch").execute({ tabId: 4, enabled: false }, undefined, nextRun);
+assert.equal(stopped.watching, false);
+assert.equal(cdpCommands.length, beforeDisabled, "stopping a missing or disconnected watch never attaches");
+
+connectionId++;
+await runtime.enablePreNavigationNetworkWatch(4, {}, nextRun);
+assert.equal(activePins, 1, "pre-navigation watch retains initial responses across scripts");
+emitResponse("retained-body");
+const retainedBody = await definitions.get("network_body").execute({ tabId: 4, requestId: "retained-body" }, undefined, nextRun);
+assert.equal(retainedBody.body, "body-4");
+const concurrentWait = definitions.get("wait_for_response").execute({ tabId: 4, urlPattern: "next", timeout: 1 }, undefined, nextRun);
+await new Promise(resolve => setTimeout(resolve, 0));
+const beforeStop = cdpCommands.length;
+await definitions.get("network_watch").execute({ tabId: 4, enabled: false }, undefined, nextRun);
+await definitions.get("network_watch").execute({ tabId: 4, enabled: false }, undefined, nextRun);
+assert.equal(activePins, 0, "explicit stop releases its hold idempotently");
+assert.equal(cdpCommands.length, beforeStop, "stop uses the existing monitor without CDP calls");
+emitResponse("armed-wait");
+assert.equal((await concurrentWait).response.requestId, "armed-wait", "stopping a persistent watch preserves already armed waits");
+emitResponse("after-stop");
+const afterStop = await definitions.get("network_recent").execute({ tabId: 4 }, undefined, nextRun);
+assert.equal(afterStop.results.some(record => record.requestId === "after-stop"), false, "stopped capture does not restart on a history read");
+debuggerRun = null;
+detachListeners.forEach(listener => listener(4, connectionId));
+const beforeExpired = cdpCommands.length;
+const expiredBody = await definitions.get("network_body").execute({ tabId: 4, requestId: "retained-body" }, undefined, nextRun);
+assert.equal(expiredBody.code, "NETWORK_RESPONSE_EXPIRED");
+assert.match(expiredBody.hint, /includeBody:true/);
+const preservedHistory = await definitions.get("network_recent").execute({ tabId: 4 }, undefined, nextRun);
+assert.equal(preservedHistory.results.some(record => record.requestId === "retained-body"), true);
+assert.equal(cdpCommands.length, beforeExpired, "expired bodies and retained summaries never reacquire a connection");
+
+connectionId++;
+await definitions.get("network_watch").execute({ tabId: 4, reset: false }, undefined, nextRun);
+assert.equal(activePins, 1);
+detachListeners.forEach(listener => listener(4, connectionId - 1));
+assert.equal(activePins, 1, "a delayed detach notification cannot release the replacement connection");
+const oldBody = await definitions.get("network_body").execute({ tabId: 4, requestId: "retained-body" }, undefined, nextRun);
+assert.equal(oldBody.code, "NETWORK_RESPONSE_EXPIRED", "request identifiers from a retired connection never reach CDP");
+runtime.releaseRun(nextRun.sessionId, nextRun.runId);
+assert.equal(activePins, 0);
+
+await definitions.get("network_watch").execute({ tabId: 4 }, undefined, nextRun);
+emitResponse("closed-tab");
+removedListeners.forEach(listener => listener(4));
+assert.equal(activePins, 0, "closing a tab releases its persistent monitor");
+const closedBody = await definitions.get("network_body").execute({ tabId: 4, requestId: "closed-tab" }, undefined, nextRun);
+assert.equal(closedBody.code, "NETWORK_REQUEST_NOT_FOUND", "closing a tab discards its buffered responses");
+
+const temporaryWait = definitions.get("wait_for_response").execute({ tabId: 4, urlPattern: "next", timeout: 1 }, undefined, nextRun);
+await new Promise(resolve => setTimeout(resolve, 0));
+emitResponse("temporary-response");
+await temporaryWait;
+emitResponse("after-temporary-wait");
+const temporaryHistory = await definitions.get("network_recent").execute({ tabId: 4 }, undefined, nextRun);
+assert.deepEqual(temporaryHistory.results.map(record => record.requestId), ["temporary-response"], "a standalone wait stops capturing even if another feature retains the physical connection");
 
 console.log("diagnostics monitor tests passed");

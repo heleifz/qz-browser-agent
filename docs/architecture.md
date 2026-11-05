@@ -242,7 +242,12 @@ Parent and child Sessions have separate runs and tabs; creating,
 claiming, and updating a tab requires the current run's authority.
 
 [CDP runtime](../src/background/tools/cdp-runtime.ts) manages debugger connections and operation
-leases. A run normally releases its connections on completion. Dismissing Chrome's debugging bar
+leases. CLI and Agent tools keep connections while executing, including outer-script waits and
+concurrent descendants. Connections with no execution or persistent feature using them detach after
+two idle seconds. The Session, tab ownership, aliases and element registrations survive; subsequent
+tools reconnect on demand. Cancellation releases execution holds and revokes further commands.
+An idle detach failure preserves the live connection and retries once; new activity resets that budget.
+Dismissing Chrome's debugging bar
 marks the tab as user-detached; before the run's next tool call, outside the tool timeout, a
 confirmation asks to continue (re-attach) or stop (ending the run), while other detach reasons
 keep the silent reconnection. Capabilities can retain a connection across runs; completion or
@@ -254,8 +259,12 @@ reattachment approval.
 Closing a tab releases its debugger state and removes it from pending reattachment checks.
 
 Diagnostics captures bounded console history as soon as a run-owned connection enables Runtime,
-including replay triggered by UID tools. Buffers follow Session/run/connection identity; idle
-retained connections collect no events, and reconnecting replaces the buffer before accepting replay.
+including replay triggered by UID tools. Same-run history survives idle reconnects with replay
+deduplication; terminal cleanup removes the buffers. Explicit `network_watch` and navigation with
+`watchNetwork:true` keep the connection between scripts. `network_watch({tabRef,enabled:false})`
+stops capture and releases that hold while preserving summaries. Read response bodies before stopping,
+or use `wait_for_response({tabRef,includeBody:true,...})`; bodies belong to their original connection.
+Temporary response/network-idle waits hold only their execution scope.
 
 [Page mode](../src/capabilities/tabs/page-mode.ts) applies mobile UA, viewport, and touch settings
 before initial navigation. Mobile mode retains its connection between runs. Mode changes refresh the

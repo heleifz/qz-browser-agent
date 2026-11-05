@@ -939,6 +939,47 @@ test("auto-attach announces every frame once and detaches it when it leaves", as
   assert.equal(events.filter(method => method === "Target.detachedFromTarget").length, 2);
 });
 
+test("idle iframe navigation changes its document identity without resuming debugger work", async () => {
+  const browser = debuggerBrowser();
+  const events = [];
+  let committed, removed, injections = 0;
+  browser.webNavigation = {
+    async getAllFrames() { return [
+      { frameId: 0, parentFrameId: -1, url: "https://example.test/" },
+      { frameId: 7, parentFrameId: 0, url: "https://other.test/frame" },
+    ]; },
+    onCommitted: { addListener(listener) { committed = listener; } },
+  };
+  browser.tabs.onRemoved = { addListener(listener) { removed = listener; } };
+  browser.scripting.executeScript = async () => { injections++; return [{ result: undefined }]; };
+  installFirefoxDebugger(browser);
+  browser.debugger.onEvent.addListener((_source, method) => events.push(method));
+  const target = { tabId: 3 }, child = { ...target, sessionId: "ff-3-7" };
+  const loader = async source => (await browser.debugger.sendCommand(source, "Page.getFrameTree")).frameTree.frame.loaderId;
+  await browser.debugger.attach(target, "1.3");
+  await browser.debugger.sendCommand(target, "Runtime.enable");
+  const mainBefore = await loader(target), childBefore = await loader(child);
+  await browser.debugger.detach(target);
+  const beforeEvents = events.length, beforeInjections = injections;
+  committed({ tabId: 3, frameId: 7, url: "https://other.test/frame" });
+  await Promise.resolve();
+  assert.equal(events.length, beforeEvents);
+  assert.equal(injections, beforeInjections);
+  await assert.rejects(browser.debugger.sendCommand(child, "Page.getFrameTree"), /not attached/);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(target), mainBefore, "only the iframe document changed");
+  const childAfter = await loader(child);
+  assert.notEqual(childAfter, childBefore, "old iframe UIDs must fail their loader check even at the same URL");
+  await browser.debugger.detach(target);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(child), childAfter, "reconnecting alone must preserve element identity");
+  await browser.debugger.detach(target);
+  removed(3);
+  await browser.debugger.attach(target, "1.3");
+  assert.equal(await loader(child), childBefore, "closing a detached tab clears its tracked generations");
+  await browser.debugger.detach(target);
+});
+
 test("network listeners fall back when Firefox rejects extraInfoSpec", async () => {
   const events = [];
   let beforeAdds = 0;
@@ -1122,6 +1163,74 @@ test("Runtime.disable leaves the session hook enabled", async () => {
   assert.match(agent.result.value, /Chrome\/131\.0\.0\.0/);
   onMessage({ type: "qz-firefox-console", record: { kind: "console", type: "log", args: ["still"] } }, { tab: { id: 3 } });
   assert.equal(events.filter(event => event.method === "Runtime.consoleAPICalled").length, 1);
+});
+
+test("console reattachment replays idle logs with capture timestamps and one bridge observer", async t => {
+  const attributes = new Map(), observers = [], events = [], pageListeners = [];
+  const root = {
+    getAttribute: name => attributes.get(name) ?? null,
+    setAttribute(name, value) {
+      attributes.set(name, value);
+      if (name === "data-qz-console-queue") for (const callback of observers) callback();
+    },
+  };
+  const browser = debuggerBrowser();
+  const pageConsole = { log() {} };
+  let onMessage, now = 1000;
+  t.mock.method(Date, "now", () => now);
+  browser.runtime.onMessage = { addListener(listener) { onMessage = listener; } };
+  browser.scripting.executeScript = async ({ func, args }) => {
+    if (func.name === "firefoxConsoleMain") {
+      const oldConsole = globalThis.console, oldAddListener = globalThis.addEventListener;
+      globalThis.console = pageConsole;
+      globalThis.addEventListener = (...listener) => pageListeners.push(listener);
+      try { func(...args); }
+      finally {
+        globalThis.console = oldConsole;
+        if (oldAddListener === undefined) delete globalThis.addEventListener;
+        else globalThis.addEventListener = oldAddListener;
+      }
+    } else if (func.name === "firefoxConsoleBridge") func(...args);
+    return [{ result: undefined }];
+  };
+  await withPage({ documentElement: root }, async () => {
+    const oldChrome = globalThis.chrome, oldObserver = globalThis.MutationObserver;
+    globalThis.chrome = { runtime: { sendMessage: message => onMessage(message, { tab: { id: 3 } }) } };
+    globalThis.MutationObserver = class { constructor(callback) { observers.push(callback); } observe() {} };
+    try {
+      installFirefoxDebugger(browser);
+      browser.debugger.onEvent.addListener((_source, method, params) => {
+        if (method === "Runtime.consoleAPICalled") events.push({ text: params.args[0].value, timestamp: params.timestamp });
+      });
+      await browser.debugger.attach({ tabId: 3 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      pageConsole.log("before");
+      await browser.debugger.detach({ tabId: 3 });
+      now = 2000;
+      pageConsole.log("during idle");
+      assert.deepEqual(events, [{ text: "before", timestamp: 1000 }]);
+      now = 3000;
+      await browser.debugger.attach({ tabId: 3 }, "1.3");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      assert.deepEqual(events, [
+        { text: "before", timestamp: 1000 },
+        { text: "before", timestamp: 1000 },
+        { text: "during idle", timestamp: 2000 },
+      ], "replay preserves event identities so diagnostics can discard previously observed entries");
+      assert.equal(observers.length, 1);
+      assert.equal(pageListeners.length, 2, "console installation must not duplicate error listeners");
+      now = 4000;
+      pageConsole.log("after");
+      assert.deepEqual(events.at(-1), { text: "after", timestamp: 4000 });
+      assert.equal(events.length, 4, "live logs pass through only one observer");
+      await browser.debugger.sendCommand({ tabId: 3 }, "Runtime.enable");
+      assert.equal(events.length, 4, "enabling an already enabled Runtime does not replay again");
+      await browser.debugger.detach({ tabId: 3 });
+    } finally {
+      if (oldChrome === undefined) delete globalThis.chrome; else globalThis.chrome = oldChrome;
+      if (oldObserver === undefined) delete globalThis.MutationObserver; else globalThis.MutationObserver = oldObserver;
+    }
+  });
 });
 
 test("a screenshot that exceeds the tile budget says what was omitted", async () => {

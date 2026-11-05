@@ -44,8 +44,12 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Regex flags. Default: i.",
   },
   networkWatchDescription: {
-    "zh-CN": "在 tabRef 指定的已打开标签页上开启或重置 Network 后置监听，只记录调用之后发生的请求摘要（适合点击、搜索、提交、翻页前调用；响应体按需用 network_body 读取）。抓首屏或重定向请求请在 open_tab/navigate 中传 watchNetwork:true。",
-    en: "Start or reset post-load network monitoring on the open tab specified by tabRef to record summaries of requests made after this call (call before clicking, searching, submitting, or paging; read bodies with network_body). Pass watchNetwork:true to open_tab/navigate for initial load or redirect requests.",
+    "zh-CN": "在 tabRef 指定的已打开标签页上开启或重置 Network 后置监听，只记录调用之后发生的请求摘要（适合点击、搜索、提交、翻页前调用；响应体按需用 network_body 读取）。抓首屏或重定向请求请在 open_tab/navigate 中传 watchNetwork:true。监听跨脚本保持；传 enabled:false 停止监听并允许空闲时释放调试连接。",
+    en: "Start or reset post-load network monitoring on the open tab specified by tabRef to record summaries of requests made after this call (call before clicking, searching, submitting, or paging; read bodies with network_body). Pass watchNetwork:true to open_tab/navigate for initial load or redirect requests. Monitoring persists across scripts; pass enabled:false to stop and allow idle debugger release.",
+  },
+  networkWatchEnabled: {
+    "zh-CN": "默认 true。false 停止监听并保留请求摘要；调试连接释放后响应体不再可读，请先用 network_body 读取。",
+    en: "Default: true. False stops monitoring and keeps request summaries. Read bodies with network_body before stopping; bodies become unavailable when the debugger connection is released.",
   },
   networkWatchReset: {
     "zh-CN": "是否清空已有记录，默认 true。",
@@ -92,8 +96,8 @@ const messages = defineMessages("diagnostics-tools", {
     en: "Regex to match response mimeType (e.g. json).",
   },
   networkBodyDescription: {
-    "zh-CN": "在 tabRef 指定的标签页按 requestId 读取 Network 响应体（requestId 来自 network_recent 或 wait_for_response）。",
-    en: "Read a network response body by requestId from the tab specified by tabRef (from network_recent or wait_for_response).",
+    "zh-CN": "在 tabRef 指定的标签页按 requestId 读取 Network 响应体（requestId 来自 network_recent 或 wait_for_response）。跨脚本读取请保持 network_watch 开启；也可在 wait_for_response 中传 includeBody:true 一起返回响应体。",
+    en: "Read a network response body by requestId from the tab specified by tabRef (from network_recent or wait_for_response). Keep network_watch enabled for reads across scripts, or pass includeBody:true to wait_for_response to return the body with the response.",
   },
   networkBodyRequestId: {
     "zh-CN": "来自 network_recent 或 wait_for_response 的 requestId。",

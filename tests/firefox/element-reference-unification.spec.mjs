@@ -7,6 +7,7 @@ function targetFor(tree, label, role = '') {
 }
 
 test('Firefox shares backend-node UIDs across readers, frames and UID absence waits', async ({ firefoxSidebar }) => {
+  test.setTimeout(120_000);
   const fixture = await startElementReferencePage();
   const page = await firefoxSidebar.context.newPage();
   try {
@@ -26,6 +27,15 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       }
       catch(error) { const failure=Cu.waiveXrays(error); return {message:String(failure.message),code:String(failure.code || ''),...(failure.hint ? {hint:String(failure.hint)} : {}),...(failure.details ? {details:JSON.parse(JSON.stringify(failure.details))} : {})}; }
     `);
+    // Probe the adapter directly: this must neither reacquire nor renew the tool's lease.
+    const attached = () => firefoxSidebar.extension('background', `
+      try { await view.chrome.debugger.sendCommand(Cu.cloneInto({tabId:${tabId}},content),'Page.getFrameTree',Cu.cloneInto({},content)); return true; }
+      catch(error) { if (/not attached/i.test(String(error))) return false; throw error; }
+    `);
+    const waitForIdleDetach = async () => {
+      expect(await attached()).toBe(true);
+      await expect.poll(attached, { timeout: 7000 }).toBe(false);
+    };
     const controls = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
     expect(controls.message, JSON.stringify(controls)).toBeUndefined();
     for (const [id, name] of [['overlay-toggle', 'Overlay menu'], ['detached-toggle', 'Detached menu']]) {
@@ -43,6 +53,7 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     expect(found.message, JSON.stringify(found)).toBeUndefined();
     expect(found.results.every(item => uidPattern.test(item.target) && !('selector' in item) && !('uid' in item))).toBe(true);
     const alpha = found.results.find(item => item.name === 'Alpha' || item.text === 'Alpha');
+    await waitForIdleDetach();
     const alphaClick = await call('act_on_element', { target: alpha.target, action: 'click' });
     expect(alphaClick).toEqual({});
     expect(await call('inspect_element', { target: alpha.target })).toMatchObject({
@@ -90,6 +101,7 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       expect(root || '', tree.snapshot).toMatch(uidPattern);
       const candidates = await call('find_elements', { target: root, roles: ['button'], limit: 5 });
       expect(candidates.message, JSON.stringify(candidates)).toBeUndefined();
+      await waitForIdleDetach();
       const clicked = await call('act_on_element', { target: candidates.results[0].target, action: 'click' });
       expect(clicked.message, JSON.stringify(clicked)).toBeUndefined();
       await expect(page.frameLocator(`#${kind}`).locator('body')).toHaveAttribute('data-clicked', 'yes');
@@ -99,6 +111,33 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
       expect(images.images[0].target).toMatch(uidPattern);
       const frameShot = await call('screenshot', { target: images.images[0].target });
       expect(frameShot.message, JSON.stringify(frameShot)).toBeUndefined();
+
+      await waitForIdleDetach();
+      await page.locator(`#${kind}`).evaluate(frame => { frame.src = frame.src; });
+      await expect(page.frameLocator(`#${kind}`).locator('body')).not.toHaveAttribute('data-clicked', 'yes');
+      expect(await attached(), 'navigation while idle must not reacquire the debugger').toBe(false);
+      const staleFrame = await call('act_on_element', { target: candidates.results[0].target, action: 'click' });
+      expect(staleFrame.code, JSON.stringify(staleFrame)).toMatch(/^STALE_ELEMENT_UID/);
+      await expect(page.frameLocator(`#${kind}`).locator('body')).not.toHaveAttribute('data-clicked', 'yes');
+      const refreshed = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 100 });
+      const freshTarget = targetFor(refreshed, `Frame ${kind}`, 'button');
+      expect(freshTarget, JSON.stringify(refreshed)).toMatch(uidPattern);
+      expect(freshTarget).not.toBe(candidates.results[0].target);
+      expect(await call('act_on_element', { target: freshTarget, action: 'click' })).toEqual({});
+      await expect(page.frameLocator(`#${kind}`).locator('body')).toHaveAttribute('data-clicked', 'yes');
     }
+
+    const consoleMessages = async () => {
+      const messages = await call('read_console_messages', { textPattern: '^idle-console-' });
+      expect(messages.message, JSON.stringify(messages)).toBeUndefined();
+      return messages.results.map(row => row.text).sort();
+    };
+    await page.evaluate(() => console.log('idle-console-before'));
+    await expect.poll(consoleMessages).toEqual(['idle-console-before']);
+    await waitForIdleDetach();
+    await page.evaluate(() => console.log('idle-console-during'));
+    await expect.poll(consoleMessages).toEqual(['idle-console-before', 'idle-console-during']);
+    await waitForIdleDetach();
+    await expect.poll(consoleMessages).toEqual(['idle-console-before', 'idle-console-during']);
   } finally { await page.close(); await fixture.close(); }
 });

@@ -686,56 +686,59 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         async (signal, reportPartial) => {
           const args = executionArgs;
           const callContext = withToolRuntimeContext({ ...context, signal, reportPartial, resultPresentation: context.resultPresentation ?? {} }, getToolRuntimeDependencies(context));
-          if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
-            callContext.prepareCreatedTab = async tab => {
-              const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
-              if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", {}, context);
-              pending = { tabId: Number(tab.id), reservation: reserved.reservation };
-              if (signal.aborted) { await discard(); throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted during tab creation"); }
-              return withExecutionAuthority(callContext, authority, reserved.reservation, Number(tab.id));
-            };
-          }
-          const pageAccess = resolvePageAccess(selectedDefinition, args);
-          if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-          const policy = selectedDefinition.behavior?.timeoutResult;
-          if (policy?.kind === "action") reportPartial({ status: "unconfirmed" }, policy.pending);
-          if (policy?.kind === "read" && Number(args.tabId) > 0
-            && !elementTargetsOf(selectedDefinition, args).some(isUidElementTarget)) {
-            const tabId = Number(args.tabId);
-            reportPartial({}, policy.pending);
-          }
-          if (needsCommittedPage(selectedDefinition, args) && !toolBehaviorEnabled(selectedDefinition.behavior?.passiveWait, args) && Number(args.tabId) > 0) {
-            await waitForPageCommit(Number(args.tabId), callContext);
-            // Firefox can report complete before its committed document finishes parsing.
-            if (selectedDefinition.behavior?.targetLookup) {
-              await elementRuntime.prepareCssTargets(Number(args.tabId), elementTargetsOf(selectedDefinition, args), {
-                index: parameters.properties.index ? Number(args.index) || 0 : 0,
-                includeShadow: selectedDefinition.behavior?.targetLookup === "openShadow",
-              }, callContext);
+          const releaseDebuggerExecution = beginDebuggerExecution(callContext);
+          try {
+            if (context.deferCreatedTabSelection && selectedDefinition.source === "core" && selectedDefinition.behavior?.parallelOpen) {
+              callContext.prepareCreatedTab = async tab => {
+                const reserved = await authority.sessions?.reserveCreatedTab?.({ sessionId: context.sessionId || "", runId: context.runId, signal, tab });
+                if (!reserved?.ok || !reserved.reservation) throw makeSessionTabTargetError(reserved?.code || "SESSION_TAB_UNAVAILABLE", {}, context);
+                pending = { tabId: Number(tab.id), reservation: reserved.reservation };
+                if (signal.aborted) { await discard(); throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted during tab creation"); }
+                return withExecutionAuthority(callContext, authority, reserved.reservation, Number(tab.id));
+              };
             }
-            // Revalidate even if the blank finished between admission and this wait.
-            // It may have become a restricted page or lost its task ownership.
-            Object.assign(args, await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal));
-            await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
-          }
-          if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
-            await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
-          }
-          if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-          return withToolCallLifecycle(callContext, async scoped => {
-            const owned = authority.sessions?.listOwnedTabIds?.(String(scoped.sessionId || ""));
-            const capture = (toolBehaviorEnabled(selectedDefinition.behavior?.mayUnloadPage, args)
-              || toolBehaviorEnabled(selectedDefinition.behavior?.mayOpenPopup, args))
-              && Number(args.tabId) > 0 && owned?.includes(Number(args.tabId))
-              ? authority.sessions?.beginPopupCapture?.({ sessionId: String(scoped.sessionId || ""), runId: scoped.runId,
-                signal: scoped.signal, openerTabId: Number(args.tabId) }) : undefined;
-            scoped.invokeTool = authority.invokeNestedTool
-              ? (name, args, options) => authority.invokeNestedTool!(scoped, name, args, options?.signal) : undefined;
-            scoped.listTools = names => listContextTools(scoped, names);
-            try { return await selectedDefinition.execute(args, scoped.signal,
-              definitionExecutionContext(scoped, selectedDefinition, args, getToolRuntimeDependencies(callContext))); }
-            finally { capture?.dispose(); }
-          });
+            const pageAccess = resolvePageAccess(selectedDefinition, args);
+            if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+            const policy = selectedDefinition.behavior?.timeoutResult;
+            if (policy?.kind === "action") reportPartial({ status: "unconfirmed" }, policy.pending);
+            if (policy?.kind === "read" && Number(args.tabId) > 0
+              && !elementTargetsOf(selectedDefinition, args).some(isUidElementTarget)) {
+              const tabId = Number(args.tabId);
+              reportPartial({}, policy.pending);
+            }
+            if (needsCommittedPage(selectedDefinition, args) && !toolBehaviorEnabled(selectedDefinition.behavior?.passiveWait, args) && Number(args.tabId) > 0) {
+              await waitForPageCommit(Number(args.tabId), callContext);
+              // Firefox can report complete before its committed document finishes parsing.
+              if (selectedDefinition.behavior?.targetLookup) {
+                await elementRuntime.prepareCssTargets(Number(args.tabId), elementTargetsOf(selectedDefinition, args), {
+                  index: parameters.properties.index ? Number(args.index) || 0 : 0,
+                  includeShadow: selectedDefinition.behavior?.targetLookup === "openShadow",
+                }, callContext);
+              }
+              // Revalidate even if the blank finished between admission and this wait.
+              // It may have become a restricted page or lost its task ownership.
+              Object.assign(args, await withSessionOwnedTarget(selectedDefinition, args, parameters, context, signal));
+              await assertToolTargetAllowedBySecurityGuardrails(selectedDefinition, args, context);
+            }
+            if (pageAccess && pageAccess !== "tab" && args._readOnlyTabAccess !== true && Number(args.tabId) > 0) {
+              await capabilityBridges.preparePage?.(Number(args.tabId), name, signal, callContext);
+            }
+            if (signal.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
+            return await withToolCallLifecycle(callContext, async scoped => {
+              const owned = authority.sessions?.listOwnedTabIds?.(String(scoped.sessionId || ""));
+              const capture = (toolBehaviorEnabled(selectedDefinition.behavior?.mayUnloadPage, args)
+                || toolBehaviorEnabled(selectedDefinition.behavior?.mayOpenPopup, args))
+                && Number(args.tabId) > 0 && owned?.includes(Number(args.tabId))
+                ? authority.sessions?.beginPopupCapture?.({ sessionId: String(scoped.sessionId || ""), runId: scoped.runId,
+                  signal: scoped.signal, openerTabId: Number(args.tabId) }) : undefined;
+              scoped.invokeTool = authority.invokeNestedTool
+                ? (name, args, options) => authority.invokeNestedTool!(scoped, name, args, options?.signal) : undefined;
+              scoped.listTools = names => listContextTools(scoped, names);
+              try { return await selectedDefinition.execute(args, scoped.signal,
+                definitionExecutionContext(scoped, selectedDefinition, args, getToolRuntimeDependencies(callContext))); }
+              finally { capture?.dispose(); }
+            });
+          } finally { releaseDebuggerExecution(); }
         },
         signal,
         timeoutMs,
@@ -1520,6 +1523,9 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 }
 
 const {
+  beginDebuggerExecution,
+  retainDebugger,
+  onDebuggerDetached,
   sendCdp,
   evaluateCdpScript,
   withDebugger,
@@ -1657,7 +1663,7 @@ const capabilityHost: ToolExtensionAPI = Object.freeze({
   assertUrlAllowed: assertUrlAllowedBySecurityGuardrails,
   assertPageUrlAccessible,
   sendToContent, sendCdp, withDebugger,
-  getDebuggerConnectionId, getDebuggerRun, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
+  getDebuggerConnectionId, getDebuggerRun, retainDebugger, onDebuggerDetached, setDebuggerRetention, releaseDebugger, withTemporaryDebugger, evaluateCdpScript,
   getTabPageState, pageStateDelta, prepareKnownPageNavigation, commitObservedPageNavigation,
   clickPointReady, clickNotReadyResult, captureTabScreenshot, enablePreNavigationNetworkWatch,
   publishSkillRegistryChange, summarizeToolArgsForTrace,

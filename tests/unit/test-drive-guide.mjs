@@ -34,7 +34,7 @@ test("the packaged guide matches the installed Skill and keeps one script vocabu
   assert.match(guide, /trigger/);
   assert.match(guide, /not transactions/);
   assert.match(guide, /stdout is JSON `\{ok,result,trace\}`/);
-  assert.match(guide, /trace\(\) and console diagnostics are returned as ordered strings in trace/);
+  assert.match(guide, /trace contains only errors and explicit trace\(\)\/console output, in order/);
   assert.match(guide, /load_skill.*qingzhou-documents/);
   assert.match(guide, /timed out|timeout/i);
   assert.doesNotMatch(guide, /\bMCP\b|\bqingzhou_(?:guide|create_drive_session|execute_tool|list_tools|get_tool|bridge_status|stop_session)\b|keepTabs:true/i);

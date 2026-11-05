@@ -52,8 +52,11 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
   chromeApi.webNavigation?.onCommitted?.addListener(details => {
     const tabId = Number(details.tabId);
     const frameId = Number(details.frameId);
-    if (!attached.has(tabId)) return;
+    // Tracked documents can change while the debugger is idle. Keep their
+    // identities current without enabling events or restoring page emulation.
+    if (!generations.has(`${tabId}:0`)) return;
     bump(generations, tabId, frameId);
+    if (!attached.has(tabId)) return;
     enterInput.committed();
     if (runtimeEnabled.has(tabId)) {
       void replaceFrameContext(tabId, frameId, String(details.url || ""));
@@ -64,6 +67,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (autoAttach.has(tabId)) void publishAutoAttach(tabId).catch(() => {});
   });
   chromeApi.tabs?.onRemoved?.addListener(tabId => {
+    for (const key of generations.keys()) if (key.startsWith(`${tabId}:`)) generations.delete(key);
     if (!attached.has(tabId)) return;
     void release(tabId, false);
     onDetach.dispatch({ tabId }, "target_closed");
@@ -71,7 +75,11 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
 
   const api: DebuggerApi & { [MARK]?: boolean } = {
     onEvent, onDetach,
-    async attach(target) { attached.add(tabIdOf(target)); },
+    async attach(target) {
+      const tabId = tabIdOf(target);
+      attached.add(tabId);
+      if (!generations.has(`${tabId}:0`)) generations.set(`${tabId}:0`, 0);
+    },
     async detach(target) { await release(tabIdOf(target), true); },
     sendCommand(target, method, params) { return sendCommand(target, method, params); },
     sendCommandWithScope: sendCommand,
@@ -294,7 +302,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const created: ContextRecord[] = [];
     for (const frame of await readFrames(tabId)) created.push(...createContexts(tabId, frame.frameId, frame.url));
     contexts.set(tabId, created);
-    await installConsole(tabId).catch(() => {});
+    await installConsole(tabId, true).catch(() => {});
     return {};
   }
 
@@ -391,10 +399,10 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     await execute(target, "MAIN", firefoxApplyUserAgent, [userAgent]);
   }
 
-  async function installConsole(tabId: number) {
+  async function installConsole(tabId: number, replay = false) {
     const target = { tabId, allFrames: true };
     await execute(target, "MAIN", firefoxConsoleMain, []);
-    await execute(target, "ISOLATED", firefoxConsoleBridge, []);
+    await execute(target, "ISOLATED", firefoxConsoleBridge, [replay]);
   }
 
   async function captureScreenshot(tabId: number, frameId: number, params: Fields) {
@@ -580,7 +588,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
 
 function publishConsole(tabId: number, recordValue: ConsoleMessage | undefined, emit: (tabId: number, method: string, params?: object) => void) {
   if (!recordValue) return;
-  const timestamp = Date.now();
+  const timestamp = Number(recordValue.timestamp) > 0 ? Number(recordValue.timestamp) : Date.now();
   const stack = stackFrame(recordValue.stack);
   if (recordValue.kind === "exception") {
     emit(tabId, "Runtime.exceptionThrown", {
@@ -683,7 +691,7 @@ interface DebugSource { tabId?: number; sessionId?: string }
 interface FrameInfo { frameId: number; parentFrameId: number; url: string }
 interface ContextRecord { id: number; uniqueId: string; frameId: number; world: ScriptWorld }
 interface SavedWindow { ownerTabId: number; width?: number; height?: number; state?: string; left?: number; top?: number }
-interface ConsoleMessage { kind?: string; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
+interface ConsoleMessage { kind?: string; timestamp?: number; type?: string; text?: string; args?: string[]; stack?: string; url?: string; line?: number; column?: number }
 type ScriptWorld = "MAIN" | "ISOLATED";
 interface ScriptTarget { tabId: number; frameIds?: number[]; allFrames?: boolean }
 interface ScriptResult { result?: unknown; error?: unknown }
