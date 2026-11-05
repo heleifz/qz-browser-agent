@@ -1,4 +1,4 @@
-import { toolError } from "#sdk/background/tools";
+import { toolError, type ToolError } from "#sdk/background/tools";
 import { mapConcurrent } from "./concurrent.js";
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
@@ -822,18 +822,27 @@ registerTool({
     if (requestedRoot === "root") await waitForParsedDocument(targetTabId, context);
     snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
+    let overviewError: ToolError | undefined;
     try {
       const result = rootRef?.uid
         ? await callElement(targetTabId, rootRef, "pageOverview", { limit: actionMax }, context)
         : await sendToContent(targetTabId, "pageOverview", { limit: actionMax, selector: overviewSelector || "body" }, context);
       if (!isPageOverview(result)) throw new ToolExecutionError("PAGE_OVERVIEW_FAILED", t("pageOverviewResponseIsInvalid"));
       overview = result;
+      if (overview.error) {
+        const failure = record(result);
+        overviewError = toolError(overview.code || "PAGE_OVERVIEW_FAILED", overview.error, {
+          hint: typeof failure.hint === "string" ? failure.hint : undefined, details: failure.details,
+        });
+      }
     } catch (err) {
       if (isCdpFallbackForbiddenError(err) || (err instanceof ToolExecutionError && String(err.code).startsWith("STALE_ELEMENT_UID"))) throw err;
-      overview = {
-        error: err instanceof Error ? err.message : String(err),
-        code: err instanceof ToolExecutionError ? err.code : "PAGE_OVERVIEW_FAILED",
-      };
+      overview = {};
+      const failure = record(err);
+      overviewError = toolError(typeof failure.code === "string" ? failure.code : "PAGE_OVERVIEW_FAILED",
+        typeof failure.message === "string" ? failure.message : String(err), {
+          hint: typeof failure.hint === "string" ? failure.hint : undefined, details: failure.details,
+        });
     }
 
     // UID pageUrl guards the owning tab, while a child overview reports its own URL.
@@ -855,9 +864,7 @@ registerTool({
       outlineTruncated: ax.outlineTruncated,
       snapshot: ax.snapshot,
       canvases: compactAxCanvasesForModel(canvasResults),
-      pageOverviewError: overview?.error ? toolError(overview.code || "PAGE_OVERVIEW_FAILED", overview.error, {
-        hint: "Retry get_ax_tree with a refreshed target, or use find_elements to inspect the page.",
-      }) : undefined,
+      pageOverviewError: overviewError,
     });
     const ax = await withDebugger(targetTabId, async (_target, send) => {
       const actionList = overview?.actions || [];

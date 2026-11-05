@@ -151,8 +151,10 @@ test('PDF content cannot succeed as an empty HTML article; injection denial has 
     contentType = 'application/pdf';
     await assert.rejects(runtime.execute('read_article', { tabId: 1, limit: 1200 }, undefined, context), error => {
       assert.equal(error.code, 'PDF_PAGE_UNSUPPORTED');
-      assert.match(error.message, /qingzhou-documents/);
-      assert.match(error.message, /qingzhou_documents__document_fetch/);
+      assert.match(error.message, /PDF/);
+      assert.match(error.message, /HTML/);
+      assert.equal(error.hint, undefined);
+      assert.equal(error.details.url, tab.url);
       return true;
     });
     assert.equal(reads, 0);

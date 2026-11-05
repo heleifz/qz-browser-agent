@@ -131,6 +131,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   INVALID_IMAGE_ASSET_ACTION: { label: "toolError.INVALID_IMAGE_ASSET_ACTION.label" },
   INVALID_LONG_PRESS_DURATION: { label: "toolError.INVALID_LONG_PRESS_DURATION.label" },
   INVALID_REGEX: { label: "toolError.INVALID_REGEX.label", message: "toolError.INVALID_REGEX.message" },
+  INVALID_SELECTOR: { label: "toolError.INVALID_SELECTOR.label" },
   INVALID_RUN_SCRIPT_INPUT: { label: "toolError.INVALID_RUN_SCRIPT_INPUT.label", message: "toolError.INVALID_RUN_SCRIPT_INPUT.message" },
   INVALID_RUN_SCRIPT_TARGET: { label: "toolError.INVALID_RUN_SCRIPT_TARGET.label", message: "toolError.INVALID_RUN_SCRIPT_TARGET.message" },
   INVALID_SCREEN_COORDINATE: { label: "toolError.INVALID_SCREEN_COORDINATE.label", message: "toolError.INVALID_SCREEN_COORDINATE.message" },
@@ -456,6 +457,7 @@ export function localizeToolFailureText(message: unknown = "", context: FailureC
   const text = String(message || "").replace(/\s+/g, " ").trim();
   const details = objectValue(context.details);
   const code = String(context.code || "").trim();
+  if (code === "INVALID_SELECTOR") return text || localizeToolFailureCode(code, details);
   const toolName = String(context.toolName || details.toolName || details.tool || details.name || "").trim();
   const preferPattern = [
     "CDP_COMMAND_FAILED",

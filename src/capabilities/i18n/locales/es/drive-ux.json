@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "Aún no hay alias de página",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "Esta sesión no tiene alias de página. Usa el tabAlias de open_tab o el tabRef devuelto por open_tab/list_tabs.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "Usa las herramientas de documentos para PDF",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "El visor PDF no admite esta operación. Llama a load_skill({name:\"qingzhou-documents\"}) y después a qingzhou_documents__document_fetch con la URL original del PDF.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Este visor PDF no admite operaciones de páginas HTML. Para leer el texto se necesitan la Skill de documentos y la URL original del PDF.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "El navegador bloquea el acceso al contenido",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "No se pueden insertar scripts en esta página. Usa una página accesible; para PDF, carga qingzhou-documents y lee la URL original con sus herramientas de documentos.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "Destino de captura no válido",

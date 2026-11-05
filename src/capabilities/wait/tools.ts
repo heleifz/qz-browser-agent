@@ -1,7 +1,7 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
-import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
+import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, operationErrorDetails, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
 import { bindCreatedTabResult, createdTabResultId, elementLocatorSchema, locatorReferences, validateElementLocator } from "#sdk/shared/browser";
 import { isCdpFallbackForbiddenError, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
@@ -395,9 +395,7 @@ const pageWaitProperties = () => ({
   timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
 } as const);
 const eventWaitBehavior = { parallelTab: true, delegatesExecution: true, passiveWait: (args: Record<string, unknown>) => !args.trigger };
-const waitDetails = (context: ToolContext, target?: string) => ({
-  ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }), ...(target ? { target } : {}),
-});
+const waitDetails = operationErrorDetails;
 function waitBudget(input: Record<string, unknown>) {
   return input.timeoutMs != null ? Math.max(0, Number(input.timeoutMs) || 0) : secondsToMs(input.timeout, 10000);
 }
@@ -564,7 +562,7 @@ registerTool({
     const visibleOnly = state === "visible" || state === "hidden";
     const absent = state === "hidden" || state === "detached";
     const intervalMs = legacy.interval != null ? Math.max(1, Number(legacy.interval) || 0) : secondsToMs(input.intervalSeconds, 500);
-    return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input.target) },
+    return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input) },
       async current => {
       const observing = Object.assign(Object.create(context), { signal: current });
       const fixed = input.locator ? undefined : await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);

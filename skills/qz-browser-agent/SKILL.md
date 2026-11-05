@@ -90,19 +90,20 @@ return await page.read({ limit: 2000 });
 
 Use `locator.inspect()` for current element state and `locator.read({limit})` for its text. `locator.wait({state:"visible",timeout:10})` waits for `attached`, `visible` (default), `hidden`, or `detached` state. Hidden includes removal or invisibility; detached requires removal. `locator.count()` reads the current attached match count, including hidden elements; `locator.wait({count:3,timeout:10})` waits for exactly that count, including zero. Use either `state` or `count` per wait. A match or count describes the current moment; it does not prove a dynamic list has finished updating.
 
-When an action must cause navigation or a popup, pass `waitFor:"navigation"` or `waitFor:"popup"` in its options. This installs the listener before dispatch and returns the navigation observation or new Tab. A failed wait never replays the action.
+When an action must cause navigation or a popup, pass `waitFor:"navigation"` or `waitFor:"popup"` in its options. This installs the listener before dispatch. Navigation returns its observation; popup returns a Tab `{tabRef,url,title,active}` directly. A failed wait never replays the action.
 
 ```js
-// Click the next-page link and await the resulting navigation.
-return await qz.tab("page").locator({ role: "link", name: "Next" })
-  .click({ waitFor: "navigation", timeout: 10 });
+// Open a detail page and read it.
+const { tabRef } = await qz.tab("page").locator({ role: "link", name: "Details" })
+  .click({ waitFor: "popup", timeout: 10 });
+return await qz.tab(tabRef).read({ limit: 2000 });
 ```
 
-Navigation waits observe a new navigation, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches its full URL against a regular expression. Use `page.waitForFunction(code, args?, options?)` for application-specific conditions. Keep actions, the wait for their expected result, and one focused observation in the same script. Choose a condition that distinguishes the new result from any previous result; prefer observable conditions over fixed sleeps.
+Navigation waits observe a new navigation, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches its full URL against a regular expression string or a `RegExp` with its flags. Use `page.waitForFunction(code, args?, options?)` for application-specific conditions. Keep actions, the wait for their expected result, and one focused observation in the same script. Choose a condition that distinguishes the new result from any previous result; prefer observable conditions over fixed sleeps.
 
 `page.find` is exploratory: it returns current candidates, including an empty list; `waitFor:"match",timeout:10` waits for a candidate. Its `pattern` is a case-insensitive regular expression by default, unlike Locator `name` and `text`. `page.axTree` uses `scope:"viewport"` or `"full"`; narrow `target` or `limit` when inspecting one control. Reserve screenshots for visual checks.
 
-Use `await` for dependencies and `Promise.all` for independent page workflows. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
+Run one `qz script` at a time per session. Within it, use `await` for dependencies and `Promise.all` for independent page workflows. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
 
 ```sh
 qz script --session "$SID" - <<'JS'

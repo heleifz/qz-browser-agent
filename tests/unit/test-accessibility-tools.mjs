@@ -2,7 +2,9 @@ globalThis.chrome = { tabs: { get: async () => ({ url: "https://example.com/", s
 import assert from "node:assert/strict";
 import { registerAccessibilityTools } from "../../src/capabilities/accessibility/tools.js";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
+import { assertHtmlPage } from "../../src/background/tools/page-access.js";
 import { isPageOverview } from "../../src/shared/contracts/page-content.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 const overview = {
   title: "Page", url: "https://example.com/", viewport: { width: 800, height: 600 },
@@ -31,7 +33,7 @@ registerAccessibilityTools({
   backendNodeIdForSelector: async () => 2,
   bindElementReferences: async (_tabId, candidates) => candidates.map(ref => ({ ...ref, backendNodeId: ref.selector ? 2 : 0, target: ref.selector ? `css:${ref.selector}` : '' })),
   makeSessionTabTargetError: code => new ToolExecutionError(code, code),
-  sendToContent: async () => input,
+  sendToContent: async () => { if (input instanceof Error) throw input; return input; },
   withDebugger: async (id, fn, context) => {
     assert.equal(id, 8); assert.equal(context.sessionId, "owner");
     return fn({}, async () => ({ nodes: [
@@ -57,4 +59,24 @@ assert.equal(malformed.pageOverviewError.code, "PAGE_OVERVIEW_FAILED");
 assert.equal(malformed.returnedNodeCount, 2, "AX output remains available after invalid overview");
 assert.equal("actions" in malformed, false);
 assert.equal("headings" in malformed, false);
+const pdfUrl = "https://example.com/report.pdf";
+try { withLanguage("en", () => assertHtmlPage(pdfUrl, "application/pdf")); }
+catch (error) { input = error; }
+assert.equal(input.code, "PDF_PAGE_UNSUPPORTED");
+assert.match(input.message, /PDF viewer.*HTML page/);
+assert.match(input.message, /document Skill and original PDF URL/);
+assert.equal(input.hint, undefined);
+const pdf = await definition.execute({ tabId: 8 }, null, context);
+assert.deepEqual(pdf.pageOverviewError, input.toJSON());
+assert.equal(pdf.pageOverviewError.details.url, pdfUrl);
+assert.equal(pdf.returnedNodeCount, 2, "a PDF overview diagnostic does not discard a successful AX snapshot");
+assert.equal(pdf.pageOverviewError.hint, undefined, "AX does not add recovery advice to the source diagnostic");
+input = Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "Target was removed", { target: "css:button" }), {
+  hint: "Choose a current target from the snapshot.",
+});
+const unavailable = await definition.execute({ tabId: 8 }, null, context);
+assert.deepEqual(unavailable.pageOverviewError, input.toJSON(), "all typed overview failures retain their source recovery fields");
+input = { error: "Partial overview", code: "ELEMENT_NOT_FOUND", hint: "Choose another target.", details: { target: "css:button" } };
+const partial = await definition.execute({ tabId: 8 }, null, context);
+assert.deepEqual(partial.pageOverviewError, { code: input.code, message: input.error, hint: input.hint, details: input.details });
 console.log("accessibility tree and unknown content boundary passed");

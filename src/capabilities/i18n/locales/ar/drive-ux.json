@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "لا يوجد اسم مستعار للصفحة",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "ليس لهذه الجلسة اسم مستعار للصفحة. استخدم tabAlias من open_tab أو tabRef الذي يعيده open_tab/list_tabs.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "استخدم أدوات المستندات لقراءة PDF",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "عارض PDF لا يدعم هذه العملية. استدعِ load_skill({name:\"qingzhou-documents\"}) ثم qingzhou_documents__document_fetch مع رابط PDF الأصلي.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "عارض PDF لا يدعم عمليات صفحات HTML. تتطلب قراءة نص المستند مهارة المستندات ورابط PDF الأصلي.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "المتصفح يمنع الوصول إلى المحتوى",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "لا يسمح المتصفح بإدراج سكربت في هذه الصفحة. استخدم صفحة متاحة؛ ولملف PDF حمّل qingzhou-documents واقرأ الرابط الأصلي بأدوات المستندات.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "هدف اللقطة غير صالح",

@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "Aucun alias de page",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "Cette session n’a pas d’alias de page. Utilisez le tabAlias de open_tab ou le tabRef renvoyé par open_tab/list_tabs.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "Utilisez les outils de documents pour les PDF",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Cette opération n’est pas disponible dans le lecteur PDF. Appelez load_skill({name:\"qingzhou-documents\"}), puis qingzhou_documents__document_fetch avec l’URL d’origine du PDF.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Ce lecteur PDF ne prend pas en charge les opérations sur les pages HTML. La lecture du texte nécessite la Skill de documents et l’URL d’origine du PDF.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "Le navigateur bloque l’accès au contenu",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "Le navigateur interdit l’injection de scripts sur cette page. Utilisez une page accessible ; pour un PDF, chargez qingzhou-documents et lisez l’URL d’origine avec ses outils de documents.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "Cible de capture non valide",

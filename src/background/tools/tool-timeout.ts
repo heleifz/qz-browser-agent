@@ -3,6 +3,7 @@ import type { ToolContext } from "../../sdk/background.js";
 import { ToolExecutionError } from "./arguments.js";
 import { diagnosticTrace, formatTraceFields } from "../trace.js";
 import { takeTimeoutTrace } from "./script-timeout-trace.js";
+import { operationErrorDetails } from "../../shared/contracts/tool-error.js";
 
 type Fields = Record<string, unknown>;
 export interface ToolPartialResult { result: Fields; pending: string }
@@ -16,6 +17,7 @@ export async function runToolWithTimeout(
   fallback: (partial: ToolPartialResult, error: ToolExecutionError) => Promise<unknown>,
   context: ToolContext,
   timeoutTrace?: string,
+  operationArgs: Readonly<Fields> = {},
 ): Promise<unknown> {
   const cancelled = () => new ToolExecutionError("OPERATION_ABORTED", `Operation aborted while running ${name}`, { name });
   if (parentSignal?.aborted) throw cancelled();
@@ -39,7 +41,9 @@ export async function runToolWithTimeout(
     timer = setTimeout(() => {
       void (async () => {
         timedOut = true;
-        const error = new ToolExecutionError("TOOL_TIMEOUT", `${name} timed out after ${timeoutMs}ms`, { name, timeout: timeoutMs });
+        const error = new ToolExecutionError("TOOL_TIMEOUT", `${name} timed out after ${timeoutMs}ms`, {
+          name, timeout: timeoutMs, ...operationErrorDetails(context, operationArgs),
+        });
         diagnosticTrace(`${timeoutTrace || "tool_timeout"}${formatTraceFields({ phase: "tool.timeout", name,
           session: context.sessionId, run: context.runId, call: context.toolCallId, timeoutMs })}`);
         // Capture the slot before abort listeners run. Timeout owns settlement from this point.

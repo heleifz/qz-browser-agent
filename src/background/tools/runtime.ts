@@ -762,6 +762,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         },
         context,
         definition.behavior?.timeoutTrace,
+        executionArgs,
       );
     } catch (err) {
       await rememberToolPageContext(definition, executionArgs, err);

@@ -1,3 +1,5 @@
+import { validateElementLocator } from "./element-locator.js";
+
 /** Public recovery fields. Schema/value/trace payloads are business data and stay intact. */
 const TEXT = [
   'target', 'reason', 'name', 'requestId', 'table', 'actualTable', 'scope', 'capability', 'prefix',
@@ -69,6 +71,22 @@ export function pageErrorDetails(
 ): ToolErrorDetails {
   return { ...(context.requestedTabRef != null ? { tabRef: context.requestedTabRef } : {}),
     ...(target ? { target } : {}) };
+}
+
+/** Identify an operation without echoing values, script source, or browser-internal IDs. */
+export function operationErrorDetails(
+  context: { requestedTabRef?: string | number } = {}, args: Readonly<Record<string, unknown>> = {},
+): ToolErrorDetails {
+  let locator: Record<string, unknown> | undefined;
+  if (args.locator !== undefined) {
+    try { validateElementLocator(args.locator); locator = { ...args.locator }; }
+    catch { /* Unrecognized business payloads are not element identities. */ }
+  }
+  return { ...pageErrorDetails(context, typeof args.target === "string" ? args.target : undefined),
+    ...(locator ? { locator } : {}),
+    ...(typeof args.action === "string" ? { action: args.action } : {}),
+    ...(typeof args.index === "number" && Number.isInteger(args.index) ? { index: args.index } : {}),
+  };
 }
 
 export interface ToolError { code: string; message: string; hint?: string; details?: ToolErrorDetails }

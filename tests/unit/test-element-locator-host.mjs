@@ -180,3 +180,19 @@ test("invalid queries and aborted contexts stop before page observation", async 
   await assert.rejects(f.runtime.countLocatorMatches(f.tabId, { role: "button" }, { ...f.context, signal: AbortSignal.abort(stop) }), stop);
   assert.equal(f.calls.length, 0);
 });
+
+test("CSS syntax failures preserve the offending target without an invented recovery hint", async () => {
+  const target = "css:form input[type=submit], css:form button";
+  const failure = { code: "INVALID_SELECTOR", error: "SyntaxError: Invalid CSS query", details: { target } };
+  const f = fixture(failure);
+  for (const locator of [{ target }, { target: "css:button", scope: target }]) {
+    await assert.rejects(f.resolve(locator), error => {
+      assert.equal(error.code, failure.code);
+      assert.equal(error.message, failure.error);
+      assert.equal(error.hint, undefined);
+      assert.deepEqual(error.details, { tabRef: "page", target });
+      return true;
+    });
+  }
+  assert.equal(f.debuggerCalls(), 0, "invalid CSS never reaches element binding or dispatch");
+});

@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "ページの別名がありません",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "このセッションにはページの別名がありません。tabRef には open_tab の tabAlias、または open_tab/list_tabs が返した tabRef を指定してください。",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "PDF は文書ツールで読み取ってください",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "PDF ビューアーではこの操作を利用できません。load_skill({name:\"qingzhou-documents\"}) を呼び出し、qingzhou_documents__document_fetch に元の PDF URL を渡してください。",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "PDF ビューアーは HTML ページ操作に対応していません。本文の読み取りには文書 Skill と元の PDF URL が必要です。",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "ブラウザーがページへのアクセスを禁止しています",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "このページにはスクリプトを挿入できません。アクセス可能なウェブページを使用してください。PDF は qingzhou-documents を読み込み、文書ツールに元の URL を渡してください。",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "撮影対象が無効です",

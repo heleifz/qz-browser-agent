@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "尚無頁面別名",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "此工作階段尚無頁面別名。tabRef 可用 open_tab 的 tabAlias，或 open_tab/list_tabs 傳回的 tabRef。",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "請用文件工具讀取 PDF",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "這是 PDF 閱讀器，不支援此頁面操作。請呼叫 load_skill({name:\"qingzhou-documents\"})，再以 qingzhou_documents__document_fetch 讀取原始 PDF URL。",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "這是 PDF 閱讀器，不支援 HTML 頁面操作；文件正文需透過文件 Skill 和原始 PDF URL 讀取。",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "瀏覽器禁止存取頁面內容",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "瀏覽器不允許在此頁面注入指令碼。請使用可存取的網頁；PDF 請載入 qingzhou-documents，再用文件工具讀取原始 URL。",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "擷取目標無效",

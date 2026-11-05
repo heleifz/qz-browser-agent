@@ -11,7 +11,7 @@ import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
 import type { ElementLocator } from '../shared/contracts/element-locator.js';
-import { resolveElementLocator } from './element-locator.js';
+import { invalidCssTargetError, resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -806,11 +806,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     try {
       return { elements: [...document.querySelectorAll(selector)] };
     } catch (err) {
+      const failure = invalidCssTargetError(selector, err);
       return {
-        error: toolError("INVALID_SELECTOR", `Invalid CSS target or locator: ${selector}`, {
-          target: selector,
-          supportedLocators: ["CSS target", "text='可见文字'"],
-        }),
+        error: toolError(failure.code, failure.message, failure.details),
         elements: [],
       };
     }
@@ -1737,9 +1735,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           element: observe(result.element),
         } : {}) };
       } catch (error) {
-        const failure = error as Error & { code?: string; matched?: number };
+        const failure = error as Error & { code?: string; matched?: number; details?: { target?: string } };
         return toolError(failure.code || "INVALID_ELEMENT_LOCATOR", errorMessage(error),
-          failure.matched === undefined ? {} : { matched: failure.matched });
+          { ...failure.details, ...(failure.matched === undefined ? {} : { matched: failure.matched }) });
       }
     },
 

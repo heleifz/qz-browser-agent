@@ -457,8 +457,9 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
   context.signal?.throwIfAborted();
   if (response.code || response.error) throw Object.assign(new ToolExecutionError(
     String(response.code || "ELEMENT_QUERY_FAILED"), String(response.message || response.error || "Element query failed."),
-    { ...pageErrorDetails(context, locator.target), ...(typeof record(response.details).matched === "number" ? { matched: record(response.details).matched } : {}) },
-  ), { hint: typeof response.hint === "string" ? response.hint : "Check the locator and narrow its scope before retrying." });
+    { ...pageErrorDetails(context, typeof record(response.details).target === "string" ? String(record(response.details).target) : locator.target),
+      ...(typeof record(response.details).matched === "number" ? { matched: record(response.details).matched } : {}) },
+  ), typeof response.hint === "string" ? { hint: response.hint } : {});
   if (!Number.isInteger(response.matched) || Number(response.matched) < 0) {
     throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned an invalid match count.", pageErrorDetails(context));
   }

@@ -20,6 +20,7 @@ async function startPage() {
       <button id="timeout" disabled aria-label="Timeout target">Timeout target</button>
       <button id="cancel" disabled aria-label="Cancelled target">Cancelled target</button>
       <button id="no-navigation" aria-label="No navigation">No navigation</button>
+      <a id="popup" href="/?popup" target="_blank">Open details</a>
       <button id="trap-Precise" data-testid="Precise" aria-label="Other name">Other name</button>
       <button id="precise" aria-label="Precise">Precise</button>
       <div id="state">Loading state</div><div id="counted"></div><div id="shadow"></div><iframe src="/frame"></iframe>
@@ -113,6 +114,15 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
       expect(await page.locator('#trap-Precise').getAttribute('data-clicks')).toBeNull();
     });
 
+    await step('invalid SDK inputs retain actionable diagnostics at the CLI boundary', async () => {
+      const field = await script("return await qz.tab('page').locator({css:'#destination'}).inspect();", {}, false);
+      expect(field).toMatchObject({ code: 'INVALID_ARGUMENTS', details: { invalidFields: ['css'] } });
+      expect(field.details.allowedFields).toContain('target');
+      const css = await script("await qz.tab('page').locator('css:button, css:input').click();", {}, false);
+      expect(css).toMatchObject({ code: 'INVALID_SELECTOR', details: { target: 'css:button, css:input', tabRef: 'page' } });
+      expect(css.message).not.toBe('The operation failed.');
+    });
+
     await step('a query can replace an unready node while a uid remains pinned', async () => {
       await script(`
         const page=qz.tab('page');
@@ -192,7 +202,25 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
         await qz.tab('page').locator('css:#no-navigation').click({timeout:5,waitFor:'navigation',waitOptions:{timeout:1}});
       `, {}, false);
       expect(timeout.code).toMatch(/TIMEOUT/);
+      expect(timeout.details).toMatchObject({
+        tabRef: 'page', action: 'click', locator: { target: 'css:#no-navigation' },
+        pending: 'wait_for_navigation', executed: true, mayHaveTakenEffect: true, automaticReplay: false,
+      });
       await expect(page.locator('#no-navigation')).toHaveAttribute('data-clicks', '1');
+    });
+
+    await step('popup actions return a directly usable Tab and URL waits accept RegExp flags', async () => {
+      const result = await script(String.raw`
+        const popup=await qz.tab('page').locator('css:#popup').click({waitFor:'popup',timeout:5});
+        const page=qz.tab(popup.tabRef);
+        const matched=await page.waitForURL(/\?POPUP$/i,{timeout:5});
+        const title=await page.evaluate(()=>document.title);
+        await page.close();
+        return {popup,matched,title};
+      `);
+      expect(result.popup.tabRef).toBeTruthy();
+      expect(result.matched.url).toBe(`${fixture.url}?popup`);
+      expect(result.title).toBe('Locator workflow');
     });
 
     await step('locator observations on a user tab preserve its ownership', async () => {

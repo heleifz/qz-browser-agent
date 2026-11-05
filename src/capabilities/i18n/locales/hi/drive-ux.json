@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "पेज का उपनाम नहीं है",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "इस सत्र में पेज का उपनाम नहीं है। open_tab का tabAlias या open_tab/list_tabs से मिला tabRef इस्तेमाल करें।",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "PDF के लिए दस्तावेज़ टूल इस्तेमाल करें",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "PDF व्यूअर यह कार्रवाई नहीं कर सकता। load_skill({name:\"qingzhou-documents\"}) चलाएँ, फिर मूल PDF URL के साथ qingzhou_documents__document_fetch चलाएँ।",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "यह PDF व्यूअर HTML पेज की कार्रवाइयों का समर्थन नहीं करता। दस्तावेज़ का पाठ पढ़ने के लिए दस्तावेज़ Skill और मूल PDF URL चाहिए।",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "ब्राउज़र ने पेज की पहुँच रोक दी",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "इस पेज में स्क्रिप्ट जोड़ने की अनुमति नहीं है। सुलभ वेब पेज इस्तेमाल करें। PDF के लिए qingzhou-documents लोड करके मूल URL को दस्तावेज़ टूल से पढ़ें।",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "कैप्चर का लक्ष्य अमान्य है",

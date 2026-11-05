@@ -10,6 +10,11 @@ function failure(code: string, message: string, matched?: number): Error {
   return Object.assign(new Error(message), { code, ...(matched === undefined ? {} : { matched }) });
 }
 
+export function invalidCssTargetError(target: string, cause: unknown) {
+  const message = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
+  return Object.assign(new Error(message), { code: "INVALID_SELECTOR", details: { target } });
+}
+
 function normalize(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -38,8 +43,8 @@ function cssMatches(root: Element | Document, elements: Element[], target: strin
       if (shadow) for (const match of shadow.querySelectorAll(selector)) matched.add(match);
     }
     return elements.filter(element => matched.has(element));
-  } catch {
-    throw failure("INVALID_SELECTOR", `Invalid CSS target: ${target}`);
+  } catch (error) {
+    throw invalidCssTargetError(target, error);
   }
 }
 

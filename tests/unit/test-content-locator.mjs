@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
 import { chromium } from "playwright";
+import { withLanguage } from "../../src/shared/i18n/index.js";
+import { localizeToolFailureError, localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.js";
 
 let browser, page, content;
 const html = `
@@ -188,6 +190,30 @@ test("invalid queries fail before selection", async () => {
   assert.equal((await resolve({ role: "button", nth: -1 })).code, "INVALID_ELEMENT_LOCATOR");
   assert.equal((await resolve({ scope: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
   assert.equal((await resolve({ target: "uid:unknown" })).code, "INVALID_ELEMENT_LOCATOR");
+});
+
+test("invalid CSS keeps the browser syntax reason and the whole public target through localization", async () => {
+  const target = "css:form input[type=submit], css:form button";
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", '<form><input type="submit"><button>Submit</button></form>'));
+  const failed = await resolve({ target });
+  assert.equal(failed.code, "INVALID_SELECTOR");
+  assert.match(failed.error, /^SyntaxError: /);
+  assert.ok(failed.error.includes("form input[type=submit], css:form button"), "native CSS failure explains the rejected query");
+  assert.deepEqual(failed.details, { target });
+  assert.equal(failed.hint, undefined);
+  for (const language of ["en", "zh-CN"]) withLanguage(language, () => {
+    const payload = localizeToolFailurePayload(failed);
+    assert.equal(payload.error, failed.error, "localization must not replace the native syntax reason");
+    assert.equal(payload.details.target, target);
+    assert.equal(payload.hint, undefined);
+    const error = localizeToolFailureError(Object.assign(new Error(failed.error), { code: failed.code, details: failed.details }));
+    assert.equal(error.message, failed.error);
+    assert.equal(error.hint, undefined);
+  });
+  const scoped = await resolve({ target: "css:button", scope: target });
+  assert.equal(scoped.details.target, target, "an invalid scope identifies the offending query");
+  assert.equal((await resolve({ target: "css:form input[type=submit], form button" }, { all: true })).matched, 2,
+    "one css prefix applies to the entire comma-separated query");
 });
 
 test("detached original nodes have a retryable reason but foreign documents do not", async () => {

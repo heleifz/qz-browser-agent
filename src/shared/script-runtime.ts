@@ -15,8 +15,8 @@ export function formatScriptErrorTrace(error: Error): string {
 export function scriptValue(value: unknown, seen = new Set<object>()): MessageValue {
   if (value === undefined || value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number' && Number.isFinite(value)) return value;
-  const invalid = () => Object.assign(new TypeError('Return a JSON value; DOM nodes, functions, cycles and non-finite numbers cannot cross script contexts.'), {
-    code: 'SCRIPT_VALUE_NOT_SERIALIZABLE', hint: 'Extract plain values from the object and return those values.',
+  const invalid = () => Object.assign(new TypeError('Pass or return JSON values; DOM nodes, functions, cycles and non-finite numbers cannot cross script contexts.'), {
+    code: 'SCRIPT_VALUE_NOT_SERIALIZABLE',
   });
   if (!value || typeof value !== 'object' || seen.has(value)) throw invalid();
   if (!Array.isArray(value) && Object.prototype.toString.call(value) !== '[object Object]') throw invalid();

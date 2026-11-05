@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "Нет псевдонима страницы",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "У этой сессии нет псевдонима страницы. Используйте tabAlias из open_tab или tabRef, возвращённый open_tab/list_tabs.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "Читайте PDF инструментами документов",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Просмотрщик PDF не поддерживает эту операцию. Вызовите load_skill({name:\"qingzhou-documents\"}), затем qingzhou_documents__document_fetch с исходным URL PDF.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Просмотрщик PDF не поддерживает операции с HTML-страницами. Для чтения текста нужны навык работы с документами и исходный URL PDF.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "Браузер блокирует доступ к странице",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "На этой странице нельзя внедрять скрипты. Откройте доступную веб-страницу. Для PDF загрузите qingzhou-documents и прочитайте исходный URL инструментами документов.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "Недопустимая цель снимка",

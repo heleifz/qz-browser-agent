@@ -55,6 +55,39 @@ test('bound calls reject changes to page, query and positional arguments before 
   assert.equal(calls.length, 0);
 });
 
+test('unknown locator keys identify the invalid input and supported fields without dispatching', () => {
+  const { qz, calls } = fixture();
+  assert.throws(() => qz.tab('page').locator({ css: '#search', timeout: 2 }), error => {
+    assert.equal(error.code, 'INVALID_ARGUMENTS');
+    assert.match(error.message, /"css", "timeout"/);
+    assert.match(error.message, /Supported fields: target, role, name, text, exact, scope, nth/);
+    assert.equal(error.hint, undefined);
+    assert.deepEqual(error.details, {
+      invalidFields: ['css', 'timeout'], allowedFields: ['target', 'role', 'name', 'text', 'exact', 'scope', 'nth'],
+    });
+    return true;
+  });
+  assert.equal(calls.length, 0, 'unsupported keys never silently select a different element');
+});
+
+test('URL waits preserve string patterns and lower RegExp source and flags without mutable matcher state', async () => {
+  const { qz, calls } = fixture();
+  const page = qz.tab('page');
+  await page.waitForURL('^https://example\\.test/Done$', { flags: 'i', timeout: 3 });
+  const pattern = /^https:\/\/example\.test\/Done$/ig;
+  pattern.lastIndex = 7;
+  await page.waitForURL(pattern, { timeout: 4 });
+  assert.deepEqual(calls, [
+    { name: 'wait_for_url', args: { tabRef: 'page', urlPattern: '^https://example\\.test/Done$', flags: 'i', timeout: 3 } },
+    { name: 'wait_for_url', args: { tabRef: 'page', urlPattern: pattern.source, flags: 'gi', timeout: 4 } },
+  ]);
+  assert.equal(pattern.lastIndex, 7);
+  assert.throws(() => page.waitForURL(pattern, { flags: 'i' }), { code: 'INVALID_ARGUMENTS', message: /flags/ });
+  assert.throws(() => page.waitForURL(pattern, { urlPattern: 'other' }), { code: 'INVALID_ARGUMENTS' });
+  assert.throws(() => page.waitForURL({ source: 'done', flags: 'i' }), { code: 'INVALID_ARGUMENTS' });
+  assert.equal(calls.length, 2);
+});
+
 test('drag binds both ends on the same explicit page', async () => {
   const { qz, calls } = fixture();
   const source = qz.tab('board').locator({ role: 'listitem', name: 'Task' });
@@ -117,6 +150,7 @@ for (const mode of ['development', 'production']) {
       const page = qz.tab("map");
       await page.locator({role:"option",name:"杭州大厦"}).click();
       const title = await page.evaluate(() => document.title);
+      await page.waitForURL(/#done$/i, {timeout:2});
       await tools.legacy({value:1});
       trace("selected");
       return {title, count: await page.locator({role:"option"}).count()};
@@ -129,8 +163,26 @@ for (const mode of ['development', 'production']) {
     assert.equal(result.ok, true);
     assert.deepEqual(result.result, { title: 'Map', count: 4 });
     assert.deepEqual(result.trace.map(row => row.message), ['selected']);
-    assert.deepEqual(calls.map(call => call.toolName), ['act_on_element', 'evaluate', 'legacy', 'find_elements']);
+    assert.deepEqual(calls.map(call => call.toolName), ['act_on_element', 'evaluate', 'wait_for_url', 'legacy', 'find_elements']);
     assert.equal(typeof calls[1].args.code, 'string');
     assert.match(calls[1].args.code, /document.title/);
+    assert.deepEqual(calls[2].args, { tabRef: 'map', urlPattern: '#done$', flags: 'i', timeout: 2 });
+
+    const invalidLocator = await runInnerWorker(compiled, 'return qz.tab("map").locator({css:"#search"});', { strictResult: true });
+    assert.equal(invalidLocator.result.code, 'INVALID_ARGUMENTS');
+    assert.deepEqual(invalidLocator.result.details.invalidFields, ['css']);
+    assert.ok(invalidLocator.result.details.allowedFields.includes('target'));
+    assert.equal(invalidLocator.result.hint, undefined);
+
+    for (const source of [
+      'return await qz.call("wait_for_url", {tabRef:"map",urlPattern:/done/i});',
+      'return /done/i;',
+    ]) {
+      const rejected = await runInnerWorker(compiled, source, { strictResult: true });
+      assert.equal(rejected.result.code, 'SCRIPT_VALUE_NOT_SERIALIZABLE');
+      assert.match(rejected.result.error, /Pass or return JSON values/);
+      assert.equal(rejected.result.hint, undefined);
+      assert.equal(rejected.events.some(event => event.type === 'tool_call'), false, 'RegExp conversion belongs only to waitForURL');
+    }
   });
 }

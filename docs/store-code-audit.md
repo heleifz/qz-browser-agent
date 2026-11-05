@@ -107,6 +107,11 @@ Skill bridge preserve permission failures and their recovery hints without repla
 trace formatter retains the message when Firefox supplies a stack without its error header; this
 changes diagnostic data only, with the Worker and page execution boundaries preserved.
 
+The packaged SDK lowers URL-wait `RegExp` inputs to source and flags passed as data to the existing
+wait tool. Locator validation reports field names from its static schema; JSON-value errors retain
+their source message. These changes affect the Worker source and private page-bridge factory
+fingerprints without changing execution sources, target authorization, or replay behavior.
+
 The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
 `evaluate` deliberately executes a self-contained user/Agent function in an explicitly owned page through CDP; it is not

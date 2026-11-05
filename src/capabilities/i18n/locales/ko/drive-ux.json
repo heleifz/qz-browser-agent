@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "페이지 별칭이 없습니다",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "이 세션에는 페이지 별칭이 없습니다. open_tab의 tabAlias 또는 open_tab/list_tabs가 반환한 tabRef를 사용하세요.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "문서 도구로 PDF를 읽으세요",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "PDF 뷰어에서는 이 작업을 지원하지 않습니다. load_skill({name:\"qingzhou-documents\"})을 호출한 뒤 원본 PDF URL로 qingzhou_documents__document_fetch를 호출하세요.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "PDF 뷰어는 HTML 페이지 작업을 지원하지 않습니다. 문서 본문을 읽으려면 문서 Skill과 원본 PDF URL이 필요합니다.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "브라우저가 페이지 접근을 차단했습니다",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "이 페이지에는 스크립트를 삽입할 수 없습니다. 접근 가능한 웹페이지를 사용하세요. PDF는 qingzhou-documents를 로드하고 문서 도구에 원본 URL을 전달하세요.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "잘못된 캡처 대상",

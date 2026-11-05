@@ -26,6 +26,7 @@ function fixture() {
     captureTabScreenshot: async () => ({ dataUrl: 'image' }), sendToContent: presence,
     element: { resolveSelectorTarget: async (_id, target) => ({ tabId: 5, selector: '#node', target,
       ...(target.startsWith('uid:') ? { uid: 'node', ref: { backendNodeId: 1 } } : {}) }),
+      resolveLocatorTarget: async () => attached ? { tabId: 5, selector: '#node' } : null,
       callElement: (_id, _binding, action, args, context) => presence(_id, action, args, context),
       addElementTargetsToFindResult: async value => ({ ...value, target: 'uid:t5.000001.1' }),
       elementTargetForSelector: value => `css:${value}` },
@@ -41,7 +42,7 @@ test('load and URL waits inspect current state; a completed page never satisfies
   const f = fixture();
   assert.deepEqual(await f.run('wait_for_load'), { status: 'complete', url: f.tab.url, title: 'Page' });
   assert.deepEqual(await f.run('wait_for_url', { urlPattern: '/start$', flags: 'g' }), { url: f.tab.url, title: 'Page' });
-  await assert.rejects(f.run('wait_for_navigation', { timeout: 0.01 }), error => error.code === 'TOOL_TIMEOUT' && error.hint && error.details.tabRef === 'page');
+  await assert.rejects(f.run('wait_for_navigation', { timeout: 0.01 }), error => error.code === 'TOOL_TIMEOUT' && error.details.tabRef === 'page');
   assert.equal(f.updated.size, 0); assert.equal(f.history.size, 0);
 });
 
@@ -66,13 +67,47 @@ test('navigation is armed before its action and observes same-URL reloads and sa
 });
 
 test('trigger failures win over observed success or failure, and all listeners are removed', async () => {
-  for (const observedFailure of [false, true]) {
-    const f = fixture(), failure = { code: 'ACTION_FAILED', message: 'Click failed', hint: 'Inspect first' };
+  for (const observedFailure of [false, true]) for (const code of ['ACTION_FAILED', 'TOOL_TIMEOUT']) {
+    const f = fixture(), failure = { code, message: 'Click failed', hint: 'Inspect first', details: { executed: false, pending: 'element readiness' } };
     await assert.rejects(f.run('wait_for_navigation', { trigger: { name: 'click' } }, { async invokeTool() {
       if (observedFailure) f.removed.emit(5); else f.history.emit({ tabId: 5, frameId: 0 });
       await Promise.resolve(); throw failure;
     } }), error => error === failure);
     assert.equal(f.updated.size, 0); assert.equal(f.removed.size, 0);
+  }
+});
+
+test('a navigation deadline preserves the completed trigger and its public identity without replay', async () => {
+  const f = fixture(), locator = { role: 'button', name: 'Save' }; let invoked = 0;
+  await assert.rejects(f.run('wait_for_navigation', { timeout: 0.01, trigger: {
+    name: 'act_on_element', args: { tabRef: 'page', locator, action: 'click', value: 'private input', tabId: 5 },
+  } }, { async invokeTool() { invoked++; return {}; } }), error => {
+    assert.equal(error.code, 'TOOL_TIMEOUT');
+    assert.deepEqual(error.details, { tabRef: 'page', timeout: 0.01, locator, action: 'click',
+      tool: 'act_on_element', pending: 'wait_for_navigation', executed: true, mayHaveTakenEffect: true, automaticReplay: false });
+    assert.doesNotMatch(JSON.stringify(error), /private input|tabId/);
+    return true;
+  });
+  assert.equal(invoked, 1); assert.equal(f.updated.size, 0); assert.equal(f.removed.size, 0);
+});
+
+test('trigger timeout identity uses its explicit page rather than the observed page', async () => {
+  const locator = { role: 'button', name: 'Save' };
+  for (const tabRef of ['action-page', 7, undefined]) {
+    let invoked = 0, disposed = 0;
+    const waiting = runWaitWithTrigger({ tool: 'wait_for_navigation', timeoutMs: 10,
+      context: { requestedTabRef: 'observed-page', invokeTool: async () => { invoked++; return {}; } },
+      details: { tabRef: 'observed-page', url: 'https://example.test/observed' },
+      trigger: { name: 'act_on_element', args: { tabRef, tabId: 987, locator, action: 'click' } },
+    }, () => ({ result: new Promise(() => {}), dispose() { disposed++; } }));
+    await assert.rejects(waiting, error => {
+      assert.deepEqual(error.details, { ...(tabRef === undefined ? {} : { tabRef }),
+        url: 'https://example.test/observed', timeout: 0.01, locator, action: 'click',
+        tool: 'act_on_element', pending: 'wait_for_navigation', executed: true, mayHaveTakenEffect: true, automaticReplay: false });
+      assert.doesNotMatch(JSON.stringify(error), /observed-page|tabId|987/);
+      return true;
+    });
+    assert.equal(invoked, 1); assert.equal(disposed, 1);
   }
 });
 
@@ -112,6 +147,15 @@ test('element wait cancels its Content work when its own deadline expires', asyn
   assert.equal(f.observationSignal.aborted, true);
 });
 
+test('element readiness deadlines identify the unresolved locator', async () => {
+  const f = fixture(), locator = { role: 'button', name: 'Save' }; f.state(false, false);
+  await assert.rejects(f.run('wait_for_element', { locator, timeout: 0.01 }), error => {
+    assert.equal(error.code, 'TOOL_TIMEOUT');
+    assert.deepEqual(error.details, { tabRef: 'page', locator, timeout: 0.01 });
+    return true;
+  });
+});
+
 test('page predicates receive JSON arguments and the caller alias, and return the truthy value', async () => {
   const f = fixture(), received = []; let count = 0;
   const result = await f.run('wait_for_function', { code: 'value => value', args: [1, 2] }, { async invokeTool(name, args, { signal }) {
@@ -130,7 +174,16 @@ test('one deadline covers observation and action, while cancellation disposes an
         signal.addEventListener('abort', () => reject(signal.reason), { once: true });
       }) } }, () => ({ result: Promise.resolve('event already seen'), dispose: () => disposed++ }));
     if (cancel) controller.abort();
-    await assert.rejects(waiting, { code: cancel ? 'OPERATION_ABORTED' : 'TOOL_TIMEOUT' });
+    await assert.rejects(waiting, error => {
+      assert.equal(error.code, cancel ? 'OPERATION_ABORTED' : 'TOOL_TIMEOUT');
+      if (!cancel) {
+        assert.equal(error.details.executed, undefined, 'an unresolved action cannot claim confirmed execution');
+        assert.equal(error.details.mayHaveTakenEffect, true);
+        assert.equal(error.details.automaticReplay, false);
+        assert.equal(error.details.pending, 'probe');
+      }
+      return true;
+    });
     assert.equal(disposed, 1);
   }
 });
@@ -140,7 +193,13 @@ test('an observer that finishes arming after timeout is disposed without invokin
   const waiting = runWaitWithTrigger({ tool: 'late-arm', timeoutMs: 10, trigger: { name: 'click' },
     context: { invokeTool: async () => { invoked++; } },
   }, () => new Promise(resolve => { ready = resolve; }));
-  await assert.rejects(waiting, { code: 'TOOL_TIMEOUT' });
+  await assert.rejects(waiting, error => {
+    assert.equal(error.code, 'TOOL_TIMEOUT');
+    assert.equal(error.details.executed, false);
+    assert.equal(error.details.mayHaveTakenEffect, false);
+    assert.equal(error.details.automaticReplay, false);
+    return true;
+  });
   let rejectLate;
   ready({ result: new Promise((_, reject) => { rejectLate = reject; }), dispose() { disposed++; rejectLate(new Error('late observer cancelled')); } });
   await new Promise(resolve => setImmediate(resolve));

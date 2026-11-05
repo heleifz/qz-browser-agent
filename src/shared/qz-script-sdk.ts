@@ -29,7 +29,9 @@ export function createQzSdk(callTool: CallTool) {
     function locator(input: string | ElementLocator) {
       const query = typeof input === "string" ? { target: input } : { ...input };
       try { validateElementLocator(query); }
-      catch (error) { return invalid(error instanceof Error ? error.message : String(error)); }
+      catch (error) {
+        throw Object.assign(new TypeError(error instanceof Error ? error.message : String(error)), error, { code: "INVALID_ARGUMENTS" });
+      }
       Object.freeze(query);
       const bindingKeys = ["target", "selector", "locator", "index"];
       const boundCall = (name: string, args: Arguments = {}) => call(name, {
@@ -94,8 +96,16 @@ export function createQzSdk(callTool: CallTool) {
       setMode(mode: "desktop" | "mobile", opts: Arguments = {}) {
         return call("set_page_mode", { ...options(opts, ["mode"]), mode });
       },
-      waitForURL(urlPattern: string, opts: Arguments = {}) {
-        return call("wait_for_url", { ...options(opts, ["urlPattern"]), urlPattern });
+      waitForURL(urlPattern: string | RegExp, opts: Arguments = {}) {
+        const regex = urlPattern instanceof RegExp;
+        if (!regex && typeof urlPattern !== "string") return invalid("Pass a URL pattern string or RegExp.");
+        const waitOptions = options(opts, ["urlPattern"]);
+        if (regex && Object.hasOwn(waitOptions, "flags")) return invalid("Set flags on the RegExp and omit options.flags.");
+        return call("wait_for_url", {
+          ...waitOptions,
+          urlPattern: regex ? urlPattern.source : urlPattern,
+          ...(regex ? { flags: urlPattern.flags } : {}),
+        });
       },
       waitForLoad(opts: Arguments = {}) { return call("wait_for_load", opts); },
       waitForFunction(code: PageFunction, args?: unknown, opts: Arguments = {}) {

@@ -42,6 +42,22 @@ test('cancellation and security failures retain their original errors despite a 
   }, undefined, 100, partialResult, context), { code: 'SECURITY_GUARDRAIL_BLOCKED' });
 });
 
+test('tool deadlines retain only the caller alias and public element operation identity', async () => {
+  const locator = { role: 'button', name: 'Submit', nth: 2 };
+  for (const query of [locator, { ...locator, backendNodeId: 17 }]) {
+    await assert.rejects(runToolWithTimeout('act_on_element', never, undefined, 10, partialResult,
+      { ...context, requestedTabRef: 'checkout' }, undefined,
+      { tabId: 981, locator: query, action: 'fill', index: 0, value: 'secret input', code: 'secret source' }), error => {
+      assert.equal(error.code, 'TOOL_TIMEOUT');
+      assert.equal(error.details.tabRef, 'checkout');
+      assert.deepEqual(error.details.locator, query === locator ? locator : undefined);
+      assert.equal(error.details.action, 'fill'); assert.equal(error.details.index, 0);
+      assert.doesNotMatch(JSON.stringify(error), /tabId|backendNodeId|secret/);
+      return true;
+    });
+  }
+});
+
 let tabs = new Map(), created = 1, removed = [], updates = [], contentCalls = 0, redirectBlocked = false, probeBusy = false;
 const listeners = new Set(), reservations = new Map();
 function reset() {
@@ -79,6 +95,7 @@ const runtime = createToolRuntime({
   windowTarget: { resolveForNewTab: async () => 2 },
   sessions: {
     isRunCurrent: () => true,
+    getTabAliases: () => ({ checkout: 1 }),
     async resolveTargetTab({ tabId }) { return tabs.has(tabId) ? { ok: true, tabId, ownedByCurrentTask: true } : { ok: false, code: 'SESSION_TAB_UNAVAILABLE' }; },
     async updateWorkingTab(value) { updates.push(value); return { ok: true }; },
     listOwnedTabIds: () => [...tabs.keys()],
@@ -271,8 +288,11 @@ test('open_tab cancellation and blocked timeout redirects still remove the creat
 
 test('side-effect timeout reports an unconfirmed attempt without replay', async () => {
   reset();
-  const result = await runtime.execute('act_on_element', { tabRef: 1, target: 'css:button', action: 'click', timeout: 0.01 }, undefined, context);
+  const result = await runtime.execute('act_on_element', { tabRef: 'checkout', target: 'css:button', action: 'click', timeout: 0.01 }, undefined, context);
   assert.equal(result.details.status, 'unconfirmed');
+  assert.equal(result.details.tabRef, 'checkout');
+  assert.equal(result.details.target, 'css:button');
+  assert.equal(result.details.action, 'click');
   assert.equal(result.details.mayHaveTakenEffect, true); assert.equal(result.details.automaticReplay, false);
   assert.equal(contentCalls, 1);
   assert.ok(result.message);

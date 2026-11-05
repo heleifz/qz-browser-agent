@@ -147,7 +147,8 @@ for (const mode of ['development', 'production']) {
     for (const expression of ['() => document', '() => () => 42', '() => NaN', '() => 1n', '() => { const v = {}; v.self = v; return v; }']) {
       const invalid = await f.run(expression);
       assert.equal(invalid.code, 'SCRIPT_VALUE_NOT_SERIALIZABLE', expression);
-      assert.ok(invalid.hint);
+      assert.match(invalid.message, /Pass or return JSON values/);
+      assert.equal(invalid.hint, undefined);
     }
     for (const args of [null, false, 0, 'text', [1, { x: 2 }]]) {
       assert.deepEqual(structuredClone(await f.run('value => value', { args })), args);

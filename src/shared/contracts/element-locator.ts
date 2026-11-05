@@ -32,8 +32,11 @@ export function locatorReferences(value: unknown): string[] {
 export function validateElementLocator(value: unknown): asserts value is ElementLocator {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Pass an element locator object.");
   const query = value as Record<string, unknown>;
-  const keys = new Set(["target", "role", "name", "text", "exact", "scope", "nth"]);
-  if (Object.keys(query).some(key => !keys.has(key))) throw new Error("Unknown element locator field.");
+  const allowedFields = Object.keys(elementLocatorSchema.properties);
+  const invalidFields = Object.keys(query).filter(key => !allowedFields.includes(key));
+  if (invalidFields.length) throw Object.assign(new Error(
+    `Unknown element locator field${invalidFields.length === 1 ? "" : "s"}: ${invalidFields.map(key => JSON.stringify(key)).join(", ")}. Supported fields: ${allowedFields.join(", ")}.`,
+  ), { details: { invalidFields, allowedFields } });
   for (const key of ["target", "role", "name", "text", "scope"]) {
     if (query[key] !== undefined && (typeof query[key] !== "string" || !query[key].trim())) {
       throw new Error(`Locator ${key} must be a non-empty string.`);

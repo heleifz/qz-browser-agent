@@ -1,5 +1,5 @@
 import type { ToolContext } from "../../sdk/background.js";
-import { isToolFailure } from "../../shared/contracts/tool-error.js";
+import { isToolFailure, operationErrorDetails } from "../../shared/contracts/tool-error.js";
 import { ToolExecutionError } from "./arguments.js";
 
 export interface WaitObservation<T> { result: Promise<T>; dispose(): void }
@@ -15,13 +15,18 @@ export async function runWaitWithTrigger<T>({ tool, timeoutMs, trigger, signal, 
 }, arm: (signal: AbortSignal) => WaitObservation<T> | Promise<WaitObservation<T>>): Promise<T> {
   const controller = new AbortController();
   const current = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  const stopped = () => typeof current.reason?.code === "string" ? current.reason : Object.assign(
-    new ToolExecutionError(current.reason?.name === "TimeoutError" ? "TOOL_TIMEOUT" : "OPERATION_ABORTED", `Stopped waiting for ${tool}.`, details),
-    { hint: "Inspect the page state before retrying the wait." });
-  const timeout = Object.assign(new ToolExecutionError("TOOL_TIMEOUT", `Timed out waiting for ${tool}.`, {
-    ...details, timeout: timeoutMs / 1000,
-  }), { hint: "Check the page state, then retry with the required condition or a longer timeout." });
-  const timer = setTimeout(() => controller.abort(timeout), timeoutMs);
+  const stopped = () => typeof current.reason?.code === "string" ? current.reason :
+    new ToolExecutionError(current.reason?.name === "TimeoutError" ? "TOOL_TIMEOUT" : "OPERATION_ABORTED", `Stopped waiting for ${tool}.`, details);
+  let triggerState: "not_started" | "running" | "completed" = "not_started";
+  const timer = setTimeout(() => controller.abort(
+    new ToolExecutionError("TOOL_TIMEOUT", `Timed out waiting for ${tool}.`, {
+      ...details, timeout: timeoutMs / 1000,
+      ...(trigger ? { ...operationErrorDetails({}, trigger.args), tabRef: trigger.args?.tabRef, tool: trigger.name, pending: tool,
+        ...(triggerState === "running" ? {} : { executed: triggerState === "completed" }),
+        mayHaveTakenEffect: triggerState !== "not_started", automaticReplay: false,
+      } : {}),
+    }),
+  ), timeoutMs);
   let rejectAbort!: (reason: unknown) => void;
   const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
   const onAbort = () => rejectAbort(stopped());
@@ -39,8 +44,10 @@ export async function runWaitWithTrigger<T>({ tool, timeoutMs, trigger, signal, 
     if (current.aborted) throw stopped();
     if (trigger) {
       if (!context.invokeTool) throw new ToolExecutionError("TOOL_EXECUTION_FAILED", "Nested tool execution is unavailable.");
+      triggerState = "running";
       const action = await Promise.race([context.invokeTool(trigger.name, trigger.args || {}, { signal: current }), aborted]);
       if (isToolFailure(action)) throw action;
+      triggerState = "completed";
     }
     const settled = await Promise.race([outcome, aborted]);
     if ("error" in settled) throw settled.error;

@@ -2,7 +2,7 @@
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.label": "Noch kein Seitenalias",
   "backend.toolError.BATCH_TAB_REFERENCE_ERROR.noAlias.message": "Diese Sitzung hat keinen Seitenalias. Verwende den tabAlias aus open_tab oder den von open_tab/list_tabs zurückgegebenen tabRef.",
   "backend.toolError.PDF_PAGE_UNSUPPORTED.label": "PDF mit Dokumentwerkzeugen lesen",
-  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Der PDF-Betrachter unterstützt diese Aktion nicht. Rufe load_skill({name:\"qingzhou-documents\"}) auf, danach qingzhou_documents__document_fetch mit der ursprünglichen PDF-URL.",
+  "backend.toolError.PDF_PAGE_UNSUPPORTED.message": "Dieser PDF-Betrachter unterstützt keine HTML-Seitenaktionen. Zum Lesen des Dokumenttexts werden der Dokument-Skill und die ursprüngliche PDF-URL benötigt.",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.label": "Browser blockiert den Seitenzugriff",
   "backend.toolError.PAGE_CONTENT_UNAVAILABLE.message": "Auf dieser Seite dürfen keine Skripte eingefügt werden. Verwende eine zugängliche Webseite. Lade für PDFs qingzhou-documents und lies die ursprüngliche URL mit dessen Dokumentwerkzeugen.",
   "backend.toolError.SCREENSHOT_TARGET_INVALID.label": "Ungültiges Aufnahmeziel",
