@@ -1,5 +1,5 @@
 import type { ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
-import { independentToolPolicy, type ToolDependencies } from "./tool-scheduler.js";
+import { independentToolPolicy, isToolOrchestration, type ToolDependencies } from "./tool-scheduler.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { getLanguage } from "../../shared/i18n/index.js";
 import { ToolExecutionError } from "./arguments.js";
@@ -94,6 +94,7 @@ export function planTabBatch<T>(items: readonly T[], describe: (item: T) => {
   return {
     ordered: items,
     independent: (item: T) => independent(byItem.get(item)!),
+    orchestration: (item: T) => isToolOrchestration(byItem.get(item)!.policy),
     lane: (item: T) => executed.get(parents.get(byItem.get(item)!)!)?.id ?? executionLanes.get(item) ?? null,
     passive: (item: T) => passive(byItem.get(item)!),
     observation: (item: T) => {

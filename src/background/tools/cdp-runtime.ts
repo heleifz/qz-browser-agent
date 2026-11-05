@@ -353,6 +353,7 @@ export function createCdpRuntime({
     return usingDebugger(tabId, context, async state => {
       const check = commandAccess(state, context);
       const ownerKey = state.ownerKey;
+      const connectionId = state.connectionId;
       if (signal?.aborted) {
         throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before running script", pageErrorDetails(context));
       }
@@ -361,11 +362,11 @@ export function createCdpRuntime({
       let scriptPromiseId = "";
       const expression = typeof params.expression === "string" ? params.expression : "";
       const liveTrace = expression.includes('Object.defineProperty(__qzPromise, "__qzTrace"');
-      const canCommand = () => state.ownerKey === ownerKey && state.attached && !state.releasing;
+      const canCommand = () => state.ownerKey === ownerKey && state.connectionId === connectionId && state.attached && !state.releasing;
 
       const readLiveScriptTrace = (): Promise<unknown[]> => {
         const finishRead = context.measurePhase?.("cdp");
-        const read = debuggerApi.sendCommand(state.target, "Runtime.callFunctionOn", {
+        return debuggerApi.sendCommand(state.target, "Runtime.callFunctionOn", {
           objectId: scriptPromiseId,
           functionDeclaration: "function(){ const rows = this && this.__qzTrace; return Array.isArray(rows) ? rows.slice(-5) : []; }",
           returnByValue: true,
@@ -373,12 +374,6 @@ export function createCdpRuntime({
           const value = record(record(snapshot).result).value;
           return Array.isArray(value) ? value.slice(-5) : [];
         }).catch(() => [] as unknown[]).finally(() => finishRead?.());
-        return read.finally(() => {
-          if (!canCommand()) return undefined;
-          const finishTerminate = context.measurePhase?.("cdp");
-          return debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
-            .finally(() => finishTerminate?.()).catch(() => undefined);
-        });
       };
 
       const abortPromise = signal
@@ -386,10 +381,12 @@ export function createCdpRuntime({
           abortHandler = () => {
             aborted = true;
             const timedOut = record(signal.reason).code === "TOOL_TIMEOUT";
-            // A late abort must not terminate the next run on this retained connection.
+            // Queue both commands while this call owns the connection. A late trace
+            // response carries diagnostics only, never authority over a later call.
             if (timedOut && liveTrace && scriptPromiseId && canCommand()) {
               publishTimeoutTrace(signal, readLiveScriptTrace());
-            } else if (canCommand()) {
+            }
+            if (canCommand()) {
               const finishPhase = context.measurePhase?.("cdp");
               debuggerApi.sendCommand(state.target, "Runtime.terminateExecution")
                 .finally(() => finishPhase?.()).catch(() => {});

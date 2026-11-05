@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCdpRuntime } from "../../src/background/tools/cdp-runtime.js";
+import { runToolWithTimeout } from "../../src/background/tools/tool-timeout.js";
 
 const IDLE_MS = 40;
 const runA = { sessionId: "idle-session", runId: "idle-run" };
@@ -59,6 +60,61 @@ function harness(t, options = {}) {
     dismiss: () => listeners.forEach(listener => listener({ tabId: 7 }, "canceled_by_user")),
   };
 }
+
+test("a timeout terminates before returning, even when its trace arrives during the next evaluation", async t => {
+  const f = harness(t), trace = Promise.withResolvers(), next = Promise.withResolvers();
+  const release = f.runtime.beginDebuggerExecution(runA);
+  let evaluations = 0;
+  const params = { expression: 'Object.defineProperty(__qzPromise, "__qzTrace"', awaitPromise: true };
+  f.command(async (_target, method, args) => {
+    if (method === "Runtime.evaluate") return { result: { type: "object", subtype: "promise", objectId: `p${++evaluations}` } };
+    if (method === "Runtime.awaitPromise") return args.promiseObjectId === "p1" ? new Promise(() => {}) : next.promise;
+    if (method === "Runtime.callFunctionOn") return trace.promise;
+    if (method === "Runtime.terminateExecution" && evaluations > 1) next.reject(new Error("Execution was terminated"));
+    return {};
+  });
+  t.after(() => { trace.resolve({}); next.resolve({}); release(); });
+  const first = runToolWithTimeout("evaluate", signal => f.runtime.evaluateCdpScript(7, params, signal, runA),
+    undefined, 10, async () => null, runA).catch(error => error);
+  await flush();
+  await advance(t, 10);
+  await advance(t, 1000);
+  assert.equal((await first).code, "TOOL_TIMEOUT");
+  const terminations = () => f.calls.filter(call => call[2] === "Runtime.terminateExecution").length;
+  assert.equal(terminations(), 1, "termination must not wait for a stalled trace read");
+  const second = f.runtime.evaluateCdpScript(7, params, undefined, runA);
+  second.catch(() => {});
+  await flush();
+  assert.equal(evaluations, 2);
+  trace.resolve({ result: { value: [{ level: "trace", message: "late checkpoint" }] } });
+  await flush();
+  assert.equal(terminations(), 1, "late diagnostics have no authority to terminate a subsequent call");
+  next.resolve({ result: { value: 42 } });
+  assert.equal((await second).result.value, 42);
+});
+
+test("aborting an evaluation on a replaced connection cannot terminate its same-run successor", async t => {
+  const f = harness(t), stop = new AbortController(), next = Promise.withResolvers();
+  let evaluations = 0;
+  f.command(async (_target, method, args) => {
+    if (method === "Runtime.evaluate") return { result: { type: "object", subtype: "promise", objectId: `p${++evaluations}` } };
+    if (method === "Runtime.awaitPromise") return args.promiseObjectId === "p1" ? new Promise(() => {}) : next.promise;
+    return {};
+  });
+  t.after(() => { stop.abort(); next.resolve({}); });
+  const first = f.runtime.evaluateCdpScript(7, { expression: "pending()", awaitPromise: true }, stop.signal, runA);
+  first.catch(() => {});
+  await flush();
+  f.dismiss();
+  const second = f.runtime.evaluateCdpScript(7, { expression: "next()", awaitPromise: true }, undefined, runA);
+  await flush();
+  assert.equal(evaluations, 2);
+  stop.abort();
+  await assert.rejects(first, { code: "OPERATION_ABORTED" });
+  assert.equal(f.calls.some(call => call[2] === "Runtime.terminateExecution"), false);
+  next.resolve({ result: { value: "next result" } });
+  assert.equal((await second).result.value, "next result");
+});
 
 test("a script keeps its connection across waits, then releases after the idle delay", async t => {
   const { runtime, count } = harness(t);

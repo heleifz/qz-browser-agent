@@ -61,19 +61,21 @@ export interface ToolModelPolicy {
 
 /** Derived from a trusted registration for one model response's tab dependency plan. */
 export type ToolBatchTabPolicy =
-  | { kind: "create"; parallel?: boolean; targeted?: boolean; passive?: boolean }
+  | { kind: "create"; parallel?: boolean; targeted?: boolean; passive?: boolean; orchestration?: boolean }
   /** Passive event observation does not occupy the page's action lane. */
   | { kind: "observe" }
   /** Page-independent orchestration; its descendants acquire their own resource lanes. */
   | { kind: "script" }
   /** `tabId` is the resolved lane for uid-targeted calls: the tab the referenced elements belong to. */
-  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number }
+  | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number; orchestration?: boolean }
   | { kind: "barrier" };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
   /** Host-selected script execution. Arguments are business data; child tools own resource access. */
   orchestration?: boolean;
+  /** Retain page ordering while child tools own execution locks; the wrapper must not mutate pages. */
+  delegatesExecution?: boolean;
   /** A passive event listener may overlap the action whose outcome it observes. */
   passiveWait?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */

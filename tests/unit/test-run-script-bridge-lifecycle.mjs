@@ -187,6 +187,48 @@ tools.defineTool({ name: '__nested_signal_event', description: 'Trigger the cont
   execute: ({ fixture }) => { const state = probes.get(fixture); state.ready = true; state.event?.(); return { signalled: true }; },
 });
 
+tools.defineTool({ name: '__wait_trigger_script', description: 'A trigger script discovers tools before acting.',
+  behavior: { orchestration: true },
+  parameters: { type: 'object', properties: { fixture: { type: 'string' }, tabRef: { type: 'integer' } }, required: ['fixture', 'tabRef'] },
+  execute: async ({ fixture, tabRef }, _signal, context) => {
+    const state = probes.get(fixture);
+    if (++state.triggers === state.waitCount) state.triggersReady.resolve();
+    await state.triggersReady.promise;
+    await context.invokeTool('list_tools', {});
+    if (++state.catalogs === state.waitCount) state.catalogsReady.resolve();
+    await state.catalogsReady.promise;
+    await context.invokeTool('__nested_lane_probe', { fixture, tabRef, label: `trigger:${tabRef}` });
+    state.navigate(tabRef);
+    return { triggered: true };
+  },
+});
+
+function waitFixture(externalDrive, count = 2) {
+  const f = fixture(true, 10, externalDrive);
+  const event = () => {
+    const listeners = new Set();
+    return { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn),
+      emit: value => { for (const listener of listeners) listener(value); }, get size() { return listeners.size; } };
+  };
+  const updated = event(), removed = event(), committed = event();
+  const previous = { onUpdated: chrome.tabs.onUpdated, onRemoved: chrome.tabs.onRemoved, webNavigation: chrome.webNavigation };
+  chrome.tabs.onUpdated = updated; chrome.tabs.onRemoved = removed;
+  chrome.webNavigation = { onCommitted: committed };
+  Object.assign(f.state, { waitCount: count, triggers: 0, catalogs: 0,
+    triggersReady: Promise.withResolvers(), catalogsReady: Promise.withResolvers(),
+    navigate: tabId => committed.emit({ tabId, frameId: 0 }),
+  });
+  return { ...f, trigger: tabRef => ({ name: '__wait_trigger_script', args: { fixture: f.id, tabRef } }),
+    listeners: () => updated.size + removed.size + committed.size,
+    dispose() {
+      f.controller.abort(); f.state.triggersReady.resolve(); f.state.catalogsReady.resolve();
+      for (const release of [...f.state.release.values()]) release();
+      chrome.tabs.onUpdated = previous.onUpdated; chrome.tabs.onRemoved = previous.onRemoved;
+      chrome.webNavigation = previous.webNavigation;
+    },
+  };
+}
+
 function fixture(hold = true, budget = 10, externalDrive = true) {
   const id = String(++nextFixture), controller = new AbortController();
   const state = { hold, started: [], release: new Map(), pages: new Set(), cards: [], events: [], applied: [], owned: [], discarded: [], active: 0, peak: 0 };
@@ -205,6 +247,7 @@ function fixture(hold = true, budget = 10, externalDrive = true) {
       discardCreatedTab: async reservation => { if (!state.owned.includes(reservation.id)) state.discarded.push(reservation.id); },
       resolveTargetTab: async ({ tabId }) => ({ ok: true, tabId, ownedByCurrentTask: true }),
       updateWorkingTab: async () => undefined,
+      observePopup: input => state.observePopup(input),
     },
   });
   bridge = createRunScriptBridge({
@@ -473,12 +516,75 @@ test('a popup creator retains the opener lane and publishes its new alias before
   assert.deepEqual(f.runtime.getBatchTabPolicy('wait_for_popup', { tabRef: 'page' }),
     { kind: 'create', parallel: true, targeted: true, passive: true });
   assert.deepEqual(f.runtime.getBatchTabPolicy('wait_for_popup', { tabRef: 'page', trigger: { name: '__nested_lane_probe', args: {} } }),
-    { kind: 'create', parallel: true, targeted: true });
+    { kind: 'create', parallel: true, targeted: true, orchestration: true });
   const created = f.call('__nested_popup_creator', { tabRef: 'page', tabAlias: 'popup' });
   const reader = f.call('__nested_lane_probe', { tabRef: 'popup', label: 'popup-reader' });
   assert.equal((await created).result.tabRef, 'popup');
   assert.deepEqual((await reader).result, { label: 'popup-reader', page: 12 });
   assert.deepEqual(f.state.started, ['opener-action', 'popup-reader']);
+});
+
+for (const externalDrive of [false, true]) test(`triggered navigation waits allow global children while preserving ${externalDrive ? 'drive' : 'native'} page order`, async () => {
+  const f = waitFixture(externalDrive);
+  try {
+    const waits = [7, 8].map(tabRef => f.call('wait_for_navigation', { tabRef, timeout: 2, trigger: f.trigger(tabRef) }));
+    const later = f.call('__nested_lane_probe', { tabRef: 7, label: 'after-wait' });
+    await tick();
+    assert.equal(f.state.catalogs, 2, 'both global children must execute before either wait deadline');
+    assert.deepEqual(new Set(f.state.started), new Set(['trigger:7', 'trigger:8']));
+    assert.equal(f.state.peak, 2, 'trigger actions retain cross-page parallelism');
+    f.state.release.get('trigger:7')();
+    assert.equal((await waits[0]).result.status, 'navigated');
+    await tick();
+    assert.equal(f.state.started.at(-1), 'after-wait', 'the same-page sibling starts only after its wait settles');
+    assert.ok(f.state.release.has('trigger:8'), 'an unrelated pending page does not block the successor');
+    f.state.release.get('after-wait')(); f.state.release.get('trigger:8')();
+    assert.equal((await later).ok, true); assert.equal((await waits[1]).result.status, 'navigated');
+    assert.equal(f.listeners(), 0);
+    assert.equal(f.state.cards.filter(card => card.name === 'wait_for_navigation').length, 2);
+  } finally { f.dispose(); }
+});
+
+test('a triggered popup wait shares nested barriers and publishes its alias before a pending reader', async () => {
+  const f = waitFixture(true);
+  let popup, popupDisposed = 0;
+  f.state.observePopup = () => ({ result: new Promise(resolve => { popup = resolve; }), dispose: () => { popupDisposed++; } });
+  const navigate = f.state.navigate;
+  f.state.navigate = tabId => tabId === 8
+    ? popup(bindCreatedTabResult({ tabRef: 12, url: 'https://example.test/popup', title: 'Popup', active: false }, 12))
+    : navigate(tabId);
+  try {
+    const navigation = f.call('wait_for_navigation', { tabRef: 7, timeout: 2, trigger: f.trigger(7) });
+    const created = f.call('wait_for_popup', { tabRef: 8, timeout: 2, tabAlias: 'popup', trigger: f.trigger(8) });
+    const reader = f.call('__nested_lane_probe', { tabRef: 'popup', label: 'popup-reader' });
+    await tick();
+    assert.equal(f.state.catalogs, 2);
+    assert.deepEqual(new Set(f.state.started), new Set(['trigger:7', 'trigger:8']));
+    assert.equal(f.aliases.popup, undefined);
+    f.state.release.get('trigger:8')();
+    assert.equal((await created).result.tabRef, 'popup');
+    await tick();
+    assert.equal(f.aliases.popup, 12);
+    assert.equal(f.state.started.at(-1), 'popup-reader');
+    f.state.release.get('popup-reader')(); f.state.release.get('trigger:7')();
+    assert.equal((await reader).result.page, 12); assert.equal((await navigation).ok, true);
+    assert.equal(popupDisposed, 1); assert.equal(f.listeners(), 0);
+  } finally { f.dispose(); }
+});
+
+test('a timed-out triggered wait cancels its page child and the next call recovers', async () => {
+  const f = waitFixture(true, 1);
+  try {
+    const waiting = f.call('wait_for_navigation', { tabRef: 7, timeout: 0.05, trigger: f.trigger(7) });
+    await tick();
+    assert.deepEqual(f.state.started, ['trigger:7']);
+    assert.equal((await waiting).code, 'TOOL_TIMEOUT');
+    assert.equal(f.listeners(), 0);
+    f.state.hold = false;
+    const next = await f.call('__nested_lane_probe', { tabRef: 7, label: 'recovered' });
+    assert.equal(next.ok, true); assert.equal(f.state.active, 0);
+    assert.deepEqual(f.state.started, ['trigger:7', 'recovered']);
+  } finally { f.dispose(); }
 });
 
 test('the registered catalog shares policy and preserves raw successful business values through the bridge', async () => {

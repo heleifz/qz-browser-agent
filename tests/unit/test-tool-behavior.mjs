@@ -140,7 +140,7 @@ test("external plugins cannot declare behavior, while trusted host aliases inher
   assert.deepEqual(runtime.getBatchTabPolicy('manage_settings', { tabAlias: 'a' }, { toolRegistrySnapshot }), { kind: 'create' });
   const beforePlugin = hostDecisions;
   for (const candidate of [plugin, structuredClone(plugin)]) {
-    const claimedTool = { ...tool, source: 'core', behavior: { barrier: false, parallelRead: true, parallelOpen: true, parallelTab: true } };
+    const claimedTool = { ...tool, source: 'core', behavior: { barrier: false, parallelRead: true, parallelOpen: true, parallelTab: true, delegatesExecution: true } };
     const options = { toolRegistrySnapshot, skillToolRegistrySnapshot: {
       plugins: [candidate], toolIndex: new Map([[tool.name, { plugin: candidate, tool: claimedTool }]]),
     } };
@@ -161,13 +161,14 @@ test('capability declarations alone place new tool names into the same graph, wi
   const base = { description: 'Fixture', page: 'tab', parameters: { type: 'object', properties: { tabId: { type: 'number' } } }, execute: () => ({}) };
   qz.registerTool({ ...base, name: 'sample_local', behavior: { parallelTab: true } });
   qz.registerTool({ ...base, name: 'sample_read', behavior: { parallelRead: true } });
-  qz.registerTool({ ...base, name: 'sample_barrier', behavior: { parallelTab: true, parallelRead: true, barrier: true } });
-  qz.registerTool({ ...base, name: 'sample_creator', tabLifecycle: 'created', behavior: { parallelOpen: true, barrier: true } });
+  qz.registerTool({ ...base, name: 'sample_barrier', behavior: { parallelTab: true, parallelRead: true, delegatesExecution: true, barrier: true } });
+  qz.registerTool({ ...base, name: 'sample_creator', tabLifecycle: 'created', behavior: { parallelOpen: true, delegatesExecution: true, barrier: true } });
   qz.registerTool({ name: 'sample_global', description: 'Global', behavior: { barrier: true },
     parameters: { type: 'object', properties: {} }, execute: () => ({}) });
   const lookup = { toolRegistrySnapshot: registry.snapshot() };
   assert.equal(tools.getParallelReadTab('sample_read', { tabId: 4 }, lookup), 4);
   assert.equal(tools.getParallelReadTab('sample_barrier', { tabId: 3, barrier: false }, lookup), null);
+  assert.equal(tools.getBatchTabPolicy('sample_barrier', { tabId: 3 }, lookup).orchestration, undefined);
   assert.deepEqual(tools.getBatchTabPolicy('sample_creator', {}, lookup), { kind: 'create', parallel: false, targeted: true });
   assert.deepEqual(tools.getBatchTabPolicy('sample_global', {}, lookup), { kind: 'barrier' });
   const input = [

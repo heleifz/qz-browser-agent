@@ -2730,6 +2730,7 @@ export class Agent {
       independent: batch.independent,
       lane: batch.lane,
       observer: batch.passive,
+      orchestration: batch.orchestration,
       completed: (tc, outcome) => batch.complete(tc, outcome.result, outcome.isError),
       cancelled: tc => failure(tc, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }),
       tab: tc => {

@@ -17,7 +17,8 @@ page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit eleme
 observe their current nodes. `evaluate({waitUntil:"commit"})` supports early observation and
 predicate waits. Content messaging does not wait for parsing. Preparation uses the call's
 cancellation signal and deadline; document replacement can retry preparation, never dispatched
-user code or input. Event waits arm before their trigger and do not occupy the action lane.
+user code or input. Event waits arm before their trigger; triggered waits retain same-page ordering
+while their child tools acquire execution locks.
 
 ## Runtime map
 
@@ -457,7 +458,7 @@ a parallel role. `behavior.uidTargets` extends the singular target fields; mixed
 target sets retain commit barriers, as do implicit targets and undeclared/global operations.
 Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
 The runtime evaluates it once per call during planning; true or a thrown predicate overrides
-`parallelOpen`, `parallelTab`, `parallelRead` and `orchestration`. The Agent reuses this decision for execution.
+`parallelOpen`, `parallelTab`, `parallelRead`, `orchestration` and `delegatesExecution`. The Agent reuses this decision for execution.
 Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
 and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 

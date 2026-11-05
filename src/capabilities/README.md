@@ -106,7 +106,10 @@ model arguments and result
 payloads cannot grant scheduling authority; the selected definition must come from a core registry
 snapshot. Any build-time capability can use these fields through `qz.registerTool`; there is no tool-name
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
-marks a tool that may touch global resources. Public `run_script` declares `behavior.orchestration`:
+marks a tool that may touch global resources.
+Event wait wrappers declare `behavior.delegatesExecution`: they retain same-page ordering and creation
+dependencies, while their trigger tools acquire execution locks. These wrappers must not mutate pages directly.
+Public `run_script` declares `behavior.orchestration`:
 its arguments are business data, and its descendant tools acquire the actual page lanes. New Skill
 tools with `runtime: "script"` use this same runner, optional 120-second timeout
 and trusted scheduling definition. Native batches and nested calls can run these containers concurrently.

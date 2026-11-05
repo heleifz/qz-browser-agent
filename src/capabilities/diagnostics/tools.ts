@@ -677,7 +677,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_response",
-  behavior: { parallelTab: true, passiveWait: args => !args.trigger },
+  behavior: { parallelTab: true, delegatesExecution: true, passiveWait: args => !args.trigger },
   get description() { return toolT("waitForResponseDescription"); },
   get parameters() { return {
     type: "object",

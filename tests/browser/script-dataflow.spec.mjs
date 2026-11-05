@@ -132,6 +132,17 @@ test('page evaluations and outer orchestration overlap across tabs, preserve pag
     expect(sameTab.peak).toBe(1); expect(sameTab.ends.every(e => !e.isError)).toBe(true);
     expect(sameTab.ids).toEqual(['same-1', 'same-2']);
     expect(sameTab.values.map(successfulScriptResult).map(value => value.value)).toEqual([2, 3]);
+    const timeoutRecovery = await run([
+      tc('timed-out', { tabRef: tabs[0], timeout: 0.5,
+        code: 'async () => { for (let i = 0; i < 7; i++) console.log("timeout-checkpoint-" + i); await new Promise(() => {}); }' }),
+      tc('after-timeout', { tabRef: tabs[0],
+        code: 'async () => { await new Promise(r => setTimeout(r, 100)); return document.title; }' }),
+    ]);
+    expect(timeoutRecovery.ends[0].isError).toBe(true);
+    expect(timeoutRecovery.values[0].result.code).toBe('TOOL_TIMEOUT');
+    expect(timeoutRecovery.values[0].trace.filter(line => line.startsWith('timeout-checkpoint-')))
+      .toEqual([2, 3, 4, 5, 6].map(i => `timeout-checkpoint-${i}`));
+    expect(successfulScriptResult(timeoutRecovery.values[1])).toBe('Local page 0');
     const withTools = await run(tabs.slice(0, 3).map((tabRef, i) => tc(`tools-${i}`, { args: { tabRef },
       code: 'await new Promise(r => setTimeout(r, 400)); const article = await tools.read_article({tabRef:input.tabRef,limit:1200}); const title = await tools.evaluate({tabRef:input.tabRef,code:() => document.title}); return {title,chars:article.text.length};' }, 'run_script')));
     expect(withTools.peak).toBe(3); expect(withTools.ends.every(e => !e.isError)).toBe(true);

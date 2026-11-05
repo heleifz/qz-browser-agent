@@ -415,7 +415,7 @@ const pageWaitProperties = () => ({
   tabRef: { type: ["integer", "string"], description: toolT("waitForNavigationTabId") },
   timeout: { type: "number", description: toolT("waitForNavigationTimeout") },
 } as const);
-const eventWaitBehavior = { parallelTab: true, passiveWait: (args: Record<string, unknown>) => !args.trigger };
+const eventWaitBehavior = { parallelTab: true, delegatesExecution: true, passiveWait: (args: Record<string, unknown>) => !args.trigger };
 const waitDetails = (context: ToolContext, target?: string) => ({
   ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }), ...(target ? { target } : {}),
 });

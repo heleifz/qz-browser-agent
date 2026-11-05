@@ -5,7 +5,7 @@ const MAX_IN_FLIGHT = 10;
 type Lane = string | number | object | null;
 interface ExecutionScope {
   gate: ExecutionGate; parent?: ExecutionScope; lane: Lane;
-  independent: boolean; observer: boolean; container: boolean;
+  independent: boolean; observer: boolean; orchestration: boolean; container: boolean;
 }
 const executionScopes = new WeakMap<object, ExecutionScope>();
 const ancestorScope = (a: ExecutionScope, b: ExecutionScope) => {
@@ -22,16 +22,19 @@ class ExecutionGate {
   wake() { for (const listener of this.listeners) listener(); }
   ready(scope: ExecutionScope) {
     if (scope.observer) return true;
-    const leaves = [...this.active].filter(other => !other.container && !other.observer);
-    return leaves.length < this.limit && !leaves.some(other => !ancestorScope(other, scope) && !ancestorScope(scope, other)
+    const active = [...this.active].filter(other => !other.observer);
+    // Containers yield capacity; page access and barriers last until execution ends.
+    return active.filter(other => !other.container).length < this.limit
+      && !active.some(other => !other.orchestration && !ancestorScope(other, scope) && !ancestorScope(scope, other)
       && (!scope.independent || !other.independent || scope.lane !== null && scope.lane === other.lane));
   }
 }
 
-function executionScope(gate: ExecutionGate, lane: Lane, independent: boolean, observer: boolean, parent?: object) {
+function executionScope(gate: ExecutionGate, lane: Lane, independent: boolean, observer: boolean,
+  { parent, orchestration = false }: { parent?: object; orchestration?: boolean } = {}) {
   const authority = parent && executionScopes.get(parent);
   const scope = Object.freeze({});
-  executionScopes.set(scope, { gate: authority?.gate || gate, parent: authority, lane, independent, observer, container: false });
+  executionScopes.set(scope, { gate: authority?.gate || gate, parent: authority, lane, independent, observer, orchestration, container: false });
   return scope;
 }
 
@@ -45,6 +48,11 @@ function releaseExecution(scope: object) {
 export function independentToolPolicy(policy: ToolBatchTabPolicy | null | undefined, explicit = true): boolean {
   return policy?.kind === "script" || policy?.kind === "observe" || (policy?.kind === "create" ? policy.parallel === true && (!policy.targeted || explicit)
     : policy?.kind === "target" && (policy.observation || policy.parallel === true) && explicit);
+}
+
+/** Ordered wait wrappers keep their dependencies, while descendants acquire execution locks. */
+export function isToolOrchestration(policy: ToolBatchTabPolicy | null | undefined): boolean {
+  return policy?.kind === "script" || (policy?.kind === "target" || policy?.kind === "create") && policy.orchestration === true;
 }
 
 interface Invocation<R> {
@@ -152,7 +160,7 @@ export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
       const requestedLane = options.lane;
       const resolveLane = typeof requestedLane === "function" ? requestedLane : () => requestedLane;
       const lane = resolveLane();
-      const scope = executionScope(gate, lane, independent, observer, options.parent);
+      const scope = executionScope(gate, lane, independent, observer, { parent: options.parent, orchestration: isToolOrchestration(options.policy) });
       const sharedGate = executionScopes.get(scope)!.gate;
       if (!gates.has(sharedGate)) sharedGate.listeners.add(pump);
       gates.set(sharedGate, (gates.get(sharedGate) || 0) + 1);
@@ -186,6 +194,7 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
   tab(item: T): number | null;
   lane?(item: T): Lane;
   observer?(item: T): boolean;
+  orchestration?(item: T): boolean;
   dependencies?(item: T): ToolDependencies<T>;
   independent?(item: T): boolean;
   execute(item: T, signal: AbortSignal, parallel: boolean, scope: object): Promise<R>;
@@ -204,7 +213,8 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
     // A caller supplying its own graph without policy metadata retains that
     // graph's concurrency; Agent and drive pass their trusted independent role.
     const independent = options.independent ? parallel : options.dependencies ? true : parallel;
-    return { item, parallel, scope: executionScope(gate, options.lane?.(item) ?? options.tab(item), independent, options.observer?.(item) === true),
+    return { item, parallel, scope: executionScope(gate, options.lane?.(item) ?? options.tab(item), independent, options.observer?.(item) === true,
+      { orchestration: options.orchestration?.(item) === true }),
       state: "queued" as "queued" | "running" | "done" | "committed" | "skipped", result: undefined as R | undefined, failed: false };
   });
   const byItem = new Map(nodes.map(node => [node.item, node]));

@@ -279,6 +279,11 @@ async function exerciseInterleavedBranches({ script, fixture, expect }) {
     const opened=await tools.open_tab({url:input.origin+'/start',...(tabAlias?{tabAlias}:{})});
     return opened.tabRef;
   }));`, { origin: fixture.origin });
+  const navigated = await script(`return await Promise.all(input.refs.map(tabRef =>
+    tools.wait_for_navigation({tabRef,timeout:10,trigger:{name:'run_script',args:{args:{tabRef},code:
+      "await tools.list_tools(); return await tools.act_on_element({tabRef:input.tabRef,target:'css:#navigate',action:'click'});"
+    }}})));`, { refs });
+  expect(navigated.map(result => result.status)).toEqual(['navigated', 'navigated', 'navigated']);
   for (const seed of [7, 29, 83]) {
     let random = seed, finished = false;
     const labels = Array.from({ length: 30 }, (_, i) => `${seed}-${Math.floor(i / 5)}-${i % 5}`);

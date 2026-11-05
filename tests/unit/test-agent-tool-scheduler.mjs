@@ -29,6 +29,85 @@ test('native script calls share the leaf budget and reach their own descendants 
   await run;
 });
 
+for (const tool of ['wait_for_navigation', 'wait_for_popup', 'wait_for_response']) test(`native ${tool} delegates child locks while preserving same-page ordering`, async t => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const bothStarted = Promise.withResolvers(), events = [], parents = [];
+  // Native popup creators retain their existing window-anchor dependency on earlier page calls.
+  const items = [7, 8].map(tabRef => ({ name: tool === 'wait_for_popup' && tabRef === 8 ? 'wait_for_navigation' : tool,
+    args: { tabRef, trigger: { name: 'run_script', args: { code: 'return await tools.list_tools();' } } } }));
+  items.push(...[7, 8].map(tabRef => ({ name: 'evaluate', args: { tabRef, code: 'return 1;' } })));
+  const plan = planTabBatch(items, item => ({ args: item.args, policy: getBatchTabPolicy(item.name, item.args) }));
+  const run = scheduleToolCalls(items, {
+    tab: item => item.args.tabRef, lane: plan.lane, independent: plan.independent, orchestration: plan.orchestration,
+    observer: plan.passive, dependencies: plan.dependencies, signal: stop.signal,
+    execute: async (item, signal, _parallel, parent) => {
+      const tab = item.args.tabRef;
+      if (item.name === 'evaluate') { events.push(`follow:${tab}`); return; }
+      return nested.run({ parent, group: 'trigger', lane: null, policy: { kind: 'script' }, signal,
+        execute: async script => {
+          parents.push(tab);
+          if (parents.length === 2) bothStarted.resolve();
+          await bothStarted.promise;
+          await nested.run({ parent: script, group: 'catalog', lane: null, policy: getBatchTabPolicy('list_tools', {}), signal,
+            execute: async () => { events.push(`catalog:${tab}`); },
+          });
+          events.push(`wait:${tab}`);
+        },
+      });
+    },
+    commit: async () => {},
+  });
+  t.after(async () => { stop.abort(); bothStarted.resolve(); await run.catch(() => {}); });
+  await tick();
+  assert.deepEqual(parents, [7, 8]);
+  assert.equal(events.length, 6, 'both waits and their following calls must finish without reaching a deadline');
+  await run;
+  for (const tab of [7, 8]) {
+    assert.ok(events.indexOf(`catalog:${tab}`) < events.indexOf(`wait:${tab}`));
+    assert.ok(events.indexOf(`wait:${tab}`) < events.indexOf(`follow:${tab}`));
+  }
+  assert.equal(nested.pending, 0);
+});
+
+for (const parallel of [true, false]) test(`nested page calls retain their ${parallel ? 'page lane' : 'global barrier'} after a child returns`, async t => {
+  const stop = new AbortController(), nested = createNestedToolScheduler();
+  const resumed = Promise.withResolvers(), finishPage = Promise.withResolvers(), started = [];
+  const items = ['page-script', 'actions'];
+  const plan = planTabBatch(items, () => ({ args: {}, policy: getBatchTabPolicy('run_script', {}) }));
+  const action = (parent, signal, lane) => nested.run({ parent, group: 'actions', lane, signal,
+    policy: { kind: 'target', implicit: false, parallel: true },
+    execute: async () => { started.push(lane); return lane; },
+  });
+  const run = scheduleToolCalls(items, {
+    tab: () => null, lane: plan.lane, independent: plan.independent, orchestration: plan.orchestration,
+    dependencies: plan.dependencies, signal: stop.signal,
+    execute: async (item, signal, _parallel, root) => {
+      if (item === 'page-script') return nested.run({ parent: root, group: item, lane: 7, signal,
+        policy: { kind: 'target', implicit: false, parallel },
+        execute: async page => {
+          // The page script can still access DOM after awaiting a nested tool.
+          await action(page, signal, 7);
+          resumed.resolve();
+          await finishPage.promise;
+          started.push('page-finished');
+        },
+      });
+      await nested.run({ parent: root, group: item, lane: null, signal,
+        policy: { kind: 'observe' }, execute: () => resumed.promise });
+      return Promise.all([action(root, signal, 7), action(root, signal, 8)]);
+    },
+    commit: async () => {},
+  });
+  t.after(async () => { stop.abort(); finishPage.resolve(); await run.catch(() => {}); });
+  await tick();
+  assert.deepEqual(started, parallel ? [7, 8] : [7],
+    'descendants can reach their parent page; siblings must respect its outstanding page access');
+  finishPage.resolve();
+  await run;
+  assert.deepEqual(started, parallel ? [7, 8, 'page-finished', 7] : [7, 'page-finished', 7, 8]);
+  assert.equal(nested.pending, 0);
+});
+
 test('native and nested ready results share one commit gate without holding it during execution', async () => {
   const nested = createNestedToolScheduler(), events = [];
   let releaseHead, releaseChild;

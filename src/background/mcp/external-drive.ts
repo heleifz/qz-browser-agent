@@ -332,6 +332,7 @@ export async function runDriveCalls(calls: readonly DriveCall[], deps: {
     independent: batch.independent,
     lane: batch.lane,
     observer: batch.passive,
+    orchestration: batch.orchestration,
     completed: (call, outcome) => batch.complete(call, outcome.result, outcome.isError),
     cancelled: call => failed(call, { message: t("agent.toolStopped"), code: "OPERATION_ABORTED" }, call.args),
     tab: call => {

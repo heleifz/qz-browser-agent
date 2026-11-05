@@ -484,9 +484,10 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
   if (!barrier && definition.behavior?.orchestration) return { kind: "script" };
   const pageAccess = resolvePageAccess(definition, input);
   const passive = !barrier && toolBehaviorEnabled(definition.behavior?.passiveWait, input);
+  const delegation = !barrier && !passive && definition.behavior?.delegatesExecution ? { orchestration: true } : {};
   if (definition.tabLifecycle === "created") return { kind: "create",
     ...(definition.behavior?.parallelOpen || pageAccess && definition.behavior?.parallelTab ? { parallel: !barrier } : {}),
-    ...(pageAccess ? { targeted: true } : {}), ...(passive ? { passive: true } : {}) };
+    ...(pageAccess ? { targeted: true } : {}), ...(passive ? { passive: true } : {}), ...delegation };
   if (passive) return { kind: "observe" };
   const targets = pageAccess ? elementTargetsOf(definition, input) : [];
   if (targets.some(isUidElementTarget)) {
@@ -497,7 +498,7 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
     return { kind: "target", implicit: false,
       observation: !barrier && isParallelReadGranted(definition, input),
       ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}),
-      tabId: lane };
+      tabId: lane, ...delegation };
   }
   if (!(definition.parameters.properties.tabRef || definition.parameters.properties.tabId) || !pageAccess) {
     return barrier ? { kind: "barrier" } : null;
@@ -505,7 +506,7 @@ export function getBatchTabPolicy(name: string, args: unknown, options: ToolOpti
   // Retain targeting metadata for tabRef even when the declaration disables parallel execution.
   return { kind: "target", implicit: input.tabId == null && !Object.hasOwn(input, "tabRef"),
     observation: !barrier && parallelReadTab(definition, { ...input, tabId: 1 }) !== null,
-    ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}) };
+    ...(definition.behavior?.parallelTab ? { parallel: !barrier } : {}), ...delegation };
 }
 
 export function getToolIdentity(name: string, options: ToolOptions = {}) {
