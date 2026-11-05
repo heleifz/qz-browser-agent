@@ -1,12 +1,12 @@
 ---
 name: qz-browser-agent
-description: Drive the connected browser through qz scripts. Create one titled session per task, pass its sessionId to every script, and use explicit tabRef values for page tools. Read qz skill for the installed CLI's guide. Read references/create-task.md only when the built-in agent should plan the task.
+description: Drive the connected browser through qz (轻舟) scripts. Create one titled session per task, pass its sessionId to every script, and use explicit tabRef values for page tools. Read qz skill for the installed CLI's guide. Read references/create-task.md only when the built-in agent should plan the task.
 ---
 
 Read `qz skill` once at the start of a task to use the guide shipped with the installed CLI. `qz --version` prints its version.
 
 <!-- qz-drive-guide:en -->
-The external agent plans the work and drives the connected browser. Do not configure a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
+The external agent plans the work and drives the connected browser through qz (轻舟). Do not configure a qz model or call `qz create`. Read references/create-task.md only when the built-in agent should plan and execute the task.
 
 ## Connect
 
@@ -92,7 +92,7 @@ return await tools.wait_for_navigation({
 
 `wait_for_navigation` matches only a new navigation after listening starts (including same-URL reloads, SPA transitions, and hash changes); an already-loaded page never satisfies it. `wait_for_load` checks whether the current page load has finished. `wait_for_element` defaults to `visible` (use `attached` for DOM presence; a zero-height `body` can still contain visible children, so do not use `body` visibility as a readiness check). Prefer observable conditions over fixed sleeps.
 
-Use `await` for sequential dependencies and `Promise.all` for independent page workflows. Each branch opens and operates on its own tab without waiting on slower branches, while same-page actions stay serialized. `Promise.all` preserves input order and rejects on the first failure without cancelling siblings; use `Promise.allSettled` when every outcome is needed. Await all tool calls before returning: script exit cancels unfinished calls.
+Use `await` for dependencies and `Promise.all` for independent page workflows that process results within each async branch. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
 
 ```sh
 qz script --session "$SID" - <<'JS'

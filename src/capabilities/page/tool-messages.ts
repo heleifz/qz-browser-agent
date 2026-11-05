@@ -4,8 +4,8 @@ import { createTranslator } from "#sdk/shared/i18n";
 /** Model-facing documentation stays with the tool contribution, outside the UI catalog. */
 const messages = defineMessages("page-tools", {
   readArticleDescription: {
-    "zh-CN": "读取 tabRef 指定页面整理后的正文 Markdown（保留标题、列表、链接、代码和表格，也支持纯文本或原始 JSON 页面）。读正文优先使用本工具，不要用于寻找可操作控件。返回 offset/limit 指定的正文片段及 totalChars/hasMore/nextOffset/target/linkCount；长文用 nextOffset 续读。outline 为带 offset/endOffset/charCount 的目录，可按 offset 和 limit 读指定章节；需原始 DOM 证据时把 tabRef 和 target 传给 read_dom。limit 必填，建议 4000–8000，范围 1000–20000。",
-    en: "Read cleaned main content from the page specified by tabRef as Markdown (preserving headings, lists, links, code, and tables; also works on plain-text or raw JSON pages). Prefer this tool for reading body text, not for finding interactive controls. Returns the offset/limit text segment plus totalChars/hasMore/nextOffset/target/linkCount; pass nextOffset to continue reading. outline lists sections with offset/endOffset/charCount; pass tabRef and target to read_dom when raw DOM evidence is needed. limit is required (recommended 4000–8000, range 1000–20000).",
+    "zh-CN": "读取 tabRef 指定页面的正文 Markdown（保留标题、列表、链接、代码和表格，也支持纯文本或 JSON 页面），用于阅读正文，不用于定位控件。返回 {text,totalChars,hasMore,nextOffset,target,linkCount,outline}；text 为 offset/limit 指定的片段，续读传 nextOffset。outline 提供章节 offset/endOffset/charCount；需原始 DOM 时把 tabRef 和 target 传给 read_dom。limit 必填，建议 4000–8000，范围 1000–20000。",
+    en: "Read cleaned main content from tabRef as Markdown, preserving headings, lists, links, code, and tables; also supports plain text and raw JSON. Use for reading, not locating controls. Returns {text,totalChars,hasMore,nextOffset,target,linkCount,outline}: text is the offset/limit segment; pass nextOffset to continue. outline gives section offset/endOffset/charCount. Pass tabRef and target to read_dom for raw DOM evidence. limit is required (recommended 4000–8000, range 1000–20000).",
   },
   readArticleTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",

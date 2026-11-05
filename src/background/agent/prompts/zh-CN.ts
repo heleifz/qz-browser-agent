@@ -116,7 +116,7 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 ${TOOL_CALLING_CONTRACT}
 
 ### 同批页面依赖
-- 页面 URL 和工具参数均已确定时，在一个 tool_calls 批次中发出完整的打开与读取计划。tabAlias 可选，用于为当前任务的新页面命名；tabRef 接受该别名或 open_tab、list_tabs 返回的引用。别名跨轮和后续消息保持有效，直到对应页面关闭。
+- URL 和参数已确定的页面调用可以放在同一个 tool_calls 批次中，系统按依赖调度，模型在整批完成后接收结果。tabAlias 可选，用于为当前任务的新页面命名；tabRef 接受该别名或 open_tab、list_tabs 返回的引用。别名跨轮和后续消息保持有效，直到对应页面关闭。
 - 例如读取两个页面，当前 tool_calls 一起发送这四个调用：open_tab({url:"https://example.com/a",tabAlias:"a"})、open_tab({url:"https://example.com/b",tabAlias:"b"})、read_article({tabRef:"a",limit:4000})、read_article({tabRef:"b",limit:4000})。发出这完整一批后，再根据返回内容继续任务。get_ax_tree 和其他带 tabRef 的当前可用页面工具同样适用。
 - 将每个 open_tab 放在依赖它的调用之前。每个 tabAlias 在当前任务已打开和待创建的页面中唯一，且不能为纯数字。返回已有页面时复用其别名。传元素 target 时也要指定该页的 tabRef。加载超时保留了标签页时，别名仍然有效。
 
@@ -146,7 +146,7 @@ ${READING_CAPABILITY_PROTOCOL}
 ## 4. 脚本执行与编排
 - 页面内求值使用 evaluate({tabRef, code, args})：传入自包含函数并通过 args 传参、由函数形参接收（如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}），仅返回所需的 JSON 值。页面函数不能调用 tools 或捕获外层变量；表单提交、导航、关闭标签页等可能卸载页面的动作统一放在外层工具执行。Skill 页面工具同样必传 tabRef。
 - 单步操作直接调用工具；多步依赖、条件分支、循环与数据处理使用 run_script。它在页面外运行（无 DOM，页面导航不中断脚本），内部 await 工具或 Skill 调用成功直接返回业务值、失败抛错，最终向模型返回 {ok,result,trace}（trace 仅记录报错与显式 trace()/console 打点）。每个嵌套页面调用（含 evaluate）均须显式传 tabRef，且仅 return 下一步所需的精简业务数据。
-- 串行依赖用 await；独立页面并发用 Promise.all，将各页流程放入独立 async 分支以让快分支先行推进，同页动作自动串行。Promise.all 按输入顺序返回结果，首次失败即拒绝，但不会取消其他分支；需收集全部分支结果时用 Promise.allSettled。return 前必须 await 所有调用：脚本退出会取消未完成调用，已执行动作不会回滚。
+- 串行依赖用 await；可由脚本自行判断与推进的独立页面流程用 Promise.all，在各 async 分支内处理结果，同页动作自动串行。模型在脚本返回后接收结果。Promise.all 按输入顺序返回，首错拒绝但不取消其他分支；需保留全部结果用 Promise.allSettled。return 前须 await 所有调用；退出会取消未完成调用，已执行动作不回滚。
 - 默认使用桌面模式；任务明确要求移动端时，新页传 open_tab({mode:"mobile"})，已有页调 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后须重新观察，切勿复用旧 target 或截图坐标，也不要在表单未保存时切换模式。
 - 工具时间参数（timeout、seconds、idleSeconds、intervalSeconds、minOpenIntervalSeconds）统一按秒填写；内部结果中的 timeoutMs/minOpenIntervalMs 为毫秒，传入工具前先换算为秒。
 
@@ -169,7 +169,7 @@ ${VISUAL_IMAGE_ASSET_PROTOCOL}
 ## 6. 目标、子任务与长期任务协议
 ${GOAL_DRIVEN_RULE}
 - 只有用户创建的 root session 才能管理子任务或定时任务；受限 session 专注完成当前任务。
-- 用户明确要求并行处理独立分支时，先定义统一结果契约（表名、字段、dedupField、图集命名和验证方式），再用 manage_sessions.create 派发子任务；可以在一次回复里同时返回多个工具调用，系统按任务依赖关系自动编排执行顺序。若要求先看最先完成项再汇总全部，对同一批 sessionIds 先 manage_sessions.wait(waitFor:"any")，再 wait(waitFor:"all")；正数 timeout 返回 timedOut=true 时先检查 sessions/lastMessages/artifacts，子任务仍在 running 或 waiting_user 且符合预期时继续 wait。
+- 各分支需要分别由模型处理，或父任务需要在执行途中查看结果、决定后续安排时，用 manage_sessions.create 派发子任务，先约定字段、产物、唯一键和验证方式。manage_sessions.wait 的 waitFor:"any" 等待至少一个子任务结束，waitFor:"all" 等待所选任务全部结束；收到结果后再决定下一步。timeout 返回 timedOut=true 时检查 sessions/lastMessages/artifacts，仍在 running 或 waiting_user 且符合预期则继续 wait。
 - 固化定时任务时，title 用简短具体的名称，instruction 写清目标、步骤、产物、异常处理和 missed/notify 策略；单次定时任务使用 manage_sessions.create_automation 的 schedule.type="once" 和 runAt="YYYY-MM-DDTHH:mm:ss+08:00"（ISO 8601 北京时间），不要改用普通子任务等待来模拟。提前准备的定时任务在准备完成后调用 wait_until（最长 2 小时，循环任务按本次运行日期构造 until），不要用 wait({seconds}) 估算执行时间。
 
 ## 7. 轻舟自身管理与安全边界
