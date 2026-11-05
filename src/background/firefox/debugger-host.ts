@@ -150,7 +150,9 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
         ? { frameId: pointerFrames.get(key) ?? frameId, x, y } : await inputFrame(tabId, frameId, x, y);
       if (type === "mousePressed") pointerFrames.set(key, target.frameId);
       try {
-        return await run(tabId, target.frameId, { op: "input", input: { kind: "mouse", type, x: target.x, y: target.y, button: String(params.button || "left"), clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } });
+        return await run(tabId, target.frameId, { op: "input", input: { kind: "mouse", type, x: target.x, y: target.y, button: String(params.button || "left"),
+          ...(typeof params.buttons === "number" ? { buttons: params.buttons } : {}),
+          clickCount: numberValue(params.clickCount) || 1, deltaX: numberValue(params.deltaX), deltaY: numberValue(params.deltaY) } });
       } finally { if (type === "mouseReleased") pointerFrames.delete(key); }
     }
     if (method === "Input.dispatchKeyEvent") {

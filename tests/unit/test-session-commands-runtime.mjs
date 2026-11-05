@@ -20,6 +20,7 @@ import {
 } from "../../src/shared/session/session-exchange.js";
 import { ROOT_SESSION_ID } from "../../src/shared/session/session-store.js";
 import { t } from "../../src/shared/i18n/backend.js";
+import { createKeyedSerialQueue } from "../../src/background/internal/serial-queue.js";
 
 await creationRunAndHistoryFlow();
 await publicSessionObservations();
@@ -58,6 +59,8 @@ await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
 await externalDriveSessionsRejectBuiltInMessages();
 await idleDriveStopPersistsTerminalState();
+await selectedDriveTabsAreValidatedBeforeStop();
+await concurrentDriveStopsKeepTheFirstRetentionDecision();
 await retentionCleanupRetriesWithoutOrphaningTheSession();
 
 console.log("session command runtime integration tests passed");
@@ -2176,6 +2179,51 @@ async function idleDriveStopPersistsTerminalState() {
   assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true, 'repeated cancel preserves the original keep decision');
   assert.ok(persisted.some(item => item.id === 'idle-drive' && item.options.terminal && item.state.status === 'aborted'));
   assert.equal(f.agents.has('idle-drive'), false);
+}
+
+async function selectedDriveTabsAreValidatedBeforeStop() {
+  const f = createFixture();
+  await f.repository.createMetadata({ id: "selective-keep", source: "external-drive" });
+  f.setRuntime("selective-keep", {
+    status: "running", running: true, ownedTabIds: [11, 12, 13], createdTabIds: [11, 12],
+    tabAliases: { result: 11, intermediate: 12 },
+  });
+  let capturedRuns = 0;
+  f.supervisor.takeDriveRunForRelease = () => { capturedRuns++; return ""; };
+  for (const [keepTabRefs, code] of [
+    [["result", "missing"], "BATCH_TAB_REFERENCE_ERROR"],
+    [["result", 999], "SESSION_TAB_FOREIGN"],
+    ["result", "INVALID_ARGUMENTS"],
+  ]) {
+    await assert.rejects(f.commands.stopSessionRuntime("selective-keep", { keepTabRefs }), error => error.code === code);
+    assert.equal(f.runtimes.get("selective-keep").status, "running");
+    assert.equal(capturedRuns, 0, "invalid keep references must not revoke the active run");
+    assert.deepEqual(f.closedTabs, []);
+    assert.deepEqual(f.releasedRuns, []);
+  }
+  await f.commands.stopSessionRuntime("selective-keep", { keepTabRefs: ["result", "11", 13] });
+  assert.equal(f.runtimes.get("selective-keep").status, "aborted");
+  assert.deepEqual(f.runtimes.get("selective-keep").driveKeepTabIds, [11, 13]);
+  assert.deepEqual(f.closedTabs.at(-1)[1].keepTabIds, [11, 13]);
+  assert.deepEqual(f.closedTabs.at(-1)[1].createdTabIds, [11, 12]);
+  f.setRuntime("selective-keep", { tabAliases: {}, ownedTabIds: [], createdTabIds: [] });
+  await f.commands.stopSessionRuntime("selective-keep", { keepTabRefs: ["intermediate"] });
+  assert.deepEqual(f.runtimes.get("selective-keep").driveKeepTabIds, [11, 13], "repeated cancel keeps the original choice after aliases expire");
+}
+
+async function concurrentDriveStopsKeepTheFirstRetentionDecision() {
+  const f = createFixture();
+  const queue = createKeyedSerialQueue(), revoke = f.supervisor.revoke;
+  f.supervisor.revoke = (id, options) => queue.run(id, () => revoke(id, options));
+  await f.repository.createMetadata({ id: "concurrent-keep", source: "external-drive" });
+  f.setRuntime("concurrent-keep", { status: "idle", ownedTabIds: [21, 22], createdTabIds: [21, 22],
+    tabAliases: { first: 21, second: 22 } });
+  await Promise.all([
+    f.commands.stopSessionRuntime("concurrent-keep", { keepTabRefs: ["first"] }),
+    f.commands.stopSessionRuntime("concurrent-keep", { keepTabRefs: ["second"] }),
+  ]);
+  assert.deepEqual(f.runtimes.get("concurrent-keep").driveKeepTabIds, [21]);
+  assert.ok(f.closedTabs.every(([, options]) => options.keepTabIds.length === 1 && options.keepTabIds[0] === 21));
 }
 
 async function retentionCleanupRetriesWithoutOrphaningTheSession() {

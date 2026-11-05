@@ -44,7 +44,7 @@ Page tools always pass tabRef on every call, including inside scripts. Omitting 
 
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript orchestration outside web pages. Read a local file or `-` for stdin; `--args` passes a JSON value exposed as `args`. Use top-level `await` and `return`, starting with a short comment stating the script's purpose. The outer script survives page navigation and provides `args`, `tools`, `trace()`, and `console`, without `document`/`window`, Node.js, `fs`, `process`, `require`, or `import`.
 
-Call tools by their catalog names on `tools`. Run `tools.list_tools()` for compact signatures, and `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for full schemas of selected tools. Read unfamiliar schemas before calling; loaded Skills can register additional tools. Awaited calls (including Skill tools) return business values directly and throw on failure.
+Call tools by their catalog names on `tools`. Run `tools.list_tools()` for compact signatures of all discoverable tools, and `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for full schemas of selected tools. Read unfamiliar schemas before calling; loaded Skills can register additional tools. Awaited calls (including Skill tools) return business values directly and throw on failure.
 
 ```sh
 qz script --session "$SID" - <<'JS'
@@ -74,7 +74,7 @@ Use `read_article` for document text, lists, and tables. Use a scoped `get_ax_tr
 
 `find_elements` `pattern` is a case-insensitive regular expression by default (for literal `a.b`, pass `"a\\.b"`). `get_ax_tree` `scope` is `viewport` or `full`; narrow `target` or `limit` instead of requesting the full page for one control. Navigation, reloads, and DOM replacement can invalidate `uid:` targets; re-observe after a stale-reference error.
 
-`act_on_element` performs one action: `click`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll` (`fill`/`select` require `value`; `press` requires `key`). Ordinary success returns `{}`: delivery and `fill`/`check` verification succeeded, with `navigated`/`url` or `navigationPending` added when navigation is detected. If `confirmationRequired` is true, verify the field locally before continuing. To check resulting page state, read a focused region rather than requesting both a full snapshot and a screenshot; reserve `screenshot` for visual checks.
+`act_on_element` performs one action: `click`, `double_click`, `hover`, `drag`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll` (`fill`/`select` require `value`; `press` requires `key`; `drag` requires `destination:{target}` on the same tab). Actions wait for their target to become usable within `timeout` (seconds, default 20), then dispatch without replaying uncertain input. Ordinary success returns `{}`, with `navigated`/`url` or `navigationPending` when navigation is detected, and `popups` for new Tabs observed during the call. Use `wait_for_popup` when the new page must be awaited. If `confirmationRequired` is true, verify the field locally before continuing. To check resulting page state, read a focused region rather than requesting both a full snapshot and a screenshot; reserve `screenshot` for visual checks.
 
 When an action must cause navigation, a popup, or a network response, pass `trigger:{name,args}` to the corresponding wait tool so it arms the listener before invoking the trigger once. Pass `tabRef` on both the wait call and the trigger action. A failed wait never rolls back or replays the action.
 
@@ -130,7 +130,7 @@ stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports executio
 
 ## Finish
 
-Run `qz session cancel "$SID"` when the task is done. It ends the session and closes its created tabs (including while a script is running), while preserving pre-existing user tabs and tabs handed back to the user. Do not call `close_tab` after the session ends; further calls return `DRIVE_SESSION_ENDED`.
+Run `qz session cancel "$SID"` when the task is done. It ends the session and closes its created tabs (including while a script is running), while preserving pre-existing user tabs and tabs handed back to the user. To leave result pages open, pass their references with `--keep result --keep evidence`; all references are validated before stopping. Kept pages return to the user and the session still ends. Do not call `close_tab` after the session ends; further calls return `DRIVE_SESSION_ENDED`.
 
 CLI process exit does not close task tabs; ~30 minutes of inactivity triggers cleanup while the extension runtime is running. Always run `qz session cancel` for task cleanup. The side panel for a drive session is view-only. Use browser tools for page content and the shell for local files.
 <!-- qz-drive-guide:end -->

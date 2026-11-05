@@ -628,6 +628,9 @@ for (const closeBoth of [false, true]) {
   f.activateRun(runA); f.activateRun(runB);
   const reader = { ...runB }; grants.add(reader);
   await f.runtime.sendCdp(73, 'Accessibility.getFullAXTree', {}, reader);
+  let readerSend;
+  await f.runtime.withDebugger(73, async (_target, send) => { readerSend = send; }, reader);
+  await assert.rejects(readerSend.cancelPointer(), { code: 'CDP_RUN_RELEASED' }, 'observation grants never authorize pointer cleanup');
   await f.runtime.sendCdp(73, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' }, runA);
   assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId,
     'a first reader cannot reserve the connection against the next authorized writer');
@@ -635,6 +638,26 @@ for (const closeBoth of [false, true]) {
   assert.equal(f.runtime.getDebuggerRun(73).sessionId, runA.sessionId);
   assert.equal(f.calls.filter(call => call[0] === 'attach' && call[1] === 73).length, 1);
   await f.runtime.releaseRun(runA.sessionId, runA.runId);
+}
+
+{
+  const f = createHarness();
+  f.activateRun(runA); f.activateRun(runB);
+  const abort = new AbortController();
+  let captured;
+  await f.runtime.withDebugger(74, async (_target, send) => { captured = send; }, { ...runA, signal: abort.signal });
+  abort.abort();
+  await assert.rejects(captured("Input.dispatchMouseEvent", { type: "mouseMoved", x: 10, y: 10 }), { code: "OPERATION_ABORTED" });
+  await captured.cancelPointer();
+  const releases = () => f.calls.filter(call => call[0] === "command" && call[2] === "Input.dispatchMouseEvent");
+  assert.deepEqual(releases().map(call => call[3]), [{ type: "mouseReleased", x: -1, y: -1, button: "left", buttons: 0, clickCount: 1 }],
+    "only a non-clicking release may outlive cancellation");
+  await f.runtime.releaseRun(runA.sessionId, runA.runId);
+  await f.runtime.sendCdp(74, "Page.enable", {}, runB);
+  const before = f.calls.length;
+  await assert.rejects(captured.cancelPointer(), { code: "CDP_RUN_RELEASED" });
+  assert.equal(f.calls.length, before, "old cleanup cannot affect a replacement connection or reacquire one");
+  await f.runtime.releaseRun(runB.sessionId, runB.runId);
 }
 
 console.log("CDP run/tab lifecycle tests passed");

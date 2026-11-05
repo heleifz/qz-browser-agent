@@ -44,7 +44,7 @@ export const VISION_READING_RULE = "- 需要分析页面中的某张图片时，
 
 export const VISUAL_SCREEN_ACTION_RULE = `页面操作指南：
 1. 首次观察目标页面：用 get_ax_tree({tabRef}) 总览，或用 read_article、find_elements、list_images 读取局部信息。只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。
-2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 {}，发生导航或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
+2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 {}，发生导航、观察到新标签或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
 3. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot({tabRef,actionable:true})，再把返回图片上的原始像素坐标交给 act_on_screen，范围见 coordinateSpace.width/height。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。
 - 每次 act_on_screen 都必须显式填写 returnScreenshot：需要观察结果时传 true；已验证序列中的中间动作传 false。只有 true 才产生观察截图；false 在坐标空间仍有效时沿用原依据。viewportChange 只记录浏览器视口是否变化，页面内效果由截图确认；coordinateBasisReady 为 false 时重新观察。不带 x/y 的 press 直接向当前焦点发送按键。
@@ -54,7 +54,7 @@ export const TEXT_ONLY_READING_RULE = "- 当前模型不能看图；确认页面
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `页面操作指南：
 1. 首次观察目标页面：用 get_ax_tree({tabRef}) 总览，或用 read_article、find_elements、list_images 读取局部信息。只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。
-2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 {}，发生导航或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
+2. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 {}，发生导航、观察到新标签或需要确认时附带信息；confirmationRequired 为 true 时，先确认编辑器已保存内容再继续。需要核对页面结果时，读取相关局部状态。
 3. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位；仍无法定位就说明限制，不进行视觉猜测操作。
 - 页面结构发生变化或 target 失效时，重新从第 1 步开始。`;
 

@@ -286,6 +286,14 @@ await sessionTabs.updateWorkingTab({
 assert.equal(sessionTabs.owns("a", 400), true, "screen actions should claim a mutated tab for the current task");
 await sessionTabs.handleTabRemoved(400);
 
+for (const action of ["hover", "double_click", "drag"]) {
+  tabs.set(401, webTab(401, "https://element-action.example/page"));
+  await sessionTabs.updateWorkingTab({ sessionId: "a", tab: tabs.get(401),
+    source: "tool:act_on_element", toolName: "act_on_element", action });
+  assert.equal(sessionTabs.owns("a", 401), true, `${action} should claim the page for its task`);
+  await sessionTabs.handleTabRemoved(401);
+}
+
 tabs.set(5, webTab(5, "https://contended.example/page"));
 const contended = await Promise.all([
   sessionTabs.resolveTargetTab({ sessionId: "a", tabId: 5 }),
@@ -442,6 +450,20 @@ assert.equal(tabs.has(22), true);
 assert.deepEqual(getOwnedTabIds(runtimes.get("drive-keep")), [22]);
 assert.deepEqual(runtimes.get("drive-keep").createdTabIds, [22]);
 assert.equal(runtimes.get("drive-keep").workingTabId, null);
+
+for (const id of [23, 24, 25, 26, 27]) tabs.set(id, webTab(id, `https://selective.example/${id}`));
+runtimes.set("drive-selective", {
+  sessionId: "drive-selective", ownedTabIds: [23, 24, 25, 26, 27], createdTabIds: [23, 24, 25, 27],
+  driveHandoffTabIds: [25], tabAliases: { result: 23, intermediate: 24 }, workingTabId: 23,
+});
+const selective = await sessionTabs.settleStoppedDriveTabs("drive-selective", {
+  keepTabIds: [23], ownedTabIds: [23, 24, 25, 26], createdTabIds: [23, 24, 25], driveHandoffTabIds: [25],
+});
+assert.deepEqual(selective.closed, [24]);
+for (const id of [23, 25, 26, 27]) assert.equal(tabs.has(id), true, "selected, handed-back, user, and later-run tabs remain open");
+assert.deepEqual(getOwnedTabIds(runtimes.get("drive-selective")), [27]);
+assert.deepEqual(runtimes.get("drive-selective").createdTabIds, [27]);
+assert.deepEqual(runtimes.get("drive-selective").tabAliases, {}, "kept pages are released from the ended session");
 
 tabs.set(30, webTab(30, "https://old.example/a"));
 tabs.set(31, webTab(31, "https://new.example/b"));

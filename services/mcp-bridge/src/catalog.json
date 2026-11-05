@@ -266,12 +266,13 @@
   },
   {
     "name": "qingzhou_stop_session",
-    "description": "结束任务或直驱会话。直驱会话结束后不可再执行工具，也无需再调用 close_tab；默认自动关闭该会话创建的标签页，并保留用户原有或已交回给用户的标签页（显式传 keepTabs:true 可保留全部标签页）。End a task or direct-drive session, closing its created tabs by default while preserving user tabs (pass keepTabs:true to retain all tabs).",
+    "description": "结束任务或直驱会话。直驱会话结束后不可再执行工具，也无需再调用 close_tab；默认自动关闭该会话创建的标签页，并保留用户原有或已交回给用户的标签页。keepTabRefs 指定要交还用户的会话标签，keepTabs:true 保留全部标签页。End a task or direct-drive session, closing its created tabs by default while preserving user tabs. Pass keepTabRefs to return selected session tabs to the user, or keepTabs:true to retain all tabs.",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
         "cascade": {"default": true, "title": "Cascade", "type": "boolean"},
         "keepTabs": {"title": "Keeptabs", "type": "boolean"},
+        "keepTabRefs": {"type": "array", "items": {"anyOf": [{"type": "integer"}, {"type": "string"}]}, "description": "Session tabRef values to keep after ending the session. Validated before stopping."},
         "timeoutSeconds": {"anyOf": [{"type": "number"}, {"type": "null"}], "default": null, "title": "Timeoutseconds"},
         "clientId": {"default": "", "title": "Clientid", "type": "string", "description": "Browser name or UUID. Required when multiple browsers are online. Offline or unknown selections never fall back to another browser."}
       },

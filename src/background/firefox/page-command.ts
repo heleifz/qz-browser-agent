@@ -135,38 +135,35 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const y = Number(input.y);
     const type = String(input.type || "");
     if (type === "mouseReleased" && (x < 0 || y < 0)) {
-      if (state.mouseTarget) {
-        pointer(state.mouseTarget, "pointerup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
-        dispatch(state.mouseTarget, "mouseup", { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 });
-      }
+      const pressed = state.mouseTarget;
       state.mouseTarget = null;
+      if (pressed) {
+        const init = { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: buttonIndex(input.button), buttons: 0 };
+        pointer(pressed, "pointerup", init);
+        dispatch(pressed, "mouseup", init);
+      }
       return {};
     }
     const target = doc.elementFromPoint?.(x, y) || doc.documentElement || null;
     const button = buttonIndex(input.button);
-    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons: type === "mouseReleased" ? 0 : 1 };
+    const clickCount = Number(input.clickCount) || 1;
+    const buttons = input.buttons ?? (type === "mousePressed" ? (button === 1 ? 4 : button === 2 ? 2 : 1) : 0);
+    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons,
+      detail: type === "mousePressed" || type === "mouseReleased" ? clickCount : 0 };
     if (type === "mousePressed") {
       state.mouseTarget = target;
       try { target?.focus?.(); } catch { /* The element is not focusable. */ }
       pointer(target, "pointerdown", init);
       dispatch(target, "mousedown", init);
     } else if (type === "mouseReleased") {
+      const pressed = state.mouseTarget;
+      state.mouseTarget = null;
       pointer(target, "pointerup", init);
       dispatch(target, "mouseup", init);
-      if (state.mouseTarget === target) {
-        const name = Number(input.clickCount) > 1 ? "dblclick" : "click";
-        const event = makeEvent(name, init);
-        noted(event);
-        if (!target || typeof target.dispatchEvent !== "function") {
-          throw new Error(`Firefox could not dispatch ${name}: the page has no element at (${x}, ${y}).`);
-        }
-        try { target.dispatchEvent(event); }
-        catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          throw new Error(`Firefox could not dispatch ${name} at (${x}, ${y}): ${text}`);
-        }
+      if (pressed === target) {
+        dispatch(target, "click", init);
+        if (clickCount === 2) dispatch(target, "dblclick", init);
       }
-      state.mouseTarget = null;
     } else if (type === "mouseMoved") {
       pointer(target, "pointermove", init);
       dispatch(target, "mousemove", init);
@@ -738,7 +735,7 @@ export type PageCommand =
   | { op: "input"; input: InputCommand };
 
 type InputCommand = MouseInput | KeyInput | { kind: "text"; text?: string } | TouchInput;
-interface MouseInput { kind: "mouse"; type?: string; x?: number; y?: number; button?: string; clickCount?: number; deltaX?: number; deltaY?: number }
+interface MouseInput { kind: "mouse"; type?: string; x?: number; y?: number; button?: string; buttons?: number; clickCount?: number; deltaX?: number; deltaY?: number }
 interface KeyInput { kind: "key"; type?: string; key?: string; code?: string; keyCode?: number; modifiers?: number; text?: string; commands?: string[] }
 interface TouchInput { kind: "touch"; type?: string; x?: number; y?: number }
 

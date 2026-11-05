@@ -1,5 +1,6 @@
 import type { ToolErrorDetails } from "../shared/contracts/tool-error.js";
 import type { ToolResultPresentation } from "../shared/contracts/tool-result-presentation.js";
+import type { PageObservation } from "../shared/contracts/page-observation.js";
 /** Background extension API. Runtime services are supplied by the owning host. */
 import type { SkillActivationContext } from "../shared/skills/skill-manifest.js";
 import type { ToolDefinition, ToolSchema } from "../shared/contracts/tool.js";
@@ -39,6 +40,8 @@ export interface ToolContext extends SkillActivationContext {
   invokeTool?(name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<unknown>;
   /** The same policy-filtered catalog used by native and script callers. */
   listTools?(names?: readonly string[]): { tools: Record<string, unknown>[] };
+  /** Confirm already-observed task popups within this call's deadline; never waits for future pages. */
+  observedPopups?(): Promise<PageObservation[]>;
   /** Opaque scheduler authority; never accepted from a page message. */
   nestedToolScope?: object;
   /** Call-local diagnostic accumulator. End the measurement in a finally block. */

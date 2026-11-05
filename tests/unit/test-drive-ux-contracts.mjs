@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createMemoryStorage } from '../support/memory-storage.mjs';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
-import { isDriveToolDefault, isDriveToolForbidden, prepareDriveToolCall, projectDriveResult, runDriveCalls } from '../../src/background/mcp/external-drive.js';
+import { isDriveToolDiscoverable, isDriveToolForbidden, prepareDriveToolCall, projectDriveResult, runDriveCalls } from '../../src/background/mcp/external-drive.js';
 
 globalThis.chrome = {
   runtime: { getURL: path => `chrome-extension://test/${path}` },
@@ -26,7 +26,7 @@ function fixture() {
   return { runtime, aliases, targets, context };
 }
 
-test('documented default and guide tool names resolve in the actual drive catalog', async () => {
+test('compact discovery includes every visible tool and named discovery preserves full schemas', async () => {
   const skillToolRegistrySnapshot = await prepareSkillToolRegistryFromStorage();
   const schemas = getToolSchemas({ skillToolRegistrySnapshot, loadedPluginSkillNames: ['qingzhou-documents'] });
   const names = new Set(schemas.map(schema => schema.function.name).filter(name => !isDriveToolForbidden(name)));
@@ -34,7 +34,15 @@ test('documented default and guide tool names resolve in the actual drive catalo
   const f = fixture();
   const context = { ...f.context, skillToolRegistrySnapshot, loadedPluginSkillNames: ['qingzhou-documents'] };
   const defaults = await f.runtime.execute('list_tools', {}, undefined, context);
-  assert.deepEqual(new Set(defaults.tools.map(tool => tool.name)), new Set([...names].filter(isDriveToolDefault)));
+  assert.deepEqual(new Set(defaults.tools.map(tool => tool.name)), new Set([...names].filter(isDriveToolDiscoverable)));
+  for (const name of ['act_on_screen', 'list_images', 'download_url', 'read_dom', 'wait_until']) {
+    assert.ok(defaults.tools.some(tool => tool.name === name), `Discoverable without guessing its name: ${name}`);
+  }
+  assert.ok(defaults.tools.some(tool => tool.name.startsWith('qingzhou_documents__')), 'loaded Skill tools are discoverable');
+  for (const name of ['run_script', 'collect_images', 'read_image_asset', 'data_store']) {
+    assert.ok(!defaults.tools.some(tool => tool.name === name), `Hidden compatibility tool: ${name}`);
+  }
+  assert.ok(defaults.tools.every(tool => typeof tool.signature === 'string' && !Object.hasOwn(tool, 'parameters')));
   const mentioned = new Set([...guide.matchAll(/\btools\.([a-z_]+)\b|\b([a-z]+(?:_[a-z]+)+)\(\{/g)]
     .map(match => match[1] || match[2]));
   for (const name of mentioned) assert.ok(names.has(name), `Documented tool must be callable: ${name}`);
@@ -48,7 +56,7 @@ test('documented default and guide tool names resolve in the actual drive catalo
   }
   const companion = readFileSync(new URL('../../skills/qz-browser-agent/references/create-task.md', import.meta.url), 'utf8');
   assert.match(companion, /Direct drive does not use this file/);
-  assert.equal(isDriveToolDefault('wait_until'), false);
+  assert.equal(isDriveToolDiscoverable('wait_until'), true);
   for (const name of ['ask_user', 'wait_for_user']) assert.equal(isDriveToolForbidden(name), true);
 });
 

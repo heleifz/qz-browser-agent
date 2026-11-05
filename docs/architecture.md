@@ -13,8 +13,9 @@ For a new tool, page, renderer, provider, or embedded Skill, start with the [cap
 guide](../src/capabilities/README.md). Development rules are in [AGENTS.md](../AGENTS.md).
 
 Page tools prepare only the state they consume. Navigation returns after document commit;
-page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element targets
-observe their current nodes. `evaluate({waitUntil:"commit"})` supports early observation and
+page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element observations
+read their current nodes. Element actions wait for their action-specific readiness within the call
+deadline before dispatching input; a stale UID requires a new observation. `evaluate({waitUntil:"commit"})` supports early observation and
 predicate waits. Content messaging does not wait for parsing. Preparation uses the call's
 cancellation signal and deadline; document replacement can retry preparation, never dispatched
 user code or input. Event waits arm before their trigger; triggered waits retain same-page ordering

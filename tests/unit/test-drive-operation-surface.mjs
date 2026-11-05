@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createElementObservation } from '../../src/shared/contracts/element-observation.js';
 import { pageReferenceForResult } from '../../src/shared/tab-reference.js';
-import { projectDriveResult, isDriveToolDefault, isDriveToolForbidden, driveToolSignature } from '../../src/background/mcp/external-drive.js';
+import { projectDriveResult, isDriveToolDiscoverable, isDriveToolForbidden, driveToolSignature } from '../../src/background/mcp/external-drive.js';
 import { createMcpTransport } from '../../src/background/transports/mcp.js';
 import { createRunScriptBridge } from '../../src/background/tools/run-script-bridge.js';
 import { registerTabsNavigationTools } from '../../src/capabilities/tabs/tools.js';
@@ -51,7 +51,7 @@ test('list_tabs constructs public discovery rows and preserves active independen
   assert.equal(definitions.has('use_tab'), false);
   assert.equal(definitions.has('get_working_tab'), false);
   for(const name of ['use_tab','get_working_tab','run_skill_script']) {
-    assert.equal(isDriveToolDefault(name),false);assert.equal(isDriveToolForbidden(name),true);
+    assert.equal(isDriveToolDiscoverable(name),false);assert.equal(isDriveToolForbidden(name),true);
     assert.throws(()=>driveToolSignature({name}),{code:'DRIVE_TOOL_FORBIDDEN'});
   }
 });

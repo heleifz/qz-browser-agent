@@ -1380,15 +1380,18 @@ const scriptedTransition = await transitionRuntime.act({
   y: 600,
 }, undefined, { ...transitionContext, source: "run_script" });
 assert.equal(getToolResultPresentation(scriptedTransition)._display, undefined, "run_script child actions should omit the animation projection");
+assert.equal(Object.hasOwn(scriptedTransition, "popups"), false, "ordinary actions do not emit an empty popup field");
 assert.equal(transitionPresentationCount, 2, "run_script child actions should not render animation previews");
+const observedPopups = [{ tabRef: 7, title: "New page", url: "https://example.test/popup", active: false }];
 const scriptedTransitionObservation = await transitionRuntime.act({
   tabId: 6,
   action: "hover",
   returnScreenshot: true,
   x: 250,
   y: 600,
-}, undefined, { ...transitionContext, source: "run_script" });
+}, undefined, { ...transitionContext, source: "run_script", observedPopups: () => observedPopups });
 assert.equal(scriptedTransitionObservation._image, "data:image/jpeg;base64,YWZ0ZXI=");
+assert.deepEqual(scriptedTransitionObservation.popups, observedPopups, "screen actions include confirmed popup observations at the source");
 assert.equal(getToolResultPresentation(scriptedTransitionObservation)._display, undefined);
 assert.equal(transitionPresentationCount, 2, "run_script observations must not prepare animation previews");
 assert.equal(transitionRuntime.releaseRun("transition-session", "transition-run"), 1, "run teardown should release the retained display frame and coordinate basis");

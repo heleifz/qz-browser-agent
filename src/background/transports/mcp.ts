@@ -92,7 +92,8 @@ export function createMcpTransport(api: BackgroundApi, { bridge = {} }: { bridge
       case "get_session_snapshot": return call("sessions.snapshot", params.sessionId, params);
       case "get_messages": return call("sessions.messages", params.sessionId, params);
       case "get_history": return call("sessions.history", params.sessionId);
-      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false, keepTabs: params.keepTabs === true }, signal);
+      case "stop_session": return call("sessions.stop", params.sessionId, { source: "mcp_bridge", cascade: params.cascade !== false,
+        keepTabs: params.keepTabs === true, ...(params.keepTabRefs !== undefined ? { keepTabRefs: params.keepTabRefs } : {}) }, signal);
       case "clear_goal": return call("sessions.clearGoal", params.sessionId, "mcp_bridge", signal);
       case "list_tools": return call("tools.list", params);
       case "get_tool": return call("tools.get", params);

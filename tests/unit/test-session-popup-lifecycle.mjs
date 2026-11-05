@@ -124,6 +124,29 @@ test('cancellation during popup persistence removes the popup and rejects its ob
   capture.dispose();
 });
 
+test('selectively kept popup survives late ownership persistence without retaining its siblings', async () => {
+  for (const keepTabIds of [[3], [1]]) {
+    const f = fixture(), controller = new AbortController();
+    const scope = { ...f.scope, signal: controller.signal };
+    const capture = f.host.beginPopupCapture(scope);
+    let finishPersist;
+    f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
+    const arriving = arrive(f, f.popup(3));
+    assert.deepEqual(getOwnedTabIds(f.runtimes.get('a')), [1, 3]);
+    const snapshot = f.runtimes.get('a');
+    f.runtimes.set('a', { ...snapshot, status: 'aborted', driveKeepTabIds: keepTabIds });
+    f.current.delete('a'); controller.abort(); f.persist(async () => {});
+    await f.host.settleStoppedDriveTabs('a', { ...snapshot, keepTabIds, runIds: ['run-a'] });
+    finishPersist(); await arriving;
+    assert.equal(f.tabs.has(3), keepTabIds.includes(3), 'retention applies to the popup itself, not its opener');
+    assert.equal(f.host.findOwner(3), null, 'an explicitly kept popup stays handed back to the user');
+    assert.deepEqual(await capture.observed(), [], 'a stopped action cannot publish the kept popup');
+    await arrive(f, f.popup(4));
+    assert.equal(f.tabs.has(4), false, 'a retained page cannot retain unselected late popups');
+    capture.dispose();
+  }
+});
+
 test('popup capture cannot steal a foreign tab or a new owner’s popup', async () => {
   const f = fixture();
   assert.throws(() => f.host.beginPopupCapture({ ...f.scope, openerTabId: 2 }), error => error.code === 'SESSION_TAB_FOREIGN');
@@ -159,4 +182,59 @@ test('native cancellation closes only the captured popups and preserves user tab
   assert.equal(f.tabs.has(4), true);
   assert.deepEqual(f.runtimes.get('a').popupTabIds, [4]);
   capture.dispose();
+});
+
+test('action receipts contain only confirmed task popups and return independent public snapshots', async () => {
+  const f = fixture(), capture = f.host.beginPopupCapture(f.scope);
+  assert.deepEqual(await capture.observed(), []);
+  let finishPersist;
+  f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
+  const arriving = arrive(f, { ...f.popup(3), openerTabId: 1 });
+  let confirmed = false;
+  const receipt = capture.observed().then(pages => { confirmed = true; return pages; });
+  await new Promise(setImmediate);
+  assert.equal(confirmed, false, 'ownership must finish persistence before entering a receipt');
+  f.persist(async () => {}); finishPersist(); await arriving;
+  await arrive(f, { ...f.popup(4), openerTabId: 2 });
+  await arrive(f, f.tabs.get(3));
+  const expected = [{ tabRef: 3, title: '', url: 'about:blank', active: false }];
+  assert.deepEqual(await receipt, expected);
+  assert.deepEqual(await capture.observed(), expected, 'foreign pages and duplicate browser events are excluded');
+  (await capture.observed())[0].url = 'https://changed.invalid/';
+  assert.deepEqual(await capture.observed(), expected);
+  await f.host.handleTabRemoved(3);
+  assert.deepEqual(await capture.observed(), [], 'closed or released pages are not actionable receipts');
+  capture.dispose();
+});
+
+test('late popup confirmation does not leak into the next action receipt', async () => {
+  const f = fixture(), first = f.host.beginPopupCapture(f.scope);
+  let finishPersist;
+  f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
+  const arriving = arrive(f, f.popup(3));
+  first.dispose();
+  const second = f.host.beginPopupCapture(f.scope);
+  f.persist(async () => {}); finishPersist(); await arriving;
+  assert.equal(f.host.owns('a', 3), true, 'the page still belongs to its originating session');
+  assert.deepEqual(await first.observed(), []);
+  assert.deepEqual(await second.observed(), []);
+  await arrive(f, f.popup(4));
+  assert.deepEqual((await second.observed()).map(page => page.tabRef), [4]);
+  f.current.delete('a');
+  assert.deepEqual(await second.observed(), [], 'revoked runs cannot publish previously collected pages');
+  second.dispose();
+});
+
+test('popup receipt confirmation stops with its call without waiting for stalled persistence', async () => {
+  const f = fixture(), controller = new AbortController();
+  const capture = f.host.beginPopupCapture({ ...f.scope, signal: controller.signal });
+  let finishPersist;
+  f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
+  const arriving = arrive(f, f.popup(3));
+  const receipt = capture.observed();
+  controller.abort();
+  await assert.rejects(receipt, { code: 'OPERATION_ABORTED' });
+  capture.dispose(); f.persist(async () => {}); finishPersist(); await arriving;
+  assert.deepEqual(f.removed, [3]);
+  assert.deepEqual(await capture.observed(), []);
 });

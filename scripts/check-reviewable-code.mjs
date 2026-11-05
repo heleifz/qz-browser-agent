@@ -27,9 +27,9 @@ const REVIEWED = new Map([
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
     reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Only explicit diagnostics and errors stream as bounded data to the live host request; tool identity remains host-owned. Modern callers unwrap only host-declared Skill receipts once; legacy callers retain receipts and image observations follow the selected business object.",
   }],
-  ["dynamic-code:81fe6123d9379eaf3a7984ce93a65fba133bd41bdaa7d964e467da13b55748c4", {
+  ["dynamic-code:726f434d83ae63c0b2dbbcc6a445364dd2af16bb88ae807cea293354f73943a1", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
-    reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
+    reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world. Pointer buttons, click counts and event ordering are data; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
   ["worker-source:da02585a58c0273e23cf838e6bb38580e55334c76c0d73b27721b54c94342f17", {
     files: /^runner-sandbox\.js$/u,

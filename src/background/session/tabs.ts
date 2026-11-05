@@ -62,7 +62,7 @@ const SESSION_TAB_GROUPS_KEY = "_session_tab_groups";
 const GLOBAL_SESSION_TAB_GROUP_ID = "__agent_owned_tabs__";
 const CREATED_TAB_TOOLS = new Set(["open_tab"]);
 const MUTATING_TAB_TOOLS = new Set(["navigate", "act_on_screen"]);
-const MUTATING_ELEMENT_ACTIONS = new Set(["click", "fill", "press", "select", "check", "uncheck"]);
+const MUTATING_ELEMENT_ACTIONS = new Set(["click", "double_click", "hover", "drag", "fill", "press", "select", "check", "uncheck"]);
 
 export function createSessionTabs({
   supervisor,
@@ -97,7 +97,7 @@ export function createSessionTabs({
   const pendingTabs = new Map<number, { token: object; sessionId: string; runId?: string | null; tab: WorkingTab }>();
   const pendingAliases = new Map<object, { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }>();
   const groupSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const popupCaptures = new Set<PopupAuthority>();
+  const popupCaptures = new Set<PopupAuthority & { pages: Map<number, PageObservation>; pending: Set<Promise<void>> }>();
   const popupObservers = new Set<PopupAuthority & { accept(tab: chrome.tabs.Tab): Promise<void> }>();
   const timestamp = () => String(now?.() || "");
 
@@ -105,19 +105,40 @@ export function createSessionTabs({
     return !scope.signal?.aborted && !!scope.runId && supervisor.isRunCurrent(scope.sessionId, scope.runId);
   }
 
-  function retainPopup(scope: PopupAuthority) {
+  function retainPopup(scope: PopupAuthority, tabId: number) {
     const runtime = supervisor.getRuntime(scope.sessionId);
-    return runtime?.driveKeepTabs === true || normalizeSessionTabIds(runtime?.driveHandoffTabIds).includes(scope.openerTabId);
+    return runtime?.driveKeepTabs === true || normalizeSessionTabIds(runtime?.driveKeepTabIds).includes(tabId)
+      || normalizeSessionTabIds(runtime?.driveHandoffTabIds).includes(scope.openerTabId);
   }
 
   function beginPopupCapture(input: PopupAuthority) {
-    const scope = { ...input, sessionId: normalizeSessionId(input.sessionId) };
+    const scope = { ...input, sessionId: normalizeSessionId(input.sessionId),
+      pages: new Map<number, PageObservation>(), pending: new Set<Promise<void>>() };
     if (!popupCurrent(scope)) throw new ToolExecutionError("OPERATION_ABORTED", "The task ended before opening a popup.");
     if (!owns(scope.sessionId, scope.openerTabId)) throw new ToolExecutionError("SESSION_TAB_FOREIGN", t("browser.foreignTab"));
     popupCaptures.add(scope);
     // Keep the revoked authority until the dispatch settles: a browser-created tab
     // arriving after cancellation must be closed, never published into another run.
-    return { dispose() { popupCaptures.delete(scope); } };
+    return {
+      async observed() {
+        if (!popupCaptures.has(scope) || !popupCurrent(scope)) return [];
+        if (scope.pending.size) {
+          const confirmed = Promise.all([...scope.pending]);
+          let aborted: (() => void) | undefined;
+          try {
+            await new Promise<void>((resolve, reject) => {
+              aborted = () => reject(new ToolExecutionError("OPERATION_ABORTED", "Stopped confirming popup ownership."));
+              if (scope.signal?.aborted) { aborted(); return; }
+              scope.signal?.addEventListener("abort", aborted, { once: true });
+              confirmed.then(() => resolve(), reject);
+            });
+          } finally { if (aborted) scope.signal?.removeEventListener("abort", aborted); }
+        }
+        if (!popupCaptures.has(scope) || !popupCurrent(scope)) return [];
+        return [...scope.pages].filter(([tabId]) => owns(scope.sessionId, tabId)).map(([, page]) => ({ ...page }));
+      },
+      dispose() { popupCaptures.delete(scope); scope.pages.clear(); scope.pending.clear(); },
+    };
   }
 
   async function observePopup(input: PopupAuthority) {
@@ -162,36 +183,50 @@ export function createSessionTabs({
     const scope = scopes.find(candidate => popupCurrent(candidate) && owns(candidate.sessionId, openerTabId));
     if (!scope) {
       const owner = findOwner(openerTabId);
-      const transferred = scopes.some(retainPopup) || owner && (scopes.every(candidate => candidate.sessionId !== owner.sessionId)
+      const transferred = scopes.some(candidate => retainPopup(candidate, tabId)) || owner && (scopes.every(candidate => candidate.sessionId !== owner.sessionId)
         || (owner.runtime.runId && scopes.every(candidate => candidate.runId !== owner.runtime.runId)));
       if (!transferred && scopes.length && scopes.every(candidate => !popupCurrent(candidate))) await tabsApi.remove(tabId).catch(() => {});
       return;
     }
-    const runtime = supervisor.getRuntime(scope.sessionId) || {};
-    // Publish both sets before yielding, so stop's durable tab snapshot includes the popup.
-    setRuntime(scope.sessionId, { ownedTabIds: addOwnedTabId(runtime, tabId),
-      createdTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), tabId]),
-      popupTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.popupTabIds) ? runtime.popupTabIds : []), tabId]) });
-    await persistRuntime(scope.sessionId);
-    if (!popupCurrent(scope)) {
-      if (retainPopup(scope)) return;
-      await tabsApi.remove(tabId).catch(() => {});
-      await handleTabRemoved(tabId);
-      return;
+    let finishConfirmation!: () => void;
+    const confirmation = new Promise<void>(resolve => { finishConfirmation = resolve; });
+    for (const capture of scopes) capture.pending.add(confirmation);
+    try {
+      const runtime = supervisor.getRuntime(scope.sessionId) || {};
+      // Publish both sets before yielding, so stop's durable tab snapshot includes the popup.
+      setRuntime(scope.sessionId, { ownedTabIds: addOwnedTabId(runtime, tabId),
+        createdTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), tabId]),
+        popupTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.popupTabIds) ? runtime.popupTabIds : []), tabId]) });
+      await persistRuntime(scope.sessionId);
+      if (!popupCurrent(scope)) {
+        if (retainPopup(scope, tabId)) return;
+        await tabsApi.remove(tabId).catch(() => {});
+        await handleTabRemoved(tabId);
+        return;
+      }
+      let tab: chrome.tabs.Tab;
+      try { tab = await tabsApi.get(tabId); }
+      catch { await handleTabRemoved(tabId); return; }
+      if (!popupCurrent(scope)) {
+        if (retainPopup(scope, tabId)) return;
+        await tabsApi.remove(tabId).catch(() => {});
+        await handleTabRemoved(tabId);
+        return;
+      }
+      // A receipt reports only pages confirmed while its capture is still open.
+      // Delayed confirmations retain their Session lifecycle without entering a later receipt.
+      for (const capture of scopes) if (popupCaptures.has(capture) && popupCurrent(capture)
+        && capture.sessionId === scope.sessionId && capture.runId === scope.runId) {
+        capture.pages.set(tabId, { tabRef: tabId, title: String(tab.title || ""), url: getEffectiveTabUrl(tab), active: !!tab.active });
+      }
+      for (const observer of [...popupObservers]) if (observer.sessionId === scope.sessionId
+        && observer.runId === scope.runId && observer.openerTabId === openerTabId) await observer.accept(tab);
+      broadcast({ type: "sessions_changed", action: "session_tabs", sessionId: scope.sessionId });
+      scheduleGroupSync(scope.sessionId);
+    } finally {
+      for (const capture of scopes) capture.pending.delete(confirmation);
+      finishConfirmation();
     }
-    let tab: chrome.tabs.Tab;
-    try { tab = await tabsApi.get(tabId); }
-    catch { await handleTabRemoved(tabId); return; }
-    if (!popupCurrent(scope)) {
-      if (retainPopup(scope)) return;
-      await tabsApi.remove(tabId).catch(() => {});
-      await handleTabRemoved(tabId);
-      return;
-    }
-    for (const observer of [...popupObservers]) if (observer.sessionId === scope.sessionId
-      && observer.runId === scope.runId && observer.openerTabId === openerTabId) await observer.accept(tab);
-    broadcast({ type: "sessions_changed", action: "session_tabs", sessionId: scope.sessionId });
-    scheduleGroupSync(scope.sessionId);
   }
 
   function getTabAliases(sessionId: string) {
@@ -808,6 +843,7 @@ export function createSessionTabs({
   /** Close or hand back only the tabs captured when this stop began. */
   async function settleStoppedDriveTabs(sessionId: unknown, options: {
     keepTabs?: boolean;
+    keepTabIds?: readonly number[];
     source?: string;
     ownedTabIds?: unknown;
     createdTabIds?: unknown;
@@ -821,13 +857,14 @@ export function createSessionTabs({
     const snapshotOwned = new Set(normalizeSessionTabIds(options.ownedTabIds));
     const snapshotCreated = new Set(normalizeSessionTabIds(options.createdTabIds));
     const snapshotHandoff = new Set(normalizeSessionTabIds(options.driveHandoffTabIds));
+    const keep = new Set(options.keepTabIds || []);
     const released = new Set([...snapshotOwned, ...snapshotCreated, ...snapshotHandoff]);
     const closed: number[] = [];
     if (!options.keepTabs) {
       await discardPendingTabsForRun(id, options.runIds || []);
       if (options.blocked?.()) return { closed, released: false };
       for (const tabId of snapshotCreated) {
-        if (snapshotHandoff.has(tabId)) continue;
+        if (snapshotHandoff.has(tabId) || keep.has(tabId)) continue;
         try {
           await tabsApi.remove(tabId);
           closed.push(tabId);

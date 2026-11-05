@@ -6,7 +6,6 @@ import {
   DRIVE_RESULT_CHAR_LIMIT,
   driveGroupTitle,
   driveToolSignature,
-  isDriveToolDefault,
   isDriveToolDiscoverable,
   isDriveToolForbidden,
   parseDriveRequest,
@@ -89,18 +88,18 @@ test("drive titles and request sentences stay on the existing tool", () => {
 });
 
 test("direct-drive discovery separates outer orchestration from explicit page evaluation", () => {
-  assert.equal(isDriveToolDefault("open_tab"), true);
-  assert.equal(isDriveToolDefault("list_skills"), true);
-  assert.equal(isDriveToolDefault("use_tab"), false);
+  assert.equal(isDriveToolDiscoverable("open_tab"), true);
+  assert.equal(isDriveToolDiscoverable("list_skills"), true);
+  assert.equal(isDriveToolDiscoverable("use_tab"), false);
   assert.equal(isDriveToolForbidden("use_tab"), true);
-  assert.equal(isDriveToolDefault("wait_for_element"), true);
-  assert.equal(isDriveToolDefault("wait_for_navigation"), true);
-  assert.equal(isDriveToolDefault("wait_until"), false);
-  assert.equal(isDriveToolDefault("get_working_tab"), false);
-  assert.equal(isDriveToolDefault("read_dom"), false);
-  assert.equal(isDriveToolDefault("browse_history"), false);
-  assert.equal(isDriveToolDefault("manage_goal"), false);
-  assert.equal(isDriveToolDefault("run_script"), false);
+  assert.equal(isDriveToolDiscoverable("wait_for_element"), true);
+  assert.equal(isDriveToolDiscoverable("wait_for_navigation"), true);
+  assert.equal(isDriveToolDiscoverable("wait_until"), true);
+  assert.equal(isDriveToolDiscoverable("get_working_tab"), false);
+  assert.equal(isDriveToolDiscoverable("read_dom"), true);
+  assert.equal(isDriveToolDiscoverable("browse_history"), true);
+  assert.equal(isDriveToolDiscoverable("manage_goal"), false);
+  assert.equal(isDriveToolDiscoverable("run_script"), false);
   assert.equal(isDriveToolForbidden("wait_until"), false);
   assert.equal(isDriveToolForbidden("get_working_tab"), true);
   assert.equal(isDriveToolForbidden("wait_for_user"), true);
@@ -1158,7 +1157,7 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
       parameters: schema.function?.parameters || {},
       type: schema.type || "function",
     })).filter(tool => tool.name);
-    const watched = catalog.filter(tool => isDriveToolDefault(tool.name));
+    const watched = catalog.filter(tool => isDriveToolDiscoverable(tool.name));
     assert.ok(watched.some(tool => tool.name === "list_tabs"));
     assert.ok(!watched.some(tool => ['use_tab', 'get_working_tab'].includes(tool.name)));
     for (const tool of watched) assertNoDriveTabLeak(`${language} signature ${tool.name}`, driveToolSignature(tool));
@@ -1223,6 +1222,9 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     await runtime.createDriveSession({ title: "Inspect example page", sessionId: "drive-1" });
     const listed = await runtime.listTools({ sessionId: "drive-1" });
     assert.ok(listed.tools.length > 1);
+    for (const name of ["act_on_screen", "list_images", "download_url", "read_dom"]) {
+      assert.ok(listed.tools.some(tool => tool.name === name), `MCP discovers ${name} without a name lookup`);
+    }
     for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);
     for (const name of ["list_tabs", "navigate"]) {
       assertNoDriveTabLeak(`${language} get_tool ${name}`, await runtime.getTool({ sessionId: "drive-1", name }));

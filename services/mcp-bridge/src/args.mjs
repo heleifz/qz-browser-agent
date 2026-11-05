@@ -29,6 +29,7 @@ const argumentOptions = {
   wait: { type: "boolean" }, stream: { type: "boolean" }, steer: { type: "boolean" },
   json: { type: "boolean" }, plain: { type: "boolean" }, "no-color": { type: "boolean" },
   lang: { type: "string" }, profile: { type: "string" }, args: { type: "string" },
+  keep: { type: "string", multiple: true },
   help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
 };
 
@@ -49,7 +50,7 @@ export function parseCommand(argv) {
   for (const token of parsed.tokens) {
     if (token.kind !== "option" || token.value === undefined) continue;
     const name = token.name;
-    if (seen.has(name)) invalid(`Provide --${name} only once.`);
+    if (seen.has(name) && !argumentOptions[name].multiple) invalid(`Provide --${name} only once.`);
     seen.add(name);
   }
   if (options.json && options.plain) invalid("Choose --json or --plain.");
@@ -70,6 +71,10 @@ export function parseCommand(argv) {
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0 || timeoutSeconds > 3600) invalid("--timeout must be greater than 0 and at most 3600 seconds.");
   for (const name of ["session", "client", "wait-id", "parent"]) {
     if (options[name] !== undefined && !options[name].trim()) invalid(`--${name} requires a non-empty ID.`);
+  }
+  if (options.keep !== undefined) {
+    options.keep = options.keep.map(value => value.trim());
+    if (options.keep.some(value => !value)) invalid("--keep requires a non-empty tabRef.");
   }
   if (options.name !== undefined) {
     try { options.name = browserName(options.name); } catch (error) { invalid(error.message); }

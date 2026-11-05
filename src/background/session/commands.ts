@@ -13,6 +13,8 @@ import type { TranscriptEntry } from "../../shared/contracts/session.js";
 import type { ModelMessage } from "../../shared/contracts/model-message.js";
 import { publicSessionObservation, type SessionStopReceipt } from "../../shared/contracts/session-observation.js";
 import { toolError } from "../../shared/contracts/tool-error.js";
+import { normalizeTabAliases } from "../../shared/tab-reference.js";
+import { resolveTabReference } from "../tools/tab-reference.js";
 import type { chat as llmChat } from "../llm/index.js";
 import type { getCurrentRuntimeConfig } from "../runtime-config.js";
 import type { normalizeSessionRuntimeStatus } from "../../shared/session/session-runtime-status.js";
@@ -1924,7 +1926,8 @@ async function deleteSessionRuntime(sessionId: string, meta: Fields = {}, signal
         const runtime = sessionSupervisor.getRuntime(id) || {};
         const tabs = snapshotStoppedTabs(runtime);
         if (tabs.ownedTabIds.length || tabs.createdTabIds.length || tabs.driveHandoffTabIds.length) {
-          await sessionTabs.settleStoppedDriveTabs(id, { ...tabs, keepTabs: runtime.driveKeepTabs === true, source: "drive_retention" });
+          await sessionTabs.settleStoppedDriveTabs(id, { ...tabs, keepTabs: runtime.driveKeepTabs === true,
+            keepTabIds: normalizeSessionTabIds(runtime.driveKeepTabIds), source: "drive_retention" });
         }
         await sessionTabs.syncGroup?.(id);
         sessionRepository.beginDeletion(id);
@@ -1993,6 +1996,33 @@ async function stopSessionRuntime(sessionId: string, meta: Fields = {}, signal?:
 async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, signal?: AbortSignal) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
+  let keepTabIds: number[] = [];
+  if (meta.keepTabRefs !== undefined) {
+    await sessionRuntimeReady;
+    signal?.throwIfAborted();
+    const session = (await getSessions())[id];
+    signal?.throwIfAborted();
+    if (session?.source !== "external-drive") throw Object.assign(new Error("Selected tabs can only be kept when ending a direct-drive session."),
+      toolError("INVALID_ARGUMENTS", "Selected tabs can only be kept when ending a direct-drive session.", {
+        hint: "Use qz session list to choose the direct-drive session that owns these tabs.",
+      }));
+    const runtime = sessionSupervisor.getRuntime(id) || {};
+    // A completed stop owns the retention decision, even after aliases were released.
+    if (runtime.status === "aborted") keepTabIds = normalizeSessionTabIds(runtime.driveKeepTabIds);
+    else {
+      if (!Array.isArray(meta.keepTabRefs)) throw sessionError("INVALID_ARGUMENTS", "keepTabRefs must be an array of tabRef values.");
+      const owned = getOwnedTabIds(runtime);
+      const aliases = normalizeTabAliases(runtime.tabAliases, owned);
+      keepTabIds = [...new Set(meta.keepTabRefs.map(tabRef => {
+        const tabId = resolveTabReference(tabRef, aliases);
+        if (!owned.includes(tabId)) throw Object.assign(new Error("The tab to keep does not belong to this session."),
+          toolError("SESSION_TAB_FOREIGN", "The tab to keep does not belong to this session.", {
+            hint: "Use list_tabs in this session and pass one of its tabRef values.", details: { tabRef },
+          }));
+        return tabId;
+      }))];
+    }
+  }
   const driveRunId = meta.driveRunCaptured === true
     ? String(meta.driveRunId || "")
     : sessionSupervisor.takeDriveRunForRelease(id);
@@ -2008,7 +2038,7 @@ async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, sig
     signal.throwIfAborted();
   }
 
-  const result = await stopSingleSessionRuntime(id, meta, signal, { driveRunId, stoppedTabs });
+  const result = await stopSingleSessionRuntime(id, meta, signal, { driveRunId, stoppedTabs, keepTabIds });
   const cascade = meta.cascade !== false;
   const childResults = [];
   if (cascade) {
@@ -2035,12 +2065,14 @@ async function stopSessionWithChildren(sessionId: string, meta: Fields = {}, sig
 async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, signal?: AbortSignal, early?: {
   driveRunId: string;
   stoppedTabs: { ownedTabIds: number[]; createdTabIds: number[]; popupTabIds: number[]; driveHandoffTabIds: number[] };
+  keepTabIds: number[];
 }) {
   const id = typeof sessionId === "string" ? sessionId.trim() : "";
   if (!id) throw new Error("stopSession requires sessionId");
   const captured = early || {
     driveRunId: sessionSupervisor.takeDriveRunForRelease(id),
     stoppedTabs: snapshotStoppedTabs(sessionSupervisor.getRuntime(id) || {}),
+    keepTabIds: [],
   };
   const invalidated = noteExternalDriveStopped(id, meta);
   const driveRunIds = captured.driveRunId ? [captured.driveRunId] : [];
@@ -2052,6 +2084,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
   const session = (await getSessions())[id];
   const externalDrive = session?.source === "external-drive";
   let keepDriveTabs = meta.keepTabs === true;
+  let keepTabIds = captured.keepTabIds;
   const before = getSessionRuntimeState(id);
   let hadRuntime = false;
   let runId = before.runId || null;
@@ -2066,7 +2099,10 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};
       const checkpoint = sessionSupervisor.getRuntime(id) || before;
-      if (externalDrive && checkpoint.status === "aborted") keepDriveTabs = object(checkpoint).driveKeepTabs === true;
+      if (externalDrive && checkpoint.status === "aborted") {
+        keepDriveTabs = object(checkpoint).driveKeepTabs === true;
+        keepTabIds = normalizeSessionTabIds(object(checkpoint).driveKeepTabIds);
+      }
       pendingFollowUpMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingFollowUpMessages);
       pendingSteeringMessages = runtimeState.normalizePendingFollowUps(checkpoint.pendingSteeringMessages);
       hadRuntime = Boolean(
@@ -2084,7 +2120,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
 
       if (checkpoint.waitId) sessionSupervisor.rejectUserWait({ sessionId: id, waitId: String(checkpoint.waitId) });
       runtimeState.set(id, {
-        ...(externalDrive ? { driveKeepTabs: keepDriveTabs } : {}),
+        ...(externalDrive ? { driveKeepTabs: keepDriveTabs, driveKeepTabIds: keepTabIds } : {}),
         status: "aborted",
         running: false,
         pendingStart: false,
@@ -2155,6 +2191,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
       if (external) {
         await sessionTabs.settleStoppedDriveTabs(id, {
           keepTabs: keepDriveTabs,
+          keepTabIds,
           source: "stop_session",
           runIds: driveRunIds,
           blocked: () => externalDriveLeaseActive(id),

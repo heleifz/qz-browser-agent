@@ -44,7 +44,7 @@ export const VISION_READING_RULE = "- To analyze an image on a page, obtain its 
 
 export const VISUAL_SCREEN_ACTION_RULE = `Page interaction:
 1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview, or read_article, find_elements, or list_images for focused observations. Read-only observations may target pages owned by another task; always pass tabRef.
-2. When you have a reliable target on a page owned by this task, use act_on_element. A successful action returns {} unless it reports navigation or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
+2. When you have a reliable target on a page owned by this task, use act_on_element. Actions wait for usable targets before dispatch. A successful action returns {} unless it reports navigation, observed popups, or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
 3. When the target is inside a Canvas or has no reliable target, call screenshot({tabRef,actionable:true}) and pass original image pixel coordinates to act_on_screen within coordinateSpace.width/height.
 - If page structure changes or a target becomes invalid, restart from step 1.
 - Every act_on_screen call must explicitly set returnScreenshot: pass true to inspect the result, or false for intermediate steps in a verified sequence. Only true produces an observation screenshot; false reuses the existing coordinate basis while valid. viewportChange records browser viewport changes only, whereas in-page effects are confirmed by screenshot; re-observe when coordinateBasisReady is false. A press without x/y sends the key to the current focus.
@@ -54,7 +54,7 @@ export const TEXT_ONLY_READING_RULE = "- The current model cannot see images; co
 
 export const TEXT_ONLY_PAGE_ACTION_RULE = `Page interaction:
 1. Inspect the target page first: use get_ax_tree({tabRef}) for an overview, or read_article, find_elements, or list_images for focused observations. Read-only observations may target pages owned by another task; always pass tabRef.
-2. When you have a reliable target on a page owned by this task, use act_on_element. A successful action returns {} unless it reports navigation or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
+2. When you have a reliable target on a page owned by this task, use act_on_element. Actions wait for usable targets before dispatch. A successful action returns {} unless it reports navigation, observed popups, or requires confirmation; if confirmationRequired is true, verify the editor saved the value before continuing. Use a focused observation to check the resulting page state when needed.
 3. Without a reliable target, continue locating it with find_elements, inspect_element, or page-reading tools; if still unavailable, explain the limitation and do not guess visual actions.
 - If page structure changes or a target becomes invalid, restart from step 1.`;
 

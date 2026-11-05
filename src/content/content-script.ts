@@ -18,6 +18,7 @@ interface ElementSummary extends PageAction {
   rect: { x: number; y: number; w: number; h: number }; clickablePoint: PagePoint | null;
 }
 interface ContentRequest {
+  scroll?: boolean;
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
@@ -2046,7 +2047,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return elementActionState(el);
     },
 
-    resolveCheckTarget({ selector, index = 0 }) {
+    resolveCheckTarget({ selector, index = 0, scroll = true }) {
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
       const { element: el } = targetResult;
@@ -2056,7 +2057,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (isDisabled(el)) return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
       const labels = [...(el.labels || [])].filter(label => label.control === el);
       for (const candidate of [el, ...labels]) {
-        candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+        if (scroll) candidate.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
         const inspection = getElementInspection(candidate);
         const point = inspection.clickablePoint;
         if (!inspection.visible || inspection.disabled || !pointInViewport(point) || inspection.state.obscuredAtCenter) continue;
@@ -2611,6 +2612,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return {
       ...summary,
       ...extra,
+      readOnly: isReadOnly(el),
       attrs: getElementAttrs(el),
       state: {
         focused: elementHasFocus(el),
@@ -3088,7 +3090,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         return element?.isConnected && element.ownerDocument === document ? element : null;
       });
     }
-    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) return elementPresence(node, payload.visibleOnly !== false);
+    if (payload?.action === "elementPresence" && node instanceof Element && node.ownerDocument === document) {
+      return payload.queryOnly ? { found: node.isConnected } : elementPresence(node, payload.visibleOnly !== false);
+    }
     const token = String(payload?.fillToken || "");
     if (payload?.action === "releaseFillRoot") {
       if (token) fillRoots.delete(token);

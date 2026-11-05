@@ -94,6 +94,22 @@ test("send accepts short follow-up text, stdin, and task observation options", (
   for (const args of [["create", "hello", "--steer"], ["watch", "task-1", "--steer"], ["send", "task-1", "hello", "--steer=false"]]) rejects(args);
 });
 
+test("session cancellation accepts repeatable explicit tab references", () => {
+  const parsed = parseCommand(["session", "cancel", "drive", "--keep", " result ", "--keep=evidence", "--keep", "42"]);
+  assert.deepEqual(parsed.options.keep, ["result", "evidence", "42"]);
+  assert.deepEqual(resourceRequest(parsed), {
+    name: "qingzhou_stop_session", args: { sessionId: "drive", keepTabRefs: ["result", "evidence", "42"] },
+  });
+  assert.equal(Object.hasOwn(resourceRequest(parseCommand(["session", "cancel", "drive"])).args, "keepTabRefs"), false);
+  for (const args of [["session", "cancel", "drive", "--keep"], ["session", "cancel", "drive", "--keep="],
+    ["session", "cancel", "drive", "--keep", "result", "--keep", " "],
+    ["session", "show", "drive", "--keep", "result"], ["session", "list", "--keep", "result"],
+    ["session", "create", "--title", "Task", "--keep", "result"], ["cancel", "drive", "--keep", "result"]]) rejects(args);
+  assert.doesNotThrow(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabRefs: [42, "result"] }));
+  assert.doesNotThrow(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabs: true }));
+  assert.throws(() => validateMcpToolInput("qingzhou_stop_session", { sessionId: "drive", keepTabRefs: [true] }));
+});
+
 test("task commands normalize to the existing task operations", () => {
   assert.deepEqual(parseCommand(["create", "Compare", "two laptops", "-t", "Research"]), {
     command: "tasks", action: "create", id: undefined, options: { title: "Research", prompt: "Compare two laptops" }, timeoutSeconds: 180, waitTimeoutSeconds: null,
@@ -282,7 +298,7 @@ test("every declared CLI resource route maps to an advertised MCP schema", () =>
       export: ["export", "research", "--filename", "research.zip"] },
     settings: { get: ["get", "model"], set: ["set", "vision", "true"] },
     automations: { list: ["--limit", "5"], run: ["run", "daily"] },
-    session: { create: ["create", "--title", "Inspect page"], list: ["list"], show: ["show", "drive"], cancel: ["cancel", "drive"] },
+    session: { create: ["create", "--title", "Inspect page"], list: ["list"], show: ["show", "drive"], cancel: ["cancel", "drive", "--keep", "result"] },
   };
   const advertised = new Set(TOOL_CATALOG.map(tool => tool.name));
   for (const [command, definition] of Object.entries(COMMANDS)) {

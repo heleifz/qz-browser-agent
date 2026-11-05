@@ -660,6 +660,19 @@ export function createCdpRuntime({
 
   function bindSend(state: CdpState, check: () => void, sessionId = "", context: ToolContext = {}): CdpCommand {
     const send = ((method: string, params: Record<string, unknown> = {}) => sendForState(state, method, params, check, sessionId, context)) as CdpCommand;
+    const connectionId = state.connectionId, ownerKey = state.ownerKey;
+    send.cancelPointer = async () => {
+      const current = () => {
+        if (isReadOnlyAccess(state.tabId, context) || tabs.get(state.tabId) !== state || !state.attached || state.releasing
+          || state.connectionId !== connectionId || state.ownerKey !== ownerKey) throw runReleasedError(context);
+      };
+      current();
+      const target = sessionId ? { ...state.target, sessionId } : state.target;
+      const params = { type: "mouseReleased", x: -1, y: -1, button: "left", buttons: 0, clickCount: 1 };
+      // Only a non-clicking release may outlive the tool signal; never acquire or restore a connection here.
+      if (debuggerApi.sendCommandWithScope) await debuggerApi.sendCommandWithScope(target, "Input.dispatchMouseEvent", params, { check: current });
+      else await debuggerApi.sendCommand(target, "Input.dispatchMouseEvent", params);
+    };
     send.inSession = (childSessionId: string) => bindSend(state, check, String(childSessionId || ""), context);
     send.tabId = state.tabId;
     send.connectionId = state.connectionId;

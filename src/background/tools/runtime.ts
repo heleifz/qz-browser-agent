@@ -45,7 +45,7 @@ import { ensureToolBrowserPermission } from "./browser-permissions.js";
 import { selectSkillResults } from "../skills/skill-selection.js";
 import { assertHtmlPage, assertPageUrlAccessible } from "./page-access.js";
 import { assertScriptPageLifecycle, toolBehaviorEnabled } from "./behavior.js";
-import { toolSignature, isDriveToolDefault, isDriveToolDiscoverable } from "../mcp/external-drive.js";
+import { toolSignature, isDriveToolDiscoverable } from "../mcp/external-drive.js";
 /**
  * Definitions declare capabilities; this runtime owns permission, cancellation and effects.
  * Core, Skill and script bridges share this boundary instead of invoking raw handlers.
@@ -531,8 +531,7 @@ function listContextTools(context: ToolContext, names?: readonly string[]): { to
     for (const name of requested) if (!index.has(name)) throw new ToolExecutionError("UNKNOWN_TOOL", `Unknown or unavailable tool: ${name}`, { name });
     return { tools: requested.map(name => ({ ...index.get(name)! })) };
   }
-  return { tools: allowed.filter(schema => context.externalDrive !== true || isDriveToolDefault(schema.function.name))
-    .map(schema => toolSignature(schema.function)) };
+  return { tools: allowed.map(schema => toolSignature(schema.function)) };
 }
 
 function getLocalizedToolSchemas(options: ToolOptions, snapshot: ReturnType<typeof coreToolDefinitions.snapshot>) {
@@ -735,6 +734,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
               scoped.invokeTool = authority.invokeNestedTool
                 ? (name, args, options) => authority.invokeNestedTool!(scoped, name, args, options?.signal) : undefined;
               scoped.listTools = names => listContextTools(scoped, names);
+              scoped.observedPopups = capture?.observed;
               try { return await selectedDefinition.execute(args, scoped.signal,
                 definitionExecutionContext(scoped, selectedDefinition, args, getToolRuntimeDependencies(callContext))); }
               finally { capture?.dispose(); }
@@ -1056,7 +1056,7 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
   if (kind === "action") result = { ...toolError(timeoutError.code, timeoutError.message, {
-    hint: result.executed === false ? "The script did not execute. Check the page state before retrying."
+    hint: result.executed === false ? "The operation did not execute. Check the page state before retrying."
       : withLanguage(language, () => toolT("actionTimeout")),
     details: { ...timeoutError.details, ...(Array.isArray(result.trace) ? { trace: result.trace } : {}),
       ...(typeof result.executed === "boolean" ? { executed: result.executed } : {}),

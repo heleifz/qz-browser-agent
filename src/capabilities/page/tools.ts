@@ -1,5 +1,6 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
+import { waitForElementReady } from "./element-readiness.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
 import { isElementReply, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
@@ -13,7 +14,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   | "getPageContext" | "getTabPageState" | "pageStateDelta"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult"
-  | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
+  | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement" | "readMainDocumentId">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import { waitForParsedDocument, armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
@@ -105,6 +106,7 @@ export function registerPageElementTools({
   resolveSelectorTarget,
   resolveElementReference,
   useElement,
+  readMainDocumentId,
   addElementTargetsToFindResult,
   elementTargetForSelector,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
@@ -309,10 +311,12 @@ registerTool({
 registerTool({
   name: "act_on_element",
   argumentAliases: { selector: "target" },
-  behavior: { targetLookup: "light", parallelTab: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
+  behavior: { targetLookup: "light", parallelTab: true,
+    uidTargets: args => [args.target, ...(args.action === "drag" ? [asRecord(args.destination).target] : [])],
+    mayOpenPopup: true, timeoutResult: { kind: "action", pending: "action outcome confirmation" }, mayUnloadPage: args => {
     const action = String(args.action || "").trim().toLowerCase();
     const key = String(args.key || args.value || "").trim().toLowerCase();
-    return action === "click" || (action === "fill" && args.submit === true)
+    return ["click", "double_click", "drag"].includes(action) || (action === "fill" && args.submit === true)
       || (action === "press" && ["enter", "return", "space"].includes(key));
   } },
   effects: (_args, result) => result && typeof result === "object" && "navigated" in result && result.navigated === true
@@ -324,7 +328,8 @@ registerTool({
       tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
       target: { type: "string", description: getElementTargetDescription() },
       index: { type: "number", description: toolT("inspectElementIndex") },
-      action: { type: "string", enum: ["click", "fill", "press", "select", "check", "uncheck", "scroll"] },
+      action: { type: "string", enum: ["click", "double_click", "hover", "drag", "fill", "press", "select", "check", "uncheck", "scroll"] },
+      destination: { type: "object", properties: { target: { type: "string", description: getElementTargetDescription() } }, required: ["target"], description: toolT("actOnElementDestination") },
       value: { type: "string", description: toolT("actOnElementValue") },
       key: { type: "string", description: toolT("actOnElementKey") },
       submit: { type: "boolean", description: toolT("actOnElementSubmit") },
@@ -332,13 +337,21 @@ registerTool({
     required: ["target", "action", "tabRef"],
   } as const; },
   page: "owned",
-  timeout: args => String(args.action || "").trim().toLowerCase() === "click" ? { defaultMs: 1800000, maxMs: 7200000 } : { defaultMs: 20000, maxMs: 120000 },
-  execute: async ({ tabId, target = "", index = 0, action, value = "", key = "", submit = false }, _signal, context = {}) => {
+  timeout: { defaultMs: 20000, maxMs: 120000 },
+  validateArgs: args => {
+    if (args.action === "drag") requireToolFields("act_on_element", args, ["destination"], { action: "drag" });
+  },
+  execute: async (input, _signal, context = {}) => {
+    let { tabId, target = "", index = 0, action, destination, value = "", key = "", submit = false } = input;
+    const timeout = Number(asRecord(input).timeout);
+    const deadline = Date.now() + (timeout > 0 ? Math.min(timeout * 1000, 120000) : Number(input.timeoutMs) > 0 ? Number(input.timeoutMs) : 20000);
+    context.reportPartial?.({ executed: false }, "element readiness");
+    const dispatchedAction = () => context.reportPartial?.({ executed: true }, "action outcome confirmation");
     const normalizedAction = String(action || "").trim().toLowerCase();
-    const allowed = new Set(["click", "fill", "press", "select", "check", "uncheck", "scroll"]);
+    const allowed = new Set(["click", "double_click", "hover", "drag", "fill", "press", "select", "check", "uncheck", "scroll"]);
     if (!allowed.has(normalizedAction)) {
       return { ...toolError("UNSUPPORTED_ELEMENT_ACTION", `Unsupported act_on_element action: ${action}`, {
-        hint: "Use click, fill, press, select, check, uncheck, or scroll.", details: { target },
+        hint: "Use click, double_click, hover, drag, fill, press, select, check, uncheck, or scroll.", details: { target },
       }) };
     }
 
@@ -370,11 +383,22 @@ registerTool({
     async function perform() {
     const frameId = String(ref.ref?.frameId || "");
 
-    const inspected = await sendToContent(tabId, "inspectElement", { selector, index }, bound, context);
+    const inspect = (clickTarget = false) => sendToContent(tabId, "inspectElement", { selector, index, ...(clickTarget ? { clickTarget } : {}) }, bound, context);
+    const inspected = await waitForElementReady({ inspect, target: resolvedTarget, signal: _signal, deadline,
+      readiness: element => {
+        if (normalizedAction === "scroll" || normalizedAction === "hover") return;
+        if (element.disabled === true) return "element is disabled";
+        if (["fill", "press"].includes(normalizedAction) && element.visible === false) return "element is hidden";
+        if (normalizedAction === "fill" && element.editable !== false && element.type !== "file") {
+          if (element.readOnly === true || asRecord(element.attrs).readonly !== undefined) return "element is readonly";
+        }
+      },
+    });
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction, resolvedTarget);
-    const complete = (navigation: Record<string, unknown> = {}, fill?: unknown) => {
+    const complete = async (navigation: Record<string, unknown> = {}, fill?: unknown) => {
       const richText = asRecord(asRecord(fill).richText);
-      return bindToolResultPresentation({ ...navigation, ...(richText.warning ? {
+      const popups = await context.observedPopups?.();
+      return bindToolResultPresentation({ ...navigation, ...(popups?.length ? { popups } : {}), ...(richText.warning ? {
         confirmationRequired: true, hint: "Verify the editor saved the value before continuing.",
       } : {}) }, {
         _display: { elementAction: {
@@ -383,6 +407,95 @@ registerTool({
         } },
       });
     };
+
+    if (["hover", "double_click", "drag"].includes(normalizedAction)) {
+      const endRef = normalizedAction === "drag"
+        ? await resolveElementReference(tabId, { target: destination?.target || "", index: 0 }, context) : null;
+      if (endRef && endRef.tabId !== tabId) throw new ToolExecutionError("ELEMENT_UID_TAB_MISMATCH", "Drag targets must belong to the same page.", { target: endRef.target });
+      const pointerReady = (element: ElementReply) => clickPointReady(normalizedAction === "hover" ? { ...element, disabled: false } : element);
+      const withDestination = <T>(run: (call?: typeof bound) => Promise<T>) => endRef ? readBound(endRef, context, run) : run();
+      return withDestination(async endCall => withDebugger(tabId, async (_target, send) => {
+        const sourceFrame = String(ref.ref?.frameId || "");
+        const endFrame = String(endRef?.ref?.frameId || "");
+        const point = async (binding: ElementTarget, call: typeof bound, prepare = true) => {
+          const frame = String(binding.ref?.frameId || "");
+          const params = { selector: binding.selector, index: binding.index || 0 };
+          const element = await waitForElementReady({
+            inspect: () => sendToContent(tabId, "inspectElement", params, call, context),
+            ...(prepare ? { prepare: (current: ElementReply) => pointerReady(current) ? Promise.resolve(current)
+              : sendToContent(tabId, "scrollElementIntoView", { ...params, block: "center" }, call, context) } : {}),
+            readiness: current => pointerReady(current) ? undefined : "element is hidden, disabled, or obscured",
+            target: binding.target || resolvedTarget, signal: _signal, deadline, stable: true,
+          });
+          if (element.error) throw Object.assign(new ToolExecutionError(String(element.code || "ELEMENT_NOT_READY"), String(element.error), { target: binding.target }), { hint: "Observe the element again before retrying." });
+          const position = await framedPagePoint(send, element.clickablePoint!, frame);
+          const viewport = await readPageViewport(send);
+          if (viewport && !pointInPageViewport(position, viewport)) throw Object.assign(new ToolExecutionError("CLICK_POINT_OUT_OF_VIEWPORT", "The element is outside the page viewport.", { target: binding.target }), { hint: "Bring the containing iframe and element into view before retrying." });
+          return position;
+        };
+        await ensurePageSurface(tabId, send, { frameId: sourceFrame });
+        if (endRef) {
+          await ensurePageSurface(tabId, send, { frameId: endFrame });
+          await point(endRef, endCall);
+        }
+        const start = await point(ref, bound);
+        // Scrolling the source may move the destination. Re-observe without moving it again.
+        const end = endRef ? await point(endRef, endCall, false) : start;
+        const originalDocument = await readMainDocumentId?.(tabId);
+        const check = async () => {
+          if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
+          if (originalDocument && await readMainDocumentId(tabId) !== originalDocument) throw new ToolExecutionError("STALE_ELEMENT_UID", "The page changed during the pointer action.", { target: resolvedTarget, mayHaveTakenEffect: true });
+          // Keep using the captured node objects; an iframe can navigate without changing the main document.
+          for (const [binding, call] of [[ref, bound], [endRef, endCall]] as const) {
+            if (!binding || !call) continue;
+            const presence = await call("elementPresence", { visibleOnly: false, queryOnly: true });
+            if (presence.found !== true) throw new ToolExecutionError("STALE_ELEMENT_UID", "The element changed during the pointer action.", { target: binding.target, mayHaveTakenEffect: true });
+          }
+        };
+        const pageBefore = await getTabPageState(tabId);
+        const guardrails = await getSecurityGuardrails();
+        const prepared = normalizedAction === "double_click" ? await prepareKnownPageNavigation({
+          url: inspected.href || "", pageBefore, guardrails, context, signal: _signal,
+          toolName: "act_on_element", toolArgs: toolArgsForUpdates, tabId, source: "href",
+        }) : null;
+        const observation = normalizedAction === "hover" ? null : await beginPageNavigationObservation(tabId, _signal);
+        let held = false;
+        const mouse = async (type: string, position: { x: number; y: number }, clickCount = 1) => {
+          await check();
+          return send("Input.dispatchMouseEvent", { type, ...position,
+            button: type === "mouseMoved" && !held ? "none" : "left", buttons: type === "mouseReleased" ? 0 : held ? 1 : 0, clickCount });
+        };
+        try {
+          dispatchedAction();
+          await mouse("mouseMoved", start);
+          if (normalizedAction === "double_click") {
+            for (const clickCount of [1, 2]) {
+              held = true;
+              await mouse("mousePressed", start, clickCount);
+              await mouse("mouseReleased", start, clickCount);
+              held = false;
+            }
+          } else if (normalizedAction === "drag") {
+            held = true;
+            await mouse("mousePressed", start);
+            for (let step = 1; step <= 8; step++) await mouse("mouseMoved", {
+              x: start.x + (end.x - start.x) * step / 8, y: start.y + (end.y - start.y) * step / 8,
+            });
+            await mouse("mouseReleased", end);
+            held = false;
+          }
+          return complete(observation ? await observeElementNavigation(tabId, pageBefore, prepared, guardrails, observation) : {});
+        } finally {
+          if (held) {
+            try {
+              if (send.cancelPointer) await send.cancelPointer();
+              else await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: -1, y: -1, button: "left", buttons: 0, clickCount: 1 });
+            } catch { /* The original connection may already have been released. */ }
+          }
+          observation?.dispose();
+        }
+      }, context));
+    }
 
     if (normalizedAction === "click") {
       const pageBefore = await getTabPageState(tabId);
@@ -400,8 +513,8 @@ registerTool({
 
       if (!clickPointReady(current)) {
         resolved = await sendToContent(tabId, "resolveClickTarget", { selector, index }, bound, context);
-        if (resolved.error) return withElementActionHelp(resolved, normalizedAction, resolvedTarget);
-        if (resolved.navigateUrl) {
+        if (resolved.error && !["NO_CLICKABLE_TARGET", "ELEMENT_NOT_FOUND"].includes(String(resolved.code))) return withElementActionHelp(resolved, normalizedAction, resolvedTarget);
+        if (resolved.navigateUrl && !(current.visible === true && current.state?.obscuredAtCenter === true)) {
           const preparedNavigation = await prepareKnownPageNavigation({
             url: resolved.navigateUrl,
             pageBefore,
@@ -416,6 +529,7 @@ registerTool({
           const navigationUrl = preparedNavigation?.url || resolved.navigateUrl;
           const observation = await beginPageNavigationObservation(tabId, _signal);
           try {
+            dispatchedAction();
             await chrome.tabs.update(tabId, { url: navigationUrl });
             return complete(await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation));
           } finally { observation.dispose(); }
@@ -441,17 +555,6 @@ registerTool({
         }
       }
 
-      if (!clickPointReady(current)) {
-        return clickNotReadyResult({
-          target: resolvedTarget,
-          selector,
-          index,
-          inspection: current,
-          originalInspection: inspected,
-          resolved,
-        });
-      }
-
       const preparedNavigation = await prepareKnownPageNavigation({
         url: current.href || resolved?.href || "",
         pageBefore,
@@ -474,8 +577,14 @@ registerTool({
         await withDebugger(tabId, async (_target, send) => {
           await ensurePageSurface(tabId, send, { frameId });
           const sameTarget = pointSelector === selector && pointIndex === index;
-          const refreshed = await sendToContent(tabId, "inspectElement", { selector, index, ...(!sameTarget ? { clickTarget: true } : {}) }, bound, context);
-          if (!refreshed.error && clickPointReady(refreshed)) current = refreshed;
+          const refreshed = await waitForElementReady({ inspect: () => inspect(!sameTarget), target: resolvedTarget,
+            signal: _signal, deadline, stable: true,
+            prepare: element => clickPointReady(element) ? Promise.resolve(element)
+              : sendToContent(tabId, "scrollElementIntoView", { selector, index, block: "center", ...(!sameTarget ? { clickTarget: true } : {}) }, bound, context),
+            readiness: element => clickPointReady(element) ? undefined : "element is hidden, disabled, or obscured",
+          });
+          if (refreshed.error) { frameFailure = refreshed; return; }
+          current = refreshed;
           if (frameId) {
             const readGeometry = async () => ({
               origin: await frameContentOrigin(send, frameId),
@@ -521,6 +630,7 @@ registerTool({
           observation = await beginPageNavigationObservation(tabId, _signal);
           if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
           dispatched = true;
+          dispatchedAction();
           if (touchInput) { await touch(dispatchSend, dispatchPoint, { signal: _signal }); }
           else {
             await dispatchSend("Input.dispatchMouseEvent", {
@@ -555,8 +665,9 @@ registerTool({
       } catch (err) {
         rethrowStaleElement(err);
         if (_signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", t("elementActionCancelled"), { target: resolvedTarget });
-        if (frameId || dispatched || touchInput || isCdpFallbackForbiddenError(err)) throw err;
+        if (frameId || dispatched || touchInput || asRecord(err).code === "ELEMENT_NOT_READY" || isCdpFallbackForbiddenError(err)) throw err;
         observation ??= await beginPageNavigationObservation(tabId, _signal);
+        dispatchedAction();
         const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
         if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
         return complete(await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation));
@@ -579,6 +690,7 @@ registerTool({
         // Hidden Chrome tabs may accept insertText without a composited keyboard
         // input surface. Prepare it without activating the tab or clicking the field.
         if (submit) await ensurePageSurface(tabId, send, { frameId });
+        dispatchedAction();
         const prepared = await sendToContent(tabId, "prepareElementFill", { selector, index, value,
           ...(submit ? { submit } : {}) }, bound, context);
         assertActive();
@@ -644,7 +756,19 @@ registerTool({
       return withDebugger(tabId, async (_target, send): Promise<Record<string, unknown>> => {
         assertActive();
         await ensurePageSurface(tabId, send, { frameId });
-        const current = await sendToContent(tabId, "resolveCheckTarget", { selector, index }, bound, context);
+        let prepared = false;
+        const current = await waitForElementReady({
+          inspect: async () => {
+            const candidate = await sendToContent(tabId, "resolveCheckTarget", { selector, index, scroll: !prepared }, bound, context);
+            prepared = true;
+            if (candidate.code === "ELEMENT_DISABLED") return { disabled: true };
+            const surface = isElementReply(candidate.element) ? candidate.element : candidate;
+            return { ...candidate, rect: surface.rect, clickablePoint: surface.clickablePoint };
+          },
+          readiness: element => element.disabled ? "element is disabled"
+            : clickPointReady(isElementReply(element.element) ? element.element : element) ? undefined : "checkbox or its label is not actionable",
+          target: resolvedTarget, signal: _signal, deadline, stable: true,
+        });
         assertActive();
         if (current.error) return withElementActionHelp(current, normalizedAction, resolvedTarget);
         if (current.tag !== "input" || current.type !== inspected.type) {
@@ -658,6 +782,7 @@ registerTool({
         const receiptId = await armPageInputReceipt(tabId);
         let delivered = false;
         try {
+          dispatchedAction();
           if (getPageContext(tabId).pageMode === "mobile") {
             await touch(send, point, { signal: _signal });
           } else {
@@ -688,6 +813,7 @@ registerTool({
     }
 
     if (normalizedAction === "press") {
+      dispatchedAction();
       const pressedKey = key || value;
       if (!pressedKey) return { ...toolError("MISSING_KEY", "key is required for press action", {
         hint: "Pass key, for example Enter, Escape, or Tab.", details: { target: resolvedTarget },
@@ -746,6 +872,7 @@ registerTool({
     }
 
     const contentAction = async () => {
+      dispatchedAction();
       const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: normalizedAction, value, key, submit }, bound, context);
       if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
       return complete();

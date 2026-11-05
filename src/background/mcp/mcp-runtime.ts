@@ -11,7 +11,6 @@ import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
 import {
   createExternalDriveCoordinator,
   driveToolSignature,
-  isDriveToolDefault,
   isDriveToolDiscoverable,
   isDriveToolForbidden,
   parseDriveRequest,
@@ -403,7 +402,7 @@ export function createMcpRuntime({
     return {
       sessionId: catalog.sessionId,
       tools: catalog.externalDrive
-        ? catalog.tools.filter(tool => isDriveToolDefault(tool.name)).map(driveToolSignature)
+        ? catalog.tools.map(driveToolSignature)
         : catalog.tools,
     };
   }

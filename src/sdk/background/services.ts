@@ -54,7 +54,7 @@ export type GoalUpdateInput = Partial<Pick<SessionGoal, 'objective' | 'criteria'
 
 /** Finite caller-owned port. Session commands retain all persistence and run authority. */
 export interface ToolSessionCommands extends UserWaitRuntime {
-  beginPopupCapture(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; openerTabId: number }): { dispose(): void };
+  beginPopupCapture(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; openerTabId: number }): { observed?(): Promise<PageObservation[]>; dispose(): void };
   observePopup(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; openerTabId: number }): Promise<{ result: Promise<PageObservation>; dispose(): void }>;
   getTabAliases(sessionId: string): Record<string, number>;
   reserveTabAlias(input: { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }): Promise<object>;

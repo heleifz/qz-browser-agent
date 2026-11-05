@@ -84,6 +84,21 @@ test("invalid arguments cannot open a connection or execute a tool", async () =>
   assert.equal(Object.hasOwn(error, "guide"), false);
 });
 
+test("session cancellation sends the keep set in the single stop request", async () => {
+  const calls = [];
+  const dependencies = {
+    findDaemon: async () => running,
+    callTool: async (_endpoint, name, args) => {
+      calls.push({ name, args });
+      return name === "qingzhou_call" ? { pong: true } : { sessionId: "drive", status: "aborted" };
+    },
+  };
+  await runCli(["session", "cancel", "drive", "--keep", "result", "--keep", "42", "--client", "browser-1"], dependencies);
+  assert.deepEqual(calls.filter(call => call.name !== "qingzhou_call"), [{
+    name: "qingzhou_stop_session", args: { sessionId: "drive", keepTabRefs: ["result", "42"], clientId: "browser-1", timeoutSeconds: 180 },
+  }]);
+});
+
 test("connect uri starts once and only returns the binding URL", async () => {
   let starts = 0;
   const dependencies = {

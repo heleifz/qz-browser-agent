@@ -30,6 +30,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     messages.push({ action, params });
     const reply = await onContent(action, params);
     if (reply !== undefined) return reply;
+    if (action === "elementPresence") return { found: true };
     return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
   };
   const send = async (method, params = {}) => {
@@ -50,13 +51,15 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
       return { tabId, target, selector: target.slice(4), index, ...(frameId ? { uid: "frame-target", ref: { frameId } } : {}) };
     },
     async useElement(_tabId, _ref, _context, run) { return run(content); },
+    async readMainDocumentId() { return state.documentId || "fixture-document"; },
     elementTargetForSelector: selector => `css:${selector}`,
     getElementTargetDescription: () => "test target",
     async sendToContent(_tabId, action, params) {
       assert.equal(rejectUnbound, false, "a frame target must stay on its node-bound Content connection");
       return content(action, params);
     },
-    clickPointReady: inspected => Boolean(inspected.clickablePoint),
+    clickPointReady: inspected => Boolean(inspected.clickablePoint) && inspected.disabled !== true
+      && inspected.visible !== false && inspected.state?.obscuredAtCenter !== true,
     clickNotReadyResult: () => ({ error: "No point", code: "CLICK_POINT_OUT_OF_VIEWPORT" }),
     getPageContext: () => ({ pageMode: mobile ? "mobile" : "desktop" }),
     async getTabPageState() { return { url: "https://example.test/", title: "Fixture" }; },
@@ -658,5 +661,111 @@ test("an iframe click that stays outside the page viewport fails instead of repo
   assert.equal(f.messages.filter(message => message.action === "scrollElementIntoView").length, 1);
   assert.equal(f.commands.some(command => command.method === "Input.dispatchMouseEvent"), false);
   assert.equal(f.receipts.size, 0);
+  assertNoReplay(f);
+});
+
+test("hover can target a disabled control without pressing a button", async () => {
+  const f = fixture();
+  f.state.disabled = true;
+  assert.deepEqual(await f.call({ action: "hover" }), {});
+  const input = f.commands.filter(command => command.method.startsWith("Input."));
+  assert.deepEqual(input.map(command => command.params.type), ["mouseMoved"]);
+  assert.equal(input[0].params.buttons, 0);
+});
+
+test("double click dispatches one native two-click sequence", async () => {
+  const f = fixture();
+  assert.deepEqual(await f.call({ action: "double_click" }), {});
+  assert.deepEqual(f.commands.filter(command => command.params.type === "mouseReleased")
+    .map(command => command.params.clickCount), [1, 2]);
+  assertNoReplay(f);
+});
+
+test("a new document after the first click prevents the second click", async () => {
+  const f = fixture();
+  f.onCommand((_method, params) => {
+    if (params.type === "mouseReleased" && params.x >= 0) f.state.documentId = "replacement";
+  });
+  await assert.rejects(f.call({ action: "double_click" }), { code: "STALE_ELEMENT_UID" });
+  assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+  assert.equal(f.commands.filter(command => command.params.type === "mouseReleased" && command.params.x >= 0).length, 1);
+  assertNoReplay(f);
+});
+
+test("an iframe's original node becoming stale prevents a second click without a main document change", async () => {
+  const f = fixture({ frameId: "child", rejectUnbound: true });
+  let replaced = false;
+  f.onCommand((method, params) => {
+    if (method === "DOM.getFrameOwner") return { backendNodeId: 5 };
+    if (method === "DOM.getBoxModel") return frameBox(80);
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } };
+    if (params.type === "mouseReleased" && params.x >= 0) replaced = true;
+  });
+  f.onContent(action => action === "elementPresence" ? { found: !replaced } : undefined);
+  await assert.rejects(f.call({ action: "double_click" }), { code: "STALE_ELEMENT_UID" });
+  assert.equal(f.state.documentId, undefined, "the main document has not changed");
+  assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+  assert.equal(f.commands.filter(command => command.params.type === "mouseReleased" && command.params.x >= 0).length, 1);
+  assertNoReplay(f);
+});
+
+test("drag holds the pointer until it reaches the observed destination", async () => {
+  const f = fixture();
+  f.onContent((_action, params) => params.selector === "#destination" ? { ...f.inspection(), clickablePoint: { x: 240, y: 80 } } : undefined);
+  assert.deepEqual(await f.call({ action: "drag", destination: { target: "css:#destination" } }), {});
+  const moved = f.commands.filter(command => command.params.type === "mouseMoved" && command.params.buttons === 1);
+  assert.equal(moved.length > 1, true);
+  const released = f.commands.filter(command => command.params.type === "mouseReleased");
+  assert.equal(released.length, 1);
+  assert.equal(released[0].params.x, 240);
+  assert.equal(released[0].params.y, 80);
+  assert.equal(released[0].params.buttons, 0);
+  assertNoReplay(f);
+});
+
+test("drag cancellation releases away from the target without completing or replaying the gesture", async () => {
+  const f = fixture();
+  f.onCommand((_method, params) => {
+    if (params.type === "mouseMoved" && params.buttons === 1) f.controller.abort();
+  });
+  await assert.rejects(f.call({ action: "drag", destination: { target: "css:#destination" } }), { code: "OPERATION_ABORTED" });
+  assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+  const released = f.commands.filter(command => command.params.type === "mouseReleased");
+  assert.equal(released.length, 1);
+  assert.equal(released[0].params.x, -1);
+  assert.equal(released[0].params.y, -1);
+  assert.equal(navigationListeners.size, 0);
+  assertNoReplay(f);
+});
+
+test("readiness waits for a disabled button and never dispatches after its deadline", async () => {
+  const f = fixture();
+  f.state.disabled = true;
+  await assert.rejects(f.call({ action: "click", timeout: 0.05 }), { code: "ELEMENT_NOT_READY" });
+  f.state.disabled = false;
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
+});
+
+test("a temporary no-clickable-target resolution waits for the overlay to disappear", async () => {
+  const f = fixture();
+  f.state.state = { obscuredAtCenter: true };
+  f.onContent(action => action === "resolveClickTarget"
+    ? { error: "Covered", code: "NO_CLICKABLE_TARGET" } : undefined);
+  const reveal = setTimeout(() => { f.state.state = { obscuredAtCenter: false }; }, 60);
+  try {
+    assert.deepEqual(await f.call({ action: "click", timeout: 0.5 }), {});
+    assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+    assertNoReplay(f);
+  } finally { clearTimeout(reveal); }
+});
+
+test("a permanently obscured click times out without input or a Content fallback", async () => {
+  const f = fixture();
+  f.state.state = { obscuredAtCenter: true };
+  f.onContent(action => action === "resolveClickTarget"
+    ? { error: "Covered", code: "NO_CLICKABLE_TARGET" } : undefined);
+  await assert.rejects(f.call({ action: "click", timeout: 0.05 }), { code: "ELEMENT_NOT_READY" });
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
   assertNoReplay(f);
 });

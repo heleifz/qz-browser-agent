@@ -17,7 +17,8 @@ test("the packaged guide matches the installed Skill and keeps one script vocabu
   resetDriveGuideCache();
   const guide = driveGuide();
   assert.equal(driveGuide({ env: { LANG: "zh_CN.UTF-8" } }), guide);
-  assert.doesNotMatch(source, /[\u3400-\u9fff]/);
+  assert.match(source, /qz \(轻舟\)/);
+  assert.doesNotMatch(source.replaceAll('qz (轻舟)', 'qz'), /[\u3400-\u9fff]/);
   assert.match(source, /qz skill.*installed CLI/);
   assert.match(guide, /Do not configure a qz model/);
   assert.match(guide, /references\/create-task\.md/);

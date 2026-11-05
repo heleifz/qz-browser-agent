@@ -206,6 +206,10 @@ assert.deepEqual(
 assert.deepEqual(await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", cascade: false } }), {
   sessionId: "s1", title: "Task", status: "aborted", stopped: true,
 });
+await mcp.dispatch({ method: "stop_session", params: { sessionId: "s1", keepTabRefs: ["result", 12] } });
+assert.deepEqual(calls.pop(), ["stop", "s1", {
+  source: "mcp_bridge", cascade: true, keepTabs: false, keepTabRefs: ["result", 12],
+}], "the bridge preserves public keep references for atomic Session validation");
 assert.equal(mcp.methods.includes("get_user_input"), true);
 assert.equal(mcp.methods.includes("respond_to_user_input"), true);
 for (const [method, params, expected] of [

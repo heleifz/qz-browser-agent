@@ -9,6 +9,8 @@ export interface CdpCommand {
   tabId?: number;
   /** Changes when the page debugger reconnects. */
   connectionId?: number;
+  /** Release a held pointer on this captured connection only, including after call cancellation. */
+  cancelPointer?(): Promise<void>;
 }
 type CdpOperation<T> = (target: chrome.debugger.Debuggee, send: CdpCommand) => T | Promise<T>;
 /** Run identity is checked by the host before accessing a debugger lease. */

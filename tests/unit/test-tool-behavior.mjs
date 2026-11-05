@@ -400,3 +400,28 @@ test('popup-only behavior captures child pages without forbidding same-page nest
     assert.equal(popupRuntime.resolveDefinition(name).behavior.mayOpenPopup, true, `${name} must retain popup lifecycle handling`);
   }
 });
+
+test('popup observations are call-local inputs, never injected into caller-authored business results', async () => {
+  const popup = { tabRef: 32, title: 'Popup', url: 'https://example.test/popup', active: false };
+  const business = { popups: ['user-owned value'], result: 'unchanged' };
+  let childContext;
+  tools.defineTool({ name: '__popup_business_value', description: 'Page script business result', page: 'owned',
+    behavior: { mayOpenPopup: true }, parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] } }, required: ['tabRef'] },
+    async execute(_args, _signal, scoped) { childContext = scoped; assert.deepEqual(await scoped.observedPopups(), [popup]); return business; },
+  });
+  tools.defineTool({ name: '__plain_business_value', description: 'Plain business result',
+    parameters: { type: 'object', properties: {} },
+    execute(_args, _signal, scoped) { assert.equal(scoped.observedPopups, undefined); return business; },
+  });
+  let active = true;
+  const observed = async () => active ? [{ ...popup }] : [];
+  const popupRuntime = tools.createToolRuntime({ sessions: {
+    async resolveTargetTab({ tabId }) { return { ok: true, tabId, ownedByCurrentTask: true }; },
+    listOwnedTabIds: () => [31],
+    beginPopupCapture() { return { observed, dispose() { active = false; } }; },
+  } });
+  assert.deepEqual(await popupRuntime.execute('__popup_business_value', { tabRef: 31 }, undefined, scriptContext), business);
+  assert.deepEqual(await childContext.observedPopups(), [], 'settled calls cannot reuse their popup capture');
+  assert.deepEqual(await popupRuntime.execute('__plain_business_value', {}, undefined,
+    { ...scriptContext, observedPopups: () => [popup] }), business, 'a child must not inherit its parent capture');
+});

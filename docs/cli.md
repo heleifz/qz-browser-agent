@@ -410,8 +410,8 @@ The default MCP catalog is the direct-drive set: `qingzhou_guide`, `qingzhou_cre
 MCP clients use the protocol below and [MCP connection setup](#connect-an-mcp-client).
 Run `qz skill` for the guide shipped with the installed CLI.
 `qz mcp` prints the local MCP endpoint. `qz mcp --profile full`
-prints the task and diagnostic catalog. A direct-drive session lists the default tool tier from
-`qingzhou_list_tools`. `qingzhou_get_tool` still returns a guide-tier tool, and returns
+prints the task and diagnostic catalog. A direct-drive session lists all discoverable tools as compact signatures from
+`qingzhou_list_tools`. `qingzhou_get_tool` returns the selected tool's full schema, and returns
 `DRIVE_TOOL_FORBIDDEN` for a blocked name. Set `wait: false` to receive a job ID and read the
 result with `qingzhou_get_tool_job`. The full catalog also provides `qingzhou_get_trace` and
 `qingzhou_clear_trace` for diagnostics. MCP `qingzhou_list_tools` and `qingzhou_get_tool` can
@@ -426,12 +426,14 @@ It prints `sessionId <id>`; with `--json`, read `result.sessionId`. Use the inst
 and read `qz skill` for its guide. `qz session list` lists direct-drive sessions, and
 `qz session show ID` reads `{sessionId,title,status}`. Finish with `qz session cancel ID` to end
 the session and clean up its created tabs, including while a script is running. User tabs are
-preserved. Further execution returns `DRIVE_SESSION_ENDED`.
+preserved. Add `--keep result --keep evidence` to return specific task pages to the user;
+references are validated before stopping, and the first cancellation fixes the retention decision.
+Further execution returns `DRIVE_SESSION_ENDED`.
 
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
 file or stdin; --args accepts a JSON value exposed as args. The script can await tools
 using the same names as the native Agent. Awaited calls, including Skill tools, return business values
-directly; failures throw. Discover compact signatures with
+directly; failures throw. Discover all visible tools as compact signatures with
 `tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`.
 Each page tool passes its own explicit tabRef. `tools.evaluate` runs a
 self-contained function in that page; pass data through args and return its value. Outer

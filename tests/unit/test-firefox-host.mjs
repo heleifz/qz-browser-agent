@@ -1338,6 +1338,68 @@ test("a full-document capture becomes one pdf page", async () => {
   });
 });
 
+test("mouse input preserves double-click order, hover buttons, and drag destination", async () => {
+  const events = [];
+  const element = id => ({
+    nodeName: "DIV", nodeType: 1, focus() {},
+    dispatchEvent(event) {
+      events.push({ target: id, type: event.type, buttons: event.buttons, detail: event.detail, bubbles: event.bubbles });
+      return true;
+    },
+  });
+  const source = element("source"), destination = element("destination");
+  const document = { nodeType: 9, documentElement: source, body: source,
+    elementFromPoint: x => x < 50 ? source : destination,
+    defaultView: { scrollX: 0, scrollY: 0, innerWidth: 800, innerHeight: 600 },
+  };
+  await withPage(document, async () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "PointerEvent");
+    Object.defineProperty(globalThis, "PointerEvent", { configurable: true, value: class {
+      constructor(type, init) { Object.assign(this, { type }, init); }
+    } });
+    try {
+      const browser = debuggerBrowser();
+      installFirefoxDebugger(browser);
+      await browser.debugger.attach({ tabId: 6 }, "1.3");
+      const mouse = (type, x, extra = {}) => browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", {
+        type, x, y: 10, button: "left", ...extra,
+      });
+      await mouse("mouseMoved", 10);
+      assert.deepEqual(events.map(event => [event.type, event.buttons]), [["pointermove", 0], ["mousemove", 0]]);
+
+      events.length = 0;
+      for (const clickCount of [1, 2]) {
+        await mouse("mousePressed", 10, { clickCount });
+        await mouse("mouseReleased", 10, { clickCount });
+      }
+      assert.deepEqual(events.filter(event => ["click", "dblclick"].includes(event.type))
+        .map(event => [event.type, event.detail]), [["click", 1], ["click", 2], ["dblclick", 2]]);
+
+      events.length = 0;
+      await mouse("mousePressed", 10);
+      await mouse("mouseMoved", 100, { buttons: 1 });
+      await mouse("mouseReleased", 100, { buttons: 0 });
+      assert.deepEqual(events.map(event => [event.target, event.type, event.buttons]), [
+        ["source", "pointerdown", 1], ["source", "mousedown", 1],
+        ["destination", "pointermove", 1], ["destination", "mousemove", 1],
+        ["destination", "pointerup", 0], ["destination", "mouseup", 0],
+      ]);
+      assert.ok(events.every(event => event.bubbles), "destination releases must reach document listeners");
+      assert.equal(globalThis.__qzFirefoxPage.mouseTarget, null);
+
+      events.length = 0;
+      await mouse("mousePressed", 10);
+      await mouse("mouseReleased", -1);
+      assert.deepEqual(events.map(event => event.type), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
+      assert.ok(events.slice(-2).every(event => event.buttons === 0));
+      assert.equal(globalThis.__qzFirefoxPage.mouseTarget, null);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "PointerEvent", previous);
+      else delete globalThis.PointerEvent;
+    }
+  });
+});
+
 test("clicks dispatch events without explicit navigation or submission", async () => {
   const events = [];
   const assigned = [];
@@ -1383,7 +1445,7 @@ test("clicks dispatch events without explicit navigation or submission", async (
         events.length = 0;
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount });
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount });
-        assert.deepEqual(events, ["pointerdown", "mousedown", "pointerup", "mouseup", clickCount > 1 ? "dblclick" : "click"]);
+        assert.deepEqual(events, ["pointerdown", "mousedown", "pointerup", "mouseup", "click", ...(clickCount === 2 ? ["dblclick"] : [])]);
         assert.deepEqual(assigned, []);
         assert.deepEqual(opened, []);
         assert.deepEqual(submitted, []);

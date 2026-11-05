@@ -317,7 +317,7 @@ for (const mode of ["desktop", "mobile"]) {
       expect(state.submits).toBe(1);
 
       for (const id of ["readonly", "disabled", "refuses"]) {
-        const result = await h.act(id, "fill", { value: "must not appear", submit: true });
+        const result = await h.act(id, "fill", { value: "must not appear", submit: true, timeout: 1 });
         expect(result, JSON.stringify(result)).toHaveProperty("message");
         state = await h.state();
         expect(state.values[id]).toBe(id);
@@ -354,7 +354,7 @@ for (const mode of ["desktop", "mobile"]) {
         expect(state.checks[id]).toBe(false);
         expect(events(state, id, "click")).toHaveLength(1);
       }
-      expect(await h.act("disabled-check", "check")).toHaveProperty("message");
+      expect(await h.act("disabled-check", "check", { timeout: 1 })).toHaveProperty("message");
       expect(await h.act("radio", "uncheck")).toHaveProperty("message");
       state = await h.state();
       expect(state.checks["disabled-check"]).toBe(false);
@@ -370,7 +370,7 @@ for (const mode of ["desktop", "mobile"]) {
       expect(events(state, "hidden-check", "click").every(event => event.trusted)).toBe(true);
       const safeUrl = state.url;
       for (const [id, labelTarget] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
-        expect(await h.act(id, "check")).toHaveProperty("message");
+        expect(await h.act(id, "check", { timeout: 1 })).toHaveProperty("message");
         state = await h.state();
         expect(state.checks[id]).toBe(false);
         expect(events(state, labelTarget, "click")).toEqual([]);
@@ -405,7 +405,7 @@ for (const mode of ["desktop", "mobile"]) test(`${mode} transparent checkbox che
     }
     const safeUrl = (await h.state()).url;
     for (const [id, surface] of [["hidden-disabled", "disabled-label"], ["link-check", "label-link"], ["button-check", "label-button"]]) {
-      expect(await h.act(id, "check")).toHaveProperty("message");
+      expect(await h.act(id, "check", { timeout: 1 })).toHaveProperty("message");
       const state = await h.state();
       expect(state.checks[id]).toBe(false);
       expect(events(state, surface, "click")).toEqual([]);

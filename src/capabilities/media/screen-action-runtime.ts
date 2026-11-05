@@ -283,6 +283,7 @@ export function createScreenActionRuntime({
           retainedSnapshot.invalidReason = retainedBasisInvalidReason;
           if (coordinateBasisReady && actionStateAfter) retainedSnapshot.state = actionStateAfter;
         }
+        const popups = await context.observedPopups?.();
         const result = {
           status: "completed",
           action,
@@ -298,6 +299,7 @@ export function createScreenActionRuntime({
           viewportChange: describeViewportChange(current, actionStateAfter),
           ...delta,
           ...(observedNavigation ? { observedNavigation } : {}),
+          ...(popups?.length ? { popups } : {}),
           ...(observation ? {
             _image: observation.shot.dataUrl,
             _imageDetail: "high",
