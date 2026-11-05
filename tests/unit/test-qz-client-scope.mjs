@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { startBridge } from "../../services/mcp-bridge/src/server.mjs";
-import { localFetch, readHealth, withToolClient } from "../../services/mcp-bridge/src/client.mjs";
+import { localFetch, QzError, readHealth, withToolClient } from "../../services/mcp-bridge/src/client.mjs";
 import { main, runCli } from "../../services/mcp-bridge/src/cli.mjs";
 
 async function fixture(t) {
@@ -20,19 +20,31 @@ async function fixture(t) {
     request.on("end", () => { if (body.length) entry.rpc = JSON.parse(Buffer.concat(body).toString()); });
   });
   const browser = await pairBrowser(bridge.state, { id: "scope-browser", pollTimeoutMs: 1000 });
-  const running = { endpoint: bridge.endpoint, health: await readHealth(bridge.endpoint) };
-  const deps = { findDaemon: async () => running };
+  const running = { endpoint: bridge.endpoint, instanceId: bridge.instanceId, health: await readHealth(bridge.endpoint) };
+  const deps = { findDaemon: async () => running,
+    ensureDaemon: () => assert.fail("the isolated fixture service already exists"),
+    restartDaemon: () => assert.fail("the isolated fixture service is compatible"),
+    openConnectionBrowser: () => assert.fail("the isolated fixture browser must be reused"),
+  };
   const requests = [];
+  async function nextRequest() {
+    while (true) {
+      const batch = await bridge.state.poll(browser, { timeoutMs: 2000 });
+      assert.equal(batch.length, 1);
+      const [request] = batch;
+      requests.push(request);
+      if (request.method !== "ping" && request.method !== "get_drive_session") return request;
+      assert.equal(completeBrowser(bridge.state, request.id, { clientId: browser.id, ok: true,
+        result: request.method === "ping" ? { pong: true } : { sessionId: request.params.sessionId, title: "Existing drive task", status: "ready" } }), true);
+    }
+  }
   async function respond(method, result, { ok = true } = {}) {
-    const batch = await bridge.state.poll(browser, { timeoutMs: 2000 });
-    assert.equal(batch.length, 1);
-    const [request] = batch;
-    requests.push(request);
+    const request = await nextRequest();
     assert.equal(request.method, method);
     assert.equal(completeBrowser(bridge.state, request.id, { clientId: browser.id, ok, ...(ok ? { result } : { error: result }) }), true);
     return request;
   }
-  return { bridge, browser, running, traffic, deps, requests, respond };
+  return { bridge, browser, running, traffic, deps, requests, respond, nextRequest };
 }
 
 function assertOneSession(traffic, toolCalls) {
@@ -41,7 +53,9 @@ function assertOneSession(traffic, toolCalls) {
   const calls = traffic.filter(entry => entry.rpc?.method === "tools/call");
   const id = calls[0]?.sessionId;
   assert.ok(id);
-  assert.equal(calls.length, toolCalls);
+  const preparation = calls.filter(entry => entry.rpc.params.name === "qingzhou_get_drive_session"
+    || entry.rpc.params.name === "qingzhou_call" && entry.rpc.params.arguments?.method === "ping");
+  assert.equal(calls.length - preparation.length, toolCalls);
   assert.ok(calls.every(entry => entry.sessionId === id));
   assert.deepEqual(traffic.filter(entry => entry.method === "DELETE").map(entry => entry.sessionId), [id]);
 }
@@ -66,10 +80,317 @@ test("one lazy command scope shares initialization across concurrent and later r
 });
 
 test("read-only local commands and invalid arguments never initialize MCP", async t => {
-  const { deps, traffic } = await fixture(t);
-  for (const argv of [["status"], ["mcp"], ["help"]]) await runCli(argv, deps);
+  const { deps, traffic, running } = await fixture(t);
+  for (const argv of [["status"], ["mcp"], ["help"]]) await runCli(argv, { ...deps, ensureDaemon: async () => running });
   await assert.rejects(runCli(["create"], deps), error => error.code === "INVALID_ARGUMENTS");
   assert.equal(traffic.length, 0);
+});
+
+test("new sessions use the first responsive browser while an explicit selector stays pinned", async t => {
+  const { bridge, browser, running, deps, traffic } = await fixture(t);
+  const other = await pairBrowser(bridge.state, { id: "second-profile" });
+  running.health = await readHealth(bridge.endpoint);
+  const browsers = [browser, other];
+  const first = browsers.find(entry => entry.id === running.health.status.clients[0].clientId);
+  const second = browsers.find(entry => entry.id !== first.id);
+  for (const selector of [undefined, running.health.status.clients.find(entry => entry.clientId === second.id).name, second.id]) {
+    const selected = selector ? second : first;
+    const untouched = browsers.find(entry => entry.id !== selected.id);
+    const start = traffic.length;
+    const pending = runCli(["session", "create", "--title", "Pinned task", "--json", ...(selector ? ["--client", selector] : [])], {
+      ...deps, openConnectionBrowser: () => assert.fail("a responsive authorized browser must be reused"),
+      restartDaemon: () => assert.fail("compatible services must stay running"),
+    });
+    const [ping] = await bridge.state.poll(selected, { timeoutMs: 2000 });
+    assert.equal(ping.method, "ping");
+    assert.equal(completeBrowser(bridge.state, ping.id, { clientId: selected.id, ok: true, result: { pong: true } }), true);
+    const [create] = await bridge.state.poll(selected, { timeoutMs: 2000 });
+    assert.equal(create.method, "create_drive_session");
+    assert.equal(create.params.title, "Pinned task");
+    assert.equal(completeBrowser(bridge.state, create.id, { clientId: selected.id, ok: true,
+      result: { sessionId: "pinned", title: "Pinned task", status: "ready" } }), true);
+    assert.equal((await pending).result.sessionId, "pinned");
+    assert.deepEqual(await bridge.state.poll(untouched, { timeoutMs: 10 }), [], "another browser receives no probe or mutation");
+    const calls = traffic.slice(start).filter(entry => entry.rpc?.method === "tools/call");
+    assert.ok(calls.every(entry => entry.rpc.params.arguments.clientId === selected.id));
+    assert.equal(calls.filter(entry => entry.rpc.params.name === "qingzhou_create_drive_session").length, 1);
+  }
+});
+
+test("an explicit offline or unknown browser never falls back to the other live profile", async t => {
+  const { bridge, browser, running, deps, traffic } = await fixture(t);
+  const offline = await pairBrowser(bridge.state, { id: "offline-profile" });
+  await bridge.state.disconnect(offline);
+  running.health = await readHealth(bridge.endpoint);
+  for (const [selector, code] of [["offline-profile", "CLIENT_OFFLINE"], [offline.id, "CLIENT_OFFLINE"], ["unknown-profile", "CLIENT_NOT_FOUND"]]) {
+    await assert.rejects(runCli(["session", "create", "--title", "No fallback", "--client", selector, "--timeout", "0.03"], {
+      ...deps, ensureDaemon: () => assert.fail("the selected browser cannot authorize a second daemon"),
+      openConnectionBrowser: () => assert.fail("an explicit browser cannot open a default profile"),
+      restartDaemon: () => assert.fail("browser selection does not authorize a service upgrade"),
+    }), error => {
+      assert.equal(error.code, code);
+      if (code === "CLIENT_OFFLINE") {
+        assert.equal(error.details.stage, "browser-connection");
+        assert.deepEqual(error.details.selectedBrowser, { clientId: offline.id, name: "offline-profile" });
+        assert.deepEqual(error.details.attemptedBrowsers, []);
+        assert.equal(error.details.operationSubmitted, false);
+        assert.match(error.message, /No browser operation was submitted/);
+        assert.equal(error.details.hint, undefined);
+      } else assert.equal(error.details.selectedBrowser, undefined);
+      return true;
+    });
+  }
+  assert.equal(traffic.length, 0, "invalid explicit selection does not initialize or probe another connection");
+  assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), []);
+});
+
+test("connection diagnostics survive public JSON and script output without submitting an operation", async t => {
+  for (const scenario of ["selected", "exhausted", "all-families", "no-launch"]) await t.test(scenario, async t => {
+    let now = 1000000, stdout = "";
+    t.mock.method(Date, "now", () => now += 10);
+    const selected = { clientId: "offline-uuid", name: "Work profile", privateData: "not diagnostic" };
+    const health = { protocolVersion: 1, features: { browserPairing: 1, scriptApiVersion: 1 },
+      status: { clients: [], browsers: [selected] } };
+    const running = { endpoint: "http://127.0.0.1:18765", health };
+    const families = scenario === "exhausted" ? ["Chrome", "Firefox"] : ["Chrome", "Firefox", "Edge"];
+    const attempted = [];
+    const deps = {
+      findDaemon: async () => running,
+      callTool: () => assert.fail("no browser request may be submitted"),
+      openConnectionBrowser: async (_uri, { exclude }) => {
+        assert.notEqual(scenario, "selected");
+        assert.notEqual(scenario, "no-launch");
+        assert.deepEqual(exclude, attempted);
+        const browser = families[attempted.length];
+        if (!browser) throw new QzError("BROWSER_NOT_FOUND", "No more installed browsers.");
+        attempted.push(browser);
+        return { browser, opened: true };
+      },
+      readHealth: async () => { now += 100; return health; },
+      readStdin: async () => "return 7;",
+      stdout: { write: text => { stdout += text; } },
+      stderr: { write: () => assert.fail("machine output stays on stdout") },
+    };
+    for (const script of [false, true]) {
+      stdout = ""; attempted.length = 0;
+      const args = script ? ["script", "--session", "existing"] : ["session", "create", "--title", "Not submitted"];
+      args.push("--json", "--timeout", scenario === "no-launch" ? "0.001" : "0.5");
+      if (scenario === "selected") args.push("--client", selected.name);
+      assert.equal(await main(args, deps), 1);
+      const output = JSON.parse(stdout), error = script ? output.result : output;
+      assert.equal(error.code, scenario === "selected" ? "CLIENT_OFFLINE" : "CONNECTION_PENDING");
+      assert.equal(error.details.stage, "browser-connection");
+      assert.equal(error.details.operationSubmitted, false);
+      assert.deepEqual(error.details.attemptedBrowsers, attempted);
+      assert.deepEqual(attempted, ["selected", "no-launch"].includes(scenario) ? [] : families);
+      assert.deepEqual(error.details.selectedBrowser, scenario === "selected" ? { clientId: selected.clientId, name: selected.name } : undefined);
+      assert.match(error.message, /No browser operation was submitted/);
+      assert.equal(error.hint, undefined);
+      assert.equal(error.details.hint, undefined);
+      assert.equal(error.details.url, `${running.endpoint}/qz-connect${scenario === "selected" ? "?name=Work+profile" : ""}`);
+      assert.doesNotMatch(stdout, /privateData|not diagnostic/);
+    }
+  });
+});
+
+test("an explicit offline profile reconnects within its deadline without opening or using another browser", async t => {
+  const { bridge, browser, running, deps, traffic } = await fixture(t);
+  const selected = await pairBrowser(bridge.state, { id: "reconnecting-profile" });
+  await bridge.state.disconnect(selected);
+  running.health = await readHealth(bridge.endpoint);
+  const reconnected = Promise.withResolvers();
+  let healthReads = 0;
+  const pending = runCli(["session", "create", "--title", "Recovered task", "--client", "reconnecting-profile", "--timeout", "2", "--json"], {
+    ...deps,
+    openConnectionBrowser: () => assert.fail("an explicit profile must not launch another browser"),
+    readHealth: async endpoint => {
+      if (++healthReads === 2) {
+        await bridge.state.pair({ ...selected, clientId: selected.id });
+        reconnected.resolve();
+      }
+      return readHealth(endpoint);
+    },
+  });
+  await reconnected.promise;
+  const [ping] = await bridge.state.poll(selected, { timeoutMs: 2000 });
+  assert.equal(ping.method, "ping");
+  assert.equal(completeBrowser(bridge.state, ping.id, { clientId: selected.id, ok: true, result: { pong: true } }), true);
+  const [create] = await bridge.state.poll(selected, { timeoutMs: 2000 });
+  assert.equal(create.method, "create_drive_session");
+  assert.equal(completeBrowser(bridge.state, create.id, { clientId: selected.id, ok: true,
+    result: { sessionId: "recovered", title: "Recovered task", status: "idle" } }), true);
+  assert.equal((await pending).result.sessionId, "recovered");
+  assert.deepEqual(await bridge.state.poll(browser, { timeoutMs: 10 }), []);
+  const calls = traffic.filter(entry => entry.rpc?.method === "tools/call");
+  assert.ok(calls.every(entry => entry.rpc.params.arguments.clientId === selected.id));
+  assert.equal(calls.filter(entry => entry.rpc.params.name === "qingzhou_create_drive_session").length, 1);
+});
+
+test("stalled reconnect health reads respect cancellation and the remaining connection budget", async t => {
+  for (const cancelled of [true, false]) await t.test(cancelled ? "caller cancellation" : "deadline exhaustion", async t => {
+    const controller = new AbortController(), reason = new Error("Cancelled during health read");
+    let reads = 0;
+    const server = createServer((_request, _response) => {
+      reads++;
+      if (cancelled) controller.abort(reason);
+      // Accept the real HTTP request but never send headers or a body.
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+    const running = { endpoint: `http://127.0.0.1:${server.address().port}`, instanceId: "stalled-service",
+      health: { protocolVersion: 1, features: { browserPairing: 1 }, status: {
+        clients: [], browsers: [{ clientId: "offline-profile", name: "offline-profile" }],
+      } } };
+    const started = performance.now();
+    await assert.rejects(runCli(["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", cancelled ? "2" : "0.0305"], {
+      signal: controller.signal, findDaemon: async () => running,
+      callTool: () => assert.fail("no browser operation may be submitted"),
+      openConnectionBrowser: () => assert.fail("a pinned profile cannot launch a substitute"),
+    }), error => cancelled ? error === reason : error.code === "CLIENT_OFFLINE");
+    assert.equal(reads, 1);
+    assert.ok(performance.now() - started < 500, "health polling must not consume its independent one-second timeout");
+  });
+});
+
+test("cancellation during service discovery prevents both startup and upgrade before any browser call", async t => {
+  const { running, deps, traffic } = await fixture(t);
+  for (const found of [null, { ...running, compatible: false }]) {
+    const controller = new AbortController(), reason = new Error("Cancelled during discovery");
+    await assert.rejects(runCli(["session", "create", "--title", "Cancelled task"], {
+      ...deps, signal: controller.signal,
+      findDaemon: async () => { controller.abort(reason); return found; },
+      ensureDaemon: () => assert.fail("cancelled discovery cannot start a service"),
+      restartDaemon: () => assert.fail("cancelled discovery cannot terminate the running service"),
+    }), error => error === reason);
+  }
+  assert.equal(traffic.length, 0);
+});
+
+test("automatic preparation tries Firefox after an unresponsive Chrome and stops before Edge", async t => {
+  const { bridge, browser, running, deps } = await fixture(t);
+  const connectedHealth = running.health;
+  running.health = { ...connectedHealth, status: { ...connectedHealth.status, connected: false, clients: [] } };
+  const opened = [];
+  const { value, requests } = await scriptedBrowsers(bridge, [browser], async request => {
+    if (request.method === "ping") return { ok: true, result: { pong: true } };
+    assert.equal(request.method, "create_drive_session");
+    return { ok: true, result: { sessionId: "firefox-task", title: "Browser discovery", status: "ready" } };
+  }, () => runCli(["session", "create", "--title", "Browser discovery", "--timeout", "1", "--json"], {
+    ...deps,
+    readHealth: async () => opened.includes("Firefox") ? connectedHealth : running.health,
+    openConnectionBrowser: async (uri, { exclude, signal }) => {
+      assert.equal(uri, `${bridge.endpoint}/qz-connect`);
+      assert.equal(signal?.aborted ?? false, false);
+      assert.deepEqual(exclude, opened, "each launched browser family is excluded from later attempts");
+      const family = ["Chrome", "Firefox", "Edge"].find(name => !exclude.includes(name));
+      assert.notEqual(family, "Edge", "the responding Firefox host must stop browser discovery");
+      opened.push(family);
+      return { url: uri, opened: true, browser: family };
+    },
+  }));
+  assert.deepEqual(opened, ["Chrome", "Firefox"]);
+  assert.equal(value.result.sessionId, "firefox-task");
+  assert.equal(requests.filter(request => request.method === "create_drive_session").length, 1);
+  assert.ok(requests.every(request => request.clientId === browser.id));
+});
+
+async function scriptedBrowsers(bridge, browsers, respond, operation) {
+  const controller = new AbortController(), requests = [];
+  const workers = browsers.map(async browser => {
+    try {
+      while (true) {
+        const batch = await bridge.state.poll(browser, { timeoutMs: 100, signal: controller.signal });
+        for (const request of batch) {
+          requests.push({ ...request, clientId: browser.id });
+          const payload = await respond(request, browser);
+          assert.equal(completeBrowser(bridge.state, request.id, { clientId: browser.id, ...payload }), true);
+        }
+      }
+    } catch (error) { if (!controller.signal.aborted) throw error; }
+  });
+  try { return { value: await Promise.race([operation(), ...workers]), requests }; }
+  finally { controller.abort(); await Promise.all(workers); }
+}
+
+test("an existing session is found across authorized browsers before its script runs exactly once on its owner", async t => {
+  const { bridge, browser, running, deps } = await fixture(t);
+  const other = await pairBrowser(bridge.state, { id: "actual-owner" });
+  running.health = await readHealth(bridge.endpoint);
+  const owner = [browser, other].find(entry => entry.id !== running.health.status.clients[0].clientId);
+  const { value, requests } = await scriptedBrowsers(bridge, [browser, other], async (request, target) => {
+    if (request.method === "ping") return { ok: true, result: { pong: true } };
+    if (request.method === "get_drive_session") return target.id === owner.id
+      ? { ok: true, result: { sessionId: "existing", title: "Owner task", status: "ready" } }
+      : { ok: false, error: { code: "DRIVE_SESSION_NOT_FOUND", message: "No such session." } };
+    if (request.method === "get_session_snapshot") {
+      assert.notEqual(target.id, owner.id);
+      return { ok: true, result: { session: null } };
+    }
+    assert.equal(target.id, owner.id, "only the proven owner receives the script API preflight or script");
+    if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: 1 } };
+    assert.equal(request.method, "execute_tool");
+    return { ok: true, result: { isError: false, traces: ["Script started."], result: { city: "Hangzhou" } } };
+  }, () => runCli(["script", "--session", "existing"], {
+    ...deps, readStdin: async () => 'return { city: "Hangzhou" };',
+    openConnectionBrowser: () => assert.fail("a found task cannot be moved to a new browser"),
+  }));
+  assert.deepEqual(JSON.parse(value.text), { traces: ["Script started."], result: { city: "Hangzhou" } });
+  assert.equal(requests.filter(request => request.method === "get_drive_session").length, 2);
+  assert.equal(requests.filter(request => request.method === "execute_tool").length, 1);
+});
+
+test("uncertain or ambiguous session ownership fails before script dispatch", async t => {
+  const { bridge, browser, running, deps } = await fixture(t);
+  const other = await pairBrowser(bridge.state, { id: "another-owner" });
+  running.health = await readHealth(bridge.endpoint);
+  for (const ambiguity of ["duplicate", "unavailable"]) {
+    const { requests } = await scriptedBrowsers(bridge, [browser, other], async (request, target) => {
+      if (request.method === "ping") return { ok: true, result: { pong: true } };
+      assert.equal(request.method, "get_drive_session", "ownership uncertainty cannot admit script execution");
+      if (ambiguity === "unavailable" && target.id === other.id) return { ok: false, error: { code: "BRIDGE_REQUEST_TIMEOUT", message: "This profile did not respond." } };
+      return { ok: true, result: { sessionId: "shared", title: "Task", status: "ready" } };
+    }, () => assert.rejects(runCli(["script", "--session", "shared"], {
+      ...deps, readStdin: async () => "return 7;",
+      openConnectionBrowser: () => assert.fail("an uncertain task cannot be moved to another profile"),
+      restartDaemon: () => assert.fail("ownership errors cannot restart a compatible service"),
+    }), error => error.code === (ambiguity === "duplicate" ? "SELECTION_REQUIRED" : "BRIDGE_REQUEST_TIMEOUT")));
+    assert.equal(requests.filter(request => request.method === "execute_tool").length, 0);
+  }
+});
+
+test("script incompatibility after admission is reported without restart, reconnect or replay", async t => {
+  const { bridge, browser, deps } = await fixture(t);
+  for (const failureStage of ["api-preflight", "execute"]) {
+    const { requests } = await scriptedBrowsers(bridge, [browser], async request => {
+      if (request.method === "ping") return { ok: true, result: { pong: true } };
+      if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: failureStage === "api-preflight" ? 0 : 1 } };
+      assert.equal(request.method, "execute_tool");
+      return { ok: false, error: { code: "UPGRADE_REQUIRED", message: "The operation may already have run." } };
+    }, () => assert.rejects(runCli(["script", "--session", "existing", "--client", browser.id], {
+      ...deps, readStdin: async () => "return 7;",
+      restartDaemon: () => assert.fail("an operation failure cannot be treated as a service preflight upgrade"),
+      openConnectionBrowser: () => assert.fail("an admitted script is never retried on another browser"),
+    }), error => error.code === "UPGRADE_REQUIRED"));
+    assert.equal(requests.filter(request => request.method === "execute_tool").length, failureStage === "api-preflight" ? 0 : 1);
+    assert.equal(requests.filter(request => request.method === "capabilities").length, 1);
+    assert.equal(requests.some(request => request.method === "get_drive_session"), false, "an explicit selector never searches other profiles");
+  }
+});
+
+test("session cancellation reaches the browser while its script is awaiting a result", async t => {
+  const { bridge, browser, deps, respond, nextRequest } = await fixture(t);
+  const script = runCli(["script", "--session", "drive"], { ...deps, readStdin: async () => "async () => await tools.wait({seconds:30})" });
+  await respond("capabilities", { scriptApiVersion: 1 });
+  const pending = await nextRequest();
+  assert.equal(pending.method, "execute_tool");
+  assert.equal(pending.params.sessionId, "drive");
+  const cancelled = runCli(["session", "cancel", "drive"], deps);
+  const stop = await respond("stop_session", { sessionId: "drive", status: "ended" });
+  assert.equal(stop.params.sessionId, "drive");
+  assert.equal((await cancelled).result.status, "ended");
+  assert.equal(completeBrowser(bridge.state, pending.id, { clientId: browser.id, ok: true,
+    result: { isError: true, result: { code: "OPERATION_ABORTED", message: "Session ended." } } }), true);
+  assert.equal((await script).exitCode, 1);
 });
 
 test("runCli creation and streaming snapshots retain one connection through pending input", async t => {
@@ -83,7 +404,9 @@ test("runCli creation and streaming snapshots retain one connection through pend
   assert.equal((await pending).result.snapshot.status, "completed");
   assert.equal(updates.filter(update => update.type === "input").length, 1);
   assert.equal(requests.filter(request => request.method === "create_session").length, 1);
-  assert.ok(requests.every(request => request.params.timeoutSeconds > 0 && request.params.timeoutSeconds <= 180));
+  assert.ok(requests.filter(request => !["ping", "get_drive_session"].includes(request.method))
+    .every(request => request.params.timeoutSeconds > 0 && request.params.timeoutSeconds <= 180));
+  assert.ok(requests.every(request => request.timeoutMs > 0), "preparation and task requests each retain a bounded deadline");
   assertOneSession(traffic, 4);
 });
 
@@ -105,13 +428,13 @@ test("main reuses one connection for form lookup, submission, and continued obse
 });
 
 test("cancelling an in-flight watch closes its session and preserves the browser task", async t => {
-  const { bridge, browser, traffic, deps } = await fixture(t);
+  const { bridge, browser, traffic, deps, nextRequest } = await fixture(t);
   const controller = new AbortController();
   let output = "";
   const pending = main(["watch", "task", "--json"], { ...deps, signal: controller.signal,
     stdout: { write: text => { output += text; } }, stderr: { write: () => assert.fail("unexpected stderr") },
   });
-  const [request] = await bridge.state.poll(browser, { timeoutMs: 2000 });
+  const request = await nextRequest();
   assert.equal(request.method, "get_session_snapshot");
   controller.abort();
   assert.equal(await pending, 130);
@@ -139,14 +462,14 @@ test("tool errors and callback errors clean up without replaying successful muta
 });
 
 test("a service interruption fails the command without reconnecting or replaying its mutation", async t => {
-  const { bridge, browser, traffic, deps } = await fixture(t);
+  const { bridge, traffic, deps, nextRequest } = await fixture(t);
   const rejected = assert.rejects(runCli(["create", "Work"], deps), error => error.code === "BRIDGE_CLOSED");
-  const [request] = await bridge.state.poll(browser, { timeoutMs: 2000 });
+  const request = await nextRequest();
   assert.equal(request.method, "create_session");
   await bridge.close();
   await rejected;
   assert.equal(traffic.filter(entry => entry.rpc?.method === "initialize").length, 1);
-  assert.equal(traffic.filter(entry => entry.rpc?.method === "tools/call").length, 1);
+  assert.equal(traffic.filter(entry => entry.rpc?.method === "tools/call" && entry.rpc.params.name === "qingzhou_create_session").length, 1);
   assert.equal(bridge.state.pending.size, 0);
   assert.equal(bridge.state.inflight.size, 0);
 });
@@ -206,7 +529,7 @@ test("the whole MCP handshake is bounded when the initialized notification never
   }
 });
 
-test("connect reports an initialization failure immediately without opening Chrome or retrying", async t => {
+test("automatic preparation reports an initialization failure without opening another browser or retrying", async t => {
   let initializations = 0;
   const server = createServer((request, response) => {
     const chunks = [];
@@ -219,19 +542,21 @@ test("connect reports an initialization failure immediately without opening Chro
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const started = Date.now();
-  await assert.rejects(runCli(["connect"], {
-    ensureDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1 }, status: { clients: [{ clientId: "browser" }] } } }),
-    openBrowser: () => assert.fail("a protocol failure must not open Chrome"),
+  await assert.rejects(runCli(["session", "create", "--title", "Initialization failure"], {
+    findDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1, scriptApiVersion: 1 }, status: { clients: [{ clientId: "browser" }] } } }),
+    openConnectionBrowser: () => assert.fail("a protocol failure must not open another browser"),
+    restartDaemon: () => assert.fail("failed MCP initialization cannot authorize a service restart"),
   }), error => error.code === "CONNECTION_ERROR");
   assert.equal(initializations, 1);
   assert.ok(Date.now() - started < 1000);
 });
 
-test("connect recovers a timed-out browser ping on the same MCP session", async t => {
+test("automatic preparation recovers a timed-out browser ping on the same MCP session", async t => {
   const { bridge, browser, running, traffic } = await fixture(t);
   let opens = 0;
-  const pending = runCli(["connect"], { ensureDaemon: async () => ({ ...running, instanceId: bridge.instanceId }),
-    openBrowser: async () => { opens++; },
+  const pending = runCli(["session", "create", "--title", "Recovered browser", "--json"], { findDaemon: async () => running,
+    readHealth: async () => running.health,
+    openConnectionBrowser: async () => { opens++; return { opened: true }; },
   });
   const [first] = await bridge.state.poll(browser, { timeoutMs: 2000 });
   assert.equal(first.method, "ping");
@@ -239,7 +564,10 @@ test("connect recovers a timed-out browser ping on the same MCP session", async 
   const [second] = await bridge.state.poll(browser, { timeoutMs: 2000 });
   assert.equal(second.method, "ping");
   completeBrowser(bridge.state, second.id, { clientId: browser.id, ok: true, result: { pong: true } });
-  assert.equal((await pending).result.connected, true);
+  const [create] = await bridge.state.poll(browser, { timeoutMs: 2000 });
+  assert.equal(create.method, "create_drive_session");
+  completeBrowser(bridge.state, create.id, { clientId: browser.id, ok: true, result: { sessionId: "recovered", title: "Recovered browser", status: "ready" } });
+  assert.equal((await pending).result.sessionId, "recovered");
   assert.equal(opens, 1);
-  assertOneSession(traffic, 2);
+  assertOneSession(traffic, 1);
 });

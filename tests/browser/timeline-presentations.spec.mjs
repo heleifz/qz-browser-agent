@@ -68,17 +68,22 @@ test("built-in timeline labels retain precedence, first-result counts and histor
   ]);
 });
 
-test("script page summaries use explicit references or host context and keep returned titles as business data", async ({ page }) => {
+test("page evaluation summaries use explicit references or host context while outer scripts keep returned titles as business data", async ({ page }) => {
   const results = await page.evaluate(() => {
     const { card } = window.__timelinePresentation;
+    const business = { pageTitle: "Business title", _pageTitle: "Returned user data" };
+    const returned = (result, metadata = {}) => ({ result, _display: { script: { valueOnly: true, trace: [] } }, ...metadata });
+    const pageArgs = { tabRef: "report", code: "value => value", args: business };
     return [
-      card({ name: "run_script", args: { code: "return 1", tabRef: "report" }, result: { ok: true, result: 1 } }),
-      card({ name: "run_script", args: { code: "return 1", tabRef: "report" }, result: { _pageTitle: "Host page", ok: true, result: { pageTitle: "Business title" } } }),
-      card({ name: "run_script", args: { code: "return 1" }, result: { ok: true, result: { pageTitle: "Business title", _pageTitle: "Returned user data" } } }),
-      card({ name: "third_party_script", profileFamily: "script", pageContext: true, args: { code: "return 1" } }),
+      card({ name: "evaluate", isError: false, args: { code: "() => 1", tabRef: "report" }, result: returned(1) }),
+      card({ name: "evaluate", isError: false, args: pageArgs, result: returned(business, { _pageTitle: "Host page" }) }),
+      card({ name: "evaluate", isError: false, args: pageArgs, result: returned(business) }),
+      card({ name: "run_script", isError: false, args: { code: "return 1" }, result: returned(1) }),
+      card({ name: "run_script", isError: false, args: { code: "return args", args: business }, result: returned(business) }),
+      card({ name: "third_party_script", profileFamily: "script", pageContext: true, args: { code: "return 1" }, result: returned(business) }),
     ];
   });
-  expect(results).toEqual(["(标签页 report)", "(Host page)", "", ""]);
+  expect(results).toEqual(["(标签页 report)", "(Host page)", "(标签页 report)", "(code=return 1)", "(code=return args, args={...})", ""]);
 });
 
 test("malformed and asynchronous timeline declarations fall back without poisoning other contributions", async ({ page }) => {

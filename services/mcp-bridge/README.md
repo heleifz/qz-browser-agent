@@ -22,13 +22,8 @@ Requires Node.js 22 or later.
 1. **Install the extension.** Click **Add to Chrome** on the
    [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm),
    open the qz side panel, and choose a provider and model in **Settings**.
-2. **Connect.** This starts the local service and pairs automatically with your default browser.
-
-   ```bash
-   npx qz-browser-agent@latest connect
-   ```
-
-3. **Run your first task.**
+2. **Run your first task.** The CLI prepares the browser connection automatically. Complete the
+   extension’s connection prompt when needed.
 
    ```bash
    npx qz-browser-agent@latest create "Find this year's Nobel Prize winners in every category and put them in a table with source links." --stream
@@ -44,12 +39,32 @@ npm install --global qz-browser-agent@latest
 qz --version
 ```
 
-To let your agent learn when and how to use qz, install the direct-drive skill with
-`npx skills add alibaba/qz-browser-agent -g`. That command installs `skills/qz-browser-agent`.
+For direct browser control, read the guide shipped with your installed CLI:
+
+```bash
+qz skill
+qz session create --title "Read example page"
+qz script --session SESSION_ID task.js --args '{"query":"example"}'
+qz session show SESSION_ID
+qz session cancel SESSION_ID
+```
+
+Browser operations prepare their connection automatically: they reuse the first responding
+online browser, or try installed Chrome, Firefox and Edge once each until the extension responds.
+Select an existing profile with --client NAME|UUID; it never falls back to another profile. An incompatible
+local service is restarted once before browser operations. Complete the extension’s connection
+prompt when needed.
+
+Scripts run outside pages and invoke browser tools with explicit tabRef values. Discover compact
+signatures with tools.list_tools() and selected full schemas with tools.list_tools({names:["evaluate"]});
+use tools.evaluate for page DOM access. stdout is JSON {traces,result}: ordered trace messages
+without levels and the returned business value. Failures put ToolError in result; undefined
+returns become null. The built-in agent delegation commands above remain available when
+qz should plan and execute the task.
 
 ## Connect an MCP client
 
-After `connect`, print the MCP URL:
+Print the MCP URL; this starts the local service if needed:
 
 ```bash
 npx qz-browser-agent@latest mcp
@@ -87,7 +102,7 @@ CLI and MCP share the same browser connection. The MCP tool list is in the
 
 | Command | What it does |
 | --- | --- |
-| `qz connect` | Start the local service and pair a browser |
+| `qz connect uri` | Print a URL to open in a chosen browser profile |
 | `qz status` | Check the connection and service address |
 | `qz browsers` | List paired browsers, or `forget` an offline one |
 | `qz create "PROMPT"` | Start a task; add `--stream` or `--wait` to follow it |
@@ -102,7 +117,6 @@ CLI and MCP share the same browser connection. The MCP tool list is in the
 | `qz skills` | Find, read, or export Skills |
 | `qz settings` | Read or update settings |
 | `qz automations` | List or run automations |
-| `qz stop` | Stop the local service and disconnect all browsers |
 
 With several browser profiles connected, choose one with `--client NAME|UUID` (or `-c`).
 Run `qz COMMAND --help` for options. Interactive terminals show readable text; pipes receive JSON.
@@ -116,8 +130,8 @@ Timeout or Ctrl-C ends observation while the browser task continues; execute the
 ## Privacy and local access
 
 The service accepts connections only on your computer, and ordinary websites cannot use its MCP
-endpoint. Local programs can control connected qz tasks while the service is running. `qz stop`
-disconnects all browsers and MCP clients; tasks already running in the browser keep going.
+endpoint. Local programs can control connected qz tasks while the service is running. Disconnect
+a profile in its qz connection settings; task cancellation remains a separate operation.
 Connection settings are stored in `~/.qz-browser-agent/run/`, and pairing credentials never
 leave your computer.
 

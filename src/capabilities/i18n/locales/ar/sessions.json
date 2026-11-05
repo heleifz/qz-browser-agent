@@ -229,8 +229,8 @@
   "sessions.externalDrive": "خارجي",
   "sessions.externalDriveReadOnly": "يتحكم عميل خارجي في هذه الجلسة مباشرة. هذه الواجهة للعرض فقط.",
   "sessions.externalDriveWelcomeTitle": "يتحكم فيه وكيل خارجي",
-  "sessions.externalDriveWelcomeBody": "يتحكم وكيل خارجي في هذه الجلسة عبر MCP أو واجهة qz. ثبّت الدليل أو حدّثه بالأمر npx skills add alibaba/qz-browser-agent -g، ثم شغّل هذا الأمر في الطرفية.",
-  "sessions.externalDriveWelcomeCommandHint": "ربط هذا المتصفح",
+  "sessions.externalDriveWelcomeBody": "يتحكم وكيل خارجي في هذه الجلسة عبر MCP أو واجهة qz. ثبّت الدليل أو حدّثه بالأمر npx skills add alibaba/qz-browser-agent -g. تتصل أوامر CLI تلقائيًا؛ للاقتران يدويًا، شغّل الأمر أدناه وافتح الرابط المطبوع في هذا المتصفح.",
+  "sessions.externalDriveWelcomeCommandHint": "افتح الرابط المطبوع في هذا المتصفح",
   "sessions.externalDriveWelcomeCopy": "نسخ",
   "sessions.externalDriveWelcomeCopied": "تم النسخ"
 }

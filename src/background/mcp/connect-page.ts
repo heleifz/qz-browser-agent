@@ -14,7 +14,7 @@ export function createMcpConnectPage(deps: ConnectDependencies) {
     deps.assertConsent();
     const url = connectionUrl(sender.url);
     if (sender.id !== deps.extensionId || sender.frameId !== 0 || !Number.isInteger(sender.tab?.id) || !url) {
-      throw failure("MCP_CONNECTION_PAGE_REQUIRED", "Open the connection page using qz connect.");
+      throw failure("MCP_CONNECTION_PAGE_REQUIRED", "Run qz connect uri and open the printed URL in this browser.");
     }
     const tabId = sender.tab!.id!;
     const assertCurrent = async () => {

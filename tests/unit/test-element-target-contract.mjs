@@ -92,8 +92,8 @@ async function assertPromptAndUiUseTarget() {
   assert.match(prompt, /把它作为当前关注范围：[\s\S]*inspect_element[\s\S]*get_ax_tree[\s\S]*read_article\/read_dom/, "system prompt should inspect the picked region before answering or acting");
   assert.match(prompt, /不要只凭 target 字符串猜测，也不要无故把注意力转向全页其他区域/, "system prompt should keep attention on the picked region");
   assert.doesNotMatch(prompt, /wait_for_element 的 target 参数也接受原始 CSS/, "system prompt must not teach unprefixed CSS compatibility");
-  assert.match(prompt, /点击或按 Enter 后用 pageAfter\/urlChanged\/titleChanged，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
-  assert.match(prompt, /already_complete 只说明调用时页面已加载/, "system prompt should clarify wait_for_navigation already_complete");
+  assert.match(prompt, /点击或按 Enter 后查看返回的 navigated\/url，或重新读取页面状态确认结果/, "system prompt should require page evidence to confirm click or Enter results");
+  assert.match(prompt, /wait_for_load[\s\S]*wait_for_navigation|wait_for_navigation[\s\S]*wait_for_load/, "system prompt distinguishes current loading from future navigation");
   assert.doesNotMatch(read("src/background/agent/prompts/zh-CN.js"), /`(?:uid:|css:)/, "target examples in ESM template strings should avoid raw Markdown backticks");
   const registry = createToolRegistry();
   registerAccessibilityTools({ registerTool: registry.defineTool, elementTargetGrammar: "target" });
@@ -126,10 +126,9 @@ function assertElementActionClickContract() {
   assert.match(tools, /scrollElementIntoView/, "act_on_element should scroll before clicking offscreen targets");
   assert.match(tools, /function clickPointReady\(inspection = \{\}\)/, "act_on_element should validate click readiness");
   assert.match(tools, /clickablePointInViewport/, "click readiness should check viewport-safe points");
-  assert.match(tools, /clickDispatched: true/, "click result should expose clickDispatched");
-  assert.match(tools, /pageBefore/, "click result should expose before page state");
-  assert.match(tools, /pageAfter/, "click result should expose after page state");
-  assert.match(tools, /urlChanged/, "click result should expose urlChanged");
+  assert.match(resolveToolDefinition("act_on_element").description, /成功返回 \{\}/, "ordinary element actions should have empty receipts");
+  assert.match(resolveToolDefinition("act_on_element").description, /navigated\/url/, "navigation receipts should retain the destination");
+  assert.match(resolveToolDefinition("act_on_element").description, /confirmationRequired/, "uncertain rich-text state should require confirmation");
   assert.match(tools, /CLICK_POINT_OUT_OF_VIEWPORT/, "click should fail clearly when the target remains offscreen");
 }
 
@@ -157,7 +156,7 @@ function assertAxTreeCompactContract() {
   assert.match(resolveToolDefinition("get_ax_tree").description, /省略 target 查看整页/, "get_ax_tree should document omission for whole-page reads");
   assert.match(resolveToolDefinition("get_ax_tree").description, /limit 使用 BFS 分配节点预算/, "get_ax_tree should document BFS budget semantics");
   assert.match(resolveToolDefinition("get_ax_tree").description, /\(truncated, N more\)/, "get_ax_tree should document truncated branch markers");
-  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot \}/, "get_ax_tree should resolve uid/css roots through the target resolver");
+  assert.match(block, /resolveElementReference\(tabId, \{ target: requestedRoot, readOnly: true \}/, "get_ax_tree should resolve uid/css roots through the read-only target resolver");
   assert.match(block, /backendNodeIdForSelector\(targetTabId, overviewSelector, context\)/, "get_ax_tree should resolve css roots to backend nodes within the current run context");
   assert.match(block, /rootBackendNodeId/, "get_ax_tree should pass the resolved AX root into snapshot construction");
   assert.match(block, /const fetchDepth = snapshotScope === "viewport" \? (?:undefined|void 0) : rootBackendNodeId \? 40 : axDepth/, "get_ax_tree should search deep enough to find requested roots");
@@ -246,12 +245,11 @@ function assertFindElementsFilterContract() {
 }
 
 function assertNavigationWaitContract() {
-  assert.match(resolveToolDefinition("wait_for_navigation").description, /already_complete 只表示调用时页面已完成加载，不证明上一动作成功或失败/, "wait_for_navigation should not overstate already_complete");
-  assert.match(waitTools, /fromUrl: \{ type: "string"/, "wait_for_navigation should accept fromUrl");
-  assert.match(waitTools, /fromTitle: \{ type: "string"/, "wait_for_navigation should accept fromTitle");
-  assert.match(waitTools, /waited: false/, "wait_for_navigation should expose waited=false when it did not wait");
-  assert.match(waitTools, /urlChanged/, "wait_for_navigation should expose urlChanged from input state");
-  assert.match(waitTools, /titleChanged/, "wait_for_navigation should expose titleChanged from input state");
+  const navigation = resolveToolDefinition("wait_for_navigation");
+  assert.match(navigation.description, /之后发生的新导航[\s\S]*已加载完成的旧页面不能满足/, "navigation waits observe a future event");
+  assert.deepEqual(navigation.parameters.properties.trigger.required, ["name"], "an optional triggering tool is an explicit action descriptor");
+  assert.match(resolveToolDefinition("wait_for_load").description, /当前加载完成[\s\S]*已完成时立即返回/, "load waits inspect current state");
+  assert.match(waitTools, /onHistoryStateUpdated/, "navigation waits include same-document changes");
 }
 
 function assertScreenshotDestinationContract() {
@@ -321,7 +319,7 @@ function assertScreenActionContract() {
   assert.match(prompt, /视觉动作序列遵循“验证后批量”/, "the prompt should teach one general verify-then-batch visual principle");
   assert.match(prompt, /效果符合预期、后续坐标可预测且浏览器视口稳定/, "the prompt should gate batching on evidence rather than action names");
   assert.match(prompt, /每步检查 coordinateBasisReady/, "the prompt should make visual batch recovery explicit");
-  assert.match(prompt, /run_script 返回按执行顺序最后产生的观察图/, "the prompt should explain ordered last-observation feedback");
+  assert.match(prompt, /显式返回选定的截图或动作结果，才能带回其中的图片/, "the prompt should explain explicitly selected image feedback");
 }
 
 function assertImageCandidateTargetContract() {

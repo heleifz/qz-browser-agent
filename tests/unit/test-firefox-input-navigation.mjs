@@ -155,10 +155,7 @@ for (const action of ['fill', 'press']) {
     for (const fault of faults) {
       const f = fixture(t, { fault, errorKind: 'result-object', commitDelay: row.commitDelay, sameUrl: row.sameUrl });
       const result = await f.call(action);
-      assert.equal(result.error, undefined, fault);
-      assert.equal(result.navigated, true, fault);
-      assert.equal(result.pageAfter.url, row.url, fault);
-      assert.equal(action === 'fill' ? result.submitDispatched : result.pressed, true, fault);
+      assert.deepEqual(result, { navigated: true, url: row.url }, fault);
       oneSubmission(f, fault);
     }
   });
@@ -250,7 +247,7 @@ for (const action of ['fill', 'press']) {
   });
   test(`Firefox ${action}: no navigation, no error sends exactly one keyDown/keyUp`, async t => {
     const f = fixture(t, { navigation: false });
-    assert.equal((await f.call(action)).navigated, false);
+    assert.deepEqual(await f.call(action), {});
     oneSubmission(f, '', false);
   });
 }
@@ -259,8 +256,7 @@ test('Firefox fill: 12 unique submits, two keyUp injections fail while the old d
   for (let i = 1; i <= 12; i++) await t.test(`submit ${i}`, async t => {
     const f = fixture(t, { fault: [4, 7].includes(i) ? 'keyup-input' : '', commitDelay: [4, 7].includes(i) ? 40 : 0 });
     const result = await f.call('fill', `unique-${i}`);
-    assert.equal(result.submitDispatched, true);
-    assert.equal(result.navigated, true);
+    assert.deepEqual(result, { navigated: true, url: AFTER });
     assert.deepEqual(f.submissions, [`unique-${i}`]);
     assert.ok(f.keys.filter(type => type === 'keyUp').length <= 1);
   });

@@ -84,12 +84,12 @@ test("task-owned local HTML supports page tools, scripts and tab cleanup", async
     expect(JSON.stringify(succeeded(await call("get_ax_tree", { tabRef })))).toContain("Show remote roles");
     succeeded(await call("act_on_element", { tabRef, target: "css:#filter", action: "click" }));
     expect(succeeded(await call("read_article", { tabRef, source: "target", target: "css:#result", limit: 1000 })).text).toContain("Remote roles only");
-    const script = succeeded(await call("run_script", {
-      tabRef, timeout: 10, mutatesPage: true,
-      code: "document.querySelector('#result').textContent = 'Script verified'; ({ title: document.title, url: location.href })",
+    const script = succeeded(await call("evaluate", {
+      tabRef, timeout: 10,
+      code: "() => { document.querySelector('#result').textContent = 'Script verified'; return { title: document.title, url: location.href }; }",
     }));
     expect(JSON.stringify(script)).toContain("Local task report");
-    expect(script.result.url).toBe(fileUrl);
+    expect(script.url).toBe(fileUrl);
     expect(succeeded(await call("read_article", { tabRef, limit: 2000 })).text).toContain("Script verified");
     const screenshot = succeeded(await call("screenshot", { tabRef, format: "png" }));
     expect(screenshot._image).toMatch(/^data:image\/png;base64,/);

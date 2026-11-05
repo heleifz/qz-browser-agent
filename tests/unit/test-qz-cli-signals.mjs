@@ -151,6 +151,9 @@ test("real process signals stop CLI observation without stopping its service or 
         const taskId = `signal-task-${randomUUID()}`;
         if (phase === "stdin") await command.ready();
         else {
+          const probes = await poll(5000);
+          assert.deepEqual(probes.map(item => item.method), ["ping"], "one read-only probe verifies the selected browser before creating a task");
+          assert.equal((await post("result", { ...proof, requestId: probes[0].id, ok: true, result: { pong: true } })).ok, true);
           const created = await poll(5000);
           assert.deepEqual(created.map(item => item.method), ["create_session"]);
           assert.equal((await post("result", { ...proof, requestId: created[0].id, ok: true, result: { sessionId: taskId } })).ok, true);

@@ -106,11 +106,11 @@
         </div>
         <section id="drive-welcome" class="drive-welcome" aria-label="外部直驱" data-i18n-aria-label="sessions.externalDrive">
           <h2 data-i18n="sessions.externalDriveWelcomeTitle">由外部 agent 直接操作</h2>
-          <p class="drive-welcome-copy" data-i18n="sessions.externalDriveWelcomeBody">这个会话由外部 agent 通过 MCP 或 qz CLI 直接操作。安装或更新说明书：npx skills add alibaba/qz-browser-agent -g。再在终端运行下面的命令完成绑定。</p>
+          <p class="drive-welcome-copy" data-i18n="sessions.externalDriveWelcomeBody">这个会话由外部 agent 通过 MCP 或 qz CLI 直接操作。安装或更新说明书：npx skills add alibaba/qz-browser-agent -g。CLI 命令会自动连接；手动绑定时，运行下方命令并在当前浏览器打开输出的链接。</p>
           <div class="drive-welcome-card">
             <div class="drive-welcome-command">
-              <code id="drive-welcome-command">npx qz-browser-agent@latest connect</code>
-              <small data-i18n="sessions.externalDriveWelcomeCommandHint">绑定当前浏览器</small>
+              <code id="drive-welcome-command">npx qz-browser-agent@latest connect uri</code>
+              <small data-i18n="sessions.externalDriveWelcomeCommandHint">获取链接后在当前浏览器打开</small>
             </div>
             <button id="drive-welcome-copy" class="qz-btn qz-btn--secondary qz-btn--sm" type="button">
               <span class="drive-welcome-copy-label" data-i18n="sessions.externalDriveWelcomeCopy">复制</span>

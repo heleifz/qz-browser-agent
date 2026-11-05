@@ -229,8 +229,8 @@
   "sessions.externalDrive": "Extern",
   "sessions.externalDriveReadOnly": "Ein externer Client steuert diese Sitzung. Diese Ansicht ist schreibgeschützt.",
   "sessions.externalDriveWelcomeTitle": "Von einem externen Agenten gesteuert",
-  "sessions.externalDriveWelcomeBody": "Ein externer Agent steuert diese Sitzung über MCP oder die qz-CLI. Installieren oder aktualisieren Sie die Anleitung mit npx skills add alibaba/qz-browser-agent -g, und führen Sie dann diesen Befehl im Terminal aus.",
-  "sessions.externalDriveWelcomeCommandHint": "Diesen Browser koppeln",
+  "sessions.externalDriveWelcomeBody": "Ein externer Agent steuert diese Sitzung über MCP oder die qz-CLI. Installieren oder aktualisieren Sie die Anleitung mit npx skills add alibaba/qz-browser-agent -g. CLI-Befehle verbinden sich automatisch; führen Sie zum manuellen Koppeln den folgenden Befehl aus und öffnen Sie die ausgegebene URL in diesem Browser.",
+  "sessions.externalDriveWelcomeCommandHint": "Die ausgegebene URL in diesem Browser öffnen",
   "sessions.externalDriveWelcomeCopy": "Kopieren",
   "sessions.externalDriveWelcomeCopied": "Kopiert"
 }

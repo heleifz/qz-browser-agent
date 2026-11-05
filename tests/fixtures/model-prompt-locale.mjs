@@ -68,8 +68,9 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
     "Restricted sessions receive one goal prohibition without root goal instructions");
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
-  assert.match(system, en ? /Omit tabRef from run_script[\s\S]*without a DOM/ : /run_script 不传 tabRef 时执行无 DOM/);
-  assert.match(system, en ? /Each nested page tool must specify its own tabRef/ : /每个嵌套页面工具仍要显式传入自己的 tabRef/);
+  assert.match(system, en ? /Use evaluate with tabRef for a self-contained page function[\s\S]*Page functions cannot call tools/ : /使用 evaluate 和 tabRef 执行自包含页面函数[\s\S]*页面函数不能调用 tools/);
+  assert.match(system, en ? /Use run_script for JavaScript computation or tool orchestration without a DOM/ : /使用 run_script 执行无 DOM 的 JavaScript 计算或工具编排/);
+  assert.match(system, en ? /Each nested page tool, including evaluate, must specify its own tabRef/ : /每个嵌套页面工具（包括 evaluate）仍要显式传入自己的 tabRef/);
   assert.equal(imageMessages.length, vision ? 2 : 1);
   if (en) assert.doesNotMatch(JSON.stringify(imageMessages), /\p{Script=Han}/u);
   if (vision) assert.equal(imageMessages[1].content[1].image_url.url, image);

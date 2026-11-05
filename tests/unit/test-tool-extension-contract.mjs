@@ -99,8 +99,8 @@ const pageTools = new Set([
   'close_tab', 'navigate', 'set_page_mode', 'screenshot', 'act_on_screen', 'list_images', 'collect_images',
   'read_image', 'get_ax_tree', 'read_article', 'read_dom', 'find_elements', 'inspect_element',
   'act_on_element', 'scroll_page', 'wait_for_navigation', 'wait_for_element', 'wait_for_user',
-  'run_script', 'network_watch', 'network_recent', 'network_body', 'read_console_messages',
-  'wait_for_response', 'wait_for_network_idle',
+  'evaluate', 'network_watch', 'network_recent', 'network_body', 'read_console_messages',
+  'wait_for_response', 'wait_for_network_idle', 'wait_for_load', 'wait_for_url', 'wait_for_function', 'wait_for_popup',
 ]);
 for (const { function: schema } of tools.getToolSchemas()) {
   if (schema.name.startsWith('__') || schema.name.startsWith('example_')) continue;
@@ -117,14 +117,16 @@ const siteEffect = [{ type: 'context.siteChanged' }];
 for (const name of ['open_tab', 'close_tab', 'navigate', 'wait_for_navigation']) {
   assert.deepEqual(tools.resolveToolDefinition(name).effects({}, {}), siteEffect, name);
 }
-for (const name of ['run_script', 'run_skill_script']) {
+assert.equal(tools.resolveToolDefinition('run_script').effects, undefined, 'orchestration effects come from its actual nested tools');
+assert.deepEqual(tools.resolveToolDefinition('evaluate').effects({}, {}), siteEffect, 'page evaluation can change page state');
+for (const name of ['run_skill_script']) {
   const effect = tools.resolveToolDefinition(name).effects;
   for (const mutatesPage of [undefined, false, 1, 'true']) assert.deepEqual(effect({ mutatesPage }, {}), []);
   assert.deepEqual(effect({ mutatesPage: true }, {}), siteEffect);
 }
 const elementEffects = tools.resolveToolDefinition('act_on_element').effects;
-for (const result of [{}, { navigated: false }, { navigated: 'true' }, { href: '', url: '' }]) assert.deepEqual(elementEffects({}, result), []);
-for (const result of [{ navigated: true }, { href: '/next' }, { url: '/next' }]) assert.deepEqual(elementEffects({}, result), siteEffect);
+for (const result of [{}, { navigated: false }, { navigated: 'true' }, { href: '/next' }, { url: '/next' }]) assert.deepEqual(elementEffects({}, result), []);
+for (const result of [{ navigated: true }, { navigated: true, url: '/next' }]) assert.deepEqual(elementEffects({}, result), siteEffect);
 const screenEffects = tools.resolveToolDefinition('act_on_screen').effects;
 for (const urlChanged of [undefined, false, 1, 'true']) assert.deepEqual(screenEffects({}, { urlChanged }), []);
 assert.deepEqual(screenEffects({}, { urlChanged: true }), siteEffect);

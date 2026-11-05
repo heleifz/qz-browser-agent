@@ -124,6 +124,20 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
       report.reads++;
     }
   };
+  const transferred = async (tabId, label) => {
+    const denied = await call("act_on_element", { tabRef: tabId, target: "css:button", action: "click" }, "fuzz-a");
+    assert.equal(denied.code, "SESSION_TAB_FOREIGN", "the previous owner may observe the page but cannot mutate it");
+    if (watchNetwork) {
+      await success(await read(tabId, "fuzz-b", 5, [["get_ax_tree", {}], ["screenshot", { format: "png" }]]), label);
+      const busy = await call("act_on_element", { tabRef: tabId, target: "css:button", action: "click" }, "fuzz-b");
+      assert.equal(busy.code, "CDP_TAB_LEASE_CONFLICT", "read-only borrowing must not transfer the previous run's retained write lease");
+      await api({ op: "release-run" });
+    }
+    const changed = await call("act_on_element", { tabRef: tabId, target: "css:button", action: "click" }, "fuzz-b");
+    assert.ok(!isToolFailure(changed), `the new owner retains page input: ${JSON.stringify(changed)}`);
+    assert.equal((await api({ op: "state", sessionId: "fuzz-a" })).ownedTabIds.includes(tabId), false);
+    assert.equal((await api({ op: "state", sessionId: "fuzz-b" })).ownedTabIds.includes(tabId), true);
+  };
   const open = async (url, sessionId = "fuzz-a", timeout = 1) => {
     const result = await call("open_tab", { url, tabAlias: "page", watchNetwork, timeout }, sessionId);
     assert.ok(!isToolFailure(result), JSON.stringify(result));
@@ -213,11 +227,8 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
           } else if (scenario === "combo-transfer-redirect") {
             await api({ op: "transfer", tabId, to: "fuzz-b" });
             const final = page(label + "-transferred"); route(target).redirect = final; release(target);
-            await failures(calls, "SESSION_TAB_FOREIGN");
-            if (watchNetwork) {
-              await failures(await read(tabId, "fuzz-b", 5, [["get_ax_tree", {}], ["screenshot", { format: "png" }]]), "CDP_TAB_LEASE_CONFLICT");
-              await api({ op: "release-run" });
-            }
+            await success(calls, label + "-transferred");
+            await transferred(tabId, label + "-transferred");
             await success(await read(tabId, "fuzz-b"), label + "-transferred");
           } else if (scenario === "combo-obsolete-new-run") {
             await api({ op: "obsolete" });
@@ -303,7 +314,8 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
             await api({ op: scenario, callIds: calls.map(item => item.callId) }); release(target);
             await failures(calls, "OPERATION_ABORTED");
           } else if (scenario === "transfer") {
-            await api({ op: "transfer", tabId, to: "fuzz-b" }); release(target); await failures(calls, "SESSION_TAB_FOREIGN");
+            await api({ op: "transfer", tabId, to: "fuzz-b" }); release(target); await success(calls, label);
+            await transferred(tabId, label);
           } else if (scenario === "replace") {
             const replacement = page(label + "-replacement", { hold: true });
             await api({ op: "update", tabId, url: replacement });

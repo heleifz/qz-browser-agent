@@ -42,7 +42,9 @@ test('five public schemas expose target only, while legacy selector is canonical
     assert.equal(Object.hasOwn(seen.at(-1), 'selector'), false);
     await f.runtime.execute(name, { tabRef: 5, target: '#chosen', selector: 'uid:unknown', limit: 100 }, undefined, context);
     assert.equal(seen.at(-1).target, '#chosen', 'canonical target wins over a legacy alias');
-    assert.equal(f.runtime.getBatchTabPolicy(name, { tabRef: 5, selector: ref.target }, context).tabId, 5);
+    const policy = f.runtime.getBatchTabPolicy(name, { tabRef: 5, selector: ref.target }, context);
+    if (name === "wait_for_element") assert.equal(policy.kind, "observe", "state waits release the mutation lane");
+    else assert.equal(policy.tabId, 5);
     await assert.rejects(f.runtime.execute(name, { tabRef: 5, target: 'uid:unknown', limit: 100 }, undefined, context), { code: 'STALE_ELEMENT_UID' });
   }
 });

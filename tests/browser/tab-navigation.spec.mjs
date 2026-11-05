@@ -56,13 +56,14 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     await cp(await ensureTestExtension(), extension, { recursive: true });
     const manifestPath = join(extension, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    expect(manifest.permissions).not.toContain("webNavigation");
+    expect(manifest.permissions).toContain("webNavigation");
     // Exercise explicit reader installation before document_idle, independently of manifest injection.
     manifest.content_scripts = manifest.content_scripts.filter(entry => !entry.js?.some(path => path.endsWith('/content-script.js')));
-    await writeFile(join(extension, "navigation-test-worker.js"), `import "./${manifest.background.service_worker}";
-      import { createToolRuntime, getToolResultPageContext } from "./background/tools/runtime.js";
+    await writeFile(join(extension, "navigation-test-worker.js"), `import { createToolRuntime, getToolResultPageContext } from "./background/tools/runtime.js";
       import { Agent } from "./background/agent/agent.js";
       import { createSessionTabs } from "./background/session/tabs.js";
+      import { createRunScriptBridge } from "./background/tools/run-script-bridge.js";
+      globalThis.navigationTestBridge = createRunScriptBridge;
       globalThis.navigationTestAgent = Agent;
       globalThis.navigationTestSessionTabs = createSessionTabs;
       globalThis.navigationTestRuntime = createToolRuntime;
@@ -85,15 +86,29 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       chrome.debugger.attach = (...args) => { navigationAttachCount++; return attach(...args); };
       const isRunCurrent = (sessionId, runId) => sessionId === 'navigation' && runId === 'run';
       const setRuntime = (_id, patch) => Object.assign(state, patch);
-      const sessions = navigationTestSessionTabs({
-        supervisor: { getRuntime: id => id === 'navigation' ? state : null,
-          runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent },
+      const runController = new AbortController();
+      const supervisor = { getRuntime: id => id === 'navigation' ? state : null,
+        runtimeEntries: () => [['navigation', state]], setRuntime, isRunCurrent,
+        hasAgent: () => true, getAbortSignal: () => runController.signal };
+      const sessions = navigationTestSessionTabs({ supervisor,
         tabsApi: chrome.tabs, storage: chrome.storage.local, setRuntime, persistRuntime: async () => {},
       });
       chrome.tabs.onRemoved.addListener(tabId => { void sessions.handleTabRemoved(tabId); });
+      let bridge;
       const runtime = navigationTestRuntime({
+        invokeNestedTool: (parent, name, args, signal) => bridge.invokeTool(parent, name, args, signal),
         windowTarget: { resolveForNewTab: async () => (await chrome.windows.getAll())[0].id },
         sessions: { ...sessions, isRunCurrent },
+      });
+      bridge = navigationTestBridge({ supervisor, getRuntime: () => state, canManageSessions: async () => true,
+        buildRunProfile: async () => ({}), getRunToolContext: async () => ({ toolRegistrySnapshot: runtime.snapshot('en'), language: 'en' }),
+        toolRuntime: runtime, collectArtifacts: () => [],
+        applyNestedToolResult: async ({ toolName, result, isError }) => globalThis.navigationActiveAgent?._applyToolResultEffects(toolName, result, isError) });
+      chrome.runtime.onMessage.addListener((message, sender, respond) => {
+        if (runtime.handleRunScriptInnerRuntimeMessage(message)) return false;
+        if (message.type !== 'run_script_tool_call') return false;
+        bridge.handleToolCall(message, sender).then(respond, () => respond({ ok: false, code: 'FIXTURE_BRIDGE_ERROR' }));
+        return true;
       });
       globalThis.navigationRuntime = runtime;
       globalThis.navigationCall = async (name, args) => {
@@ -111,7 +126,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     const first = await worker.evaluate(async ({ origin, watchNetwork }) => {
       const before = structuredClone(navigationState);
       const agent = new navigationTestAgent('navigation', { tools: navigationRuntime });
-      agent._currentRunId = 'run';
+      agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
       const events = []; agent.subscribe(event => events.push(event));
       const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
       const messages = await agent._executeToolCalls([
@@ -242,7 +257,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
             navigationCompleted.push(context.toolCallId); return result;
           },
         } });
-        agent._currentRunId = 'run';
+        agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
         const events = []; agent.subscribe(event => { events.push(event); });
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
@@ -250,10 +265,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
           tc('open-b', 'open_tab', { url: `${origin}/batch-open-b`, tabAlias: 'b', watchNetwork }),
           tc('read-a', 'read_article', { tabRef: 'a', limit: 3000 }),
           tc('read-b', 'read_article', { tabRef: 'b', limit: 3000 }),
-          tc('script-ref', 'run_script', { tabRef: 'b', timeout: 10, code: '() => location.href' }),
+          tc('script-ref', 'evaluate', { tabRef: 'b', timeout: 10, code: '() => location.href' }),
         ], new AbortController().signal);
         return { ids: messages.filter(message => message.role === 'tool').map(message => message.tool_call_id),
-          ends: events.filter(event => event.type === 'tool_execution_end') };
+          ends: events.filter(event => event.type === 'tool_execution_end'),
+          outputs: messages.filter(message => message.role === 'tool').map(message => ({ id: message.tool_call_id, content: message.content })) };
       }, { origin, watchNetwork });
       await expect.poll(() => held.get('/batch-open-b').length).toBeGreaterThan(0);
       await expect.poll(() => held.get('/head-block-batch-a').length).toBeGreaterThan(0);
@@ -272,10 +288,10 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         const tabs = await chrome.tabs.query({}); return urls.map(url => tabs.find(tab => tab.url === url)?.id);
       }, [left.url, right.url]);
       expect(batchTabIds.every(id => Number.isInteger(id))).toBe(true);
-      expect(batchResult.ends.find(event => event.toolCallId === 'script-ref').result.result).toBe(`${origin}/batch-open-b`);
+      expect(batchResult.outputs.find(message => message.id === 'script-ref').content).toBe(`${origin}/batch-open-b`);
       release('/late-image');
 
-      // A tool-using script blocks later no-tools scripts and reads, including other tabs.
+      // Outer orchestration waits for its explicit page function and blocks later page work on other tabs.
       const scriptRun = worker.evaluate(async ids => {
         globalThis.scriptBatchStarted = [];
         let active = 0, peak = 0;
@@ -287,16 +303,17 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
             finally { if (name === 'run_script') active--; }
           },
         } });
-        agent._currentRunId = 'run';
+        agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
         const ends = []; agent.subscribe(event => { if (event.type === 'tool_execution_end') ends.push(event); });
         const tc = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
         const messages = await agent._executeToolCalls([
-          tc('script-a', 'run_script', { tabRef: ids[0], mutatesPage: true, timeout: 10,
-            code: 'async () => { void tools.$list; globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }' }),
-          tc('script-b', 'run_script', { tabRef: ids[1], mutatesPage: false, timeout: 10, code: '() => "script b"' }),
+          tc('script-a', 'run_script', { args: { tabRef: ids[0] }, timeout: 10,
+            code: 'return await tools.evaluate({tabRef:input.tabRef,code:async () => { globalThis.__scriptStarted = true; while (!globalThis.__scriptRelease) await new Promise(r => setTimeout(r, 20)); document.body.dataset.scriptChecked = "yes"; return "script a"; }});' }),
+          tc('script-b', 'evaluate', { tabRef: ids[1], timeout: 10, code: '() => "script b"' }),
           tc('after-script', 'read_article', { tabRef: ids[1], limit: 3000 }),
         ], new AbortController().signal);
-        return { peak, ends, ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id) };
+        return { peak, ends, ids: messages.filter(m => m.role === 'tool').map(m => m.tool_call_id),
+          outputs: messages.filter(m => m.role === 'tool').map(m => m.content) };
       }, batchTabIds);
       await expect.poll(() => worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: id },
         world: 'MAIN', func: () => Boolean(globalThis.__scriptStarted) }))[0]?.result, batchTabIds[0])).toBe(true);
@@ -307,7 +324,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       expect(scripts.peak).toBe(1);
       expect(scripts.ids).toEqual(['script-a', 'script-b', 'after-script']);
       expect(scripts.ends.every(event => !event.isError)).toBe(true);
-      expect(scripts.ends.slice(0, 2).map(event => event.result.result)).toEqual(['script a', 'script b']);
+      expect(scripts.outputs.slice(0, 2)).toEqual(['script a', 'script b']);
       for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabRef: event.result.tabRef });
 
       const observations = [];

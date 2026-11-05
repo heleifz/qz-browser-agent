@@ -3,12 +3,11 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { GUIDE_URL, INSTALL_URL, QzError, withToolClient, readHealth } from "./client.mjs";
-import { ensureDaemon, findDaemon, stopDaemon } from "./daemon.mjs";
+import { GUIDE_URL, INSTALL_URL, QzError, withToolClient } from "./client.mjs";
+import { ensureDaemon, findDaemon } from "./daemon.mjs";
 import { openBrowser } from "./open-browser.mjs";
-import { parseCommand } from "./args.mjs";
-import { EXEC_JSON_MESSAGE } from "./commands.mjs";
+import { connectionUri, prepareConnection } from "./connection.mjs";
+import { commandNameFromArgs, parseCommand } from "./args.mjs";
 import { renderError, renderHelp, renderResult, renderInputNotice, sanitizeTerminalText } from "./terminal.mjs";
 import { TASK_NOT_FOUND_MESSAGE, waitForTask } from "./task-stream.mjs";
 import { createLiveOutput, outputMode } from "./output.mjs";
@@ -16,8 +15,7 @@ import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
 import { driveGuide } from "./drive-guide.mjs";
-import { buildScriptRequest, catalogExecRoute, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
-import { driveExtensionTimeoutSeconds } from "./drive-timeout.mjs";
+import { buildScriptRequest, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
 
 export const HELP = renderHelp();
 
@@ -46,56 +44,16 @@ async function stdinText({ signal } = {}) {
   });
 }
 
-const UPGRADE_HINT = "Use the latest CLI. After current tasks finish, run npx --yes qz-browser-agent@latest stop (disconnects all browsers), update and reload the qz extension, then run npx --yes qz-browser-agent@latest connect.";
+const UPGRADE_HINT = "Update the installed CLI and browser extension, then retry the command.";
 
 function requirePairingSupport(health) {
   if (health?.features?.browserPairing !== 1) throw new QzError("UPGRADE_REQUIRED",
-    "This qz service is unsupported. Upgrade the CLI and extension, then run qz stop and qz connect.",
+    "This qz service is unsupported. Update the CLI and extension, then retry the command.",
     { hint: UPGRADE_HINT });
 }
 
-function selectClient(health, selector = "", { allowEmpty = false } = {}) {
-  const clients = health.status?.clients || [];
-  if (selector) {
-    const entry = (health.status?.browsers || []).find(client => client.clientId === selector || client.name === selector);
-    const selected = clients.find(client => client.clientId === (entry?.clientId || selector));
-    if (selected) return selected.clientId;
-    throw new QzError(entry ? "CLIENT_OFFLINE" : "CLIENT_NOT_FOUND", `Browser ${selector} is ${entry ? "offline" : "not registered"}.`,
-      { hint: "Run qz browsers to inspect names and UUIDs. Reconnect that profile from its extension settings." });
-  }
-  if (clients.length > 1) throw new QzError("SELECTION_REQUIRED", "Multiple browsers are connected. Select one with --client NAME|UUID.",
-    { clients: clients.map(({ clientId, name }) => ({ clientId, name })), hint: clients.map(client => `${client.name || client.clientId}: ${client.clientId}`).join("\n") });
-  if (clients.length === 1) return clients[0].clientId;
-  if (allowEmpty) return "";
-  throw connectionRequired();
-}
-
 function connectionRequired() {
-  return new QzError("NOT_CONNECTED", "Run qz connect to start the local service and connect Chrome. If qz is not installed, run qz install.");
-}
-
-function resolveExecClient(health, optionSelector = "", payload = null) {
-  const payloadSelector = String(payload && typeof payload === "object" && !Array.isArray(payload) ? payload.clientId || "" : "").trim();
-  const optionId = optionSelector ? selectClient(health, optionSelector) : "";
-  const payloadId = payloadSelector ? selectClient(health, payloadSelector) : "";
-  if (optionId && payloadId && optionId !== payloadId) {
-    throw new QzError("CLIENT_CONFLICT", "The --client option and clientId select different browsers.");
-  }
-  return optionId || payloadId || selectClient(health, "");
-}
-
-function parseExecPayload(source) {
-  let value;
-  try { value = JSON.parse(source); }
-  catch { throw new QzError("INVALID_ARGUMENTS", EXEC_JSON_MESSAGE); }
-  if (!value || Array.isArray(value) || typeof value !== "object") throw new QzError("INVALID_ARGUMENTS", EXEC_JSON_MESSAGE);
-  return value;
-}
-
-async function readExecStdin(dependencies) {
-  const stdin = dependencies.stdin || process.stdin;
-  if (stdin.isTTY) throw new QzError("INVALID_ARGUMENTS", EXEC_JSON_MESSAGE);
-  return (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
+  return new QzError("NOT_CONNECTED", "Run qz connect uri and open its URL in the browser profile with qz installed. Session and script commands prepare their connection automatically.");
 }
 
 function imageFilePaths(images, directory, prefix) {
@@ -109,37 +67,10 @@ function imageFilePaths(images, directory, prefix) {
   });
 }
 
-export function materializeExecImages(result) {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const nested = Array.isArray(result.results) && result.results.some(item => Array.isArray(item?.images) && item.images.some(image => typeof image?.data === "string"));
-  const topLevel = Array.isArray(result.images) && result.images.some(image => typeof image?.data === "string");
-  if (!nested && !topLevel) return result;
-  const directory = mkdtempSync(join(tmpdir(), "qz-exec-"));
-  const images = imageFilePaths(result.images, directory, "");
-  const results = Array.isArray(result.results)
-    ? result.results.map((item, index) => {
-      if (!item || typeof item !== "object" || !Array.isArray(item.images)) return item;
-      const paths = imageFilePaths(item.images, directory, `${index}-`);
-      return paths ? { ...item, images: paths } : item;
-    })
-    : result.results;
-  return {
-    ...result,
-    ...(images ? { images } : {}),
-    ...(Array.isArray(result.results) ? { results } : {}),
-  };
-}
-
-function execFailed(result) {
-  if (!result || typeof result !== "object") return false;
-  if (result.isError === true || result.ok === false || (typeof result.code === "string" && typeof result.message === "string")) return true;
-  if (Array.isArray(result.results) && result.results.some(item => item?.isError === true || item?.ok === false)) return true;
-  const inner = result.result;
-  if (inner && typeof inner === "object") {
-    if (typeof inner.code === "string" && typeof inner.message === "string") return true;
-    if (inner.isError === true || inner.ok === false) return true;
-  }
-  return false;
+export function materializeToolImages(result) {
+  if (!result || !Array.isArray(result.images) || !result.images.some(image => typeof image?.data === "string")) return result;
+  const directory = mkdtempSync(join(tmpdir(), "qz-script-"));
+  return { ...result, images: imageFilePaths(result.images, directory, "") };
 }
 
 function recoveryCommand(command, sessionId, clientId, stream = false) {
@@ -170,7 +101,7 @@ async function executeCommand(parsed, dependencies) {
   return withToolClient(async callTool => {
     const returned = await dispatchCommand(parsed, { ...dependencies, callTool: dependencies.callTool || callTool });
     const clientId = parsed.presentation?.clientId;
-    return clientId && returned.result && typeof returned.result === "object" && !Array.isArray(returned.result)
+    return parsed.command !== "session" && clientId && returned.result && typeof returned.result === "object" && !Array.isArray(returned.result)
       ? { ...returned, result: { ...returned.result, clientId } } : returned;
   });
 }
@@ -181,80 +112,24 @@ async function dispatchCommand(parsed, dependencies) {
   dependencies.signal?.throwIfAborted();
   const open = dependencies.openBrowser || openBrowser;
   const find = dependencies.findDaemon || findDaemon;
-  const healthReader = dependencies.readHealth || readHealth;
   if (command === "install") return { result: await open(INSTALL_URL) };
-  if (command === "stop") return { result: await (dependencies.stopDaemon || stopDaemon)() };
   if (command === "connect") {
-    const running = await (dependencies.ensureDaemon || ensureDaemon)(options.port === undefined ? {} : { preferredPort: options.port });
-    requirePairingSupport(running.health);
+    const running = await find({ allowIncompatible: true }) || await (dependencies.ensureDaemon || ensureDaemon)(options.port === undefined ? {} : { preferredPort: options.port });
     if (options.port !== undefined && Number(new URL(running.endpoint).port) !== options.port) throw new QzError("PORT_MISMATCH",
-      `The local service is already running at ${running.endpoint}.`, { endpoint: running.endpoint,
-        hint: "Use its current address, or run qz stop before connecting on a different port." });
-    const bindingUrl = new URL("/qz-connect", running.endpoint);
-    if (options.name !== undefined) bindingUrl.searchParams.set("name", options.name);
-    const connectUrl = bindingUrl.href;
-    if (options["no-open"] || options.name !== undefined) {
-      dependencies.signal?.throwIfAborted();
-      const opened = options["no-open"] ? false : Boolean((await open(connectUrl))?.opened);
-      return { result: { endpoint: running.endpoint, url: connectUrl, mcpUrl: `${running.endpoint}/mcp`, opened } };
-    }
-    const deadline = Date.now() + timeoutSeconds * 1000;
-    let selected = selectClient(running.health, options["client-id"], { allowEmpty: true });
-    const probe = async health => {
-      const chosen = selected || selectClient(health, "", { allowEmpty: true });
-      const clients = (health?.status?.clients || []).filter(client => client.clientId === chosen);
-      for (const client of clients) {
-        dependencies.signal?.throwIfAborted();
-        const timeoutMs = Math.min(2000, deadline - Date.now());
-        if (timeoutMs <= 0) return false;
-        const timeout = AbortSignal.timeout(timeoutMs);
-        try {
-          // A lease can outlive a stopped poller. Confirm a real extension round trip.
-          await dependencies.callTool(running.endpoint, "qingzhou_call", {
-            method: "ping", clientId: client.clientId, timeoutSeconds: timeoutMs / 1000,
-          }, { timeoutMs, signal: dependencies.signal ? AbortSignal.any([dependencies.signal, timeout]) : timeout });
-          selected = client.clientId;
-          return true;
-        } catch (error) {
-          dependencies.signal?.throwIfAborted();
-          if (error.code === "CONNECTION_ERROR" || (!timeout.aborted
-            && !["BRIDGE_NOT_CONNECTED", "BRIDGE_CLIENT_OFFLINE", "BRIDGE_CLIENT_DISCONNECTED", "BRIDGE_REQUEST_TIMEOUT", -32001].includes(error.code))) throw error;
-        }
-      }
-      return false;
-    };
-    const result = health => ({ result: { connected: true, mcpUrl: `${running.endpoint}/mcp`, clients: health.status.clients, clientId: selected } });
-    if (await probe(running.health)) return result(running.health);
-    if (options["client-id"]) throw new QzError("CLIENT_OFFLINE", "The selected browser is not responding. Reconnect it from its extension settings.");
-    dependencies.signal?.throwIfAborted();
-    await open(connectUrl);
-    while (Date.now() < deadline) {
-      dependencies.signal?.throwIfAborted();
-      const health = await healthReader(running.endpoint).catch(() => null);
-      if (health && health.instanceId !== running.instanceId) throw new QzError("CONNECTION_CHANGED", "The local service changed. Run qz connect again.", { url: connectUrl });
-      if (health && await probe(health)) return result(health);
-      await delay(200, undefined, { signal: dependencies.signal });
-    }
-    throw new QzError("CONNECTION_PENDING", "qz is waiting for Chrome. Open the connection URL in the Chrome profile with qz installed and confirm the connection in qz. Then run qz connect again.", { url: connectUrl });
+      `The local service is already running at ${running.endpoint}.`, { endpoint: running.endpoint, hint: "Use its current address." });
+    const url = connectionUri(running, options);
+    return options.json ? { result: { url } } : { text: `${url}\n` };
   }
   // Validate JSON before connecting; malformed arguments cannot cause browser actions.
   let scriptCode = "";
   if (command === "script") {
     if (options.file && options.file !== "-") {
       try { scriptCode = readFileSync(options.file, "utf8"); }
-      catch { throw new QzError("INVALID_ARGUMENTS", `Could not read ${options.file}. Use qz script --session ID --tab TABREF [FILE|-].`); }
+      catch { throw new QzError("INVALID_ARGUMENTS", `Could not read ${options.file}. Use qz script --session ID [FILE|-] [--args JSON].`); }
     } else {
       scriptCode = await (dependencies.readStdin || stdinText)({ signal: dependencies.signal });
     }
-    if (!String(scriptCode).trim()) throw new QzError("INVALID_ARGUMENTS", "The script is empty. Use qz script --session ID --tab TABREF [FILE|-].");
-  }
-  let execPayload = null;
-  if (command === "exec") {
-    if (options.payloadError) throw new QzError("INVALID_ARGUMENTS", options.payloadError);
-    const source = options.payload === "-" || options.payload == null
-      ? await readExecStdin(dependencies)
-      : options.payload;
-    execPayload = parseExecPayload(source);
+    if (!String(scriptCode).trim()) throw new QzError("INVALID_ARGUMENTS", "The script is empty. Use qz script --session ID [FILE|-] [--args JSON].");
   }
   let args = {};
   if (command === "submit" || (command === "settings" && action === "set" && id === undefined)) {
@@ -272,7 +147,12 @@ async function dispatchCommand(parsed, dependencies) {
   }
   dependencies.signal?.throwIfAborted();
   const resource = resourceRequest(parsed, config);
-  const running = await find();
+  const sessionId = command === "script" ? options.session
+    : command === "session" && ["show", "cancel"].includes(action) ? id
+      : ["send", "watch", "submit", "approve", "reject"].includes(command) || command === "tasks" && ["get", "stop"].includes(action) ? id : options.session || "";
+  const prepared = !["status", "browsers", "mcp"].includes(command)
+    ? await prepareConnection({ options, timeoutSeconds, script: command === "script", sessionId }, dependencies) : null;
+  const running = prepared?.running || (["mcp", "browsers"].includes(command) ? await (dependencies.ensureDaemon || ensureDaemon)() : await find());
   if (command === "status") return { result: running ? { running: true, endpoint: running.endpoint, updateAvailable: running.updateAvailable === true, ...(running.health.features?.browserPairing === 1 ? {} : { updateRequired: true, hint: UPGRADE_HINT }), ...running.health.status } : { running: false, connected: false } };
   if (!running) throw connectionRequired();
   if (command === "mcp") {
@@ -289,63 +169,21 @@ async function dispatchCommand(parsed, dependencies) {
     return { result: await call(running.endpoint, "qingzhou_forget_browser", { clientId: browser.clientId }, { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal }) };
   }
   // Resolve names once. Every subsequent operation carries this profile UUID.
-  const clientId = command === "exec"
-    ? resolveExecClient(running.health, options["client-id"], execPayload)
-    : selectClient(running.health, options["client-id"]);
+  const clientId = prepared.clientId;
   parsed.presentation = { ...parsed.presentation, clientId };
   options["client-id"] = clientId;
   const common = { timeoutSeconds, ...(clientId ? { clientId } : {}) };
   const requestOptions = { timeoutMs: timeoutSeconds * 1000, signal: dependencies.signal };
-  if (command === "exec") {
-    const flaggedSession = String(options.session || "").trim();
-    const payloadSession = String(execPayload.sessionId || "").trim();
-    if (payloadSession && flaggedSession && payloadSession !== flaggedSession) {
-      throw new QzError("INVALID_ARGUMENTS", "The --session option and sessionId select different sessions. Pass one id from qz session create.");
-    }
-    const route = catalogExecRoute(execPayload);
-    if (route) {
-      const sessionId = String(route.args.sessionId || flaggedSession).trim();
-      if (sessionId !== flaggedSession) {
-        throw new QzError("INVALID_ARGUMENTS", "The --session option and args.sessionId select different sessions. Pass one id from qz session create.");
-      }
-      const bindsSession = route.tool === "qingzhou_list_tools" || route.tool === "qingzhou_get_tool";
-      const result = await call(running.endpoint, route.tool, {
-        ...route.args,
-        ...(bindsSession && sessionId ? { sessionId } : {}),
-        ...common,
-      }, requestOptions);
-      return { result, exitCode: 0 };
-    }
-    const session = flaggedSession && !execPayload.sessionId ? { sessionId: flaggedSession } : {};
-    const params = { ...execPayload, ...session, ...common };
-    const requestSeconds = driveExtensionTimeoutSeconds(params, timeoutSeconds);
-    const result = await call(running.endpoint, "qingzhou_execute_tool", params, {
-      ...requestOptions, timeoutMs: requestSeconds * 1000,
-    });
-    const failed = execFailed(result);
-    return { result: materializeExecImages(result), exitCode: failed ? 1 : 0 };
-  }
   if (command === "script") {
     const budgets = scriptTimeouts({ timeoutOption: options.timeout, timeoutSeconds });
-    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session, tabRef: options.tab });
+    const request = buildScriptRequest({ code: scriptCode, timeoutSeconds: budgets.scriptSeconds, sessionId: options.session, args: options.args });
     const result = await call(running.endpoint, "qingzhou_execute_tool", { ...request, ...common, timeoutSeconds: budgets.requestSeconds }, {
       ...requestOptions,
       timeoutMs: budgets.requestSeconds * 1000,
     });
-    return presentScriptResult(result);
-  }
-  if (command === "tools") {
-    const session = options.session ? { sessionId: options.session } : {};
-    if (id) {
-      const tool = await call(running.endpoint, "qingzhou_get_tool", { ...common, ...session, name: id }, requestOptions);
-      if (options.json) return { result: tool };
-      const signature = tool?.signature || tool?.name || id;
-      return { text: tool?.description ? `${signature}\n${tool.description}\n` : `${signature}\n` };
-    }
-    const listed = await call(running.endpoint, "qingzhou_list_tools", { ...common, ...session }, requestOptions);
-    if (options.json) return { result: listed };
-    const lines = (Array.isArray(listed?.tools) ? listed.tools : []).map(tool => tool.signature || tool.name);
-    return { text: `${lines.join("\n")}\n` };
+    const output = materializeToolImages(result);
+    const shown = presentScriptResult(output);
+    return { ...shown, ...(output?.images?.length ? { stderr: output.images.map(path => `Image: ${path}\n`).join("") } : {}) };
   }
   const startedAt = Date.now();
   const readSnapshot = async (sessionId, seconds, signal) => {
@@ -469,13 +307,8 @@ export function errorPayload(error) {
   const payload = { code, message: interrupted ? "Stopped waiting. A started browser task may still be running."
     : timeout && error.code !== "TIMEOUT" ? "The request timed out. A started browser task may still be running." : error.message,
     ...(error.hint || detailHint ? { hint: error.hint || detailHint } : {}) };
-  if (code === "INVALID_ARGUMENTS") payload.hint ||= "With npm, use npm run qz -- <command> [options]. Run qz --help for usage.";
-  if (!payload.hint && (timeout || interrupted)) payload.hint = "Run qz tasks to inspect the task before repeating the command.";
-  if (!payload.hint && code === "BRIDGE_REQUEST_TIMEOUT") payload.hint = "The browser operation may still be running. Check the task before repeating the command.";
-  if (!payload.hint && code === "BRIDGE_CLIENT_REQUIRED") payload.hint = "Run qz status to list browser IDs, then repeat with --client ID.";
   if (["NOT_CONNECTED", "CONNECTION_ERROR", "CONNECTION_UNAVAILABLE", "CONNECTION_PENDING", "CONNECTION_CHANGED", "BROWSER_OPEN_FAILED", "BRIDGE_NOT_CONNECTED", "BRIDGE_CLOSED"].includes(code)) {
     Object.assign(details, { guide: GUIDE_URL, install: INSTALL_URL });
-    payload.hint ||= "Run qz install if the extension is missing, then qz connect. See the GitHub guide for setup.";
   }
   if (Object.keys(details).length) payload.details = details;
   return payload;
@@ -487,9 +320,9 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const env = dependencies.env || process.env;
   // Preserve explicit machine output even when argument validation itself fails.
   let mode = outputMode({ json: argv.includes("--json"), plain: argv.includes("--plain"), "no-color": argv.includes("--no-color") }, stdout, env);
-  let live;
+  let live, parsed;
   try {
-    const parsed = parseCommand(argv);
+    parsed = parseCommand(argv);
     mode = outputMode(parsed.options, stdout, env);
     if (parsed.command === "help") {
       const help = renderHelp(parsed.helpTopic, mode);
@@ -501,7 +334,6 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       stdout.write(parsed.options.json ? `${JSON.stringify({ ok: true, result: { guide } })}\n` : guide);
       return 0;
     }
-    if (parsed.command === "exec") mode = { ...mode, json: true };
     if (parsed.options.wait) live = createLiveOutput(parsed, { stdout, stderr, ...mode });
     const result = await executeCommand(parsed, { ...dependencies,
       onTaskCreated: async task => { live?.created(task); await dependencies.onTaskCreated?.(task); },
@@ -522,9 +354,11 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   } catch (error) {
     live?.finish();
     const payload = errorPayload(error);
-    if (mode.json) stdout.write(`${JSON.stringify(payload)}\n`);
+    const scriptCommand = (parsed?.command ?? commandNameFromArgs(argv)) === "script";
+    if (scriptCommand) stdout.write(presentScriptResult({ isError: true, result: payload }).text);
+    else if (mode.json) stdout.write(`${JSON.stringify(payload)}\n`);
     else stderr.write(renderError(payload, { ...mode, color: mode.color && Boolean(stderr.isTTY) }));
-    return payload.code === "INVALID_ARGUMENTS" ? 2 : payload.code === "INTERRUPTED" ? 130 : 1;
+    return payload.code === "INVALID_ARGUMENTS" ? 2 : !scriptCommand && payload.code === "INTERRUPTED" ? 130 : 1;
   }
 }
 

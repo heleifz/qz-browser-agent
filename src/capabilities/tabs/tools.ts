@@ -116,7 +116,11 @@ registerTool({
           ? "Operation aborted before navigating tab" : "Operation aborted while opening tab", { url, tabRef: tabAlias });
       }
       await navigateTab(tabId, url, assertTabAllowedBySecurityGuardrails, signal);
-      const opened = await chrome.tabs.get(tabId);
+      const opened = await chrome.tabs.get(tabId).catch(() => {
+        throw Object.assign(new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The opened tab is no longer available.", {
+          ...(tabAlias ? { tabRef: tabAlias } : {}),
+        }), { hint: "Use list_tabs to choose an available tabRef, then retry." });
+      });
       return bindCreatedTabResult(describeToolTab({ ...opened, url: opened.url || url }, tabAlias), tabId);
     } catch (error) {
       const timedOut = signal?.aborted && signal.reason?.code === "TOOL_TIMEOUT";
@@ -173,8 +177,11 @@ registerTool({
   } as const; },
   page: "tab",
   timeout: { defaultMs: 20000, maxMs: 120000 },
-  execute: async ({ tabId }) => {
-    await chrome.tabs.remove(tabId);
+  execute: async ({ tabId }, _signal, context = {}) => {
+    try { await chrome.tabs.remove(tabId); }
+    catch { throw Object.assign(new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The requested tab is no longer available.", {
+      ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
+    }), { hint: "Use list_tabs to choose an available tabRef, then retry." }); }
     return { closed: true };
   },
 });

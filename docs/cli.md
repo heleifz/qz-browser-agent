@@ -21,7 +21,6 @@ your provider and model in Settings. A development build in Firefox uses
 Run the published package with npx:
 
 ```bash
-npx qz-browser-agent@latest connect
 npx qz-browser-agent@latest create "Summarize the current page." --stream
 ```
 
@@ -29,12 +28,11 @@ npx qz-browser-agent@latest create "Summarize the current page." --stream
 installation, download the [latest GitHub release](https://github.com/alibaba/qz-browser-agent/releases/latest)
 and follow the [manual installation steps](https://github.com/alibaba/qz-browser-agent/blob/main/README.md#manual-installation).
 
-`connect` starts the local MCP service and opens its connection page in the default browser.
-The first new profile is named `default`;
-accepting the data notice alone does not enable the local connection. Repeating `connect` reuses
-an online browser. Add further profiles with a [pairing URL](#pair-a-selected-browser-from-the-shell)
-or from their own qz Settings. To choose Firefox, return the URL and open it there, as in
-[Load qz in Firefox](#load-qz-in-firefox).
+Browser operations prepare their connection automatically. They reuse a responding online browser,
+or open installed browsers in Chrome, Firefox, Edge order until the extension responds. Each browser
+is opened at most once within the connection deadline. Complete the first-use notice and connection
+prompt when needed. Use `qz connect uri` to print a URL for a specific profile without opening it.
+The first new profile is named `default`; an existing profile retains its name.
 
 The examples and suggested next commands use `qz`. Replace it with
 `npx qz-browser-agent@latest`, or install the command globally:
@@ -68,8 +66,8 @@ Open the sidebar from the toolbar button, then pair:
 
 1. In qz, open **Settings → Advanced → CLI → Connect CLI**. The service address is the one
    `qz status` prints. The default is `http://127.0.0.1:18765`.
-2. Or run `qz connect --no-open --json` and open `result.url` in the Firefox profile that has
-   the add-on. `qz connect` without `--no-open` opens the URL in the system default browser.
+2. Or run `qz connect uri --json` and open `result.url` in the Firefox profile that has
+   the add-on. The URI command does not open a browser.
 
 The settings sender accepts a `moz-extension://<host>/` page when `sender.id` is this add-on.
 A web page URL is rejected.
@@ -87,61 +85,56 @@ A request to `/mcp` that carries any Origin is rejected. The daemon still binds 
 
 ### Check Connect CLI on a local Firefox
 
-Use `npm run qz` from this checkout. An older daemon keeps its previous origin rule until
-`npm run qz -- stop`.
+Use `npm run qz` from this checkout. Browser operations restart an incompatible local service once
+before submitting any browser operation; compatible running services remain in use.
 
 1. Run `npm run build:firefox`. In Firefox 154 or later, open
    `about:debugging#/runtime/this-firefox` and load `dist/extension-firefox/manifest.json`.
 2. Open the sidebar and accept the data notice.
-3. Run `npm run qz -- connect --no-open --json` and open `result.url` in that Firefox window.
+3. Run `npm run qz -- connect uri --json` and open `result.url` in that Firefox window.
 4. The page reports the profile connected. `npm run qz -- browsers` lists it online.
 
 **Settings → Advanced → CLI → Connect CLI** is the same check. Use the address `qz status` prints.
 
-## Connect and stop
+## Connection preparation
 
 ```bash
-qz connect
+qz session create --title "Inspect a page"
 qz status
 qz browsers
 qz mcp
-qz stop
 ```
 
-`connect` reuses the healthy service already running for this installation. It prefers port 18765;
-if that port belongs to another program, the service chooses a free port. `status` shows the actual
-service address, and `mcp` prints its MCP URL. Both commands are read-only. To request a custom port,
-run `qz connect --port 18766`; an existing service on another port remains running and the command
-reports its address. The extension connects only to its configured address.
+Browser operations reuse a responding connection or prepare one automatically. The local service
+prefers port 18765; if another program owns it, the service chooses a free port. `status` shows the
+actual service address, and `mcp` prints its MCP URL. A protocol-incompatible service is restarted
+once under its scope lock after verifying its process and instance identity. Build changes alone
+do not restart compatible services. No submitted browser operation is replayed during recovery.
 
-The connection page can be closed once `qz browsers` shows the profile online. Connections start
-only through `qz connect` or **qz Settings → Advanced → CLI → Connect CLI**. For ordinary connection
-failures, the extension makes at most three recovery attempts, 30 seconds apart, then pauses.
-After a browser or background restart, it may first wait once for the previous connection to expire.
-Click **Connect CLI** in that browser's settings to retry.
+Without an explicit selection, a new task uses the first responding browser. An existing session
+is located through read-only queries when several browsers are online; ambiguous ownership requires
+`--client NAME|UUID`. An explicit selection never falls back to another browser. With no online
+connection, the CLI tries installed Chrome, Firefox and Edge once each within one deadline. Pairing
+still requires the extension’s first-use notice and connection prompt. The connection page can be
+closed once `qz browsers` shows the intended profile online.
 
-To disconnect one browser, click **Disconnect: NAME** in its qz Settings. `qz stop` stops the local
-service and disconnects every browser and MCP client using it. Browser tasks already running
-remain in the extension; stopping the service does not cancel them. Use `qz cancel TASK_ID` to stop
-a task, adding `--client NAME|UUID` when needed.
+To disconnect one browser, click **Disconnect: NAME** in its qz Settings. To cancel a task, use
+`qz cancel TASK_ID`, or `qz session cancel ID` for a direct-drive session, adding --client when needed.
+The extension retains browser tasks independently of the local service.
 
 ### Pair a selected browser from the shell
 
-Get a pairing URL without opening the default browser or waiting for a connection:
+Print a pairing URL without opening a browser, waiting for a connection or interrupting tasks:
 
 ```bash
-qz connect --no-open --json
-qz connect --no-open --name work --json
+qz connect uri
+qz connect uri --name work --json
 ```
 
-The JSON envelope contains `result.endpoint`, `result.url`, `result.mcpUrl`, and
-`result.opened: false`. The command starts or reuses the service even when other browsers are
-already connected. Open the exact returned URL in the browser profile where qz is installed.
-
-`qz connect` without `--no-open` asks the operating system to open that URL (`open` on macOS,
-`xdg-open` on Linux, `rundll32` on Windows). That uses the system default browser. A specific
-profile uses `--no-open` and one of the commands below. If the automatic open fails, the CLI
-message says to open the URL in Chrome.
+The first command prints the URL. With --json, read result.url. Open that exact URL in the browser
+profile where qz is installed. --name names a new profile; --client NAME|UUID addresses a registered
+profile and cannot be combined with --name. To request a custom service port, use --port; if the
+service is already running on another port, it remains running and the command reports its address.
 
 ### Open the URL in Chrome
 
@@ -194,7 +187,7 @@ with the daemon. `qz browsers` lists that profile when the pair succeeds. See
 `--name work` adds `?name=work` to the URL. The profile opening it receives that identifier,
 including when it already has a connection. Without `--name`, a registered profile keeps its name;
 a new profile receives the next available name: `default`, `browser-2`, and so on. A name conflict
-requires another name. `qz connect --name work` opens the URL automatically and returns immediately.
+requires another name. `qz connect uri --name work` only prints the URL.
 These URL-returning commands do not confirm that a browser connected. Verify it with:
 
 ```bash
@@ -203,8 +196,8 @@ qz create "Summarize the current page." --client UUID --stream
 ```
 
 Read `result.browsers`, then use the intended online entry's `clientId` UUID. `--client` selects an
-existing connection and cannot be combined with `--no-open` or `--name`. `--port` works with either
-pairing mode and follows the existing-service behavior above.
+existing connection and cannot be combined with --name on the URI command. --port follows the
+existing-service behavior above.
 
 ### Add and select browsers
 
@@ -220,10 +213,11 @@ qz show TASK_ID --client work
 qz data --client work
 ```
 
-`--client NAME|UUID` and `-c NAME|UUID` select a profile. With exactly one online browser, the CLI
-selects it automatically. With several online browsers, a selection is required; `default` is a
-name, not a routing preference. An unknown or offline selection fails without opening or using
-another browser. Each command resolves its name once and carries the UUID through subsequent
+`--client NAME|UUID` and `-c NAME|UUID` select a profile. New tasks use the first responsive browser;
+existing sessions are located through read-only queries when several browsers are online, and
+ambiguous ownership requires a selection. `default` is a name, not a routing preference. An unknown
+selection fails immediately; an offline selection waits for that UUID within the connection deadline
+without opening or using another browser. Each command resolves its name once and carries the UUID through subsequent
 requests. JSON task results and suggested next commands include that UUID.
 
 Names remain registered while their browsers are offline and across service restarts. To release
@@ -238,21 +232,17 @@ browser's tasks and data intact. A browser can then explicitly pair using the re
 
 ### Update the connection
 
-Use the current CLI and extension together. Updating the npm package leaves the running service
-in place; `qz status` reports an available update. Restart the connection to use the updated package:
-
-1. Use the latest CLI and let current tasks finish.
-2. Run `npx --yes qz-browser-agent@latest stop`. This disconnects all browsers using that service.
-3. Update the extension that profile is running. Chrome: install from the
-   [Chrome Web Store](https://chromewebstore.google.com/detail/dknbdgkgoinlgjpfebapkklbmjjgdblm),
-   or replace a manual ZIP and reload it at `chrome://extensions`. Firefox development: run
-   `npm run build:firefox` and reload the temporary add-on at `about:debugging`.
-4. Run `npx --yes qz-browser-agent@latest connect`, then reconnect additional profiles using their
-   pairing URL or settings.
+Use the current CLI and extension together. Compatible running services remain in use after package
+updates. Before browser operations, the CLI can replace a protocol-incompatible service once under
+its scope lock, retaining the service address and paired identities. If the extension’s script API
+is incompatible, update the CLI and extension together before retrying; no script is submitted.
+Chrome store users update through the store; manual packages must be reloaded. Firefox development
+packages are rebuilt with npm run build:firefox and reloaded at about:debugging.
 
 ## Connect an MCP client
 
-Run `qz connect`, then `qz mcp`. Copy the returned URL into your MCP client's HTTP configuration:
+Run `qz mcp` to start or reuse the local service. If the intended profile is not paired, open the URL
+from `qz connect uri` there. Copy the MCP URL into your client’s HTTP configuration:
 
 ```toml
 [mcp_servers.qz]
@@ -405,10 +395,11 @@ UUIDs, and online status. See [browser selection](#add-and-select-browsers) for 
 Use `-t` for `--title`. Run `qz help COMMAND` or `qz COMMAND --help` for command-specific options.
 
 The default MCP catalog is the direct-drive set: `qingzhou_guide`, `qingzhou_create_drive_session`,
+`qingzhou_list_drive_sessions`, `qingzhou_get_drive_session`, `qingzhou_stop_session`,
 `qingzhou_execute_tool`, `qingzhou_list_tools`, `qingzhou_get_tool`, and `qingzhou_bridge_status`.
 `qingzhou_guide` returns the CLI workflow from `skills/qz-browser-agent/SKILL.md`.
 MCP clients use the protocol below and [MCP connection setup](#connect-an-mcp-client).
-Install or update the CLI skill with `npx skills add alibaba/qz-browser-agent -g`.
+Run `qz skill` for the guide shipped with the installed CLI.
 `qz mcp` prints the local MCP endpoint. `qz mcp --profile full`
 prints the task and diagnostic catalog. A direct-drive session lists the default tool tier from
 `qingzhou_list_tools`. `qingzhou_get_tool` still returns a guide-tier tool, and returns
@@ -421,57 +412,58 @@ Tool execution requires a created session: omitting `sessionId` returns `DRIVE_S
 an unknown ID returns `DRIVE_SESSION_NOT_FOUND`. Neither case creates a session. Check the browser selection and ID,
 or create a new task session with `qz session create --title "Task title"` / `qingzhou_create_drive_session({title:"Task title"})`.
 
-`qz session create --title "Task title"` requires a readable title, creates a fresh direct-drive session,
-and prints `sessionId <id>` on stdout. With `--json`, read `result.sessionId`. `qz` abbreviates `npx --yes qz-browser-agent@latest` when
-it is not installed globally. See the [copyable drive workflow](../skills/qz-browser-agent/SKILL.md)
-for creation, tab aliases, dependent batches, PDF reading, and response examples.
-Finish with `qz cancel ID`; it ends the session and cleans up created tabs, so do not call
-`close_tab` afterward. Further execution returns `DRIVE_SESSION_ENDED`. User tabs stay
-open; full MCP `qingzhou_stop_session({sessionId,keepTabs:true})` explicitly keeps created tabs too.
+`qz session create --title "Task title"` creates a fresh session and requires a readable title.
+It prints `sessionId <id>`; with `--json`, read `result.sessionId`. Use the installed `qz` command
+and read `qz skill` for its guide. `qz session list` lists direct-drive sessions, and
+`qz session show ID` reads `{sessionId,title,status}`. Finish with `qz session cancel ID` to end
+the session and clean up its created tabs, including while a script is running. User tabs are
+preserved. Further execution returns `DRIVE_SESSION_ENDED`.
 
-`qz script --session ID --tab TABREF [FILE|-]` runs an async function on that tab. `--session` is
-required. `--tab` takes an alias or a tabRef returned by open_tab/list_tabs. stdout is the returned
-value. Failures print `{code,message,hint?,details?}`; `details` holds script line/column and at most
-five trace entries. Thrown/transport failures use the same shape with `--json`, or stderr on an interactive terminal.
-`--timeout` defaults to 120 seconds, accepts >0 and <=3600, and the request waits 60 seconds longer.
-To modify a page, use `qz exec --session ID` with run_script and `args.mutatesPage:true`; the script
-command has no mutation flag. `qz tools --session ID` lists compact signatures for the default
-tier. `qz skill` prints the direct-drive guide without connecting. `qz --help` prints that same
-guide after the command list.
+`qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
+file or stdin; --args accepts a JSON value exposed as input/args. The script can await tools
+using the same names as the native Agent. Discover compact signatures with
+`tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`.
+Each page tool passes its own explicit tabRef. `tools.evaluate` runs a
+self-contained function in that page; pass data through args and return its value. Outer
+scripts survive page navigation; an evaluate call that unloads its own page can be interrupted.
+The [installed Skill](../skills/qz-browser-agent/SKILL.md) provides a complete workflow.
 
-`qz exec --session ID` is transport for one tool call or a short `calls` batch. It does not add
-tools or start a model. Pass one JSON object with `name` and `args`, or with `calls`. Quote it
-safely by piping stdin: `qz exec --session ID <<'JSON'`. stdout is JSON. Exit 0 when the tool
-succeeds, 2 when the arguments are invalid, and 1 when the tool fails. Screenshot bytes are
-written to temporary files and the JSON lists those paths. `--session` is required. A missing
-flag exits 2 and names `qz session create --title "Task title"`. These commands do not create a session and do not
-reuse the previous one. Each parallel task creates its own `sessionId`. Run `qz connect` first.
+```sh
+qz session create --title "Read example page"
+qz script --session SESSION_ID - <<'JS'
+await tools.open_tab({url:"https://example.com", tabAlias:"page"});
+return await tools.read_article({tabRef:"page", limit:3000});
+JS
+qz session show SESSION_ID
+qz session cancel SESSION_ID
+```
 
-A single tool's data is at `result.result` in exec JSON; a successful script value is at
-`result.result.result`. MCP's decoded text omits the CLI envelope, so those paths are `result`
-and `result.result`. A batch uses exec `result.results` / MCP `results`: inspect each `isError`.
-Call IDs correlate results; they do not interpolate returned values. Fixed-alias open/read calls
-can share a batch. Split requests when arguments depend on an unknown return value. Batches do
-not roll back completed actions.
+stdout is JSON `{traces,result}` on success and failure. traces is an ordered string array
+without levels; result is the returned business value, null for undefined, or a failure in
+`{code,message,hint?,details?}` form. Business trace/traces fields stay inside result. Script
+locations are in details. Exit codes are 0 for success, 1 for execution or connection failure,
+and 2 for invalid arguments. --timeout defaults to 120
+seconds, accepts >0 through 3600, and the request waits 60 seconds longer. The caller's deadline
+must allow that request to finish. A timeout does not undo completed browser actions.
 
-Three deadlines are separate: `args.timeout` limits script execution; `limits.timeoutSeconds`
-limits batch execution; exec `--timeout` / MCP `timeoutSeconds` controls request waiting (default
-180 seconds). Both the CLI and bridge extend a script request to at least its longest script
-budget plus 60 seconds, preserving a longer client setting. They do not rewrite script or batch
-budgets. Script timeout <=0 uses a request wait of 86400 seconds; CLI timeout flags require a
-positive value. For serial scripts, allow enough total request time and a longer calling-agent deadline.
+For action-dependent waits, pass `trigger:{name,args}` to the wait tool. It listens before
+executing the trigger once. Use this for navigation, popups and network responses; a wait
+failure never replays the action. To inspect an existing state, use a normal read, wait_for_load or an element
+wait. Tool schemas specify the available filters and deadlines.
 
-A CLI process closing its MCP connection does not immediately close the business session's tabs.
-While the extension runtime is running, about 30 minutes of business-session inactivity triggers
-cleanup. At completion use `qz cancel SESSION_ID`, or close specific owned tabs. To stop but retain
-opened tabs, use full MCP `qingzhou_stop_session({sessionId,keepTabs:true,cascade:false})`.
-Cleanup closes session-created tabs; claimed/user tabs only release leases. Do not use global
-`qz stop` for task cleanup. The next day, connect and create a new task session; leftover groups
-are ordinary user tabs.
+MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns
+`{toolName,sessionId,isError,result}`: inspect isError, then read result as the business value or
+ToolError. Do not infer execution status from keys inside a script's returned object. Batches
+correlate each result by call ID and are not transactions. The service extends script request
+waiting to at least the execution budget plus 60 seconds without rewriting execution budgets.
+Native MCP session operations include `qingzhou_list_drive_sessions`,
+`qingzhou_get_drive_session` and `qingzhou_stop_session`.
 
-If a request times out or its connection is interrupted, an operation already started in the
-browser may still be running. Check the task before repeating it. Disconnected MCP requests are
-cancelled in the service, and reconnecting does not replay their browser actions.
+A CLI process exiting does not close its session's tabs. While the extension runtime runs,
+about 30 minutes of inactivity triggers cleanup. Cancel the session for task cleanup;
+the internal service shutdown disconnects every browser. Full MCP can explicitly retain created tabs with
+`qingzhou_stop_session({sessionId,keepTabs:true,cascade:false})`. Check the session and page
+after an interrupted request before repeating an action; reconnecting does not replay it.
 
 ## Data, images, and Skills
 
@@ -557,7 +549,7 @@ Connection errors include the GitHub setup guide and installation link.
 
 The service accepts connections only on your computer. Ordinary websites cannot use its MCP
 endpoint. Local programs can control connected qz tasks while the service is running.
-Run `qz stop` to disconnect all browsers and MCP clients; existing browser tasks keep running.
+Run the internal service shutdown to disconnect all browsers and MCP clients; existing browser tasks keep running.
 
 Connection settings and browser registrations are stored in `~/.qz-browser-agent/run/`.
 Pairing credentials stay on your computer and are omitted from status output.

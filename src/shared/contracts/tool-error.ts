@@ -72,6 +72,18 @@ export function pageErrorDetails(
 }
 
 export interface ToolError { code: string; message: string; hint?: string; details?: ToolErrorDetails }
+const values = new WeakSet<object>();
+
+/** Execution status belongs to the host, never to keys in a caller's returned object. */
+export function markToolValue<T>(value: T): T {
+  if (value && typeof value === 'object') values.add(value);
+  return value;
+}
+
+export function isToolValue(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && values.has(value));
+}
+
 export function toolError(
   code: string, message: string, options: { hint?: string; details?: unknown } = {},
 ): ToolError {
@@ -82,7 +94,7 @@ export function toolError(
 
 /** Native failures plus the input-only legacy failure envelopes. */
 export function isToolFailure(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || isToolValue(value)) return false;
   const result = value as Record<string, unknown>;
   return result.ok === false || result.isError === true || Boolean(result.error)
     || (result.ok !== true && typeof result.code === 'string' && typeof result.message === 'string'

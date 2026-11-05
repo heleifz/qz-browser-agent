@@ -139,6 +139,29 @@ const waited = await waiting;
 assert.equal(waited.matched, true);
 assert.equal(waited.response.status, 201);
 
+// Future response waits cannot reuse a captured response, even when its body finishes later.
+await assert.rejects(definitions.get("wait_for_response").execute({
+  tabId: 4, urlPattern: "next", timeout: 0.01,
+}, undefined, runOne), { code: "TOOL_TIMEOUT" });
+const emitResponse = requestId => {
+  emit("Network.requestWillBeSent", { requestId, request: { url: "https://example.test/next", method: "POST" }, timestamp: 6 });
+  emit("Network.responseReceived", { requestId, response: { status: 202, mimeType: "application/json" }, timestamp: 6.1 });
+  emit("Network.loadingFinished", { requestId, timestamp: 6.2 });
+};
+let triggered = 0;
+const afterTrigger = await definitions.get("wait_for_response").execute({
+  tabId: 4, urlPattern: "next", includeBody: true, timeout: 1,
+  trigger: { name: "act_on_element", args: { tabRef: "page", target: "css:#send", action: "click" } },
+}, undefined, { ...runOne, async invokeTool(name, args, { signal }) {
+  triggered++; assert.equal(name, "act_on_element"); assert.equal(args.tabRef, "page"); assert.equal(signal.aborted, false);
+  emitResponse("r3"); return { inputDelivered: true };
+} });
+assert.equal(triggered, 1); assert.equal(afterTrigger.response.requestId, "r3"); assert.equal(afterTrigger.body.body, "body-4");
+const actionFailure = { code: "ACTION_FAILED", message: "Input was rejected", hint: "Inspect the button" };
+await assert.rejects(definitions.get("wait_for_response").execute({
+  tabId: 4, urlPattern: "next", timeout: 1, trigger: { name: "act_on_element" },
+}, undefined, { ...runOne, async invokeTool() { emitResponse("r4"); throw actionFailure; } }), error => error === actionFailure);
+
 runtime.releaseRun("other-session", runOne.runId);
 emit("Runtime.consoleAPICalled", { type: "warning", args: [{ type: "string", value: "still watching" }], timestamp: 4 });
 runtime.releaseRun(runOne.sessionId, runOne.runId);
@@ -147,13 +170,18 @@ emit("Network.requestWillBeSent", { requestId: "late", request: { url: "https://
 const stoppedConsole = await definitions.get("read_console_messages").execute({ tabId: 4, level: "warning" }, null, runOne);
 assert.deepEqual(stoppedConsole.results.map(item => item.text).sort(), ["hello", "still watching"], "retained CDP must not append console events after run cleanup");
 const stoppedNetwork = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, runOne);
-assert.equal(stoppedNetwork.records, 2, "late Network events are ignored even without a physical detach");
+assert.equal(stoppedNetwork.records, 4, "late Network events are ignored even without a physical detach");
 
 const nextRun = { sessionId: "s1", runId: "r2" };
 const afterRunChange = await definitions.get("network_recent").execute({ tabId: 4, limit: 10 }, null, nextRun);
 assert.equal(afterRunChange.records, 0, "a new Agent run must not inherit the previous run's Network buffer");
 const consoleAfterRunChange = await definitions.get("read_console_messages").execute({ tabId: 4 }, null, nextRun);
 assert.equal(consoleAfterRunChange.records, 0, "a new Agent run must not inherit the previous run's Console buffer");
+
+const idle = await definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.5 }, undefined, nextRun);
+assert.equal(idle.idle, true);
+emit("Network.requestWillBeSent", { requestId: "pending", request: { url: "https://example.test/pending", method: "GET" }, timestamp: 7 });
+await assert.rejects(definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.01 }, undefined, nextRun), error => error.code === "TOOL_TIMEOUT" && Boolean(error.hint));
 
 detachListeners.forEach(listener => listener({ tabId: 4 }));
 assert.equal(runtime.defaultNetworkLimit, 200);

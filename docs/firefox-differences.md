@@ -401,7 +401,7 @@ Probe it on a temporary load:
 1. Run `npm run build:firefox` and load `dist/extension-firefox/manifest.json` from
    `about:debugging#/runtime/this-firefox`. A root-manifest zip of that directory loads the same
    package.
-2. Pair with `npm run qz -- connect`, or open the pairing URL the command prints.
+2. Run `npm run qz -- connect uri` and open the printed URL in this Firefox profile.
 3. Run `npm run qz -- browsers --json` and confirm this browser is online.
 4. Close the sidebar. Leave Firefox open for at least a minute.
 5. Run `npm run qz -- browsers --json` again. The same browser is online. The background console

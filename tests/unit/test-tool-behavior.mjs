@@ -168,7 +168,7 @@ test('capability declarations alone place new tool names into the same graph, wi
   const lookup = { toolRegistrySnapshot: registry.snapshot() };
   assert.equal(tools.getParallelReadTab('sample_read', { tabId: 4 }, lookup), 4);
   assert.equal(tools.getParallelReadTab('sample_barrier', { tabId: 3, barrier: false }, lookup), null);
-  assert.deepEqual(tools.getBatchTabPolicy('sample_creator', {}, lookup), { kind: 'create', parallel: false });
+  assert.deepEqual(tools.getBatchTabPolicy('sample_creator', {}, lookup), { kind: 'create', parallel: false, targeted: true });
   assert.deepEqual(tools.getBatchTabPolicy('sample_global', {}, lookup), { kind: 'barrier' });
   const input = [
     { name: 'sample_local', tabId: 1 }, { name: 'sample_local', tabId: 2 },
@@ -188,19 +188,19 @@ test('capability declarations alone place new tool names into the same graph, wi
   releases.get(4)(); await run; assert.deepEqual(committed, [1, 2, 3, 4]);
 });
 
-test('script declarations parallelize simple explicit page work and keep orchestration as a barrier', () => {
-  assert.equal(typeof runtime.resolveDefinition('run_script').behavior.barrier, 'function');
+test('page evaluation occupies explicit tab lanes and outer orchestration remains a barrier', () => {
+  assert.equal(runtime.resolveDefinition('run_script').behavior.barrier, true);
   assert.equal(runtime.resolveDefinition('run_skill_script').behavior.barrier, true);
-  for (const name of ['run_script', 'run_skill_script']) {
+  for (const name of ['evaluate', 'run_skill_script']) {
     for (const mutatesPage of [false, true]) for (const code of ['42', 'return input.value + args.extra', 'tools.$list()', 'eval(input.code)', 'async () => {', undefined]) {
       const args = { mutatesPage, tabRef: 'a', code, args: { value: 1, extra: 2 } };
-      const safe = name === 'run_script' && (code === '42' || code === 'return input.value + args.extra');
       assert.deepEqual(runtime.getBatchTabPolicy(name, args),
-        { kind: 'target', implicit: false, observation: false, ...(name === 'run_script' ? { parallel: safe } : {}) });
+        { kind: 'target', implicit: false, observation: false, ...(name === 'evaluate' ? { parallel: true } : {}) });
       assert.equal(runtime.getParallelReadTab(name, { ...args, tabId: 1 }), null);
     }
   }
   assert.deepEqual(runtime.getBatchTabPolicy('run_script', { code: 'return await tools.list_tabs();' }), { kind: 'barrier' });
+  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { tabRef: 'a', code: 'return 42;' }), { kind: 'barrier' }, 'an obsolete page argument cannot grant orchestration a parallel lane');
   assert.deepEqual(runtime.getBatchTabPolicy('run_skill_script', { target: 'inner', code: 'return 42', tabRef: 'a' }), { kind: 'barrier' }, 'hidden worker compatibility retains its own scheduling boundary');
 });
 
@@ -374,4 +374,27 @@ test("custom timeout diagnostic declarations retain the runtime's abort signal a
   assert.equal(signal.aborted, true);
   assert.ok((await getTraceLog()).some(line => line.includes("custom_action_trace") && line.includes("phase=tool.timeout")
     && line.includes("session=session") && line.includes("run=run")));
+});
+
+test('popup-only behavior captures child pages without forbidding same-page nested execution', async () => {
+  const order = [];
+  tools.defineTool({ name: '__popup_only_action', description: 'Popup action', page: 'owned',
+    behavior: { mayOpenPopup: true }, parameters: { type: 'object', properties: { tabRef: { type: ['integer', 'string'] } }, required: ['tabRef'] },
+    async execute() { order.push('execute'); return { done: true }; },
+  });
+  const popupRuntime = tools.createToolRuntime({ sessions: {
+    async resolveTargetTab({ tabId }) { return { ok: true, tabId, ownedByCurrentTask: true }; },
+    listOwnedTabIds: () => [31],
+    beginPopupCapture(input) {
+      assert.equal(input.openerTabId, 31);
+      assert.equal(input.runId, 'run');
+      order.push('capture');
+      return { dispose() { order.push('dispose'); } };
+    },
+  } });
+  assert.deepEqual(await popupRuntime.execute('__popup_only_action', { tabRef: 31 }, undefined, scriptContext), { done: true });
+  assert.deepEqual(order, ['capture', 'execute', 'dispose']);
+  for (const name of ['evaluate', 'act_on_screen', 'run_skill_script']) {
+    assert.equal(popupRuntime.resolveDefinition(name).behavior.mayOpenPopup, true, `${name} must retain popup lifecycle handling`);
+  }
 });

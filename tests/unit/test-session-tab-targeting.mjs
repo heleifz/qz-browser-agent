@@ -4,6 +4,12 @@ import { navigationDocuments } from "../support/navigation-documents.mjs";
 import { createSessionTabs } from "../../src/background/session/tabs.js";
 
 const navigation = navigationDocuments();
+globalThis.createImageBitmap = async () => ({ width: 800, height: 600, close() {} });
+globalThis.OffscreenCanvas = class {
+  constructor(width, height) { this.width = width; this.height = height; }
+  getContext() { return { drawImage() {} }; }
+  async convertToBlob({ type }) { return new Blob(['fixture-image'], { type }); }
+};
 
 const storageData = {};
 const state = {
@@ -113,6 +119,7 @@ globalThis.chrome = {
   scripting: {
     async executeScript(details = {}) {
       state.scriptInjections.push(details);
+      if (details.args?.length === 1 && typeof details.args[0] === 'boolean') return [{ result: { width: 800, height: 600, scale: 1 } }];
       return details.injectImmediately ? navigation.result(details.target.tabId) : [];
     },
   },
@@ -128,6 +135,11 @@ globalThis.chrome = {
     sendCommand(target = {}, command = "", params = {}) {
       state.events.push({ type: "debugger.sendCommand", tabId: Number(target.tabId), command, params: { ...params } });
       if (command === 'Runtime.evaluate' && params.expression === 'navigator.userAgent') return { result: { value: 'Chrome/149.0.0.0' } };
+      if (command === 'Page.captureScreenshot') return { data: 'c2NyZWVuc2hvdA==' };
+      if (command === 'Page.getLayoutMetrics') return { cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 0, scale: 1 } };
+      if (command === 'Page.getFrameTree') return { frameTree: { frame: { id: 'main', loaderId: 'fixture-document' } } };
+      if (command === 'Accessibility.getFullAXTree') return { nodes: [{ nodeId: 'root', ignored: false,
+        role: { value: 'RootWebArea' }, name: { value: 'Foreign Active' }, backendDOMNodeId: 10, childIds: [] }] };
       return {};
     },
   },
@@ -309,28 +321,28 @@ assert.deepEqual(
 assert.deepEqual(state.workingTabUpdates, [], "read-only foreign access must not change the session working tab");
 
 resetCalls();
-await assertRejectsWithCode(
-  tools.executeTool("screenshot", { tabRef: 2 }, null, sessionA()),
-  "SESSION_TAB_FOREIGN",
-);
-assert.equal(state.resolveCalls[0]?.readOnly, false, "screenshots require task ownership because they acquire CDP");
-assert.equal(state.events.some(event => event.type === "debugger.attach"), false, "a foreign screenshot must fail before CDP access");
+const foreignScreenshot = await tools.executeTool("screenshot", { tabRef: 2 }, null, sessionA());
+assert.match(foreignScreenshot._image, /^data:image\//);
+assert.equal(state.resolveCalls[0]?.readOnly, true, "screenshots use the same read-only foreign permission as other page readers");
+assert.deepEqual(state.workingTabUpdates, []);
+assert.equal(tabOwners.get(2), "session-b");
 
 resetCalls();
-await assertRejectsWithCode(
-  tools.executeTool("screenshot", { tabRef: 2, actionable: true }, null, sessionA()),
-  "SESSION_TAB_FOREIGN",
-);
-assert.equal(state.resolveCalls[0]?.readOnly, false, "actionable screenshots must require task ownership up front");
-assert.equal(state.events.some(event => event.type === "debugger.attach"), false, "a foreign actionable screenshot must fail before CDP access");
+const foreignActionable = await tools.executeTool("screenshot", { tabRef: 2, actionable: true }, null, sessionA());
+assert.match(foreignActionable._image, /^data:image\//);
+assert.equal(state.resolveCalls[0]?.readOnly, true);
+assert.deepEqual(state.workingTabUpdates, []);
+assert.equal(tabOwners.get(2), "session-b", "a coordinate observation does not grant write ownership");
+await assertRejectsWithCode(tools.executeTool("act_on_screen", {
+  tabRef: 2, action: "press", key: "Escape", returnScreenshot: false, _readOnlyTabAccess: true,
+}, null, sessionA()), "SESSION_TAB_FOREIGN");
 
 resetCalls();
-await assertRejectsWithCode(
-  tools.executeTool("get_ax_tree", { tabRef: 2 }, null, sessionA()),
-  "SESSION_TAB_FOREIGN",
-);
-assert.equal(state.resolveCalls[0]?.readOnly, false, "AX snapshots require task ownership because they acquire CDP");
-assert.equal(state.events.some(event => event.type === "debugger.attach"), false);
+const foreignTree = await tools.executeTool("get_ax_tree", { tabRef: 2 }, null, sessionA());
+assert.match(foreignTree.snapshot, /Foreign Active/);
+assert.equal(state.resolveCalls[0]?.readOnly, true);
+assert.deepEqual(state.workingTabUpdates, []);
+assert.equal(tabOwners.get(2), "session-b");
 
 resetCalls();
 state.rejectedRunIds.add("stale-run");

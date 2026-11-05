@@ -9,6 +9,8 @@ import type { SecurityGuardrails } from "../../shared/security-guardrails.js";
 import type { NewTabTarget } from "../services/chrome-window-target.js";
 import { isTabAlias, normalizeTabAliases } from "../../shared/tab-reference.js";
 import { tabReferenceError } from "../tools/tab-reference.js";
+import { ToolExecutionError } from "../tools/arguments.js";
+import { bindCreatedTabResult, type PageObservation } from "../../shared/contracts/page-observation.js";
 type Fields = Record<string, unknown>;
 type WorkingTab = NonNullable<ReturnType<typeof normalizeWorkingTab>>;
 interface GroupWindow { groupId: number; tabIds: number[] }
@@ -36,6 +38,7 @@ interface SessionTabsOptions {
 }
 interface TabClaim { source?: string; toolName?: string; action?: string; explicitClaim?: boolean; createdTab?: boolean; clonedTab?: boolean }
 interface RunAuthority { runId?: string | null; signal?: AbortSignal }
+interface PopupAuthority extends RunAuthority { sessionId: string; openerTabId: number }
 interface WorkingTabUpdate extends TabClaim, RunAuthority { sessionId?: unknown; tab?: unknown; owned?: boolean; claim?: boolean; createdTabReservation?: object }
 interface TargetTabOptions extends RunAuthority { sessionId?: unknown; tabId?: unknown; source?: string; checkOnly?: boolean; readOnly?: boolean; tabOnly?: boolean; allowPreNavigationBlank?: boolean; allowLoadingBlank?: boolean; createdTabReservation?: object }
 type RestoreFailure = { ok: false; index: number; code: string; reason: string; error?: string };
@@ -94,7 +97,102 @@ export function createSessionTabs({
   const pendingTabs = new Map<number, { token: object; sessionId: string; runId?: string | null; tab: WorkingTab }>();
   const pendingAliases = new Map<object, { sessionId: string; runId?: string | null; signal?: AbortSignal; alias: string }>();
   const groupSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const popupCaptures = new Set<PopupAuthority>();
+  const popupObservers = new Set<PopupAuthority & { accept(tab: chrome.tabs.Tab): Promise<void> }>();
   const timestamp = () => String(now?.() || "");
+
+  function popupCurrent(scope: PopupAuthority) {
+    return !scope.signal?.aborted && !!scope.runId && supervisor.isRunCurrent(scope.sessionId, scope.runId);
+  }
+
+  function retainPopup(scope: PopupAuthority) {
+    const runtime = supervisor.getRuntime(scope.sessionId);
+    return runtime?.driveKeepTabs === true || normalizeSessionTabIds(runtime?.driveHandoffTabIds).includes(scope.openerTabId);
+  }
+
+  function beginPopupCapture(input: PopupAuthority) {
+    const scope = { ...input, sessionId: normalizeSessionId(input.sessionId) };
+    if (!popupCurrent(scope)) throw new ToolExecutionError("OPERATION_ABORTED", "The task ended before opening a popup.");
+    if (!owns(scope.sessionId, scope.openerTabId)) throw new ToolExecutionError("SESSION_TAB_FOREIGN", t("browser.foreignTab"));
+    popupCaptures.add(scope);
+    // Keep the revoked authority until the dispatch settles: a browser-created tab
+    // arriving after cancellation must be closed, never published into another run.
+    return { dispose() { popupCaptures.delete(scope); } };
+  }
+
+  async function observePopup(input: PopupAuthority) {
+    const scope = { ...input, sessionId: normalizeSessionId(input.sessionId) };
+    await ready();
+    if (!popupCurrent(scope)) throw new ToolExecutionError("OPERATION_ABORTED", "The task ended while waiting for a popup.");
+    if (!owns(scope.sessionId, scope.openerTabId)) throw new ToolExecutionError("SESSION_TAB_FOREIGN", t("browser.foreignTab"));
+    let rejectResult!: (error: unknown) => void;
+    let observer!: PopupAuthority & { accept(tab: chrome.tabs.Tab): Promise<void> };
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      popupObservers.delete(observer);
+      scope.signal?.removeEventListener("abort", aborted);
+    };
+    const aborted = () => {
+      dispose();
+      rejectResult(new ToolExecutionError("OPERATION_ABORTED", "The task ended while waiting for a popup."));
+    };
+    const result = new Promise<PageObservation>((resolve, reject) => {
+      rejectResult = reject;
+      observer = { ...scope, async accept(tab) {
+        if (disposed) return;
+        if (!popupCurrent(scope)) { aborted(); return; }
+        try {
+          resolve(bindCreatedTabResult({ tabRef: tab.id!, title: String(tab.title || ""), url: getEffectiveTabUrl(tab), active: !!tab.active }, tab.id!));
+        } catch (error) { reject(error); }
+        finally { dispose(); }
+      } };
+    });
+    result.catch(() => {});
+    if (!popupCurrent(scope)) aborted();
+    else { popupObservers.add(observer); scope.signal?.addEventListener("abort", aborted, { once: true }); }
+    return { result, dispose };
+  }
+
+  async function handlePopupCreated(target: { tabId: number; sourceTabId: number }) {
+    const tabId = Number(target.tabId), openerTabId = Number(target.sourceTabId);
+    if (!Number.isInteger(tabId) || tabId <= 0 || !Number.isInteger(openerTabId) || openerTabId <= 0 || findOwner(tabId) || pendingTabs.has(tabId)) return;
+    const scopes = [...popupCaptures].filter(scope => scope.openerTabId === openerTabId);
+    const scope = scopes.find(candidate => popupCurrent(candidate) && owns(candidate.sessionId, openerTabId));
+    if (!scope) {
+      const owner = findOwner(openerTabId);
+      const transferred = scopes.some(retainPopup) || owner && (scopes.every(candidate => candidate.sessionId !== owner.sessionId)
+        || (owner.runtime.runId && scopes.every(candidate => candidate.runId !== owner.runtime.runId)));
+      if (!transferred && scopes.length && scopes.every(candidate => !popupCurrent(candidate))) await tabsApi.remove(tabId).catch(() => {});
+      return;
+    }
+    const runtime = supervisor.getRuntime(scope.sessionId) || {};
+    // Publish both sets before yielding, so stop's durable tab snapshot includes the popup.
+    setRuntime(scope.sessionId, { ownedTabIds: addOwnedTabId(runtime, tabId),
+      createdTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), tabId]),
+      popupTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.popupTabIds) ? runtime.popupTabIds : []), tabId]) });
+    await persistRuntime(scope.sessionId);
+    if (!popupCurrent(scope)) {
+      if (retainPopup(scope)) return;
+      await tabsApi.remove(tabId).catch(() => {});
+      await handleTabRemoved(tabId);
+      return;
+    }
+    let tab: chrome.tabs.Tab;
+    try { tab = await tabsApi.get(tabId); }
+    catch { await handleTabRemoved(tabId); return; }
+    if (!popupCurrent(scope)) {
+      if (retainPopup(scope)) return;
+      await tabsApi.remove(tabId).catch(() => {});
+      await handleTabRemoved(tabId);
+      return;
+    }
+    for (const observer of [...popupObservers]) if (observer.sessionId === scope.sessionId
+      && observer.runId === scope.runId && observer.openerTabId === openerTabId) await observer.accept(tab);
+    broadcast({ type: "sessions_changed", action: "session_tabs", sessionId: scope.sessionId });
+    scheduleGroupSync(scope.sessionId);
+  }
 
   function getTabAliases(sessionId: string) {
     const runtime = supervisor.getRuntime(normalizeSessionId(sessionId));
@@ -145,8 +243,7 @@ export function createSessionTabs({
     assertAliasRun(id, { runId, signal });
     if (!pending || pending.sessionId !== id || pending.runId !== runId || pending.signal?.aborted || !owns(id, tabId)) {
       const error = tabReferenceError("invalid_reference", pending?.alias);
-      Object.assign(error.details, { tabId, sessionId: id, bindingReason: !pending ? "missing_reservation"
-        : pending.signal?.aborted ? "aborted_reservation" : !owns(id, tabId) ? "unowned_tab" : "mismatched_reservation" });
+      error.hint = "Use list_tabs to refresh page references, then retry with a current tabRef.";
       throw error;
     }
     setRuntime(id, { tabAliases: { ...getTabAliases(id), [pending.alias]: tabId } });
@@ -308,13 +405,13 @@ export function createSessionTabs({
     let tab = null;
     try {
       tab = await tabsApi.get(targetTabId);
-    } catch (error) {
+    } catch {
       if (!isCurrent()) return aborted();
       return {
         ok: false,
         code: "SESSION_TAB_UNAVAILABLE",
         reason: "tab_unavailable",
-        error: errorMessage(error),
+        error: t("toolError.SESSION_TAB_UNAVAILABLE.label"),
         sessionId: id,
         tabId: targetTabId,
       };
@@ -757,6 +854,7 @@ export function createSessionTabs({
       ownedTabIds: owned,
       sessionTabIds: owned,
       createdTabIds: created,
+      popupTabIds: normalizeSessionTabIds(runtime.popupTabIds).filter(tabId => !released.has(tabId)),
       driveHandoffTabIds: handoff,
       tabAliases: normalizeTabAliases(runtime.tabAliases, owned),
       ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
@@ -768,9 +866,17 @@ export function createSessionTabs({
     return { closed, released: true };
   }
 
-  async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal") {
+  async function closeOwnedTabsAfterTerminal(sessionId: unknown, source = "terminal", popupTabIds: readonly number[] = []) {
     await discardPendingTabs(sessionId);
-    if (!(await shouldAutoCloseOwnedTabs(sessionId))) return { closed: [], skipped: true };
+    if (!(await shouldAutoCloseOwnedTabs(sessionId))) {
+      const id = normalizeSessionId(sessionId), closed: number[] = [];
+      if (source === "stop_session") for (const tabId of normalizeSessionTabIds(popupTabIds)) {
+        if (!owns(id, tabId)) continue;
+        try { await tabsApi.remove(tabId); closed.push(tabId); } catch { /* Already closed. */ }
+        await handleTabRemoved(tabId);
+      }
+      return { closed, skipped: closed.length === 0 };
+    }
     return closeOwnedTabs(sessionId, { source });
   }
 
@@ -820,6 +926,7 @@ export function createSessionTabs({
         : {}),
       ownedTabIds: [],
       createdTabIds: [],
+      popupTabIds: [],
       driveHandoffTabIds: [],
       tabAliases: {},
       ownedTabsClosedAt: timestamp(),
@@ -949,6 +1056,7 @@ export function createSessionTabs({
           : {}),
         ownedTabIds: nextTabIds,
         createdTabIds: nextCreated,
+        popupTabIds: normalizeSessionTabIds(runtime.popupTabIds).filter(id => id !== Number(tabId)),
         driveHandoffTabIds: normalizeSessionTabIds(runtime.driveHandoffTabIds).filter(id => id !== Number(tabId)),
         tabAliases: normalizeTabAliases(runtime.tabAliases, nextTabIds),
         sessionTabIds: nextTabIds,
@@ -1153,6 +1261,9 @@ export function createSessionTabs({
   }
 
   return Object.freeze({
+    beginPopupCapture,
+    observePopup,
+    handlePopupCreated,
     getTabAliases,
     reserveTabAlias,
     commitTabAlias,

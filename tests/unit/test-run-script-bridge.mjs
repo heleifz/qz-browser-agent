@@ -41,6 +41,7 @@ const toolRuntime = {
     }];
   },
   async execute(name, args, _signal, context) {
+    if (name === "list_tools") return { tools: this.getSchemas(context).map(schema => schema.function) };
     assertScriptPageLifecycle(this.resolveDefinition(name), args, context);
     executions.push({ name, args, context });
     if (name === "returns_error") return { ok: false, code: "EXPECTED_FAILURE", error: "failed" };
@@ -293,6 +294,7 @@ const activationBridge = createRunScriptBridge({
         : []),
     ],
     async execute(name, _args, _signal, context) {
+      if (name === "list_tools") return { tools: this.getSchemas(context).map(schema => schema.function) };
       if (name === "load_skill") return { name: "fresh-skill" };
       if (name === "fresh_plugin__run" && context.loadedPluginSkillNames.includes("fresh-skill")) return { ok: true };
       throw Object.assign(new Error(`Unknown tool: ${name}`), { code: "UNKNOWN_TOOL" });
@@ -343,6 +345,7 @@ const driveBridge = createRunScriptBridge({
     ],
     getTabAliases: () => ({ page: 7 }),
     async execute(name, args, _signal, context) {
+      if (name === "list_tools") return { tools: [{ name: "open_tab", signature: "open_tab({url:string})", description: "Open a tab" }] };
       if (name === "get_ax_tree") {
         const error = new Error("built-in alias");
         error.code = "BATCH_TAB_REFERENCE_ERROR";
@@ -443,5 +446,36 @@ const builtInAlias = await driveBridge.handleToolCall({
 assert.equal(builtInAlias.code, "BATCH_TAB_REFERENCE_ERROR");
 assert.doesNotMatch(builtInAlias.message, /省略 tabRef|omit tabRef/i);
 assert.match(builtInAlias.message, /no page alias yet|还没有页面别名/);
+
+{
+  const recorded = [], holders = [], parentPresentation = { _display: { parent: true } };
+  const values = [null, undefined, 'primitive'];
+  const collectorBridge = createRunScriptBridge({
+    supervisor, getRuntime: () => ({ status: 'running' }), canManageSessions: async () => true,
+    buildRunProfile: async () => ({}),
+    getRunToolContext: async () => ({ externalDrive: true, resultPresentation: parentPresentation }),
+    recordNestedTool: async input => { if (input.phase === 'end') recorded.push(input); },
+    toolRuntime: {
+      resolveDefinition: () => ({ model: { preserveResult: true } }), getSchemas: () => [],
+      async execute(_name, { index }, _signal, context) {
+        assert.deepEqual(context.resultPresentation, {});
+        holders.push(context.resultPresentation);
+        Object.assign(context.resultPresentation, { _display: { script: { valueOnly: true, trace: [index] } } });
+        return values[index];
+      },
+    },
+    collectArtifacts: () => [],
+  });
+  for (const [index, value] of values.entries()) {
+    const response = await collectorBridge.handleToolCall({ toolName: 'run_script', args: { index, code: 'async () => null' },
+      sessionId: 's1', runId: 'run-current' });
+    assert.equal(response.ok, true);
+    assert.equal(response.result, value);
+    assert.equal(recorded[index].result, value);
+    assert.deepEqual(recorded[index].resultPresentation._display.script.trace, [index]);
+  }
+  assert.equal(new Set(holders).size, values.length);
+  assert.deepEqual(parentPresentation, { _display: { parent: true } });
+}
 
 console.log("run_script bridge tests passed");

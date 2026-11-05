@@ -54,11 +54,13 @@ async function connected(browser) {
   return until(async () => (await readHealth(bridge.endpoint)).status.clients.find(client => client.clientId === browser.uuid), `${browser.name} connected`, 100000);
 }
 async function connect(browser) {
-  const result = await runCli(["connect", "--no-open", "--name", browser.name, "--json"], {
-    ensureDaemon: async () => ({ endpoint: bridge.endpoint, instanceId: bridge.instanceId, health: await readHealth(bridge.endpoint) }),
-    openBrowser: () => assert.fail("--no-open must not launch a default user browser"),
+  const locate = async () => ({ endpoint: bridge.endpoint, instanceId: bridge.instanceId, health: await readHealth(bridge.endpoint) });
+  const result = await runCli(["connect", "uri", "--name", browser.name, "--json"], {
+    findDaemon: locate, ensureDaemon: locate,
+    openBrowser: () => assert.fail("connect uri must not launch a default user browser"),
+    openConnectionBrowser: () => assert.fail("connect uri must only print the URL"),
   });
-  assert.ok(result.result.url, "headless connect returns the exact browser pairing URL");
+  assert.equal(result.result.url, `${bridge.endpoint}/qz-connect?name=${browser.name}`);
   const page = await browser.context.newPage();
   try {
     await page.goto(result.result.url);

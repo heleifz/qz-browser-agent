@@ -108,9 +108,9 @@ test("script timeouts read the last five traces once from the execution environm
     if (method === "Runtime.terminateExecution") return {};
     return {};
   };
-  const page = await runtime.execute("run_script", {
+  const page = await runtime.execute("evaluate", {
     timeout: 1,
-    tabId: 7,
+    tabRef: 7,
     code: "async () => { await new Promise(() => {}); }",
   }, undefined, context);
   assert.equal(page.code, "TOOL_TIMEOUT");

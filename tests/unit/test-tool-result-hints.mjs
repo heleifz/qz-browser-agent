@@ -6,6 +6,10 @@ import { registerWaitTools } from "../../src/capabilities/wait/tools.js";
 import { registerTabsNavigationTools } from "../../src/capabilities/tabs/tools.js";
 import { Agent } from "../../src/background/agent/agent.js";
 import { createTestAgentOptions } from "../support/agent-services.mjs";
+import { initializeLanguage } from "../../src/shared/i18n/index.js";
+
+globalThis.chrome = { ...globalThis.chrome, i18n: { getUILanguage: () => "zh-CN" } };
+await initializeLanguage();
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const tools = [
@@ -153,16 +157,33 @@ async function assertWaitToolNotesAreCompact() {
   const previousChrome = globalThis.chrome;
   screenshotFails = false;
   try {
-    for (const status of ["complete", "loading"]) {
-      globalThis.chrome = { tabs: {
-        get: async () => ({ id: 42, status, url: "https://example.test", title: "Page" }),
-        onUpdated: { addListener() {}, removeListener() {} },
-      } };
-      const result = await definitions.get("wait_for_navigation").execute({ tabId: 42, screenshot: true, timeout: 0.001 }, undefined, context);
-      assert.ok(result._image);
-      assert.doesNotMatch(result.note, /这是当前(?:状态|页面)截图。如果看到登录\/验证码弹窗，必须调用 wait_for_user/, "navigation screenshot note should not repeat hard wait_for_user rules");
-      assert.match(result.note, status === "complete" ? /页面加载完成，这是当前页面截图。/ : /页面加载超时，这是当前状态截图。/, "navigation screenshot note should describe the actual loading result");
-    }
+    const listeners = new Set();
+    let status = "complete";
+    globalThis.chrome = { tabs: {
+      get: async () => ({ id: 42, status, url: "https://example.test", title: "Page" }),
+      onUpdated: { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener) },
+    } };
+    const pageContext = { ...context, requestedTabRef: "page" };
+    const load = definitions.get("wait_for_load"), navigation = definitions.get("wait_for_navigation");
+    assert.deepEqual(await load.execute({ tabId: 42, timeout: 0.1 }, undefined, pageContext), {
+      status: "complete", url: "https://example.test", title: "Page",
+    }, "a current load-state wait returns concise page state");
+    assert.equal(Object.hasOwn(navigation.parameters.properties, "screenshot"), false);
+    await assert.rejects(navigation.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
+      error.code === "TOOL_TIMEOUT" && Boolean(error.hint), "a previously complete page does not satisfy a future-navigation wait");
+    status = "loading";
+    await assert.rejects(load.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
+      error.code === "TOOL_TIMEOUT" && Boolean(error.hint), "load timeout is a recoverable ToolError, not a successful screenshot receipt");
+    const pending = navigation.execute({ tabId: 42, timeout: 0.1 }, undefined, pageContext);
+    setTimeout(() => {
+      for (const listener of listeners) listener(42, { status: "loading" }, { id: 42, status: "loading" });
+      for (const listener of listeners) listener(42, { status: "complete" }, {
+        id: 42, status: "complete", url: "https://example.test", title: "Page",
+      });
+    }, 0);
+    assert.deepEqual(await pending, { status: "navigated", url: "https://example.test", title: "Page" });
+    assert.equal(listeners.size, 0, "settled navigation observers remove their listeners");
+    assert.equal(captures, capturesBeforeUnscoped, "state and navigation waits never inject an unsolicited screenshot");
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;

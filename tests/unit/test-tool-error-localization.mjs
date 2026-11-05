@@ -133,6 +133,12 @@ assert.equal(
   assert.equal(localized.message, "未知工具：no_such_tool");
   assert.equal(localized.codeLabel, "未知工具");
   assert.deepEqual(localized.details, { name: "no_such_tool" });
+  // Catalog queries fail inside list_tools, but the requested name is what the
+  // caller must fix. The execution context must not hide that identity.
+  const queryError = Object.assign(new Error("Unknown or unavailable tool: no_such_tool"), {
+    code: "UNKNOWN_TOOL", details: { name: "no_such_tool", toolName: "list_tools" },
+  });
+  assert.equal(localizeToolFailureError(queryError, { toolName: "list_tools" }).message, "未知工具：no_such_tool");
 }
 
 {

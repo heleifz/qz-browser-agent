@@ -341,6 +341,30 @@
     }
   },
   {
+    "name": "qingzhou_list_drive_sessions",
+    "description": "List direct-drive sessions as {sessionId,title,status} observations.",
+    "inputSchema": {
+      "properties": {
+        "timeoutSeconds": {"type": ["number", "null"], "default": null},
+        "clientId": {"type": "string", "default": "", "description": "Browser name or UUID."}
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "qingzhou_get_drive_session",
+    "description": "Read one direct-drive session as {sessionId,title,status}.",
+    "inputSchema": {
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "timeoutSeconds": {"type": ["number", "null"], "default": null},
+        "clientId": {"type": "string", "default": "", "description": "Browser name or UUID."}
+      },
+      "required": ["sessionId"],
+      "type": "object"
+    }
+  },
+  {
     "name": "qingzhou_create_drive_session",
     "description": "Create one direct-drive session with a readable title and return sessionId, title, and status. Pass that id on every tool execution. This does not start a model.",
     "inputSchema": {
@@ -356,9 +380,10 @@
   },
   {
     "name": "qingzhou_execute_tool",
-    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools.",
+    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务；结果可附带按执行顺序排列的 traces 消息字符串。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools. Results may include ordered traces as message strings.",
     "inputSchema": {
       "properties": {
+        "scriptApiVersion": {"type": "integer", "minimum": 1, "description": "Required script API version; checked before executing the request."},
         "name": {"title": "Name", "type": "string"},
         "args": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Args"},
         "calls": {

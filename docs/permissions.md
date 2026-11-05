@@ -136,13 +136,14 @@ later calls reuse it. Declining leaves consent unset. Device location access and
 are required; a failed lookup returns recovery guidance. History and bookmarks
 are read when their tools are invoked; their authorization cards explain that task results are sent
 to the configured model service. Skill network access and outgoing MCP connections follow user
-configuration. After first-use consent, qz enables local MCP and CLI connections. `qz connect`
-starts the local service and opens a local connection page when needed. The extension verifies that
-page's address and the service identity before saving its endpoint. It tries the saved endpoint
-(initially `http://127.0.0.1:18765`) and becomes idle after three consecutive failures; the connection
-page resumes it. Local clients can then access qz tasks and browser tools without a pairing token.
+configuration. After first-use consent, qz enables local MCP and CLI connections. Browser commands
+prepare the local connection automatically; `qz connect uri` prints a URL for a chosen browser
+profile. The extension verifies that page's address and the service identity before saving its
+endpoint. It tries the saved endpoint (initially `http://127.0.0.1:18765`) and becomes idle after
+three consecutive failures; the connection page resumes it. Local clients can then access qz tasks
+and browser tools without a pairing token.
 The service accepts loopback connections, validates request Host and Origin, and rejects ordinary
-web-page origins. `qz stop` stops the local service. See the [connection guide](../services/mcp-bridge/README.md)
+web-page origins. Disconnect a browser from its qz connection settings. See the [connection guide](../services/mcp-bridge/README.md)
 for setup and connection controls.
 
 Provider header rules use the current `chrome.runtime.id` as their `initiatorDomains` condition.
