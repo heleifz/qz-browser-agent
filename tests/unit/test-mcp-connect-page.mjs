@@ -11,11 +11,14 @@ import { createSidepanelTransport } from "../../src/background/transports/sidepa
 const sender = { id: "extension", frameId: 0, tab: { id: 12 }, url: "http://127.0.0.1:23001/qz-connect" };
 const status = { state: "connected", clientId: "profile-uuid", name: "default", endpoint: "http://127.0.0.1:23001", retryCount: 0, retryLimit: 3 };
 function setup() {
-  const state = { consent: true, url: sender.url, connections: [] };
+  const state = { consent: true, url: sender.url, connections: [], tabs: [{ id: 12 }, { id: 13 }], removed: [], created: 0 };
   const deps = {
     extensionId: "extension",
     assertConsent() { if (!state.consent) throw Object.assign(new Error("Consent required"), { code: "DATA_CONSENT_REQUIRED" }); },
-    getTab: async () => ({ url: state.url }),
+    getTab: async id => { assert.ok(state.tabs.some(tab => tab.id === id)); return { url: state.url }; },
+    listTabs: async () => state.tabs,
+    createTab: async () => { state.created++; state.tabs.push({ id: 99 }); },
+    removeTab: async id => { state.removed.push(id); state.tabs = state.tabs.filter(tab => tab.id !== id); },
     status: async () => status,
     connect: async (input, assertCurrent) => { await assertCurrent(); state.connections.push(input); return status; },
   };
@@ -41,6 +44,7 @@ test("connection rejects untrusted pages, subframes and extension senders withou
     const { state, deps } = setup();
     await assert.rejects(createMcpConnectPage(deps).connect(invalid), { code: "MCP_CONNECTION_PAGE_REQUIRED" });
     await assert.rejects(createMcpConnectPage(deps).status(invalid), { code: "MCP_CONNECTION_PAGE_REQUIRED" });
+    await assert.rejects(createMcpConnectPage(deps).close(invalid), { code: "MCP_CONNECTION_PAGE_REQUIRED" });
     assert.equal(state.connections.length, 0);
   }
 });
@@ -139,9 +143,47 @@ test("binding URLs reject empty, duplicate and malformed names before connecting
   }
 });
 
-test("the connection page observes pending status until connected or paused without reconnecting", async () => {
+test("closing the connection page uses its sender and keeps the browser open", async () => {
+  const { state, deps } = setup(), page = createMcpConnectPage(deps);
+  const transport = createRuntimeMessageTransport(createBackgroundApi({ system: { closeMcpConnectPage: page.close } }));
+  const result = await new Promise(resolve => transport.listener({ type: "mcp_bridge_close", tabId: 13 }, sender, resolve));
+  assert.deepEqual(result, { ok: true, closed: true });
+  assert.deepEqual(state.removed, [12]);
+  assert.equal(state.created, 0);
+
+  const last = { ...sender, tab: { id: 13 } };
+  assert.deepEqual(await page.close(last), { closed: true });
+  assert.deepEqual(state.tabs, [{ id: 99 }]);
+  assert.equal(state.created, 1);
+});
+
+test("concurrent connection-page closures preserve a default browser tab", async () => {
+  const { state, deps } = setup(), page = createMcpConnectPage(deps);
+  await Promise.all([page.close(sender), page.close({ ...sender, tab: { id: 13 } })]);
+  assert.deepEqual(state.removed, [12, 13]);
+  assert.deepEqual(state.tabs, [{ id: 99 }]);
+  assert.equal(state.created, 1);
+});
+
+test("closing rechecks the connection and current page after asynchronous work", async () => {
+  for (const change of ["disconnected", "endpoint", "navigation", "late-disconnect"]) {
+    const { state, deps } = setup(), pending = { ...status, state: "reconnecting" };
+    if (change === "disconnected") deps.status = async () => pending;
+    if (change === "endpoint") deps.status = async () => ({ ...status, endpoint: "http://localhost:9999" });
+    if (change === "navigation") deps.listTabs = async () => { state.url = "https://example.com"; return state.tabs; };
+    if (change === "late-disconnect") deps.listTabs = async () => { deps.status = async () => pending; return state.tabs; };
+    const closing = createMcpConnectPage(deps).close(sender);
+    if (change === "endpoint" || change === "navigation") await assert.rejects(closing, { code: "MCP_CONNECTION_PAGE_CHANGED" });
+    else assert.deepEqual(await closing, { closed: false, status: pending });
+    assert.deepEqual(state.removed, []);
+    assert.equal(state.created, 0);
+  }
+});
+
+test("the connection page counts down only after success and stops when navigating away", async () => {
   const script = transformSync(readFileSync("src/content/mcp-connect-bridge.ts", "utf8"), { loader: "ts", format: "cjs" }).code;
-  for (const terminal of ["connected", "paused"]) {
+  for (const outcome of ["connected", "paused", "navigated", "close-failed"]) {
+    const terminal = outcome === "paused" ? "paused" : "connected";
     const element = { dataset: {}, textContent: "" }, calls = [], timers = [], listeners = new Map();
     const message = terminal === "connected" ? { textContent: "" } : element;
     element.querySelector = () => message === element ? null : message;
@@ -149,6 +191,7 @@ test("the connection page observes pending status until connected or paused with
       { ok: true, connected: false, status: { ...status, state: "reconnecting", lastError: { code: "BRIDGE_CLIENT_IN_USE", message: "Old connection active." } } },
       { ok: true, result: { ...status, state: "connecting" } },
       { ok: true, result: { ...status, state: terminal, ...(terminal === "paused" ? { lastError: { code: "BRIDGE_CLIENT_IN_USE", message: "Another profile is connected." } } : {}) } },
+      outcome === "close-failed" ? { ok: false, error: "Tab closure failed" } : { ok: true, closed: true },
     ];
     const window = { addEventListener: (type, fn) => listeners.set(type, fn), removeEventListener: type => listeners.delete(type) };
     window.top = window;
@@ -169,7 +212,20 @@ test("the connection page observes pending status until connected or paused with
     timers.shift()(); await settle();
     assert.deepEqual(calls, ["mcp_bridge_connect", "mcp_connection_status", "mcp_connection_status"]);
     assert.equal(element.dataset.qzConnectionState, terminal === "connected" ? "connected" : "error");
-    assert.equal(message.textContent, terminal === "connected" ? "Connected as default. You can close this tab." : "Another profile is connected.");
+    if (terminal === "connected") {
+      for (let seconds = 3; seconds > 0; seconds--) {
+        assert.equal(message.textContent, `Connected as default. Closing this tab in ${seconds}s.`);
+        assert.equal(calls.includes("mcp_bridge_close"), false);
+        if (outcome === "navigated") listeners.get("pagehide")();
+        timers.shift()(); await settle();
+        if (outcome === "navigated") break;
+      }
+      assert.equal(calls.filter(type => type === "mcp_bridge_close").length, outcome === "navigated" ? 0 : 1);
+      if (outcome === "close-failed") {
+        assert.equal(message.textContent, "Connected as default. You can close this tab.");
+        assert.equal(element.dataset.qzConnectionState, "connected");
+      }
+    } else assert.equal(message.textContent, "Another profile is connected.");
     assert.equal(timers.length, 0);
     assert.equal(listeners.size, 0);
   }

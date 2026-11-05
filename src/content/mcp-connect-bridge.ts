@@ -17,6 +17,7 @@ if (window === window.top && location.protocol === "http:"
         const connection = value && typeof value === "object" ? value as Record<string, unknown> : {};
         const connected = response.ok && connection.state === "connected";
         const pending = response.ok && ["connecting", "reconnecting"].includes(String(connection.state));
+        const connectedText = `Connected${connection.name ? ` as ${connection.name}` : ""}.`;
         const error = connection.lastError as { code?: string; message?: string } | undefined;
         status.dataset.qzConnectionState = connected ? "connected" : pending ? String(connection.state) : "error";
         status.dataset.qzConnectionCode = pending || connected ? "" : String(response.code || error?.code || "");
@@ -24,11 +25,23 @@ if (window === window.top && location.protocol === "http:"
           status.dataset.qzClientId = String(connection.clientId || "");
           status.dataset.qzBrowserName = String(connection.name || "");
         }
-        message.textContent = connected ? `Connected${connection.name ? ` as ${connection.name}` : ""}. You can close this tab.`
+        message.textContent = connected ? `${connectedText} Closing this tab in 3s.`
           : pending ? connection.state === "reconnecting" ? "Reconnecting to qz…" : "Connecting to qz…"
             : response.code === "DATA_CONSENT_REQUIRED"
               ? productText("Open the qz side panel and complete first-time setup, then reload this page.", "Open the qz sidebar and complete first-time setup, then reload this page.")
               : String(response.error || error?.message || "Connection failed. Run qz connect uri and open the printed URL in this browser.");
+        if (connected) {
+          for (let remaining = 3; remaining > 0; remaining--) {
+            message.textContent = `${connectedText} Closing this tab in ${remaining}s.`;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            if (controller.signal.aborted) return;
+          }
+          const closed = await requestRuntimeMessage({ type: "mcp_bridge_close" }, { timeoutMs: 5000, signal: controller.signal }).catch(() => null);
+          if (controller.signal.aborted) return;
+          if (closed?.ok && closed.closed === false && closed.status) { response = closed; continue; }
+          if (!closed?.ok) message.textContent = `${connectedText} You can close this tab.`;
+          return;
+        }
         if (!pending) return;
         await new Promise(resolve => setTimeout(resolve, 1000));
         response = await requestRuntimeMessage({ type: "mcp_connection_status" }, { timeoutMs: 5000, signal: controller.signal });

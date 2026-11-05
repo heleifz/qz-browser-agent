@@ -117,7 +117,8 @@ is located through read-only queries when several browsers are online; ambiguous
 connection, the CLI tries installed Chrome, Firefox and Edge once each within one deadline. When the
 service confirms a browser is reconnecting, the CLI waits for its lease recovery within the command's
 timeout before trying another browser. Pairing still requires the extension’s first-use notice and
-connection prompt. The connection page updates while reconnecting and can be closed once connected.
+connection prompt. The connection page updates while reconnecting, then counts down for three seconds
+and closes after a successful connection.
 
 To disconnect one browser, click **Disconnect: NAME** in its qz Settings. To cancel a task, use
 `qz cancel TASK_ID`, or `qz session cancel ID` for a direct-drive session, adding --client when needed.

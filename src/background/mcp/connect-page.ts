@@ -7,10 +7,14 @@ interface ConnectDependencies {
   connect(input: CliConnectionInput, assertCurrent: () => Promise<void>): Promise<CliConnectionStatus>;
   status(): Promise<CliConnectionStatus>;
   getTab(tabId: number): Promise<{ url?: string }>;
+  listTabs(): Promise<Array<{ id?: number }>>;
+  createTab(): Promise<unknown>;
+  removeTab(tabId: number): Promise<void>;
 }
 
 /** The endpoint comes from Chrome's sender identity, never from page-supplied parameters. */
 export function createMcpConnectPage(deps: ConnectDependencies) {
+  let closing: Promise<unknown> = Promise.resolve();
   async function source(sender: chrome.runtime.MessageSender) {
     deps.assertConsent();
     const url = connectionUrl(sender.url);
@@ -44,13 +48,34 @@ export function createMcpConnectPage(deps: ConnectDependencies) {
       assertMcpSettingsSender(sender, deps.extensionId);
       return deps.status();
     }
-    const { url, assertCurrent } = await source(sender);
+    return currentStatus(await source(sender));
+  }
+  async function currentStatus({ url, assertCurrent }: { url: URL; assertCurrent(): Promise<void> }) {
     const current = await deps.status();
     await assertCurrent();
     if (current.endpoint !== url.origin) throw failure("MCP_CONNECTION_PAGE_CHANGED", "Reload the connection page to continue.");
     return current;
   }
-  return { connect, status };
+  async function closePage(sender: chrome.runtime.MessageSender) {
+    const page = await source(sender);
+    let current = await currentStatus(page);
+    if (current.state !== "connected") return { closed: false, status: current };
+    const tabId = sender.tab!.id!;
+    const tabs = await deps.listTabs();
+    await page.assertCurrent();
+    if (!tabs.some(tab => tab.id !== tabId)) await deps.createTab();
+    current = await currentStatus(page);
+    if (current.state !== "connected") return { closed: false, status: current };
+    await deps.removeTab(tabId);
+    return { closed: true };
+  }
+  function close(sender: chrome.runtime.MessageSender) {
+    // Concurrent connection pages must not each close the browser's final tab.
+    const operation = closing.then(() => closePage(sender));
+    closing = operation.catch(() => {});
+    return operation;
+  }
+  return { connect, status, close };
 }
 
 function connectionUrl(value: string | undefined) {

@@ -885,11 +885,15 @@ const mcpConnectPage = createMcpConnectPage({
   connect: (input, assertCurrent) => getMcpBridge().connect(input, assertCurrent),
   status: () => mcpBridge?.status() || getQingzhouMcpConnectionStatus(),
   getTab: tabId => chrome.tabs.get(tabId),
+  listTabs: () => chrome.tabs.query({}),
+  createTab: () => chrome.tabs.create({}),
+  removeTab: tabId => chrome.tabs.remove(tabId),
 });
 
 const backgroundApi = createBackgroundApi({
   system: {
     connectMcp: mcpConnectPage.connect,
+    closeMcpConnectPage: mcpConnectPage.close,
     mcpConnectionStatus: mcpConnectPage.status,
     connectMcpFromSettings: (sender: chrome.runtime.MessageSender, input: CliConnectionInput) => {
       assertMcpSettingsSender(sender, chrome.runtime.id);
