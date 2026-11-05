@@ -94,15 +94,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   chrome.runtime.onMessage.addListener(onMessage);
   host.__QZ_CONTENT_MESSAGE_LISTENER = onMessage;
 
-  // One event-only wait per document, even when a caller stops waiting.
-  let documentReady: Promise<{ ok: true }> | undefined;
-  function awaitDocument() {
-    if (documentReady) return documentReady;
-    const ready = documentReadiness("wait");
-    if (ready === true) return { ok: true };
-    return documentReady = ready.then(() => ({ ok: true }));
-  }
-
   // Handlers
 
   function normalizeResponse(result: unknown, action: string) {
@@ -1623,7 +1614,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   const handlers: Record<string, (message: ContentRequest) => unknown> = {
-    awaitDocument,
     startElementPicker,
     confirmElementPicker,
     cancelElementPicker,

@@ -257,6 +257,21 @@ test('the registered catalog shares policy and preserves raw successful business
   assert.equal(f.state.cards.length, 4, 'catalog successes, a catalog failure and business return each record once');
 });
 
+test('drive discovery omits its script entry and storage tools while native discovery retains them', async () => {
+  const f = fixture(false);
+  const names = ['run_script', 'collect_images', 'read_image_asset', 'data_store'];
+  const listed = await f.call('list_tools', {});
+  assert.equal(listed.ok, true);
+  for (const name of names) {
+    assert.ok(!listed.result.tools.some(tool => tool.name === name));
+    assert.equal((await f.call('list_tools', { names: [name] })).code, 'UNKNOWN_TOOL');
+  }
+  const native = await f.runtime.execute('list_tools', { names }, undefined,
+    { sessionId: f.id, runId: `run-${f.id}`, externalDrive: false });
+  assert.deepEqual(native.tools.map(tool => tool.name), names);
+  assert.ok(native.tools.every(tool => tool.parameters.type === 'object'));
+});
+
 test('passive event observations permit a same-page action and cancellation never starts queued work', async () => {
   const f = fixture(false);
   const observer = f.call('__nested_observer', { tabRef: 'page' });

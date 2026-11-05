@@ -7,6 +7,7 @@ import {
   driveGroupTitle,
   driveToolSignature,
   isDriveToolDefault,
+  isDriveToolDiscoverable,
   isDriveToolForbidden,
   parseDriveRequest,
   prepareDriveToolCall,
@@ -97,11 +98,16 @@ test("direct-drive discovery separates outer orchestration from explicit page ev
   assert.equal(isDriveToolDefault("read_dom"), false);
   assert.equal(isDriveToolDefault("browse_history"), false);
   assert.equal(isDriveToolDefault("manage_goal"), false);
-  assert.equal(isDriveToolDefault("run_script"), true);
+  assert.equal(isDriveToolDefault("run_script"), false);
   assert.equal(isDriveToolForbidden("wait_until"), false);
   assert.equal(isDriveToolForbidden("get_working_tab"), true);
   assert.equal(isDriveToolForbidden("wait_for_user"), true);
   assert.equal(isDriveToolForbidden("ask_user"), true);
+  for (const name of ["run_script", "collect_images", "read_image_asset", "data_store"]) {
+    assert.equal(isDriveToolDiscoverable(name), false);
+    assert.equal(isDriveToolDiscoverable(`skill__${name}`), false);
+    assert.equal(parseDriveRequest({ name, args: {} }).ok, true, "discovery does not revoke execution");
+  }
   const page = getToolSchemas().find(schema => schema.function.name === "evaluate").function;
   assert.deepEqual(page.parameters.required, ["tabRef", "code"]);
   const orchestration = prepareDriveToolCall("run_script", { timeout: 1, code: "return 1;" });
@@ -1196,8 +1202,13 @@ test("drive catalogs hide tabId and inner for every default tool", async () => {
     const listed = await runtime.listTools({ sessionId: "drive-1" });
     assert.ok(listed.tools.length > 1);
     for (const tool of listed.tools) assertNoDriveTabLeak(`${language} list_tools ${tool.name}`, tool);
-    for (const name of ["list_tabs", "navigate", "run_script"]) {
+    for (const name of ["list_tabs", "navigate"]) {
       assertNoDriveTabLeak(`${language} get_tool ${name}`, await runtime.getTool({ sessionId: "drive-1", name }));
+    }
+    for (const name of ["run_script", "collect_images", "read_image_asset", "data_store"]) {
+      assert.ok(!listed.tools.some(tool => tool.name === name));
+      assert.equal(await runtime.getTool({ sessionId: "drive-1", name }), null);
+      assert.equal((await runtime.getTool({ sessionId: "agent-1", name })).name, name);
     }
     for (const name of ['use_tab', 'get_working_tab', 'run_skill_script']) await assert.rejects(runtime.getTool({ sessionId: 'drive-1', name }), { code: 'DRIVE_TOOL_FORBIDDEN' });
     const builtInList = await runtime.getTool({ sessionId: "agent-1", name: "list_tabs" });

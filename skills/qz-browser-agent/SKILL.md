@@ -36,7 +36,7 @@ return await tools.read_article({ tabRef: "page", limit: 3000 });
 JS
 ```
 
-open_tab, list_tabs and wait_for_popup return Tabs `{tabRef,url,title,active}`. Use the supplied tabAlias or a tabRef returned by those tools; tabAlias is optional. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. Returned positive integers or their numeric strings are also valid tabRef values; never guess one. A supplied alias is preserved in the returned Tab. active marks the tab visible to the user and never selects a tool target.
+open_tab, list_tabs and wait_for_popup return Tabs `{tabRef,url,title,active}`. Use the supplied tabAlias or a tabRef returned by those tools; tabAlias is optional. Aliases contain 1–64 letters, digits, underscores or hyphens, not all digits, and expire when the tab closes. Returned positive integers or their numeric strings are also valid tabRef values; never guess one. A supplied alias is preserved in the returned Tab. active marks the tab visible to the user and never selects a tool target. set_page_mode switches between desktop and mobile modes; a change reloads the page, so observe it again afterward.
 
 Page tools always pass tabRef, including each call inside a script. A missing tabRef is TAB_REF_REQUIRED. One tab belongs to one session at a time. Use list_tabs({scope:"all"}) to inspect other web pages; changes require a session-owned page. Do not interrupt another session's owner.
 
@@ -58,7 +58,6 @@ For DOM access, call evaluate with an explicit tabRef. Its code is a self-contai
 ```sh
 qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
 // Read a compact DOM summary from the page opened earlier.
-await tools.wait_for_element({tabRef:"page", target:"css:body"});
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
@@ -67,7 +66,7 @@ return await tools.evaluate({
 JS
 ```
 
-Use ordinary action tools for clicks, forms and navigation. After opening or navigating, use wait_for_element for the DOM you need before reading it with evaluate. evaluate runs inside the page: navigating or closing that page can interrupt that evaluate call, while the outer script remains available. Do not blindly replay a script after an uncertain result; inspect completed work first.
+Use ordinary action tools for clicks, forms and navigation. evaluate waits for DOMContentLoaded by default; use waitUntil:"commit" for early page observation. Wait for specific elements or predicates when the task depends on dynamic content. evaluate runs inside the page: navigating or closing that page can interrupt that evaluate call, while the outer script remains available. Do not blindly replay a script after an uncertain result; inspect completed work first.
 
 ## Observe, act, and verify
 
@@ -91,7 +90,7 @@ return await tools.wait_for_navigation({
 });
 ```
 
-wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element waits for current element state. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
+wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element defaults to visible; use attached when only DOM presence is needed. A body with zero height can contain visible children, so waiting for body visibility is not a page-readiness check. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
 
 Execute known steps serially in one script, then observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
 
@@ -99,7 +98,7 @@ Execute known steps serially in one script, then observe the relevant result onc
 
 For PDFs, load the document Skill before reading: list_skills, then load_skill({name:"qingzhou-documents"}). Follow its tool schemas and use the original PDF URL. PDF viewers do not support ordinary body reads or page actions. Keep the returned fileId/docModelId in this session and follow chunk cursors only as needed. load_skill_resource can load a packaged document directly.
 
-Write large datasets in batches through data_store and return a compact summary or identifiers. Images and files stay in their artifact stores; return their references. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read instead of treating the preview as a full value. ToolError is never truncated.
+Images and files stay in their artifact stores; return their references. Business results beyond about 48000 characters become `{truncated:true,totalChars,limitChars,preview}`; narrow the read instead of treating the preview as a full value. ToolError is never truncated.
 
 ## Output and recovery
 

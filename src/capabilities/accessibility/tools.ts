@@ -4,7 +4,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import { filterViewportNodes, isViewportStructure, readViewportBands, verticalBand } from "./viewport.js";
 import type { ToolExtension, ToolExtensionAPI } from "#sdk/background";
-import { directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
+import { waitForParsedDocument, directChildFrames, openChildFrame, isCdpFallbackForbiddenError, type CdpCommand } from "#sdk/background/browser";
 import { isPageOverview, createElementObservation, toRect, type CanvasObservation, type PageAction as Action, type PageCanvas as Canvas, type PageOverview } from "#sdk/shared/browser";
 type AccessibilityHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "clampLimit" | "makeSessionTabTargetError"
@@ -819,6 +819,7 @@ registerTool({
       target: requestedRoot,
     });
 
+    if (requestedRoot === "root") await waitForParsedDocument(targetTabId, context);
     snapshotId = makeSnapshotId(targetTabId, context);
     let overview: PageOverview;
     try {

@@ -1,3 +1,4 @@
+globalThis.chrome = { tabs: { get: async () => ({ url: "https://example.com/", status: "complete" }) }, scripting: { executeScript: async () => [{ result: true }] } };
 import assert from "node:assert/strict";
 import { registerAccessibilityTools } from "../../src/capabilities/accessibility/tools.js";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";

@@ -143,7 +143,7 @@ test("a committed URL still undergoes navigation security checks while resources
     await new Promise(setImmediate);
     t.mock.timers.tick(10_000);
     const result = await pending;
-    assert.equal(result.navigationPending, true);
+    assert.equal(result.navigationPending, undefined);
     assert.equal(result.navigated, true, "a committed destination is known even if its resources are still loading");
     assert.equal(f.observations.length, 1);
     assert.equal(f.observations[0].pageAfter.url, "https://example.test/done");

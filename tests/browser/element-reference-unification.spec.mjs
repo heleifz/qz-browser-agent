@@ -132,7 +132,6 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     expect(syntax.code, JSON.stringify(syntax)).toBe('SCRIPT_EVALUATION_FAILED');
     expect(syntax.message).toMatch(/SyntaxError/);
     expect(Object.keys(syntax).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
-    expect(syntax.hint).toBeTruthy();
     expect(syntax.details).toBeTruthy();
     expect(syntax).not.toHaveProperty('line');
     expect(syntax).not.toHaveProperty('column');

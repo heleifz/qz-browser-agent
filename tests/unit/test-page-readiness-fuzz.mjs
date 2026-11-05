@@ -24,7 +24,7 @@ globalThis.chrome = {
       return { text: `DOCUMENT ${tab.url}` };
     },
   },
-  scripting: { async executeScript() { return []; } },
+  scripting: { async executeScript(options) { return options.func?.name === "documentReadiness" ? [{ documentId: "document", result: true }] : []; } },
 };
 const { createToolRuntime } = await import("../../src/background/tools/runtime.js");
 

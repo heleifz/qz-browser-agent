@@ -157,7 +157,7 @@ test("a same-URL new document remains confirmed while its subresources are still
   const result = await observer.finish(before);
   assert.equal(result.documentChanged, true);
   assert.equal(result.navigationStarted, true);
-  assert.equal(result.navigationPending, true);
+  assert.equal(result.navigationPending, false);
 });
 
 test("an explicit navigation request settles when its new document is observed", async t => {

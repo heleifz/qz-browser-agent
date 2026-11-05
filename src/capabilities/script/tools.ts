@@ -14,7 +14,7 @@ const record = (value: unknown): Fields => value && typeof value === "object" &&
 const errorCode = (error: unknown) => String(record(error).code || "");
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(record(error).message || error || "");
 import { publishTimeoutTrace, scriptTimeout, toolError, markToolValue, bindToolResultPresentation } from "#sdk/background/tools";
-import { ensureOffscreenDocument } from "#sdk/background/browser";
+import { ensureOffscreenDocument, waitForParsedDocument, waitForPageCommit } from "#sdk/background/browser";
 import { wrapRunScriptSource, isRunScriptCallableExpression } from "#sdk/shared/browser";
 import { getSecurityGuardrails } from "#sdk/shared/security";
 import {
@@ -278,6 +278,7 @@ registerTool({
       tabRef: { type: ["integer", "string"], description: toolT("runSkillScriptTabId") },
       code: { type: "string", description: toolT("evaluateCode") },
       args: { description: toolT("evaluateArgs") },
+      waitUntil: { type: "string", enum: ["commit", "domcontentloaded"], description: toolT("evaluateWaitUntil") },
       timeout: SCRIPT_TIMEOUT_SECONDS_PROPERTY,
     },
     required: ["tabRef", "code"],
@@ -288,12 +289,16 @@ registerTool({
     if (!isRunScriptCallableExpression(String(args.code || ""))) throw new ToolExecutionError(
       "INVALID_SCRIPT_FUNCTION", "evaluate code is not a function expression.");
   },
-  execute: async ({ tabId, code, args }, signal, context = {}) => {
+  execute: async ({ tabId, code, args, waitUntil = "domcontentloaded" }, signal, context = {}) => {
+    context.reportPartial?.({ executed: false }, "document preparation");
     const resolvedTabId = resolveRunScriptTargetTabId(tabId);
     if (!resolvedTabId) throw makeRunScriptTargetRequiredError();
     const securityGuardrails = compactRunScriptSecurityGuardrails(await getSecurityGuardrails());
     const run = async () => {
+      await (waitUntil === "commit" ? waitForPageCommit : waitForParsedDocument)(resolvedTabId, { ...context, signal });
+      signal?.throwIfAborted();
       try {
+        context.reportPartial?.({ executed: true }, "page evaluation outcome confirmation");
         const evalResult = await evaluateCdpScript(resolvedTabId, {
           // Evaluate the user function outside the host closure: only its argument and page globals are visible.
           expression: `((__qzEvaluate, __qzArgument) => ${holdScriptTrace(runScriptTraceRuntimeSource({
@@ -356,6 +361,7 @@ function describeScriptExecution(execution: Fields) {
   const details = record(execution.details);
   return { ...toolError(String(execution.code || 'SCRIPT_EVALUATION_FAILED'),
     String(details.originalError || execution.message || execution.error || 'Script failed.'), {
+      hint: typeof execution.hint === "string" ? execution.hint : undefined,
       details: {
         ...details,
         ...(details.lineNumber != null ? { line: details.lineNumber } : {}),

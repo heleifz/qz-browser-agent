@@ -15,7 +15,7 @@ type PageElementHost = Pick<ToolExtensionAPI,
   "resolveSelectorTarget" | "resolveElementReference" | "addElementTargetsToFindResult"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement">;
 import { getSecurityGuardrails } from "#sdk/shared/security";
-import { armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
+import { waitForParsedDocument, armPageInputReceipt, beginPageNavigationObservation, ensurePageSurface, frameContentOrigin, isCdpFallbackForbiddenError, openChildFrame, pageInputDelivered, readPageInputReceipt } from "#sdk/background/browser";
 import { createCdpKeyboard, createCdpTouch } from "#sdk/background/browser";
 
 interface PageViewport { width: number; height: number }
@@ -191,6 +191,7 @@ registerTool({
   },
   execute: async ({ tabId, source = "auto", target: selector = "", offset = 0, limit }, _signal, context = {}) => {
     const target = selector ? await resolveSelectorTarget(tabId, selector, 0, context) : { tabId, selector };
+    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, context);
     const mode = source === "target" || (source === "auto" && selector) ? "selector" : source;
     return readBound(target, context, async call => {
       const article = await sendToContent(target.tabId, "readArticle", { source: mode, selector: target.selector, offset, limit }, call, context);
@@ -220,8 +221,9 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, offset = 1, limit = 200, target: selector = "body" }, _signal, context = {}) => {
-    const target = await resolveSelectorTarget(tabId, selector, 0, context);
+  execute: async ({ tabId, offset = 1, limit = 200, target: selector = "" }, _signal, context = {}) => {
+    const target = await resolveSelectorTarget(tabId, selector || "body", 0, context);
+    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, context);
     return readBound(target, context, async call => {
       const result = await sendToContent(target.tabId, "readDom", { offset, limit, selector: scopedSelector(target) }, call, context);
       if (result.error) return { ...toolError(String(result.code || "DOM_READ_FAILED"), String(result.error), {
@@ -254,8 +256,9 @@ registerTool({
   } as const; },
   page: "readOnly",
   timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
-    const target = await resolveSelectorTarget(tabId, selector, 0, context);
+  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
+    const target = await resolveSelectorTarget(tabId, selector || "body", 0, context);
+    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, context);
     const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
       pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
     }, call, context));

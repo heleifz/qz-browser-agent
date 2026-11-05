@@ -20,12 +20,15 @@ const FORBIDDEN = new Set([
   "wait_for_user", "ask_user", "send_message", "use_tab", "get_working_tab", "run_skill_script",
 ]);
 
-/** Default list_tools tier. Guide-tier names stay callable by name. */
+// The CLI script entry and local storage workflows remain callable but unlisted.
+const DRIVE_UNLISTED_TOOLS = new Set(["run_script", "collect_images", "read_image_asset", "data_store"]);
+
+/** Default list_tools tier. Other discoverable tools can be queried by name. */
 const DRIVE_DEFAULT_TOOLS = new Set([
   "open_tab", "navigate", "list_tabs", "close_tab",
   "get_ax_tree", "find_elements", "read_article", "act_on_element", "scroll_page",
   "screenshot", "wait_for_element", "wait_for_navigation",
-  "run_script", "evaluate", "list_tools", "wait_for_load", "wait_for_url", "wait_for_function", "wait_for_popup", "wait_for_response", "load_skill", "list_skills",
+  "evaluate", "list_tools", "wait_for_load", "wait_for_url", "wait_for_function", "wait_for_popup", "wait_for_response", "load_skill", "list_skills",
 ]);
 
 export interface DriveCall { id: string; name: string; args: Record<string, unknown> }
@@ -65,9 +68,14 @@ export function isDriveToolForbidden(name: string) {
   return FORBIDDEN.has(name) || FORBIDDEN.has(local) || name.startsWith("mcp_") || local.startsWith("mcp_");
 }
 
+/** Shared visibility policy for compact and named tool discovery. */
+export function isDriveToolDiscoverable(name: string) {
+  return !isDriveToolForbidden(name) && !DRIVE_UNLISTED_TOOLS.has(toolLocalName(name));
+}
+
 /** True when a drive catalog or in-script $list should show this tool without asking for it by name. */
 export function isDriveToolDefault(name: string) {
-  if (isDriveToolForbidden(name)) return false;
+  if (!isDriveToolDiscoverable(name)) return false;
   const local = toolLocalName(name);
   return DRIVE_DEFAULT_TOOLS.has(name) || DRIVE_DEFAULT_TOOLS.has(local);
 }

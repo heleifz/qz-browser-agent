@@ -8,7 +8,7 @@ const originalChrome = globalThis.chrome;
 const originalRuntimeSource = globalThis.SCRIPT_RUNTIME_SOURCE;
 before(async () => {
   globalThis.SCRIPT_RUNTIME_SOURCE = await compileScriptRuntime();
-  globalThis.chrome = { storage: { local: { async get() { return {}; } } } };
+  globalThis.chrome = { tabs: { get: async () => ({ url: "https://example.test", status: "complete" }) }, scripting: { executeScript: async () => [{ result: true, documentId: "document" }] }, storage: { local: { async get() { return {}; } } } };
 });
 after(() => {
   if (originalChrome === undefined) delete globalThis.chrome;
@@ -29,6 +29,38 @@ function fixture(evaluateCdpScript) {
   };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('default evaluate prepares the current document; commit mode observes it without waiting for parsing', async t => {
+  let ready = false, probes = 0, executions = 0;
+  t.mock.method(chrome.scripting, 'executeScript', async () => { probes++; return [{ result: ready }]; });
+  const run = fixture(async () => { executions++; return { result: { type: 'number', value: 42 } }; });
+  assert.equal(await run(7, undefined, {}, { waitUntil: 'commit' }), 42);
+  assert.equal(probes, 0);
+  const waiting = run();
+  while (!probes) await tick();
+  assert.equal(executions, 1);
+  ready = true;
+  assert.equal(await waiting, 42);
+  assert.equal(executions, 2);
+});
+
+test('document replacement retries preparation only; cancellation never executes late user code', async t => {
+  let probes = 0, executions = 0, ready = false;
+  t.mock.method(chrome.scripting, 'executeScript', async () => {
+    if (++probes === 1) throw new Error('Execution context was destroyed');
+    return [{ result: ready }];
+  });
+  const run = fixture(async () => { executions++; return { result: { type: 'number', value: 42 } }; });
+  const controller = new AbortController();
+  const waiting = run(7, controller.signal);
+  const rejected = assert.rejects(waiting, { name: 'AbortError' });
+  while (probes < 2) await tick();
+  controller.abort();
+  await rejected;
+  ready = true;
+  assert.equal(await run(), 42);
+  assert.equal(executions, 1, 'only the new call may execute');
+});
 
 test('page evaluation requires a function before any debugger operation', async () => {
   let evaluations = 0;
@@ -59,7 +91,7 @@ test('page results preserve large structured values and public error feedback', 
   assert.equal(result.__runScriptEnvelope, undefined);
 });
 
-test('script failures report observed facts without recovery advice or replay', async () => {
+test('script failures preserve supplied recovery hints without inventing advice or replay', async () => {
   for (const code of ['UNKNOWN_TOOL', 'STALE_ELEMENT_UID', 'STALE_ELEMENT_UID_PAGE_CHANGED', 'TOOL_TIMEOUT']) {
     for (const extra of [{}, { hint: 'Inspect payment receipt; do not submit again.' },
       { details: { mayHaveTakenEffect: true, automaticReplay: false } }]) {
@@ -73,7 +105,7 @@ test('script failures report observed facts without recovery advice or replay', 
       assert.equal(result.code, code);
       assert.equal(result.message, 'opaque failure without English keywords');
       assert.equal(calls, 1, 'reporting a failure never replays the operation');
-      assert.equal(result.hint, undefined);
+      assert.equal(result.hint, extra.hint);
       assert.deepEqual(result.details, extra.details || undefined);
     }
   }

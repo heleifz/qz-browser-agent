@@ -18,7 +18,7 @@ interface ElementRuntimeHost {
   makeSessionTabTargetError(code: string, details: Record<string, unknown>, context?: ToolContext): Error;
   assertTabAllowed(tabId: number, details: Record<string, unknown>): Promise<unknown>;
   withDebugger: ReturnType<typeof createCdpRuntime>['withDebugger'];
-  sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>): Promise<unknown>;
+  sendToContent(tabId: number | undefined, action: string, params?: Record<string, unknown>, context?: ToolContext): Promise<unknown>;
   initializeContentScript(tabId: number, context?: ToolContext): Promise<void>;
   isReadOnlyAccess?(tabId: number, context: ToolContext): boolean;
 }
@@ -625,7 +625,7 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
     const selector = requested || route.selector;
     const requestedIndex = Number(params.index);
     const index = Number.isInteger(requestedIndex) && requestedIndex >= 0 ? requestedIndex : route.index;
-    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }), action, context);
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }, context), action, context);
   };
   return run(call);
 }

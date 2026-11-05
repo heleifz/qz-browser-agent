@@ -73,8 +73,8 @@ export function registerMediaTools({
   elementTargetForRef,
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
   getElementTargetDescription,
-  callElement = async (tabId, binding, action, params = {}) => {
-    const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 });
+  callElement = async (tabId, binding, action, params = {}, context = {}) => {
+    const result = await contentRequest(binding.tabId || tabId, action, { ...params, selector: binding.selector, index: binding.index ?? 0 }, context);
     return result && typeof result === "object" && !Array.isArray(result) ? result as Record<string, unknown> : {};
   },
   getTabPageState,
@@ -104,8 +104,8 @@ const screenActions = createScreenActionRuntime({
   now: screenSnapshotNow,
 });
 
-async function sendToContent(tabId: number, action: string, args: Fields): Promise<ImageMetadata> {
-  return imageMetadata(await contentRequest(tabId, action, args));
+async function sendToContent(tabId: number, action: string, args: Fields, context?: ToolContext): Promise<ImageMetadata> {
+  return imageMetadata(await contentRequest(tabId, action, args, context));
 }
 function imageCallTarget(candidate: ImageMetadata): ElementTarget {
   const stored = candidate.ref && typeof candidate.ref === "object" && !Array.isArray(candidate.ref) ? candidate.ref as ElementReference : undefined;
@@ -201,7 +201,6 @@ registerTool({
     let screenCapture = null;
 
     if (hasElementTarget) {
-      if (tabId) await waitForParsedDocument(tabId, context);
       ref = await resolveElementReference(tabId, { target, index, readOnly: true }, context);
       shot = await captureElementScreenshot(ref.tabId!, ref, {
         format,
@@ -344,9 +343,10 @@ registerTool({
   execute: async ({ tabId, target: selector = "", minWidth = 1, minHeight = 1, visibleOnly = true, limit = 100 }, _signal, context = {}) => {
     const target = await resolveSelectorTarget(tabId, selector, 0, context);
     if (!target.tabId) throw makeSessionTabTargetError("SESSION_TAB_TARGET_REQUIRED", { toolName: "list_images" });
+    if (!selector) await waitForParsedDocument(target.tabId, context);
     const result = target.uid
       ? imageMetadata(await callElement(target.tabId, target, "listImageElements", { minWidth, minHeight, visibleOnly, limit }, context))
-      : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit });
+      : await sendToContent(target.tabId, "listImageElements", { selector: target.selector, minWidth, minHeight, visibleOnly, limit }, context);
     if (result?.error) return toolError(result.code || "LIST_IMAGES_FAILED", errorMessage(result), {
       hint: "Pass a valid target, or use get_ax_tree to find the image region before retrying list_images.",
       details: { target: target.target || elementTargetForSelector(target.selector || selector) },
@@ -1610,7 +1610,7 @@ async function captureElementScreenshot(tabId: number, ref: ScreenshotRef, { for
       const contentBounds = await sendToContent(tabId, "getElementScreenshotBounds", {
         selector: ref.selector,
         index: ref.index,
-      });
+      }, context);
       if (contentBounds?.error) {
         selectorError = contentBounds;
       } else {

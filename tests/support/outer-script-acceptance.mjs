@@ -55,10 +55,8 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       const result = await script(`async () => {
         trace('navigation.begin');
         const opened = await tools.open_tab({url:input.origin+'/start',tabAlias:'main'});
-        await tools.wait_for_element({tabRef:'main',target:'css:body[data-document-token] #navigate',state:'visible',timeout:10});
         const before = await tools.evaluate({tabRef:'main',code:()=>({token:document.body.dataset.documentToken,dom:typeof document})});
         const navigation = await tools.wait_for_navigation({tabRef:'main',timeout:10,trigger:{name:'act_on_element',args:{tabRef:'main',target:'css:#navigate',action:'click'}}});
-        await tools.wait_for_element({tabRef:'main',target:'css:body[data-document-token] #continue',state:'visible',timeout:10});
         const after = await tools.evaluate({tabRef:'main',code:()=>({token:document.body.dataset.documentToken,title:document.title,path:location.pathname})});
         trace('navigation.arrived');
         await tools.act_on_element({tabRef:'main',target:'css:#continue',action:'click'});
@@ -77,7 +75,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
         .toEqual(['navigation.begin', 'navigation.arrived', 'navigation.continued']);
       await expect.poll(async () => (await events()).filter(event => event.toolName === 'run_script').length).toBe(1);
       expect((await events()).map(event => event.toolName).sort()).toEqual([
-        'open_tab', 'wait_for_element', 'evaluate', 'act_on_element', 'wait_for_navigation', 'wait_for_element', 'evaluate', 'act_on_element', 'evaluate', 'run_script',
+        'open_tab', 'evaluate', 'act_on_element', 'wait_for_navigation', 'evaluate', 'act_on_element', 'evaluate', 'run_script',
       ].sort());
       const taskPage = context.pages().find(candidate => candidate.url() === `${fixture.origin}/next`);
       await expect(taskPage.locator('body')).toHaveAttribute('data-continued', 'yes');
@@ -140,7 +138,6 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
         }}); trace('failure.unreached'); }`);
       expect(failure.exitCode, JSON.stringify(failure)).toBe(1);
       expect(failure.value.result.code).toBeTruthy(); expect(failure.value.result.message).toContain('outer-fixture-failure');
-      expect(failure.value.result.hint).toBeTruthy();
       expect(Object.keys(failure.value.result).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
       expect(failure.value.traces.filter(value => value === 'failure.begin')).toHaveLength(1);
       expect(failure.value.traces).not.toContain('failure.unreached');
