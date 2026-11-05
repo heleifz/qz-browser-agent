@@ -79,6 +79,22 @@ const messages = defineMessages("page-tools", {
     "zh-CN": "是否包含不可见元素，默认 false。",
     en: "Include hidden elements. Default: false.",
   },
+  findElementsWaitFor: {
+    "zh-CN": "省略时返回当前匹配，允许空列表。match 等待至少一个匹配，超时报错；不保证动态列表已加载完整。",
+    en: "Omit to return current matches, including an empty list. match waits for at least one match and throws on timeout; it does not guarantee a complete dynamic list.",
+  },
+  findElementsTimeout: {
+    "zh-CN": "调用时限（秒，大于 0，最大 300）。等待匹配默认 10 秒，普通查询默认 30 秒。",
+    en: "Call timeout in seconds (>0, maximum 300). Default: 10 when waiting for a match, otherwise 30.",
+  },
+  findElementsInvalidRegex: {
+    "zh-CN": "元素查找的正则表达式或 flags 无效。",
+    en: "Invalid element search regular expression or flags.",
+  },
+  findElementsInvalidRegexHint: {
+    "zh-CN": "修正 pattern 或 flags 后重试查找。",
+    en: "Correct pattern or flags, then retry the search.",
+  },
   inspectElementDescription: {
     "zh-CN": "检查 tabRef 指定页面内单个元素的完整可操作画像：匹配数、文本/aria/attrs、可见性、disabled、rect、clickablePoint、state、form、附近文本及行号。先从 get_ax_tree 或 find_elements 获取 target。{targetGrammar}。",
     en: "Inspect an element's interaction profile on the page specified by tabRef: match count, text/aria/attrs, visibility, disabled state, rect, clickablePoint, state, form, nearby text, and line numbers. Obtain target from get_ax_tree or find_elements first. {targetGrammar}.",

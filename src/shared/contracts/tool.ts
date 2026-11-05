@@ -70,6 +70,8 @@ export type ToolBatchTabPolicy =
   | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number; orchestration?: boolean }
   | { kind: "barrier" };
 
+export interface ToolTimeoutResult { kind: "read" | "action" | "navigation"; pending: string }
+
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
   /** Host-selected script execution. Arguments are business data; child tools own resource access. */
@@ -96,7 +98,7 @@ export interface ToolBehavior {
    */
   uidTargets?: (args: Readonly<Record<string, unknown>>) => readonly unknown[];
   /** Trusted hard-timeout fallback; the runtime owns cancellation and revalidation. */
-  timeoutResult?: { kind: "read" | "action" | "navigation"; pending: string };
+  timeoutResult?: ToolTimeoutResult | ((args: Readonly<Record<string, unknown>>) => ToolTimeoutResult | undefined);
   /** Reject actions that may unload the page hosting a nested script. */
   mayUnloadPage?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Opens child pages while retaining the parent's execution context. */

@@ -53,3 +53,38 @@ export async function runWaitWithTrigger<T>({ tool, timeoutMs, trigger, signal, 
     controller.abort();
   }
 }
+
+export function waitDelay(delayMs: number, signal?: AbortSignal, details: Record<string, unknown> = {}) {
+  if (signal?.aborted) {
+    return Promise.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting", details));
+  }
+  return new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      if (timer != null) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting", details));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+  });
+}
+
+
+export function pollState<T>(signal: AbortSignal, read: () => Promise<T | undefined>, intervalMs = 100): WaitObservation<T> {
+  return { dispose() {}, result: (async () => {
+    for (;;) {
+      signal.throwIfAborted();
+      const value = await read();
+      signal.throwIfAborted();
+      if (value !== undefined) return value;
+      await waitDelay(intervalMs, signal);
+    }
+  })() };
+}

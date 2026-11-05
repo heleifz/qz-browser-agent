@@ -16,7 +16,7 @@ import { setCurrentRuntimeConfig } from "../runtime-config.js";
 import { listSkills, loadSkill, loadSkillByIdentity, saveSkill, updateSkill, deleteSkill, loadSkillResource, loadSkillScript } from "../skills/runtime.js";
 import type { ToolContext } from "../../sdk/background.js";
 import type { ToolRuntimeDependencies } from "../../sdk/background/services.js";
-import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy } from "../../shared/contracts/tool.js";
+import type { ToolDefinition, ToolSchema, ToolParameter, ToolModelPolicy, ToolBatchTabPolicy, ToolTimeoutResult } from "../../shared/contracts/tool.js";
 import type { RegisteredTool } from "./registry.js";
 import type { SkillTool, SkillManifest } from "../../shared/skills/skill-manifest.js";
 import type { SkillRenderer } from "../../shared/skills/skill-renderers.js";
@@ -680,6 +680,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     let result;
     const selectedDefinition = definition;
+    const timeoutResult = resolveTimeoutResult(definition, executionArgs);
     try {
       result = await runToolWithTimeout(
         name,
@@ -701,7 +702,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
             }
             const pageAccess = resolvePageAccess(selectedDefinition, args);
             if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted before tool execution");
-            const policy = selectedDefinition.behavior?.timeoutResult;
+            const policy = timeoutResult;
             if (policy?.kind === "action") reportPartial({ status: "unconfirmed" }, policy.pending);
             if (policy?.kind === "read" && Number(args.tabId) > 0
               && !elementTargetsOf(selectedDefinition, args).some(isUidElementTarget)) {
@@ -746,7 +747,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
         signal,
         timeoutMs,
         async (partial, timeoutError) => {
-          try { return await finishTimedOutTool(selectedDefinition, partial, signal, language, timeoutError, context, inferToolPageId(selectedDefinition, executionArgs) || undefined); }
+          try { return await finishTimedOutTool(timeoutResult, partial, signal, language, timeoutError, context, inferToolPageId(selectedDefinition, executionArgs) || undefined); }
           catch (error) {
             if (selectedDefinition.tabLifecycle === "created" && Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId) > 0) {
               try { await chrome.tabs.remove(Number(createdTabResultId(partial.result) ?? partial.result.tabRef ?? partial.result.tabId)); } catch { /* Already closed. */ }
@@ -1036,10 +1037,10 @@ function withTimeoutAliases(args: unknown, definition: RuntimeTool) {
   return input;
 }
 
-async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext, selectedTabId?: number) {
+async function finishTimedOutTool(policy: ToolTimeoutResult | undefined, partial: ToolPartialResult, signal: AbortSignal | undefined, language: string, timeoutError: ToolExecutionError, context: ToolContext, selectedTabId?: number) {
   let result = partial.result;
   let pending = partial.pending;
-  const kind = definition.behavior?.timeoutResult?.kind;
+  const kind = policy?.kind;
   const tabId = Number(selectedTabId || createdTabResultId(result) || result.tabRef || result.tabId || result.id);
   if (tabId > 0) {
     await assertTabAllowedBySecurityGuardrails(tabId, { tabRef: context.requestedTabRef });
@@ -1070,6 +1071,11 @@ async function finishTimedOutTool(definition: RuntimeTool, partial: ToolPartialR
     result = { ...observation, actionable: false };
   }
   return copyToolEffects(partial.result, kind === "action" ? result : { ...result, incomplete: { reason: "timeout", pending } });
+}
+
+function resolveTimeoutResult(definition: RuntimeTool, args: Fields): ToolTimeoutResult | undefined {
+  const policy = definition.behavior?.timeoutResult;
+  return typeof policy === "function" ? policy(args) : policy;
 }
 
 function resolveToolTimeoutMs(definition: RuntimeTool, args: Fields = {}) {
@@ -1120,7 +1126,7 @@ function resolvePageAccess(definition: RuntimeTool, args: Fields) {
 function needsCommittedPage(definition: RuntimeTool, args: Fields) {
   const access = resolvePageAccess(definition, args);
   return shouldResolveSessionTabTarget(definition, args)
-    && (access === "readOnly" || (access === "owned" && (definition.behavior?.timeoutResult?.kind === "read"
+    && (access === "readOnly" || (access === "owned" && (resolveTimeoutResult(definition, args)?.kind === "read"
       || (Boolean(definition.behavior?.targetLookup) && elementTargetsOf(definition, args).some(target => !isUidElementTarget(target))))));
 }
 

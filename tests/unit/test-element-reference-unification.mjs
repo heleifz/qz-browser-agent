@@ -130,15 +130,17 @@ test('native click readiness failure contains only public error fields', async (
   const sendMessage = chrome.tabs.sendMessage;
   chrome.tabs.sendMessage = async (_id, params) => params.action === 'ping' ? { ok: true, contentType: 'text/html', elementRefs: 1 } : inspect;
   try {
-    const result = await resolveToolDefinition('act_on_element').execute({ tabId: 5, target: 'css:#disabled', action: 'click' }, undefined, {});
-    assert.deepEqual(Object.keys(result).sort(), ['code', 'details', 'hint', 'message']);
-    assert.equal(result.code, 'ELEMENT_DISABLED');
-    assert.deepEqual(result.details, { target: 'css:#disabled' });
-    assert.match(result.hint, /find_elements/);
-    assert.doesNotMatch(JSON.stringify(result), /selector|tabId|originalElement|"w"|"h"/);
-    const thrown = new ToolExecutionError('element_disabled', result.message, result.details);
-    thrown.hint = result.hint;
-    assert.deepEqual(JSON.parse(JSON.stringify(thrown)), result);
+    await assert.rejects(resolveToolDefinition('act_on_element').execute({
+      tabId: 5, target: 'css:#disabled', action: 'click', timeout: 0.05,
+    }, undefined, {}), error => {
+      const result = JSON.parse(JSON.stringify(error));
+      assert.deepEqual(Object.keys(result).sort(), ['code', 'details', 'hint', 'message']);
+      assert.equal(result.code, 'ELEMENT_NOT_READY');
+      assert.deepEqual(result.details, { target: 'css:#disabled', reason: 'element is disabled' });
+      assert.match(result.hint, /Inspect the target/);
+      assert.doesNotMatch(JSON.stringify(result), /selector|tabId|originalElement|"w"|"h"/);
+      return true;
+    });
   } finally { chrome.tabs.sendMessage = sendMessage; }
 });
 

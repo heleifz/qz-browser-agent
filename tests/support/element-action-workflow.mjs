@@ -83,6 +83,7 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   for (const name of ['run_script', 'collect_images', 'read_image_asset', 'data_store']) expect(names).not.toContain(name);
   const schema = await call('list_tools', { names: ['act_on_element'] });
   expect(schema.tools[0].parameters.properties.action.enum).toEqual(expect.arrayContaining(['hover', 'double_click', 'drag']));
+  await exerciseElementMatchWait({ page, call, expect });
 
   await page.evaluate(() => { setTimeout(() => { document.getElementById('delayed').disabled = false; }, 1200); });
   expect(await call('act_on_element', { target: 'css:#delayed', action: 'click', timeout: 5 })).toEqual({});
@@ -145,4 +146,52 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   await expect(page.frameLocator('iframe').locator('#frame-hover')).toHaveAttribute('data-hovered', 'yes');
   expect(await page.locator('#never').getAttribute('data-clicks'), 'timed-out preparation must not click after becoming ready').toBeNull();
   expect(await page.locator('#hover-never').locator('..').getAttribute('data-downs'), 'timed-out hover must not press after its overlay disappears').toBeNull();
+}
+
+async function exerciseElementMatchWait({ page, call, expect }) {
+  await page.evaluate(() => {
+    const other = document.createElement('p');
+    other.textContent = 'Async match'; document.body.append(other);
+    const button = document.createElement('button');
+    button.id = 'async-match'; button.textContent = 'Async match'; button.hidden = true;
+    button.onclick = () => { button.dataset.clicked = 'yes'; };
+    document.body.append(button);
+  });
+  const query = { roles: ['button'], pattern: '^Async match$' };
+  expect(await call('find_elements', query)).toMatchObject({ matches: 0, results: [] });
+  let settled = false;
+  const pending = call('find_elements', { ...query, waitFor: 'match', timeout: 5 })
+    .then(result => { settled = true; return result; });
+  await page.waitForTimeout(150);
+  expect(settled, 'a matching role/name must be visible before the wait resolves').toBe(false);
+  await page.locator('#async-match').evaluate(button => { button.hidden = false; });
+  const found = await pending;
+  expect(found, JSON.stringify(found)).toMatchObject({ matches: 1, results: [
+    { target: expect.stringMatching(/^uid:t\d+\.[0-9a-z]{6}\.\d+$/), role: 'button', text: 'Async match' },
+  ] });
+  expect(found).not.toHaveProperty('tabRef');
+  expect(await call('act_on_element', { target: found.results[0].target, action: 'click' })).toEqual({});
+  await expect(page.locator('#async-match')).toHaveAttribute('data-clicked', 'yes');
+
+  const timeout = await call('find_elements', { target: 'css:#missing-match', waitFor: 'match', timeout: 0.3 });
+  expect(timeout, JSON.stringify(timeout)).toMatchObject({ code: 'TOOL_TIMEOUT' });
+  expect(timeout).not.toHaveProperty('incomplete');
+
+  const tree = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 80 });
+  const roots = tree.snapshot?.split('\n').filter(line => line.includes(' RootWebArea'));
+  expect(roots, JSON.stringify(tree)).toHaveLength(2);
+  const frame = roots[1].match(/target=(uid:\S+)/)?.[1];
+  expect(frame || '', JSON.stringify(tree)).toMatch(/^uid:/);
+  const framed = call('find_elements', { target: frame, roles: ['button'], pattern: '^Async frame match$', waitFor: 'match', timeout: 5 });
+  await page.waitForTimeout(150);
+  await page.frameLocator('iframe').locator('body').evaluate(body => {
+    const button = document.createElement('button');
+    button.textContent = 'Async frame match'; button.id = 'async-frame-match';
+    button.onclick = () => { button.dataset.clicked = 'yes'; };
+    body.append(button);
+  });
+  const frameFound = await framed;
+  expect(frameFound, JSON.stringify(frameFound)).toMatchObject({ matches: 1, results: [{ target: expect.stringMatching(/^uid:/) }] });
+  expect(await call('act_on_element', { target: frameFound.results[0].target, action: 'click' })).toEqual({});
+  await expect(page.frameLocator('iframe').locator('#async-frame-match')).toHaveAttribute('data-clicked', 'yes');
 }

@@ -72,15 +72,18 @@ Use outer action tools for clicks, form input, and navigation. `evaluate` waits 
 
 Use `read_article` for document text, lists, and tables. Use a scoped `get_ax_tree` or `find_elements` to locate interactive elements. Element identity is `target` (`uid:t<tab>.<snap>.<n>` or `css:...`); `rect` is `{x,y,width,height}`. Pass returned `target` values unchanged to `act_on_element`, `inspect_element`, `screenshot`, and `wait_for_element`. Prefer returned `uid:` targets; use `css:` only when no `uid:` is available.
 
-`find_elements` `pattern` is a case-insensitive regular expression by default (for literal `a.b`, pass `"a\\.b"`). `get_ax_tree` `scope` is `viewport` or `full`; narrow `target` or `limit` instead of requesting the full page for one control. Navigation, reloads, and DOM replacement can invalidate `uid:` targets; re-observe after a stale-reference error.
+`find_elements` returns current matches by default, including an empty list. Pass `waitFor:"match",timeout:10` to wait up to 10 seconds for at least one match; timeout throws. A match does not mean a dynamic list has finished loading. Its `pattern` is a case-insensitive regular expression by default (for literal `a.b`, pass `"a\\.b"`). `get_ax_tree` `scope` is `viewport` or `full`; narrow `target` or `limit` instead of requesting the full page for one control. Navigation, reloads, and DOM replacement can invalidate `uid:` targets; re-observe after a stale-reference error.
 
 `act_on_element` performs one action: `click`, `double_click`, `hover`, `drag`, `fill`, `press`, `select`, `check`, `uncheck`, or `scroll` (`fill`/`select` require `value`; `press` requires `key`; `drag` requires `destination:{target}` on the same tab). Actions wait up to 5 seconds for their target to become usable, then dispatch without replaying uncertain input. `timeout` sets the whole-call limit (seconds, default 20); an explicit value also sets the readiness limit. Ordinary success returns `{}`, with `navigated`/`url` or `navigationPending` when navigation is detected, and `popups` for new Tabs observed during the call. Use `wait_for_popup` when the new page must be awaited. If `confirmationRequired` is true, verify the field locally before continuing. To check resulting page state, read a focused region rather than requesting both a full snapshot and a screenshot; reserve `screenshot` for visual checks.
 
 When an action must cause navigation, a popup, or a network response, pass `trigger:{name,args}` to the corresponding wait tool so it arms the listener before invoking the trigger once. Pass `tabRef` on both the wait call and the trigger action. A failed wait never rolls back or replays the action.
 
 ```js
-// Follow the next-page link and wait for the navigation it triggers.
-const found = await tools.find_elements({ tabRef: "page", pattern: "Next", roles: ["link"], limit: 3 });
+// Wait for the next-page link, click it, and await the resulting navigation.
+const found = await tools.find_elements({
+  tabRef: "page", pattern: "^Next$", roles: ["link"], limit: 3,
+  waitFor: "match", timeout: 10
+});
 return await tools.wait_for_navigation({
   tabRef: "page",
   trigger: {
@@ -90,7 +93,7 @@ return await tools.wait_for_navigation({
 });
 ```
 
-`wait_for_navigation` matches only a new navigation after listening starts (including same-URL reloads, SPA transitions, and hash changes); an already-loaded page never satisfies it. `wait_for_load` checks whether the current page load has finished. `wait_for_element` defaults to `visible` (use `attached` for DOM presence; a zero-height `body` can still contain visible children, so do not use `body` visibility as a readiness check). Prefer observable conditions over fixed sleeps.
+`wait_for_navigation` matches only a new navigation after listening starts (including same-URL reloads, SPA transitions, and hash changes); an already-loaded page never satisfies it. `wait_for_load` checks whether the current page load has finished. `wait_for_element` defaults to `visible` (use `attached` for DOM presence; a zero-height `body` can still contain visible children, so do not use `body` visibility as a readiness check). Use `wait_for_function` for application-specific conditions. Prefer observable conditions over fixed sleeps.
 
 Use `await` for dependencies and `Promise.all` for independent page workflows that process results within each async branch. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
 

@@ -1,7 +1,7 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
-import { delayTimeout, pageWaitTimeout, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
+import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
 import { bindCreatedTabResult, createdTabResultId } from "#sdk/shared/browser";
 import { isCdpFallbackForbiddenError, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
@@ -68,27 +68,6 @@ function validIsoDateTimeParts(match: RegExpMatchArray) {
   return offsetHour <= 14 && offsetMinute <= 59 && (offsetHour < 14 || offsetMinute === 0);
 }
 
-function waitDelay(delayMs: number, signal?: AbortSignal, details: Record<string, unknown> = {}) {
-  if (signal?.aborted) {
-    return Promise.reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting", details));
-  }
-  return new Promise<void>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const cleanup = () => {
-      if (timer != null) clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while waiting", details));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, delayMs);
-  });
-}
 
 async function waitUntilTime(targetMs: number, signal?: AbortSignal, details: Record<string, unknown> = {}) {
   if (signal?.aborted) {
@@ -422,17 +401,7 @@ const waitDetails = (context: ToolContext, target?: string) => ({
 function waitBudget(input: Record<string, unknown>) {
   return input.timeoutMs != null ? Math.max(0, Number(input.timeoutMs) || 0) : secondsToMs(input.timeout, 10000);
 }
-function pollState<T>(signal: AbortSignal, read: () => Promise<T | undefined>, intervalMs = 100): WaitObservation<T> {
-  return { dispose() {}, result: (async () => {
-    for (;;) {
-      signal.throwIfAborted();
-      const value = await read();
-      signal.throwIfAborted();
-      if (value !== undefined) return value;
-      await waitDelay(intervalMs, signal);
-    }
-  })() };
-}
+
 function observeNavigation(tabId: number, signal: AbortSignal): WaitObservation<{ status: string; url: string; title: string }> {
   let started = false, disposed = false;
   let resolve!: (value: { status: string; url: string; title: string }) => void, reject!: (error: unknown) => void;

@@ -140,7 +140,8 @@ semantics](../../docs/architecture.md#tool-and-skill-execution).
 A handler can call `context.reportPartial?.(result, pending)` after a completed stage. The host copies
 that result into a call-local slot, reads it only at the existing hard timeout, and revokes late
 updates. Use concise `pending` text naming the unfinished work. `behavior.timeoutResult` selects the
-host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
+host's page-read, action-uncertainty or navigation fallback. It may select a policy from the call arguments;
+returning `undefined` leaves timeouts as errors, as with `find_elements` waiting for a match. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
 
 At the model boundary, scripts produce `{ok, result, trace}` on success and failure; failure `result` is a ToolError. Inside `run_script` and `runtime:"script"` Skills, tool calls return business values directly, including script Skill calls; failures reject. Legacy page/inner callers retain their original return contracts. The host collects errors and explicit trace()/console output from nested scripts independently of the returned business data. Successful tool calls add no trace entries.

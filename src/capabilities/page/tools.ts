@@ -6,7 +6,7 @@ import { isElementReply, type ElementReply } from "#sdk/shared/browser";
 import type { SecurityGuardrails } from "#sdk/shared/security";
 import type { CdpCommand, ElementTarget, PageState, PreparedNavigation } from "#sdk/background/browser";
 import type { ToolContext } from "#sdk/background";
-import { bindToolResultPresentation, requireToolFields, toolError } from "#sdk/background/tools";
+import { bindToolResultPresentation, requireToolFields, toolError, pageWaitTimeout, pollState, runWaitWithTrigger } from "#sdk/background/tools";
 export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/background/browser";
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
@@ -239,7 +239,8 @@ registerTool({
 registerTool({
   name: "find_elements",
   argumentAliases: { selector: "target" },
-  behavior: { parallelRead: true, targetLookup: "openShadow", timeoutResult: { kind: "read", pending: "element scan" } },
+  behavior: { parallelRead: true, targetLookup: "openShadow", passiveWait: args => args.waitFor === "match",
+    timeoutResult: args => args.waitFor === "match" ? undefined : { kind: "read", pending: "element scan" } },
   get description() { return toolT("findElementsDescription"); },
   get parameters() { return {
     type: "object",
@@ -253,18 +254,58 @@ registerTool({
       types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
       limit: { type: "number", description: toolT("findElementsLimit") },
       includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
+      waitFor: { type: "string", enum: ["match"], description: toolT("findElementsWaitFor") },
+      timeout: { type: "number", exclusiveMinimum: 0, maximum: 300, description: toolT("findElementsTimeout") },
     },
     required: ["tabRef"],
   } as const; },
   page: "readOnly",
-  timeout: { defaultMs: 30000, maxMs: 300000 },
-  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "", roles = [], tags = [], types = [], limit = 20, includeHidden = false }, _signal, context = {}) => {
-    const target = await resolveSelectorTarget(tabId, selector || "body", 0, context);
-    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, context);
-    const result = await readBound(target, context, call => sendToContent(target.tabId, "findElements", {
-      pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
-    }, call, context));
-    return addElementTargetsToFindResult(result, target.tabId, context, target.ref);
+  timeout: args => args.waitFor === "match" ? pageWaitTimeout(args) : { defaultMs: 30000, maxMs: 300000 },
+  validateArgs: args => {
+    if (args.waitFor === "match" && args.timeout !== undefined
+      && !(typeof args.timeout === "number" && args.timeout > 0 && args.timeout <= 300)) {
+      throw new ToolExecutionError("INVALID_TIMEOUT", toolT("findElementsTimeout"), { timeout: args.timeout });
+    }
+  },
+  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "", roles = [], tags = [], types = [], limit = 20, includeHidden = false, waitFor, timeout = 10 }, signal, context = {}) => {
+    const waiting = waitFor === "match";
+    if (waiting && pattern.trim()) {
+      try { new RegExp(pattern.trim(), flags || "i"); }
+      catch { throw Object.assign(new ToolExecutionError("INVALID_REGEX", toolT("findElementsInvalidRegex"), { pattern, flags }),
+        { hint: toolT("findElementsInvalidRegexHint") }); }
+    }
+    const scan = async (observing: ToolContext) => {
+      observing.signal?.throwIfAborted();
+      const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
+      if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
+      const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
+        pattern, flags, selector: scopedSelector(target), roles, tags, types, limit, includeHidden,
+      }, call, observing));
+      observing.signal?.throwIfAborted();
+      if (waiting) {
+        if (result.code || result.error) throw result;
+        if (!Array.isArray(result.results)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element search response.");
+        if (!result.results.length) return undefined;
+      }
+      return addElementTargetsToFindResult(result, target.tabId, observing, target.ref);
+    };
+    if (!waiting) return scan(context);
+    return runWaitWithTrigger({ tool: "find_elements", timeoutMs: timeout * 1000, signal, context,
+      details: { ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
+        ...(selector ? { target: selector } : {}), ...(pattern ? { pattern } : {}) },
+    }, current => {
+      const observing = Object.assign(Object.create(context), { signal: current });
+      return pollState(current, async () => {
+        try { return await scan(observing); }
+        catch (error) {
+          if (current.aborted || isCdpFallbackForbiddenError(error)) throw error;
+          const code = String(asRecord(error).code || "");
+          if ((code === "ELEMENT_NOT_FOUND" && !selector.trim().startsWith("uid:"))
+            || ["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) return undefined;
+          throw error;
+        }
+      });
+    });
   },
 });
 

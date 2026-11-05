@@ -24,6 +24,20 @@ test('direct-drive tools discover capabilities and act on ready element targets'
     await page.frameLocator('iframe').locator('#frame-hover').waitFor();
     await exerciseElementActionWorkflow({ page, call, expect });
 
+    const concurrent = (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', buildScriptRequest({ sessionId, code: `
+      const [found] = await Promise.all([
+        tools.find_elements({ tabRef: 'page', roles: ['button'], pattern: '^Pipeline ready$', waitFor: 'match', timeout: 5 }),
+        tools.evaluate({ tabRef: 'page', code: () => {
+          const button = document.createElement('button');
+          button.textContent = 'Pipeline ready'; document.body.append(button);
+        } })
+      ]);
+      return found;
+    ` }))).result;
+    expect(concurrent, JSON.stringify(concurrent)).toMatchObject({ ok: true, result: {
+      matches: 1, results: [{ target: expect.stringMatching(/^uid:/) }],
+    } });
+
     const authored = { popups: [{ tabRef: 'business-value' }], target: 'inventory', result: { nodes: [1, 2] } };
     const script = (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool',
       buildScriptRequest({ sessionId, code: 'return args;', args: authored }))).result;
