@@ -1,4 +1,5 @@
 import { safeValueForMessage, scriptValue, scriptToolArguments, installSecurityGuards } from "../shared/script-runtime.js";
+import { createQzSdk } from "../shared/qz-script-sdk.js";
 import type { FetchResult, InnerWorkerInput, InnerWorkerOutput, ScriptEnvelope, ScriptFailure, ToolBridgeResponse, TraceRow, WorkerExecute } from '../shared/contracts/inner-runner.js';
 
 type ToolCall = { toolName: string; resolve(response: Extract<ToolBridgeResponse, {ok: true}>): void; reject(error: unknown): void };
@@ -145,6 +146,7 @@ async function runInnerScript(payload: WorkerExecute) {
   }
 
   const tool = callTool;
+  const qz = createQzSdk(callTool);
   const tools = new Proxy(Object.create(null), {
     get(_target, prop) {
       if (prop === "then") return undefined;
@@ -160,8 +162,8 @@ async function runInnerScript(payload: WorkerExecute) {
   const restoreConsole = patchConsole(pushTrace);
   const restoreSecurity = installSecurityGuards(payload.securityGuardrails || {});
   try {
-    const fn = new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "\"use strict\"; return (async () => {\n" + source + "\n})();");
-    const result = await fn(input, args, isRecord(input) ? input.$plugin || {} : {}, tools, tool, trace, log, tabId);
+    const fn = new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "qz", "\"use strict\"; return (async () => {\n" + source + "\n})();");
+    const result = await fn(input, args, isRecord(input) ? input.$plugin || {} : {}, tools, tool, trace, log, tabId, qz);
     const value = payload.strictResult ? scriptValue(result) : result;
     const returnedObservations: unknown[] = [];
     const visited = new Set<object>();

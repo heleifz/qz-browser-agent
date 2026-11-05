@@ -56,9 +56,10 @@ Select an existing profile with --client NAME|UUID; it never falls back to anoth
 local service is restarted once before browser operations. Complete the extension’s connection
 prompt when needed.
 
-Scripts run outside pages and invoke browser tools with explicit `tabRef` values. Discover compact
-signatures with `tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`;
-use `tools.evaluate` for page DOM access. stdout is JSON `{ok,result,trace}`: execution status, the returned business value,
+Scripts run outside pages and use the `qz` SDK. Bind `qz.tab(tabRef)` for page operations,
+use `page.locator(query)` for element actions and waits, and `page.evaluate(code,args?)` for DOM access.
+Discover additional capabilities with `qz.listTools()` or `qz.listTools({names:["list_images"]})`,
+then invoke them through `qz.call(name,args)`. stdout is JSON `{ok,result,trace}`: execution status, the returned business value,
 and ordered error and `trace()`/`console` messages without levels. Failures put `ToolError` in `result`; `undefined`
 returns become `null`. The built-in agent delegation commands above remain available when
 qz should plan and execute the task.

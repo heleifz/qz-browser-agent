@@ -130,6 +130,17 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     try { target.dispatchEvent(event); }
     catch { /* The page has no pointer events. Mouse events still fire. */ }
   };
+  const elementAtPoint = (x: number, y: number): DomNode | null => {
+    let target = doc.elementFromPoint?.(x, y) || doc.documentElement || null;
+    const visited = new Set<DomNode>();
+    while (target && !visited.has(target)) {
+      visited.add(target);
+      const inner = target.shadowRoot?.elementFromPoint?.(x, y);
+      if (!inner || inner === target) break;
+      target = inner;
+    }
+    return target;
+  };
   const mouse = (input: MouseInput) => {
     const x = Number(input.x);
     const y = Number(input.y);
@@ -138,17 +149,17 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
       const pressed = state.mouseTarget;
       state.mouseTarget = null;
       if (pressed) {
-        const init = { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: buttonIndex(input.button), buttons: 0 };
+        const init = { bubbles: true, cancelable: true, composed: true, clientX: 0, clientY: 0, button: buttonIndex(input.button), buttons: 0 };
         pointer(pressed, "pointerup", init);
         dispatch(pressed, "mouseup", init);
       }
       return {};
     }
-    const target = doc.elementFromPoint?.(x, y) || doc.documentElement || null;
+    const target = elementAtPoint(x, y);
     const button = buttonIndex(input.button);
     const clickCount = Number(input.clickCount) || 1;
     const buttons = input.buttons ?? (type === "mousePressed" ? (button === 1 ? 4 : button === 2 ? 2 : 1) : 0);
-    const init = { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons,
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button, buttons,
       detail: type === "mousePressed" || type === "mouseReleased" ? clickCount : 0 };
     if (type === "mousePressed") {
       state.mouseTarget = target;
@@ -290,15 +301,15 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
     const y = Number(input.y || 0);
     const type = String(input.type || "");
     const target = type === "touchStart" || type === "touchMove"
-      ? doc.elementFromPoint?.(x, y) || doc.documentElement
-      : state.touchTarget || doc.elementFromPoint?.(x, y) || doc.documentElement;
+      ? elementAtPoint(x, y)
+      : state.touchTarget || elementAtPoint(x, y);
     try {
       if (typeof page.Touch === "function" && typeof page.TouchEvent === "function" && target) {
         const point = new page.Touch({ identifier: 0, target, clientX: x, clientY: y, pageX: x, pageY: y, radiusX: 1, radiusY: 1, force: 1, rotationAngle: 0 });
         const name = type === "touchStart" ? "touchstart" : type === "touchMove" ? "touchmove" : type === "touchEnd" ? "touchend" : "touchcancel";
         const empty = type === "touchEnd" || type === "touchCancel";
         const event = new page.TouchEvent(name, {
-          bubbles: true, cancelable: true,
+          bubbles: true, cancelable: true, composed: true,
           touches: empty ? [] : [point],
           targetTouches: empty ? [] : [point],
           changedTouches: [point],
@@ -609,7 +620,7 @@ export async function firefoxPageCommand(request: PageCommand, world: "MAIN" | "
         };
       }
       case "inputFrame": {
-        const target = command.active ? doc.activeElement : doc.elementFromPoint?.(command.x, command.y);
+        const target = command.active ? doc.activeElement : elementAtPoint(command.x, command.y);
         if (!target || !["IFRAME", "FRAME"].includes(String(target.nodeName).toUpperCase())) return {};
         const rect = quad(target);
         return { backendNodeId: idFor(target), x: command.x - rect.x - Number(target.clientLeft || 0),
@@ -753,6 +764,7 @@ interface DomNode {
   getAttribute?(name: string): string | null; setAttribute?(name: string, value: string): void;
   hasAttribute?(name: string): boolean; getBoundingClientRect?(): { x?: number; y?: number; left?: number; top?: number; width?: number; height?: number };
   querySelectorAll?(selector: string): ArrayLike<DomNode>; dispatchEvent?(event: unknown): boolean;
+  elementFromPoint?(x: number, y: number): DomNode | null;
   contentDocument?: (DomNode & { documentElement?: DomNode | null }) | null; contentWindow?: { location?: { href?: string } } | null;
   shadowRoot?: DomNode | null; focus?(): void;
   ownerDocument?: DomNode; type?: string; matches?(selector: string): boolean; click?(): void;

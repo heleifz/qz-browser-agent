@@ -58,8 +58,8 @@ function assertTargetInfrastructure() {
 }
 
 function assertElementToolSchemasUseTarget() {
-  assertToolUsesTargetOnly("inspect_element", { required: ["target", "tabRef"] });
-  assertToolUsesTargetOnly("act_on_element", { required: ["target", "action", "tabRef"] });
+  assertToolUsesTargetOnly("inspect_element", { required: ["tabRef"], locator: true });
+  assertToolUsesTargetOnly("act_on_element", { required: ["action", "tabRef"], locator: true });
   assertToolUsesTargetOnly("scroll_page");
   assertToolUsesTargetOnly("screenshot");
   assertToolUsesTargetOnly("read_image");
@@ -67,12 +67,27 @@ function assertElementToolSchemasUseTarget() {
   assert.deepEqual(resolveToolDefinition("read_image").parameters.anyOf, [{ required: ["url"] }, { required: ["tabRef", "target"] }], "image URLs are page-free, while element reads require an explicit page and target");
 }
 
-function assertToolUsesTargetOnly(name, { required = null } = {}) {
+function assertToolUsesTargetOnly(name, { required = null, locator = false } = {}) {
   const block = toolBlock(name);
   assert.match(block, /\btarget: \{ type: "string"/, `${name} should expose target`);
   assert.doesNotMatch(block, /\buid: \{ type: "string"/, `${name} should not expose uid as a tool argument`);
   assert.doesNotMatch(block, /\bselector: \{ type: "string"/, `${name} should not expose selector as an element argument`);
-  if (required) assert.deepEqual(resolveToolDefinition(name).parameters.required, required, `${name} should enforce target and page requirements`);
+  const definition = resolveToolDefinition(name);
+  if (required) assert.deepEqual(definition.parameters.required, required, `${name} should enforce operation and page requirements`);
+  if (locator) {
+    assert.equal(definition.parameters.properties.locator.type, "object");
+    assert.deepEqual(definition.parameters.oneOf, [
+      { required: ["target"], not: { required: ["locator"] } },
+      { required: ["locator"], not: { required: ["target"] } },
+    ], `${name} schema requires exactly one public element input`);
+    const base = { tabRef: "page", ...(name === "act_on_element" ? { action: "click" } : {}) };
+    for (const args of [{ target: "uid:t7.000001.1" }, { target: "css:button" }, { locator: { role: "button", name: "Save" } }]) {
+      assert.doesNotThrow(() => definition.validateArgs({ ...base, ...args }));
+    }
+    for (const args of [{}, { target: "css:button", locator: { role: "button" } }, { target: "", locator: { role: "button" } }]) {
+      assert.throws(() => definition.validateArgs({ ...base, ...args }), { code: "INVALID_ELEMENT_TARGET" });
+    }
+  }
 }
 
 function assertSelectorFieldsAcceptTargetSyntax() {
@@ -246,9 +261,9 @@ function assertFindElementsFilterContract() {
 
 function assertNavigationWaitContract() {
   const navigation = resolveToolDefinition("wait_for_navigation");
-  assert.match(navigation.description, /之后发生的新导航[\s\S]*已加载完成的旧页面不能满足/, "navigation waits observe a future event");
+  assert.match(navigation.description, /之后发生的新导航[\s\S]*已完成的旧页面不会命中/, "navigation waits observe a future event");
   assert.deepEqual(navigation.parameters.properties.trigger.required, ["name"], "an optional triggering tool is an explicit action descriptor");
-  assert.match(resolveToolDefinition("wait_for_load").description, /当前加载完成[\s\S]*已完成时立即返回/, "load waits inspect current state");
+  assert.match(resolveToolDefinition("wait_for_load").description, /当前文档加载完成[\s\S]*已加载完成则立即返回/, "load waits inspect current state");
   assert.match(waitTools, /onHistoryStateUpdated/, "navigation waits include same-document changes");
 }
 

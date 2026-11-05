@@ -5,7 +5,7 @@ import { startBridge } from '../../services/mcp-bridge/src/server.mjs';
 import { openFromToolbar } from '../firefox/driver.mjs';
 
 /** Pair the real Firefox sidebar with a private CLI service. */
-export async function connectFirefoxCli(session) {
+export async function connectFirefoxCli(session, { requireObserver = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'qz-firefox-cli-'));
   const bridge = await startBridge({ port: 0, registryPath: join(directory, 'browsers.json'), requestTimeoutSeconds: 90 });
   const rejectDefaultBridge = route => route.abort();
@@ -42,7 +42,7 @@ export async function connectFirefoxCli(session) {
       const deadline=Date.now()+12000;
       while(Date.now()<deadline){
         content.document.querySelector('[data-consent-accept]')?.click();
-        if(view.__qzOuterScriptModules&&!content.document.querySelector('#app')?.hasAttribute('data-consent-pending')
+        if((${JSON.stringify(requireObserver)} ? !!view.__qzOuterScriptModules : true)&&!content.document.querySelector('#app')?.hasAttribute('data-consent-pending')
           &&!content.document.querySelector('#app')?.hasAttribute('data-workspace-booting'))return true;
         await new Promise(resolve=>content.setTimeout(resolve,100));
       }return false;

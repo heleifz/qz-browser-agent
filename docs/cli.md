@@ -434,20 +434,22 @@ references are validated before stopping, and the first cancellation fixes the r
 Further execution returns `DRIVE_SESSION_ENDED`.
 
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
-file or stdin; --args accepts a JSON value exposed as args. The script can await tools
-using the same names as the native Agent. Awaited calls, including Skill tools, return business values
-directly; failures throw. Discover all visible tools as compact signatures with
-`tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`.
-Each page tool passes its own explicit tabRef. `tools.evaluate` runs a
-self-contained function in that page; pass data through args and return its value. Outer
-scripts survive page navigation; an evaluate call that unloads its own page can be interrupted.
-The [installed Skill](../skills/qz-browser-agent/SKILL.md) provides a complete workflow.
+file or stdin; `--args` supplies the script's `args` value. Use the `qz` SDK: `qz.openTab(options)`
+returns a Tab, `qz.tab(tabRef)` binds a Page, and `page.locator(targetOrQuery)` creates an element query.
+Locator actions resolve a unique match and wait for it to become usable within one call budget.
+Awaited SDK calls return business values directly and throw on failure.
+For additional capabilities and loaded Skills, discover compact signatures with `qz.listTools()`
+and selected full schemas with `qz.listTools({names:["list_images"]})`, then use `qz.call(name,args)`.
+`page.evaluate(code,args?,options?)` runs a self-contained page function with DOM and login-state
+access; pass its inputs explicitly and return JSON. Outer scripts survive page navigation;
+an evaluation that unloads its own page can be interrupted. The
+[installed Skill](../skills/qz-browser-agent/SKILL.md) provides the SDK reference and workflow.
 
 ```sh
 qz session create --title "Read example page"
 qz script --session SESSION_ID - <<'JS'
-await tools.open_tab({url:"https://example.com", tabAlias:"page"});
-return await tools.read_article({tabRef:"page", limit:3000});
+const { tabRef } = await qz.openTab({url:"https://example.com", tabAlias:"page"});
+return await qz.tab(tabRef).read({limit:3000});
 JS
 qz session show SESSION_ID
 qz session cancel SESSION_ID
@@ -455,10 +457,11 @@ qz session cancel SESSION_ID
 
 stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports execution success; `trace` is an ordered string array of errors and explicit `trace()`/`console` diagnostics without levels. `result` is the returned business value, `null` for `undefined`, or a failure in `{code,message,hint?,details?}` form. Business `trace`/`traces` fields stay inside `result`. Script locations are in `details`. Exit codes are `0` for success, `1` for execution or connection failure, and `2` for invalid arguments. `--timeout` defaults to `120` seconds, accepts `>0` through `3600`, and the request waits 60 seconds longer. The caller's deadline must allow that request to finish. A timeout does not undo completed browser actions.
 
-For action-dependent waits, pass `trigger:{name,args}` to the wait tool. It listens before
-executing the trigger once. Use this for navigation, popups and network responses; a wait
-failure never replays the action. To inspect an existing state, use a normal read, wait_for_load or an element
-wait. Tool schemas specify the available filters and deadlines.
+For action-dependent navigation or popups, use `locator.click({waitFor:"navigation"})` or
+`locator.click({waitFor:"popup"})`. The wait listens before dispatching the action once; failure
+never replays it. For current element state, use `locator.wait({state:"visible"})`; for an exact
+attached match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
+Use `page.waitForFunction(code,args?,options?)` for application-specific completion conditions.
 
 MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns
 `{toolName,sessionId,isError,result}`: inspect isError, then read result as the business value or

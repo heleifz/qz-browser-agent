@@ -1,5 +1,6 @@
 import type { ToolContext } from "../background.js";
 import type { ElementReference } from "../../background/tools/element-runtime.js";
+import type { ElementLocator } from "../../shared/contracts/element-locator.js";
 export type { ElementReference } from "../../background/tools/element-runtime.js";
 export interface CdpCommand {
   (method: string, params?: Record<string, unknown>): Promise<unknown>;
@@ -30,7 +31,7 @@ export interface ElementAccess {
   makeElementUid(snapshotId: string, seq: number, mark?: string): string;
   registerElementRef(ref: ElementReference): void;
   registerElementBinding(ref: ElementReference): ElementReference & { target: string };
-  bindElementReferences(tabId: number, candidates: readonly ElementReference[], context?: ToolContext, scope?: ElementReference): Promise<(ElementReference & { target: string })[]>;
+  bindElementReferences(tabId: number, candidates: readonly ElementReference[], context?: ToolContext, scope?: ElementReference, mode?: "bestEffort" | "required"): Promise<(ElementReference & { target: string })[]>;
   elementTargetForUid(uid: unknown): string;
   elementTargetForSelector(selector: unknown): string;
   elementTargetForRef(ref?: ElementReference): string;
@@ -39,6 +40,9 @@ export interface ElementAccess {
   isUidElementTarget(value: unknown): boolean;
   resolveSelectorTarget(tabId?: number, selector?: string, index?: number, context?: ToolContext): Promise<ElementTarget>;
   resolveElementReference(tabId: number | undefined, options?: { target?: string; index?: number; readOnly?: boolean }, context?: ToolContext): Promise<ElementTarget & { index: number }>;
+  resolveLocatorTarget(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<ElementTarget | null>;
+  countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context?: ToolContext): Promise<number>;
+  findLocatorElements(tabId: number | undefined, locator: ElementLocator, context?: ToolContext, limit?: number): Promise<{ results: unknown[]; count: number }>;
   addElementTargetsToFindResult(value: unknown, tabId?: number, context?: ToolContext, scope?: ElementReference): Promise<unknown>;
   backendNodeIdForSelector(tabId: number, selector: string, context?: ToolContext): Promise<number>;
   /** Bind unique selectors in one document; a frame scope also rejects a changed loader. */

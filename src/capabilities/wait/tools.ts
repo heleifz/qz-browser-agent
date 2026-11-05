@@ -2,7 +2,7 @@ import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
 import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
-import { bindCreatedTabResult, createdTabResultId } from "#sdk/shared/browser";
+import { bindCreatedTabResult, createdTabResultId, elementLocatorSchema, locatorReferences, validateElementLocator } from "#sdk/shared/browser";
 import { isCdpFallbackForbiddenError, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
 
@@ -22,7 +22,7 @@ interface WaitDependencies {
   getToolRuntimeDependencies(context: ToolContext): { sessions?: Partial<ToolSessionCommands> | null; emit?: ((event: ToolEvent) => void) | null };
   captureTabScreenshot(tabId: number, options: { format: "jpeg" | "png"; quality: number }, context: ToolContext): Promise<{ dataUrl: string; method?: string }>;
   sendToContent(tabId: number | undefined, action: string, args: Record<string, unknown>, context?: ToolContext): Promise<unknown>;
-  element: Pick<ElementAccess, "resolveSelectorTarget" | "callElement" | "addElementTargetsToFindResult" | "elementTargetForSelector">;
+  element: Pick<ElementAccess, "resolveSelectorTarget" | "resolveLocatorTarget" | "countLocatorMatches" | "callElement" | "addElementTargetsToFindResult" | "elementTargetForSelector">;
 }
 type QuestionField = Record<string, unknown>;
 
@@ -534,14 +534,29 @@ registerTool({
 });
 
 registerTool({
-  name: "wait_for_element", behavior: { parallelTab: true, passiveWait: true }, argumentAliases: { selector: "target" },
+  name: "wait_for_element", behavior: { parallelTab: true, passiveWait: true, uidTargets: args => locatorReferences(args.locator) }, argumentAliases: { selector: "target" },
   get description() { return toolT("waitForElementDescription"); },
   get parameters() { return { type: "object", properties: { ...pageWaitProperties(),
     target: { type: "string", description: toolT("waitForElementSelector") },
+    locator: elementLocatorSchema,
+    count: { type: "integer", minimum: 0, description: toolT("waitForElementCount") },
     state: { type: "string", enum: ["attached", "visible", "hidden", "detached"], description: toolT("waitForElementState") },
     intervalSeconds: { type: "number", description: toolT("waitForElementIntervalSeconds") },
-  }, required: ["target", "tabRef"] } as const; },
+  }, required: ["tabRef"], oneOf: [
+    { required: ["target"], not: { required: ["locator"] } },
+    { required: ["locator"], not: { required: ["target"] } },
+  ] } as const; },
   page: "readOnly", timeout: pageWaitTimeout,
+  validateArgs: args => {
+    if ((args.locator !== undefined) === (args.target !== undefined)) throw new ToolExecutionError("INVALID_ELEMENT_TARGET", "Pass exactly one of target or locator.");
+    if (args.locator !== undefined) {
+      try { validateElementLocator(args.locator); }
+      catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", error instanceof Error ? error.message : String(error)); }
+    }
+    if (args.count !== undefined && (!args.locator || args.state !== undefined || typeof args.count !== "number" || !Number.isInteger(args.count) || args.count < 0)) {
+      throw new ToolExecutionError("INVALID_ELEMENT_WAIT", "count requires a locator and a non-negative integer; omit state.");
+    }
+  },
   execute: async (input, signal, context = {}) => {
     const legacy = input as Record<string, unknown>;
     const state = String(input.state || (legacy.absent === true ? "hidden" : "visible"));
@@ -551,28 +566,40 @@ registerTool({
     return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input.target) },
       async current => {
       const observing = Object.assign(Object.create(context), { signal: current });
-      const binding = await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);
-      const reference = binding.target || element.elementTargetForSelector(binding.selector || binding.ref?.selector || "");
+      const fixed = input.locator ? undefined : await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);
       current.throwIfAborted();
       return pollState(current, async () => {
+        let binding = fixed;
         let result: Record<string, unknown>;
         try {
+          if (input.count !== undefined && input.locator) {
+            const count = await element.countLocatorMatches(input.tabId, input.locator, observing);
+            return count === input.count ? { count } : undefined;
+          }
+          binding = fixed ?? await element.resolveLocatorTarget(input.tabId, input.locator!, observing) ?? undefined;
+          if (!binding) return absent ? { state, found: false, element: null } : undefined;
           const params = { selector: binding.selector, visibleOnly };
           result = (binding.uid ? await element.callElement(binding.tabId, binding, "elementPresence", params, observing)
             : await sendToContent(binding.tabId, "elementPresence", params, observing)) as Record<string, unknown>;
-          if (result?.error) throw new ToolExecutionError(String(result.code || "CONTENT_SCRIPT_MESSAGE_FAILED"), String(result.error));
+          if (result?.error || result?.code) throw new ToolExecutionError(String(result.code || "CONTENT_SCRIPT_MESSAGE_FAILED"), String(result.message || result.error),
+            result.details && typeof result.details === "object" ? result.details as Record<string, unknown> : {});
           if (!result || typeof result.found !== "boolean") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element presence response");
         } catch (error) {
           const failure = error && typeof error === "object" ? error as Record<string, unknown> : {};
           const details = failure.details && typeof failure.details === "object" ? failure.details as Record<string, unknown> : {};
-          if (binding.uid && failure.code === "STALE_ELEMENT_UID" && details.reason === "node_unavailable") result = { found: false };
-          else {
+          if (input.count === undefined && input.locator && !/^uid:/i.test(String(input.locator.target || ""))
+            && failure.code === "STALE_ELEMENT_UID" && details.reason === "locator_match_changed") return undefined;
+          if (binding?.uid && failure.code === "STALE_ELEMENT_UID" && details.reason === "node_unavailable") {
+            if (input.locator && !/^uid:/i.test(String(input.locator.target || ""))) return undefined;
+            result = { found: false };
+          } else {
             if (current.aborted || isCdpFallbackForbiddenError(error)
               || !["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(String(failure.code))) throw error;
             return undefined;
           }
         }
-        if (absent ? result.found : !result.found) return undefined;
+        if (!binding || (absent ? result.found : !result.found)) return undefined;
+        const reference = binding.target || element.elementTargetForSelector(binding.selector || binding.ref?.selector || "");
         const observed = result.found ? await element.addElementTargetsToFindResult(result.element, binding.tabId, observing, binding.ref) : null;
         const target = observed && typeof observed === "object" && "target" in observed ? observed.target : reference;
         return { state, found: result.found, target, element: observed };

@@ -14,7 +14,7 @@ export default `# 技能工作台
 7. 创建新 skill 时调用本 skill 暴露的“创建技能”Skill 工具；写入或编辑 \`plugin.json\`、\`scripts/*.js\`、\`references/*.md\` 等资源时调用“编辑技能资源”，一次只改一个资源且一次只做一个动作；修改已有 skill 正文或元信息时调用“更新技能”；删除时调用“删除技能”。
 8. Skill 脚本不要承载完整流程，只封装可重复、边界明确、适合 LLM tool 调用的局部动作；skill 本身就是用户可选择的入口，不要额外设计 Skill slash command。
 9. 写入或更新后，轻舟会刷新 Skill 注册表；显式声明的新工具和工具结果渲染应立即对当前对话生效。
-10. 新建 Skill 脚本统一声明 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。通过 \`tools.*\` 调用浏览器工具；页面内 DOM 读写和复用页面登录态的请求统一放入自包含的 \`tools.evaluate({ tabRef, code, args })\`。若工具操作调用方指定的页面，须在 schema 中声明 \`tabRef\`（\`type:["integer","string"]\`）并列入 \`required\`，再传给每次页面操作；脚本自行打开页面时直接使用返回的 \`tabRef\`。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 仅访问 \`network.allowedOrigins\` 声明的来源。
+10. 新建 Skill 脚本统一声明 \`runtime:"script"\`，与 \`run_script\` 一样在页面外执行。使用 \`qz\` SDK：通过 \`qz.tab(tabRef)\` 绑定页面，以 \`page.locator(query)\` 定位、操作和等待元素；页面 DOM 访问和复用登录态的请求放入自包含的 \`page.evaluate(code,args?)\` 函数。若工具操作调用方指定的页面，须在 schema 中声明 \`tabRef\`（\`type:["integer","string"]\`）并列入 \`required\`；脚本自行打开页面时使用 \`qz.openTab\` 返回的引用。通过 \`$plugin.config\` 读取设置，外层 \`fetch\` 仅访问 \`network.allowedOrigins\` 声明的来源。
 11. 新 Skill 脚本工具与 \`run_script\` 语义一致：脚本直接 return 业务 JSON；await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错。模型收到 \`{ok,result,trace}\` 回执，\`trace\` 仅按序记录报错与脚本显式输出的 \`trace()\`/\`console\`（含嵌套脚本），建议在关键阶段用 \`trace()\` 打点以便失败定位；renderer 路径始终相对于脚本 return 的业务值解析。独立页面流程用 \`Promise.all\`，并在 return 前 await 所有调用。宿主自动注入可选 \`timeout\`（秒，默认 120；0 不设单次时限，仍受父调用取消与期限约束），请勿将 \`timeout\` 写进业务 schema。存量旧执行模式脚本保留原有调用契约。
 12. Skill 工具曝光由 skill 的 \`scope\` 决定，不在 manifest 里额外配置：\`scope:"resident"\` 常驻曝光；\`scope:"site"\` 在当前页面匹配 skill 的 \`domains/urlPatterns\` 时曝光，也可由当前会话 \`load_skill\` 后曝光；\`scope:"global"\` 只在当前会话 \`load_skill\` 后曝光。\`builtin\`、\`readOnly\` 和 \`source\` 只描述来源与权限，不改变加载策略。
 13. 接入外部 MCP 时，先 \`load_skill("qingzhou-mcp")\`，按该 skill 完成 registry 搜索、未注册 URL 探测和必要的最小试调用。只有确认要长期复用时，才把选中的 MCP server 和工具绑定写入目标 skill；已注册 MCP 必须通过对应 Skill 工具名调用。
@@ -117,7 +117,7 @@ export default `# 技能工作台
       "parameters": {
         "type": "object",
         "properties": {
-          "tabRef": { "type": ["integer", "string"], "description": "必填，当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用" },
+          "tabRef": { "type": ["integer", "string"], "description": "必填，当前任务拥有的标签页别名或 qz.openTab、qz.listTabs 返回的引用" },
           "limit": { "type": "integer", "description": "最多返回多少条链接" }
         },
         "required": ["tabRef"]
@@ -188,28 +188,25 @@ export default `# 技能工作台
 
 ## 脚本约定
 
-Skill 脚本与 \`run_script.code\` 使用同一种源码形态：顶层 \`await\` 和 \`return\`（兼容已有函数表达式）。脚本在页面外运行，页面导航不会销毁它，提供 \`args\`、\`$plugin\`、\`tools\`、\`trace()\` 与 Web APIs，不包含 \`window/document\`；await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错。传给 \`tools.evaluate\` 的页面函数必须自包含：通过 \`args\` 传值，不能捕获外层变量或调用 tools。导航和点击通过外层工具执行，之后再读取新页面；页面卸载可能中断单次 evaluate，代码不会自动重放。
+Skill 脚本与 \`run_script.code\` 使用同一种源码形态：顶层 \`await\` 和 \`return\`（兼容已有函数表达式）。脚本在页面外运行，页面导航不会销毁它，提供 \`args\`、\`$plugin\`、\`qz\`、\`trace()\` 与 Web APIs，不包含 \`window/document\`；await SDK 调用成功直接返回业务值，失败抛错。用 \`const page = qz.tab(args.tabRef)\` 绑定页面，再调用 \`page.goto(url)\`、\`page.read({limit})\`、\`page.locator(targetOrQuery)\`。Locator 支持 \`role/name/text\` 条件或 \`uid:/css:\` 引用，要求唯一匹配，在元素就绪后只派发一次动作。方法包括 \`click()\`、\`fill(value)\`、\`press(key)\`、\`inspect()\`、\`read({limit})\`、\`wait({state:"visible"})\`、\`count()\` 和 \`wait({count:3})\`。传给 \`page.evaluate(code,args?)\` 的页面函数必须自包含：通过函数形参接收传入数据，不能捕获外层变量或调用 qz SDK。导航和点击通过外层 SDK 执行，之后再读取新页面；页面卸载可能中断单次 evaluate，代码不会自动重放。通过 \`qz.listTools({names})\` 查询扩展工具，再用 \`qz.call(name,args)\` 调用。
 
 \`\`\`js
-return await tools.evaluate({
-  tabRef: args.tabRef,
-  args: { limit: Number(args.limit ?? 10) },
-  code: ({ limit }) => {
-    const links = Array.from(document.querySelectorAll("a[href]"))
-      .slice(0, limit)
-      .map(a => ({ text: a.innerText.trim(), href: a.href }));
-    return {
-      title: document.title,
-      url: location.href,
-      linkCount: links.length,
-      textLength: document.body?.innerText?.length || 0,
-      links
-    };
-  }
-});
+const page = qz.tab(args.tabRef);
+return await page.evaluate(({ limit }) => {
+  const links = Array.from(document.querySelectorAll("a[href]"))
+    .slice(0, limit)
+    .map(a => ({ text: a.innerText.trim(), href: a.href }));
+  return {
+    title: document.title,
+    url: location.href,
+    linkCount: links.length,
+    textLength: document.body?.innerText?.length || 0,
+    links
+  };
+}, { limit: Number(args.limit ?? 10) });
 \`\`\`
 
-有依赖的步骤按顺序 await；独立分支使用 \`Promise.all\`，各分支在自己的工具完成后即可继续，同页动作仍串行。结果保持输入顺序，一个 Promise 拒绝不会取消其他分支；需要所有结果时用 \`Promise.allSettled\`。返回前 await 所有必要工作：脚本退出会取消未完成调用，已完成操作不会回滚。外层网络来源和 method 必须在 \`network\` 声明；使用页面登录态的 fetch 放进 \`tools.evaluate\`。不要使用 Node.js、fs/path/process/require、npm 包、本地 shell 或服务器文件系统。
+有依赖的步骤按顺序 await；独立分支使用 \`Promise.all\`，各分支在自己的工具完成后即可继续，同页动作仍串行。结果保持输入顺序，一个 Promise 拒绝不会取消其他分支；需要所有结果时用 \`Promise.allSettled\`。返回前 await 所有必要工作：脚本退出会取消未完成调用，已完成操作不会回滚。外层网络来源和 method 必须在 \`network\` 声明；使用页面登录态的 fetch 放进 \`page.evaluate\`。不要使用 Node.js、fs/path/process/require、npm 包、本地 shell 或服务器文件系统。
 
 ### 页面 state 与安全返回规范
 

@@ -373,7 +373,7 @@ function describeScriptExecution(execution: Fields) {
 }
 
 function isToolApiReferenceError(error: unknown) {
-  return /\b(?:tools|tool) is not defined\b|can't find variable:\s*(?:tools|tool)\b/i.test(String(error || ""));
+  return /\b(?:qz|tools|tool) is not defined\b|can't find variable:\s*(?:qz|tools|tool)\b/i.test(String(error || ""));
 }
 
 function withoutToolAccess(result: Fields): Fields {
@@ -817,11 +817,11 @@ function buildCdpToolBridgeExpression(code: string, { tabId, sessionId, runId, p
     },
   });
   const tabId = __qzSourceTabId;
-  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, securityGuardrails })}
+  ${runScriptTraceRuntimeSource({ reason, source, withConsolePatch: true, defineInputBindings: false, withToolSdk: true, securityGuardrails })}
 `);
 }
 
-function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, strictResult = false, source, withConsolePatch = true, defineInputBindings = true, securityGuardrails = {} }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean }) {
+function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, strictResult = false, source, withConsolePatch = true, defineInputBindings = true, withToolSdk = false, securityGuardrails = {} }: ScriptOptions & { source: string; withConsolePatch?: boolean; defineInputBindings?: boolean; withToolSdk?: boolean }) {
   return `
   ${defineInputBindings ? `
   const tabId = ${JSON.stringify(tabId || null)};
@@ -833,6 +833,7 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, strictResult =
   const __qzMaxTrace = ${MAX_SCRIPT_TRACE_ENTRIES};
   const __qzStartedAt = Date.now();
   ${SCRIPT_RUNTIME_SOURCE}
+  ${withToolSdk ? "const qz = QZ_SCRIPT_RUNTIME.createQzSdk((name, args) => __qzCallTool(name, QZ_SCRIPT_RUNTIME.scriptToolArguments(name, args)));" : ""}
   const __qzSafeValueForMessage = value => QZ_SCRIPT_RUNTIME.safeValueForMessage(value, "page");
   function __qzTraceText(value) {
     try {

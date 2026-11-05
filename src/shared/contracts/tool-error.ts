@@ -13,7 +13,7 @@ const NUMBER = [
   'line', 'column', 'index', 'timeout', 'timeoutMs', 'bytes', 'maxBytes', 'base64Chars', 'payloadChars',
   'sheetCount', 'blockCount', 'tableCount', 'matched', 'selectedTargets', 'selectedUrls', 'collected', 'failed',
   'issueCount', 'omittedIssueCount', 'maxOptions', 'remainingSeconds', 'maxWaitSeconds', 'targetAt', 'maximum',
-  'min', 'max', 'schemaVersion', 'downloadId', 'revision', 'expectedRevision', 'currentRevision',
+  'min', 'max', 'schemaVersion', 'downloadId', 'revision', 'expectedRevision', 'currentRevision', 'count',
 ] as const;
 const BOOLEAN = [
   'automaticReplay', 'mayHaveTakenEffect', 'toolAccess', 'executed', 'submitDispatched', 'clickDispatched',
@@ -27,7 +27,7 @@ const ARRAY = [
 ] as const;
 const OBJECT = [
   'schema', 'expectedSchema', 'retry', 'contentSummary', 'coordinateSpace', 'clip', 'rect', 'bounds',
-  'viewport',
+  'viewport', 'locator',
 ] as const;
 const VALUE = [
   'value', 'expected', 'expectedType', 'recommended', 'recovery', 'examples', 'expectedValue', 'currentValue',

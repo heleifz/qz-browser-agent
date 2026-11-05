@@ -8,7 +8,7 @@ import { tokenizer } from "acorn";
 import { loadExtension, loadRules, runRules, formatJson } from "storecheck";
 
 const STORECHECK_VERSION = "0.1.0";
-const SANDBOX_TOKENS = "cf5426fa9b7197a04e2ea017222ad89ca1f5c4596f346990ac9261bae88161a5";
+const SANDBOX_TOKENS = "a430e7957b2f0c49a4f1043588b61419764956c2cad4ece08fd3f72d7d9be5eb";
 const REQUIRED_CLEAN = /^(?:code\/(?:obfuscated-code|minified-without-source)|privacy\/(?:remote-code-execution|remote-script-tag)|csp\/)/u;
 const identity = finding => JSON.stringify([finding.ruleId, finding.file, finding.line, finding.message]);
 
@@ -23,7 +23,7 @@ export function reviewedSandboxFinding(source, finding) {
   const runtime = source.file("runner-sandbox.js")?.text();
   const html = source.file("runner-sandbox.html")?.text();
   if (!runtime || !html || !/<script src="runner-sandbox\.js"><\/script>/u.test(html) ||
-      !runtime.split("\n")[finding.line - 1]?.includes('new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId"')) return false;
+      !runtime.split("\n")[finding.line - 1]?.includes('new Function("input", "args", "$plugin", "tools", "tool", "trace", "log", "tabId", "qz",')) return false;
   const digest = createHash("sha256").update(JSON.stringify([...tokenizer(runtime, { ecmaVersion: "latest" })].map(token => [token.type.label, token.value]))).digest("hex");
   return digest === SANDBOX_TOKENS;
 }

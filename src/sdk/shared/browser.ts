@@ -1,6 +1,8 @@
 /** Public browser contracts and operations, independent of extension implementation paths. */
 export { createElementObservation, toRect } from "../../shared/contracts/element-observation.js";
 export type { Rect, ElementObservation, ImageObservation, CanvasObservation } from "../../shared/contracts/element-observation.js";
+export { elementLocatorSchema, locatorReferences, validateElementLocator } from "../../shared/contracts/element-locator.js";
+export type { ElementLocator } from "../../shared/contracts/element-locator.js";
 export { pageReferenceForResult } from "../../shared/tab-reference.js";
 export { bindCreatedTabResult, createdTabResultId, copyCreatedTabResult } from "../../shared/contracts/page-observation.js";
 export type { PageObservation } from "../../shared/contracts/page-observation.js";

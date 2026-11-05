@@ -16,8 +16,9 @@ Page tools prepare only the state they consume. Navigation returns after documen
 page-wide readers and `evaluate` wait for DOMContentLoaded, while explicit element observations
 read their current nodes. Element actions poll lightweight readiness state, geometry, and hit tests
 within the call deadline; full inspection supplies presentation and navigation metadata once.
-Preparation defaults to at most 5 seconds inside the 20-second call budget; an explicit `timeout`
-sets the shared preparation and execution limit.
+Legacy target preparation defaults to at most 5 seconds inside the 20-second call budget; an explicit
+`timeout` sets the shared preparation and execution limit. Locator queries share the whole call budget
+for resolution, readiness, and dispatch.
 Mouse presses recheck the target after moving the pointer. A stale UID requires a new observation.
 `evaluate({waitUntil:"commit"})` supports early observation and
 predicate waits. Content messaging does not wait for parsing. Preparation and navigation confirmation
@@ -567,6 +568,20 @@ New image-collection rows store `target` and `tabRef`.
 
 Direct-drive catalogs omit implicit task-page selection tools. Every page operation requires an explicit
 `tabRef`; `list_tabs.active` still identifies the tab visible to the user and never selects a tool target.
+
+The shared [script SDK](../src/shared/qz-script-sdk.ts) binds a Page to an explicit `tabRef` and a
+Locator to a repeatable query. SDK methods lower into the existing tool invocation path, preserving
+Session permissions, scheduling, cancellation, deadlines, and result contracts. The outer Worker and
+legacy page bridge inject the same SDK; `evaluate` remains a self-contained DOM function. Legacy
+`tools` and `tool` bindings remain compatible, while new CLI and Skill scripts use `qz`.
+
+[Locator queries](../src/shared/contracts/element-locator.ts) distinguish precise role/name/text filters
+from exploratory `find_elements.pattern` matching. Element actions resolve one matching node and bind
+it through the existing registry before readiness checks and dispatch. Queries may re-resolve before
+input delivery; explicit UID targets retain their original identity. Ambiguous queries require
+narrowing or an explicit index. Scoped queries retain their frame and document authority.
+Element waits re-evaluate queries for the requested state or attached match count; reads preserve
+their observation semantics. An action is never replayed to confirm its outcome.
 MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
 metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.
 

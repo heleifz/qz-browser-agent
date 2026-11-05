@@ -14,7 +14,7 @@ Use this skill when the user wants to create, edit, delete, import, or publish a
 7. Use this skill's create tool for new skills, resource-editing tool for \`plugin.json\`, \`scripts/*.js\`, and \`references/*.md\`, update tool for existing content or metadata, and delete tool for removal. Edit one resource with one action per call.
 8. Scripts should implement reusable, well-defined local operations suitable for tool calls, not entire workflows. The skill itself is the user-selectable entry point; do not add Skill slash commands.
 9. qz refreshes the Skill registry after a write or update. Newly declared tools and result views should become available to the current conversation immediately.
-10. New Skill scripts use \`runtime:"script"\`, the same page-independent outer execution mode as \`run_script\`. Call browser tools through \`tools.*\`; perform DOM access and page-authenticated requests through self-contained \`tools.evaluate({ tabRef, code, args })\` calls. If a tool operates on a caller-selected page, declare \`tabRef\` with \`type:["integer","string"]\` in \`required\` and pass it to each page operation; scripts that open their own pages use the returned \`tabRef\`. Read settings through \`$plugin.config\` and use outer \`fetch\` only for origins declared in \`network.allowedOrigins\`.
+10. New Skill scripts use \`runtime:"script"\`, the same page-independent outer execution mode as \`run_script\`. Use the \`qz\` SDK: bind \`qz.tab(tabRef)\` for page operations, use \`page.locator(query)\` for element actions and waits, and self-contained \`page.evaluate(code,args?)\` functions for DOM access and page-authenticated requests. If a tool operates on a caller-selected page, declare \`tabRef\` with \`type:["integer","string"]\` in \`required\`; scripts that open their own pages use the reference returned by \`qz.openTab\`. Read settings through \`$plugin.config\` and use outer \`fetch\` only for origins declared in \`network.allowedOrigins\`.
 11. New Skill script tools share \`run_script\` semantics: scripts return plain business JSON; awaited tool calls (including Skill calls) return business values directly and throw on failure. The model receives \`{ok,result,trace}\`, where \`trace\` lists only errors and explicit \`trace()\`/\`console\` output in order (including from nested scripts)—use \`trace()\` at key checkpoints to aid failure recovery. Renderer paths resolve relative to the returned business value. Use \`Promise.all\` for independent tab workflows and \`await\` all calls before returning. The host injects an optional \`timeout\` in seconds (default 120; 0 disables the per-call deadline while preserving parent cancellation and deadlines); do not declare \`timeout\` in the business schema. Legacy scripts retain their declared calling contract.
 12. Tool availability follows the skill's \`scope\`, not an extra manifest setting. \`resident\` is always available; \`site\` is available when the page matches domains/urlPatterns or after the current conversation calls \`load_skill\`; \`global\` is available only after \`load_skill\` in the current conversation. \`builtin\`, \`readOnly\`, and \`source\` describe origin and permissions, not loading policy.
 13. For external MCP, first \`load_skill("qingzhou-mcp")\` and follow its registry search, unregistered-URL inspection, and minimal test-call workflow. Persist selected server/tool bindings only when ongoing reuse is confirmed. Call registered MCP tools by their Skill tool names.
@@ -117,7 +117,7 @@ qz supports remote HTTP MCP only, not local stdio. \`qingzhou-mcp\` handles disc
       "parameters": {
         "type": "object",
         "properties": {
-          "tabRef": { "type": ["integer", "string"], "description": "Required task-owned tab alias or reference returned by open_tab or list_tabs" },
+          "tabRef": { "type": ["integer", "string"], "description": "Required task-owned tab alias or reference returned by qz.openTab or qz.listTabs" },
           "limit": { "type": "integer", "description": "Maximum number of links to return" }
         },
         "required": ["tabRef"]
@@ -188,28 +188,25 @@ Scripts read settings through \`$plugin.config.<key>\`. Secret values remain out
 
 ## Script conventions
 
-Skill scripts use the same source form as \`run_script.code\`: top-level \`await\` and \`return\` (existing function expressions remain supported). The script runs outside web pages, survives page navigation, and provides \`args\`, \`$plugin\`, \`tools\`, \`trace()\`, and Web APIs without \`window/document\`. Awaited tool calls (including Skill calls) return business values directly and throw on failure. Page functions passed to \`tools.evaluate\` must be self-contained: pass inputs through \`args\`; they cannot capture outer variables or call tools. Perform navigation and clicks through outer tools before evaluating the resulting page; unloading can interrupt an evaluation without automatic replay.
+Skill scripts use the same source form as \`run_script.code\`: top-level \`await\` and \`return\` (existing function expressions remain supported). The script runs outside web pages, survives page navigation, and provides \`args\`, \`$plugin\`, \`qz\`, \`trace()\`, and Web APIs without \`window/document\`. Awaited SDK calls return business values directly and throw on failure. Bind \`const page = qz.tab(args.tabRef)\`; use \`page.goto(url)\`, \`page.read({limit})\`, and \`page.locator(targetOrQuery)\`. Locator queries support \`role/name/text\` or a \`uid:/css:\` target, require a unique match, and wait for readiness before dispatching an action once. Methods include \`click()\`, \`fill(value)\`, \`press(key)\`, \`inspect()\`, \`read({limit})\`, \`wait({state:"visible"})\`, \`count()\`, and \`wait({count:3})\`. Page functions passed to \`page.evaluate(code,args?)\` must be self-contained: inputs arrive as their function argument; they cannot capture outer variables or call the qz SDK. Perform navigation and clicks through the outer SDK before evaluating the resulting page; unloading can interrupt an evaluation without automatic replay. Discover extension tools through \`qz.listTools({names})\` and call them with \`qz.call(name,args)\`.
 
 \`\`\`js
-return await tools.evaluate({
-  tabRef: args.tabRef,
-  args: { limit: Number(args.limit ?? 10) },
-  code: ({ limit }) => {
-    const links = Array.from(document.querySelectorAll("a[href]"))
-      .slice(0, limit)
-      .map(a => ({ text: a.innerText.trim(), href: a.href }));
-    return {
-      title: document.title,
-      url: location.href,
-      linkCount: links.length,
-      textLength: document.body?.innerText?.length || 0,
-      links
-    };
-  }
-});
+const page = qz.tab(args.tabRef);
+return await page.evaluate(({ limit }) => {
+  const links = Array.from(document.querySelectorAll("a[href]"))
+    .slice(0, limit)
+    .map(a => ({ text: a.innerText.trim(), href: a.href }));
+  return {
+    title: document.title,
+    url: location.href,
+    linkCount: links.length,
+    textLength: document.body?.innerText?.length || 0,
+    links
+  };
+}, { limit: Number(args.limit ?? 10) });
 \`\`\`
 
-Await dependent steps in order. Use \`Promise.all\` for independent branches; each branch can continue when its own tool completes, while same-page actions remain serialized. Results keep input order. A rejection does not cancel sibling promises; use \`Promise.allSettled\` when every outcome matters. Await all required work before returning: script exit cancels unfinished calls and does not undo completed actions. Outer network origins and methods must be declared in \`network\`; page-authenticated fetch belongs inside \`tools.evaluate\`. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
+Await dependent steps in order. Use \`Promise.all\` for independent branches; each branch can continue when its own tool completes, while same-page actions remain serialized. Results keep input order. A rejection does not cancel sibling promises; use \`Promise.allSettled\` when every outcome matters. Await all required work before returning: script exit cancels unfinished calls and does not undo completed actions. Outer network origins and methods must be declared in \`network\`; page-authenticated fetch belongs inside \`page.evaluate\`. Do not use Node.js, fs/path/process/require, npm packages, local shell commands, or the server filesystem.
 
 ### Page state and safe return values
 

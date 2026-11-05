@@ -1,0 +1,210 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { build } from "esbuild";
+import { chromium } from "playwright";
+
+let browser, page, content;
+const html = `
+  <button id="save">Save</button>
+  <button aria-label="Save draft">Different text</button>
+  <button class="Save">Cancel</button>
+  <label for="destination">Destination</label><input id="destination">
+  <span id="city">Hangzhou</span><span id="building">Tower</span>
+  <div role="option" aria-labelledby="city building">Unrelated text</div>
+  <button id="hidden" hidden>Hidden</button>
+  <div class="twin" role="option">Duplicate</div><div class="twin" role="option">Duplicate</div>
+  <section id="scope"><button>Scoped</button><p><span>Ready result</span></p></section>
+  <div id="shadow"></div>`;
+
+test.before(async () => {
+  const built = await build({
+    entryPoints: ["src/content/content-script.ts"], bundle: true, write: false,
+    format: "iife", platform: "browser", target: "chrome114", logLevel: "silent",
+  });
+  content = built.outputFiles[0].text;
+  browser = await chromium.launch({ headless: true });
+  page = await browser.newPage();
+});
+
+test.beforeEach(async () => {
+  await page.setContent(html);
+  await page.evaluate(() => {
+    delete window.__QZ_CONTENT_VERSION;
+    let listener;
+    if (!window.chrome) window.chrome = {};
+    Object.defineProperty(window.chrome, "runtime", { configurable: true, value: {
+      getManifest: () => ({ name: "Locator fixture", version: "0.0.0" }),
+      onMessage: { addListener(value) { listener = value; }, removeListener() {} },
+      sendMessage: async () => ({ ok: true }),
+    } });
+    window.callContent = (action, args = {}) => new Promise(resolve => listener({ action, ...args }, {}, resolve));
+  });
+  await page.addScriptTag({ content });
+});
+
+test.after(async () => { await browser?.close(); });
+
+const resolve = (locator, extra = {}) => page.evaluate(
+  ({ locator, extra }) => window.callContent("resolveLocator", { locator, ...extra }), { locator, extra },
+);
+
+test("semantic names use the named field, implicit roles, labels and content", async () => {
+  const save = await resolve({ role: "button", name: "Save" });
+  assert.equal(save.matched, 1);
+  assert.equal(save.element.text, "Save");
+  assert.equal(save.element.name, "Save");
+  assert.equal(save.element.selector, "");
+  assert.ok(save.element._elementRef);
+  assert.equal((await resolve({ role: "button", name: "save" })).matched, 0);
+  assert.equal((await resolve({ role: "button", name: "Save", exact: false })).matched, 2);
+  const textbox = await resolve({ role: "textbox", name: "Destination" });
+  assert.equal(textbox.matched, 1);
+  assert.equal(textbox.element.tag, "input");
+  const labelled = await resolve({ role: "option", name: "Hangzhou   Tower" });
+  assert.equal(labelled.matched, 1);
+  assert.equal(labelled.element.text, "Unrelated text");
+  const discovery = await page.evaluate(() => window.callContent("findElements", { roles: ["button"], pattern: "^Save$" }));
+  assert.ok(discovery.results.some(element => element.name === save.element.name));
+});
+
+test("strict queries report ambiguity; nth is explicit and preserves tree order", async () => {
+  const ambiguous = await resolve({ target: "css:.twin" });
+  assert.deepEqual(ambiguous, { matched: 2 });
+  const selected = await resolve({ target: "css:.twin", nth: 1 });
+  assert.equal(selected.matched, 2);
+  assert.ok(selected.element._elementRef);
+  const isSecond = await page.evaluate(async token => {
+    const [node] = await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: [token] });
+    return node === document.querySelectorAll(".twin")[1];
+  }, selected.element._elementRef);
+  assert.equal(isSecond, true);
+  assert.deepEqual(await resolve({ target: "css:.twin", nth: 8 }), { matched: 2 });
+});
+
+test("attached hidden nodes remain queryable and counting does not bind nodes", async () => {
+  const hidden = await resolve({ target: "css:#hidden" });
+  assert.equal(hidden.matched, 1);
+  assert.equal(hidden.element.visible, false);
+  const count = await resolve({ role: "button" }, { countOnly: true });
+  assert.deepEqual(count, { matched: 5 });
+  await page.evaluate(() => document.querySelector("#hidden").remove());
+  assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
+});
+
+test("list queries preserve total counts, bounded results and explicit nth", async () => {
+  const found = await resolve({ role: "button" }, { all: true, limit: 2 });
+  assert.equal(found.matched, 5);
+  assert.equal(found.results.length, 2);
+  assert.deepEqual(found.results.map(element => element.name), ["Save", "Save draft"]);
+  assert.ok(found.results.every(element => element._elementRef));
+  const nth = await resolve({ role: "button", nth: 3 }, { all: true });
+  assert.equal(nth.matched, 5);
+  assert.equal(nth.results.length, 1);
+  assert.equal(nth.results[0].visible, false);
+  const missing = await resolve({ role: "button", nth: 9 }, { all: true });
+  assert.deepEqual(missing, { matched: 5, results: [] });
+  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#save"), {
+    action: "resolveLocator", locator: {}, matchSelf: true, all: true,
+  }));
+  assert.equal(self.matched, 1);
+  assert.equal(self.results[0].text, "Save");
+});
+
+test("text-only queries choose smallest matching nodes and scoped calls remain local", async () => {
+  const text = await resolve({ text: "Ready result" });
+  assert.equal(text.matched, 1);
+  assert.equal(text.element.tag, "span");
+  const scoped = await page.evaluate(() => window.__qzInvoke(document.querySelector("#scope"), {
+    action: "resolveLocator", locator: { role: "button" },
+  }));
+  assert.equal(scoped.matched, 1);
+  assert.equal(scoped.element.text, "Scoped");
+  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#save"), {
+    action: "resolveLocator", locator: { role: "button", name: "Save" }, matchSelf: true,
+  }));
+  assert.equal(self.matched, 1);
+  const documentRoot = await page.evaluate(() => window.__qzInvoke(document, {
+    action: "resolveLocator", locator: { role: "button", name: "Save" },
+  }));
+  assert.equal(documentRoot.matched, 1);
+  assert.equal((await resolve({ target: "css:button", scope: "css:.twin" })).code, "AMBIGUOUS_ELEMENT");
+});
+
+test("open shadow queries bind the exact node and never rematch after replacement", async () => {
+  await page.evaluate(() => {
+    document.querySelector("#shadow").attachShadow({ mode: "open" }).innerHTML =
+      '<label for="field">Shadow field</label><input id="field"><button id="save">Shadow save</button>';
+  });
+  const named = await resolve({ role: "textbox", name: "Shadow field" });
+  assert.equal(named.matched, 1);
+  assert.ok(named.element._elementRef);
+  assert.equal((await resolve({ target: "css:#save" })).matched, 2);
+  const old = await resolve({ role: "button", name: "Shadow save" });
+  await page.evaluate(() => {
+    document.querySelector("#shadow").shadowRoot.querySelector("button").outerHTML = '<button id="save">New save</button>';
+  });
+  const stale = await page.evaluate(async token => {
+    const [node] = await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: [token] });
+    return node;
+  }, old.element._elementRef);
+  assert.equal(stale, null);
+  assert.equal((await resolve({ role: "button", name: "New save" })).matched, 1);
+});
+
+test("CSS scope is rooted at the supplied search root and preserves shadow walk order", async () => {
+  await page.evaluate(() => {
+    const list = document.createElement("ul");
+    list.id = "list";
+    list.innerHTML = '<li id="first">First<ul><li id="nested">Nested</li></ul></li><li id="second">Second</li>';
+    document.querySelector("#scope").append(list);
+    document.querySelector("#shadow").attachShadow({ mode: "open" }).innerHTML = '<ul><li id="shadow-row">Shadow</li></ul>';
+  });
+  const scoped = await resolve({ scope: "css:#list", target: "css::scope > li" }, { all: true });
+  assert.equal(scoped.matched, 2);
+  assert.deepEqual(scoped.results.map(element => element.text), ["FirstNested", "Second"]);
+  const bound = await page.evaluate(async () => {
+    const selected = await window.callContent("resolveLocator", { locator: { target: "css:#list" } });
+    const [root] = await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: [selected.element._elementRef] });
+    return window.__qzInvoke(root, { action: "resolveLocator", locator: { target: "css::scope > li" }, all: true });
+  });
+  assert.equal(bound.matched, 2);
+  assert.deepEqual(bound.results.map(element => element.text), ["FirstNested", "Second"]);
+  const root = await resolve({ scope: "css:#list", target: "css::scope" });
+  assert.equal(root.matched, 1);
+  assert.equal(root.element.tag, "ul");
+  const ordinary = await resolve({ target: "css:li" }, { all: true });
+  assert.equal(ordinary.matched, 4);
+  assert.deepEqual(ordinary.results.map(element => element.text), ["FirstNested", "Nested", "Second", "Shadow"]);
+  assert.equal((await resolve({ target: "css::scope > body" })).matched, 1);
+  const documentRoot = await page.evaluate(() => window.__qzInvoke(document, {
+    action: "resolveLocator", locator: { target: "css::scope > body" },
+  }));
+  assert.equal(documentRoot.matched, 1);
+  assert.equal(documentRoot.element.tag, "body");
+});
+
+test("invalid queries fail before selection", async () => {
+  assert.equal((await resolve({ target: "css:[" })).code, "INVALID_SELECTOR");
+  assert.equal((await resolve({ role: "button", nth: -1 })).code, "INVALID_ELEMENT_LOCATOR");
+  assert.equal((await resolve({ scope: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
+  assert.equal((await resolve({ target: "uid:unknown" })).code, "INVALID_ELEMENT_LOCATOR");
+});
+
+test("detached original nodes have a retryable reason but foreign documents do not", async () => {
+  const result = await page.evaluate(async () => {
+    const original = document.querySelector("#save");
+    original.remove();
+    const bound = await window.__qzInvoke(original, { action: "readElementReadiness" });
+    const direct = await window.callContent("readElementReadiness", { selector: original });
+    const scope = await window.__qzInvoke(original, { action: "resolveLocator", locator: { role: "button" } });
+    document.implementation.createHTMLDocument("Other").adoptNode(original);
+    const foreign = await window.__qzInvoke(original, { action: "readElementReadiness" });
+    return { bound, direct, scope, foreign };
+  });
+  for (const name of ["bound", "direct", "scope"]) {
+    assert.equal(result[name].code, "STALE_ELEMENT_UID", name);
+    assert.equal(result[name].details.reason, "node_unavailable", name);
+  }
+  assert.equal(result.foreign.code, "STALE_ELEMENT_UID");
+  assert.equal(result.foreign.details.reason, undefined);
+});

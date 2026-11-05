@@ -22,17 +22,25 @@ test("the packaged guide matches the installed Skill and keeps one script vocabu
   assert.match(source, /qz skill.*installed CLI/);
   assert.match(guide, /Do not configure a qz model/);
   assert.match(guide, /references\/create-task\.md/);
-  assert.match(guide, /tools\.list_tools/);
-  assert.match(guide, /tools\.evaluate/);
+  for (const method of ["qz.tab", "qz.openTab", "qz.listTabs", "qz.listTools", "qz.call", "page.locator", "page.evaluate"]) {
+    assert.ok(guide.includes(method), `The guide must document ${method}`);
+  }
+  const syntax = [...guide.matchAll(/```(?:js|sh)\n([\s\S]*?)```|`([^`\n]+)`/g)]
+    .map(match => match[1] || match[2]).join("\n");
+  assert.doesNotMatch(syntax, /\btools\s*\./);
   assert.doesNotMatch(guide, /qz (?:exec|tools)\b|--tab|qz-browser-agent@latest|page\.click|\b(?:inner|tabId|workingTab|isWorkingTab|use_tab|get_working_tab|selector)\b/);
   assert.doesNotMatch(guide, /\bqz stop\b|\bqz connect\b(?! uri)/);
   for (const command of ["create", "list", "show", "cancel"]) assert.match(guide, new RegExp(`qz session ${command}`));
-  assert.match(guide, /active.*never selects a tool target/);
-  assert.match(guide, /Page tools always pass tabRef/);
+  assert.match(guide, /active.*never selects/);
+  assert.match(guide, /qz\.tab\(tabRef\)/);
   assert.match(guide, /uid:t<tab>\.<snap>\.<n>/);
   assert.match(guide, /`rect` is `\{x,y,width,height\}`/);
   assert.match(guide, /Ordinary success returns `\{\}`/);
-  assert.match(guide, /trigger/);
+  assert.match(guide, /waitFor:"navigation"/);
+  assert.match(guide, /waitFor:"popup"/);
+  assert.match(guide, /listener before/);
+  assert.match(guide, /locator\.count\(\)/);
+  assert.match(guide, /\.wait\(\{count:/);
   assert.match(guide, /not transactions/);
   assert.match(guide, /stdout is JSON `\{ok,result,trace\}`/);
   assert.match(guide, /`trace` contains only errors and explicit `trace\(\)`\/`console` output, in order/);

@@ -1,4 +1,5 @@
 import type { MessageValue, ScriptFailure } from "./contracts/inner-runner.js";
+export { createQzSdk } from "./qz-script-sdk.js";
 
 type ScriptWorld = "page" | "inner";
 

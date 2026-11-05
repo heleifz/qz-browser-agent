@@ -144,8 +144,8 @@ ${READING_CAPABILITY_PROTOCOL}
 - 任务需要上传本地文件时，调用 wait_for_user 请用户在页面选择文件后继续；恢复后用 get_ax_tree 或 inspect_element 检查 selectedFileCount 或页面反馈，再继续提交。
 
 ## 4. 脚本执行与编排
-- 页面内求值使用 evaluate({tabRef, code, args})：传入自包含函数并通过 args 传参、由函数形参接收（如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}），仅返回所需的 JSON 值。页面函数不能调用 tools 或捕获外层变量；表单提交、导航、关闭标签页等可能卸载页面的动作统一放在外层工具执行。Skill 页面工具同样必传 tabRef。
-- 单步操作直接调用工具；多步依赖、条件分支、循环与数据处理使用 run_script。它在页面外运行（无 DOM，页面导航不中断脚本），内部 await 工具或 Skill 调用成功直接返回业务值、失败抛错，最终向模型返回 {ok,result,trace}（trace 仅记录报错与显式 trace()/console 打点）。每个嵌套页面调用（含 evaluate）均须显式传 tabRef，且仅 return 下一步所需的精简业务数据。
+- 页面内求值使用 evaluate({tabRef, code, args})：传入自包含函数并通过 args 传参、由函数形参接收（如 code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}），仅返回所需的 JSON 值。页面函数不能调用 qz SDK 或捕获外层变量；表单提交、导航、关闭标签页等可能卸载页面的动作统一放在外层工具执行。Skill 页面工具同样必传 tabRef。
+- 单步操作直接调用工具；多步依赖、条件分支、循环与数据处理使用 run_script。它在页面外运行（无 DOM，页面导航不中断脚本），内部 await 工具或 Skill 调用成功直接返回业务值、失败抛错，最终向模型返回 {ok,result,trace}（trace 仅记录报错与显式 trace()/console 打点）。脚本中用 qz.tab(tabRef) 绑定明确页面，调用 page.goto(url)、page.locator(target或查询).click()/fill(value)、page.read() 和 page.evaluate(code,args)。Locator 动作要求唯一匹配并等待可操作；locator.wait({state:"visible"}) 和 locator.wait({count:3}) 表达预期状态，locator.count() 读取当前数量。扩展能力用 qz.listTools({names}) 查询、qz.call(name,args) 调用；仅 return 下一步所需的精简业务数据。
 - 串行依赖用 await；可由脚本自行判断与推进的独立页面流程用 Promise.all，在各 async 分支内处理结果，同页动作自动串行。模型在脚本返回后接收结果。Promise.all 按输入顺序返回，首错拒绝但不取消其他分支；需保留全部结果用 Promise.allSettled。return 前须 await 所有调用；退出会取消未完成调用，已执行动作不回滚。
 - 默认使用桌面模式；任务明确要求移动端时，新页传 open_tab({mode:"mobile"})，已有页调 set_page_mode({tabRef,mode:"mobile"})。以当前页面上下文的 pageMode 为准；模式切换或恢复后须重新观察，切勿复用旧 target 或截图坐标，也不要在表单未保存时切换模式。
 - 工具时间参数（timeout、seconds、idleSeconds、intervalSeconds、minOpenIntervalSeconds）统一按秒填写；内部结果中的 timeoutMs/minOpenIntervalMs 为毫秒，传入工具前先换算为秒。
@@ -154,7 +154,7 @@ ${READING_CAPABILITY_PROTOCOL}
 - 用户要求采集、整理、写表、生成文件或形成图集时，将完整结果保存为 durable 产物（data_store 表、图集、文件、文档、Skill 或定时任务）。
 
 ### data_store
-- 采集和整理类任务默认写入 data_store：建空表头用 data_store create_table 传 table + columns；写数据用 insert/upsert（大批 rows 在 run_script 内部分批调用 tools.data_store 落库并验证 schema/list）。
+- 采集和整理类任务默认写入 data_store：建空表头用 data_store create_table 传 table + columns；写数据用 insert/upsert（大批 rows 在 run_script 内部分批调用 qz.call("data_store", args) 落库并验证 schema/list）。
 - list/get 返回的是行包装对象：{rowId, order, data, createdAt, updatedAt, revision}，table 在外层；rowId 是不透明句柄，原样用于后续 get/update/replace/delete，禁止拼接或推导；业务字段都在 row.data 内（如 row.data["标题"]，不要用 row["标题"] 取业务字段），写入 row/rows/data 时只传业务字段对象。
 - 聚合结果或派生表使用稳定唯一 dedupField 表达统计维度或业务主键，避免粗粒度字段导致多行结果被 upsert 折叠。
 - 编辑已有 Data 行必须先用 list/get 读取当前行：改单字段用 data_store update：传 rowId、field、value、expectedValue=row.data[field]（仅旧字段不存在时省略 expectedValue）；整行覆盖用 data_store replace：传 rowId、revision=row.revision、data。

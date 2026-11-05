@@ -44,6 +44,37 @@ test('Firefox production package retains implicit submission and only reviewed e
   assert.equal(findings.filter(item => item.rule === 'dynamic-code' && item.file === 'background/firefox/page-command.js').length, 1);
 });
 
+for (const kind of ['mouse', 'touch']) test(`Firefox ${kind} reaches nested shadow elements and document event receipts`, async t => {
+  const page = await browser.newPage();
+  t.after(() => page.close());
+  await page.setContent('<div id=outer></div>');
+  await page.evaluate(() => {
+    const outer = document.querySelector('#outer').attachShadow({ mode: 'open' });
+    outer.innerHTML = '<div id=inner></div>';
+    const inner = outer.querySelector('#inner').attachShadow({ mode: 'open' });
+    inner.innerHTML = '<button id=button style="width:160px;height:80px">Click</button>';
+    window.receipts = [];
+    window.clicks = 0;
+    inner.querySelector('button').addEventListener('click', () => clicks++);
+    for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click',
+      'touchstart', 'touchmove', 'touchend']) document.addEventListener(type, event => {
+      receipts.push({ type, target: event.composedPath()[0].id, composed: event.composed,
+        marked: window.__qzExtensionInputEvents?.has(event) === true });
+    }, true);
+  });
+  const point = await elementCenter(page.locator('button'));
+  const types = kind === 'mouse' ? ['mouseMoved', 'mousePressed', 'mouseReleased'] : ['touchStart', 'touchMove', 'touchEnd'];
+  for (const type of types) await page.evaluate(firefoxPageCommand, {
+    op: 'input', input: { kind, type, ...point, button: 'left', clickCount: 1 },
+  });
+  const observed = await page.evaluate(() => ({ receipts, clicks }));
+  const expectedTypes = kind === 'mouse'
+    ? ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+    : ['touchstart', 'touchmove', 'touchend'];
+  assert.deepEqual(observed.receipts, expectedTypes.map(type => ({ type, target: 'button', composed: true, marked: true })));
+  assert.equal(observed.clicks, kind === 'mouse' ? 1 : 0);
+});
+
 for (const crossOrigin of [false, true]) test(`Firefox frame sessions bind and click child nodes (crossOrigin=${crossOrigin})`, async t => {
   const page = await browser.newPage();
   t.after(() => page.close());

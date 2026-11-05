@@ -6,6 +6,8 @@ import type { createCdpRuntime } from './cdp-runtime.js';
 import { openChildFrame } from './child-frames.js';
 import { waitForParsedDocument } from './document-readiness.js';
 import { createElementObservation, type ElementObservation } from "../../shared/contracts/element-observation.js";
+import { validateElementLocator, type ElementLocator } from "../../shared/contracts/element-locator.js";
+import type { ElementTarget } from "../../sdk/background/browser.js";
 
 export interface ElementReference {
   uid?: string; selector?: string; tabId?: number; sessionId?: string; pageUrl?: string;
@@ -296,14 +298,17 @@ async function addElementTargetsToFindResult(result: unknown, tabId?: number, co
 }
 
 /** One binding/registration pipeline for Content observations, image candidates and AX anchors. */
-async function bindElementReferences(tabId: number, candidates: readonly ElementReference[], context: ToolContext = {}, scope?: ElementReference) {
+async function bindElementReferences(tabId: number, candidates: readonly ElementReference[], context: ToolContext = {}, scope?: ElementReference, mode: "bestEffort" | "required" = "bestEffort") {
   context.signal?.throwIfAborted();
   if (!candidates.length) return [];
+  if (mode === "required" && candidates.some(item => !item._elementRef && !(Number(item.backendNodeId) > 0))) {
+    throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "The element observation has no node binding.", pageErrorDetails(context));
+  }
   const documentId = scope?.documentId || await readMainDocumentId(tabId);
   let pageUrl = scope?.pageUrl || "";
   try { if (!pageUrl) pageUrl = getEffectiveTabUrl(await chrome.tabs.get(tabId)); } catch { /* Binding enforces access separately. */ }
   const tokens = [...new Set(candidates.map(item => item._elementRef).filter((value): value is string => typeof value === "string" && Boolean(value)))];
-  const bound = tokens.length ? await bindContentElementRefs(tabId, tokens, context, scope) : new Map<string, ElementReference>();
+  const bound = tokens.length ? await bindContentElementRefs(tabId, tokens, context, scope, mode) : new Map<string, ElementReference>();
   const selectorCandidates = candidates.filter(item => !item._elementRef && !Number(item.backendNodeId) && item.selector);
   let selected = { loaderId: scope?.loaderId || "", ids: [] as number[] };
   if (selectorCandidates.length) {
@@ -320,11 +325,12 @@ async function bindElementReferences(tabId: number, candidates: readonly Element
     return registerElementBinding({ ...item, ...binding, tabId, sessionId: context.sessionId, pageUrl, documentId, snapshotId,
       frameId: binding?.frameId || scope?.frameId,
       loaderId: binding?.loaderId || item.loaderId || selected.loaderId,
-      backendNodeId: binding?.backendNodeId || item.backendNodeId || selectorBindings.get(item) || undefined });
+      backendNodeId: mode === "required" && item._elementRef ? binding?.backendNodeId
+        : binding?.backendNodeId || item.backendNodeId || selectorBindings.get(item) || undefined });
   });
 }
 
-async function bindContentElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: ElementReference) {
+async function bindContentElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: ElementReference, mode: "bestEffort" | "required" = "bestEffort") {
   const objectGroup = `${OBJECT_GROUP}-find-${makeSnapshotId(tabId, context)}`;
   try {
     return await withDebugger(tabId, async (_target, send) => {
@@ -348,9 +354,17 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
           }));
           if (remote.exceptionDetails) throw staleElement(chunk[0]);
           const object = record(remote.result);
-          if (object.subtype !== "array" || !object.objectId) continue;
+          if (object.subtype !== "array" || !object.objectId) {
+            if (mode === "required") throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element binding returned an invalid node list.", pageErrorDetails(context));
+            continue;
+          }
           const properties = record(await nodeSend("Runtime.getProperties", { objectId: object.objectId, ownProperties: true }));
-          const nodes = (Array.isArray(properties.result) ? properties.result : []).map(record)
+          const entries = (Array.isArray(properties.result) ? properties.result : []).map(record);
+          if (mode === "required" && chunk.some((_token, index) => {
+            const value = record(entries.find(property => property.name === String(index))?.value);
+            return value.subtype !== "null" && !(value.subtype === "node" && typeof value.objectId === "string" && value.objectId);
+          })) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element binding returned an invalid node reference.", pageErrorDetails(context));
+          const nodes = entries
             .filter(property => /^\d+$/.test(String(property.name)) && record(property.value).subtype === "node");
           // One context and one object group per batch; at most eight node descriptions in flight.
           for (let start = 0; start < nodes.length; start += 8) await Promise.all(nodes.slice(start, start + 8).map(async property => {
@@ -358,6 +372,9 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
             if (!token) return;
             const described = record(await nodeSend("DOM.describeNode", { objectId: record(property.value).objectId }));
             const backendNodeId = Number(record(described.node).backendNodeId || 0);
+            if (mode === "required" && (!Number.isInteger(backendNodeId) || backendNodeId <= 0)) {
+              throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element binding returned an invalid node identity.", pageErrorDetails(context));
+            }
             if (backendNodeId) bound.set(token, { backendNodeId, loaderId, ...(child ? { frameId } : {}) });
           }));
         }
@@ -369,7 +386,7 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
     }, context);
   } catch (error) {
     const code = String(record(error).code || "");
-    if ((isCdpFallbackForbiddenError(error) && !["SESSION_TAB_UNOWNED", "SESSION_TAB_FOREIGN"].includes(code)) || code.startsWith("STALE_ELEMENT_UID")) throw error;
+    if (mode === "required" || (isCdpFallbackForbiddenError(error) && !["SESSION_TAB_UNOWNED", "SESSION_TAB_FOREIGN"].includes(code)) || code.startsWith("STALE_ELEMENT_UID")) throw error;
     return new Map<string, ElementReference>();
   }
 }
@@ -401,6 +418,92 @@ async function resolveSelectorTarget(tabId: number | undefined, selector = "", i
   if (parsed.selector) return { tabId, selector: parsed.selector, target: elementTargetForSelector(parsed.selector) };
   const ref = await resolveElementReference(tabId, { target: raw, index }, context);
   return { tabId: ref.tabId, selector: ref.selector, index: ref.index, target: ref.target, uid: ref.uid, ref: ref.ref };
+}
+
+/** A single query in its bound document; callers own retries and the operation deadline. */
+async function scanLocator(tabId: number | undefined, locator: ElementLocator, context: ToolContext, options: { countOnly?: boolean; all?: boolean; limit?: number } = {}) {
+  try { validateElementLocator(locator); }
+  catch (error) {
+    throw Object.assign(new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String(record(error).message || error), pageErrorDetails(context)), {
+      hint: "Pass a CSS/UID target or a role, name, or text query; use scope to narrow the search.",
+    });
+  }
+  context.signal?.throwIfAborted();
+  if (!Number.isInteger(tabId) || Number(tabId) <= 0) {
+    throw new ToolExecutionError("TAB_REF_REQUIRED", "Pass tabRef for the page containing the element.", pageErrorDetails(context));
+  }
+  const id = Number(tabId);
+  const pinned = isUidElementTarget(locator.target);
+  const root = pinned ? await resolveElementReference(id, { target: locator.target }, context)
+    : isUidElementTarget(locator.scope) ? await resolveElementReference(id, { target: locator.scope }, context) : null;
+  if (pinned && !options.countOnly && !options.all && !locator.role && !locator.name && !locator.text) {
+    return { id, pinned, root, matched: 1, element: undefined, results: [] as unknown[] };
+  }
+  // CSS scopes are resolved strictly in the same Content scan. Only UID roots need host binding.
+  const queryInput = { ...locator };
+  if (root) delete queryInput.scope;
+  if (pinned) delete queryInput.target;
+  const params = { locator: queryInput, ...options, ...(pinned ? { matchSelf: true } : {}) };
+  let response: Record<string, unknown>;
+  try {
+    response = record(await (root ? callElement(id, root, "resolveLocator", params, context)
+      : sendToContent(id, "resolveLocator", params, context)));
+  } catch (error) {
+    if (pinned && record(error).code === "STALE_ELEMENT_UID" && record(record(error).details).reason === "node_unavailable") {
+      return { id, pinned, root, matched: 0, element: undefined, results: [] as unknown[] };
+    }
+    throw error;
+  }
+  context.signal?.throwIfAborted();
+  if (response.code || response.error) throw Object.assign(new ToolExecutionError(
+    String(response.code || "ELEMENT_QUERY_FAILED"), String(response.message || response.error || "Element query failed."),
+    { ...pageErrorDetails(context, locator.target), ...(typeof record(response.details).matched === "number" ? { matched: record(response.details).matched } : {}) },
+  ), { hint: typeof response.hint === "string" ? response.hint : "Check the locator and narrow its scope before retrying." });
+  if (!Number.isInteger(response.matched) || Number(response.matched) < 0) {
+    throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned an invalid match count.", pageErrorDetails(context));
+  }
+  if (options.all && !Array.isArray(response.results)) {
+    throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned an invalid candidate list.", pageErrorDetails(context));
+  }
+  return { id, pinned, root, matched: Number(response.matched), element: response.element,
+    results: Array.isArray(response.results) ? response.results : [] };
+}
+
+/** Count attached matches, including hidden nodes. An explicit nth selects at most one. */
+async function countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context: ToolContext = {}) {
+  const { matched } = await scanLocator(tabId, locator, context, { countOnly: true });
+  return locator.nth === undefined ? matched : locator.nth < matched ? 1 : 0;
+}
+
+/** Discovery uses the same field matcher as actions, while retaining a list result. */
+async function findLocatorElements(tabId: number | undefined, locator: ElementLocator, context: ToolContext = {}, limit = 20) {
+  const scanned = await scanLocator(tabId, locator, context, { all: true, limit });
+  const count = locator.nth === undefined ? scanned.matched : locator.nth < scanned.matched ? 1 : 0;
+  const candidates = scanned.results.filter(isRecord);
+  const results = scanned.pinned
+    ? candidates.map(item => createElementObservation(item, scanned.root?.target))
+    : record(await addElementTargetsToFindResult({ results: candidates }, scanned.id, context, scanned.root?.ref)).results;
+  return { results: Array.isArray(results) ? results : [], count };
+}
+
+/** A strict query binds its selected node once; it never falls back to re-querying CSS. */
+async function resolveLocatorTarget(tabId: number | undefined, locator: ElementLocator, context: ToolContext = {}): Promise<ElementTarget | null> {
+  const { id, pinned, root, matched, element } = await scanLocator(tabId, locator, context);
+  if (matched === 0 || locator.nth !== undefined && locator.nth >= matched) return null;
+  if (matched > 1 && locator.nth === undefined) throw Object.assign(
+    new ToolExecutionError("AMBIGUOUS_ELEMENT", "The locator matches more than one element.", { ...pageErrorDetails(context, locator.target), matched }),
+    { hint: "Narrow the locator or its scope, or select an explicit nth match." },
+  );
+  if (pinned) return root;
+  if (!isRecord(element)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned no selected node.", pageErrorDetails(context));
+  const [binding] = await bindElementReferences(id, [element], context, root?.ref, "required");
+  context.signal?.throwIfAborted();
+  // A disappearing node must not silently become a CSS re-query of its replacement.
+  if (!binding?.uid || !Number(binding.backendNodeId)) throw Object.assign(
+    new ToolExecutionError("STALE_ELEMENT_UID", "The matched element changed before it could be bound.", { ...pageErrorDetails(context, locator.target), reason: "locator_match_changed" }),
+    { hint: "Retry the query before dispatching an action; an explicit UID cannot be retargeted." },
+  );
+  return resolveElementReference(id, { target: binding.target }, context);
 }
 
 async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, readOnly = false } = {}, context: ToolContext = {}) {
@@ -645,7 +748,7 @@ async function useElement<T>(tabId: number | undefined, binding: ElementBinding,
     const selector = requested || route.selector;
     const requestedIndex = Number(params.index);
     const index = Number.isInteger(requestedIndex) && requestedIndex >= 0 ? requestedIndex : route.index;
-    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }, context), action, context);
+    return asElementReply(await sendToContent(binding.tabId || tabId, action, { ...params, selector, index }, context), action, context, binding.target);
   };
   return run(call);
 }
@@ -706,7 +809,7 @@ async function withElement<T>(tabId: number | undefined, binding: { tabId?: numb
     }
     const objectId = await objectFromBackend(nodeSend, binding, objectGroup, contextId);
     try {
-      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup, context));
+      return await run(nodeSend, (action, params = {}) => invokeBound(nodeSend, objectId, action, params, objectGroup, context, binding.target));
     } finally {
       try { await nodeSend("Runtime.releaseObjectGroup", { objectGroup }); } catch { /* The node may already be gone. */ }
     }
@@ -799,7 +902,7 @@ async function contentContextId(tabId: number, send: CdpCommand, frameId: string
   return id;
 }
 
-async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string, context: ToolContext) {
+async function invokeBound(send: CdpCommand, objectId: string, action: string, params: Record<string, unknown>, objectGroup: string, context: ToolContext, target?: string) {
   const finishPhase = context.measurePhase?.("extraction");
   try {
     const remote = record(await send("Runtime.callFunctionOn", {
@@ -811,15 +914,16 @@ async function invokeBound(send: CdpCommand, objectId: string, action: string, p
     if (details.text || details.exception) {
       throw new ToolExecutionError("CONTENT_SCRIPT_NOT_READY", String(details.text || "Content script call failed"), pageErrorDetails(context));
     }
-    return asElementReply(record(remote.result).value, action, context);
+    return asElementReply(record(remote.result).value, action, context, target);
   } finally { finishPhase?.(); }
 }
 
-function asElementReply(value: unknown, action: string, context: ToolContext = {}) {
+function asElementReply(value: unknown, action: string, context: ToolContext = {}, target?: string) {
   const reply = record(value);
   const code = String(reply.code || "");
   if (code === "STALE_ELEMENT_UID" || code === "STALE_ELEMENT_UID_PAGE_CHANGED") {
-    throw new ToolExecutionError(code, String(reply.error || code), pageErrorDetails(context));
+    throw new ToolExecutionError(code, String(reply.error || code), { ...pageErrorDetails(context, target),
+      ...(record(reply.details).reason === "node_unavailable" ? { reason: "node_unavailable" } : {}) });
   }
   if (!isElementReply(reply)) throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED", `Content script returned an invalid response for ${action}`, pageErrorDetails(context));
   return reply;
@@ -855,6 +959,9 @@ function samePageUrl(a: unknown, b: unknown) {
     prepareCssTargets,
     resolveSelectorTarget,
     resolveElementReference,
+    resolveLocatorTarget,
+    countLocatorMatches,
+    findLocatorElements,
     addElementTargetsToFindResult,
     backendNodeIdForSelector,
     bindBackendNodes,

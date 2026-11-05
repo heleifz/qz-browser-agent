@@ -81,7 +81,7 @@ for (const mode of ['development', 'production']) {
     assert.equal(failed.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(failed.details.automaticReplay, false);
     assert.equal(failed.details.mayHaveTakenEffect, true);
-    assert.match(failed.hint, /tools\.name/);
+    assert.match(failed.hint, /qz SDK/);
     assert.equal(f.context.attempts, 1);
     assert.equal(f.calls.filter(c => c.kind === 'bridge').length, 0);
     const shape = await f.run('async () => { globalThis.shapeAttempts = (globalThis.shapeAttempts || 0) + 1; throw new Error("Illegal return statement"); }');
@@ -117,6 +117,15 @@ for (const mode of ['development', 'production']) {
       await f.privateRun(code, {}, { runId: 'opaque-tool-run', externalDrive: true });
       assert.equal(f.context.lastToolMessage.args.tabId, undefined, 'direct drive never injects an implicit page');
     }
+    assert.equal((await f.privateRun('async () => await qz.tab("other").locator({role:"button",name:"Save"}).click()')).result, 42);
+    assert.equal(f.context.lastToolMessage.toolName, 'act_on_element');
+    assert.deepEqual(structuredClone(f.context.lastToolMessage.args.locator), { role: 'button', name: 'Save' });
+    assert.equal(f.context.lastToolMessage.args.tabRef, 'other');
+    assert.equal(f.context.lastToolMessage.parentCallId, 'parent-call');
+    await f.privateRun('async () => await qz.tab("other").evaluate(value => value + 1, 4)');
+    assert.equal(f.context.lastToolMessage.toolName, 'evaluate');
+    assert.equal(typeof f.context.lastToolMessage.args.code, 'string');
+    assert.equal(f.context.lastToolMessage.args.args, 4);
   });
 
   test(`${mode}: actual page evaluation returns raw JSON values without business-key rewriting`, async () => {

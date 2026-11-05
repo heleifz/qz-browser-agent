@@ -118,7 +118,9 @@ and result contracts through the hidden `run_skill_script` host. All descendants
 and the concurrency budget;
 ready results commit one at a time and resolve their Promises without waiting for unrelated executions.
 `evaluate` declares `parallelTab: true` and runs a self-contained function on an explicit `tabRef`,
-with data passed through `args`. Page functions have DOM access; orchestration uses `tools`.
+with data passed through `args`. Page functions have DOM access; orchestration uses the shared
+`qz` SDK. Its Page and Locator methods lower into these same tool registrations; `qz.call(name,args)`
+provides access to dynamic Skill and other catalog tools.
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 

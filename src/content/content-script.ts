@@ -10,6 +10,8 @@ import { finder, attr as finderAttribute } from "@medv/finder";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
+import type { ElementLocator } from '../shared/contracts/element-locator.js';
+import { resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -21,6 +23,7 @@ interface ContentRequest {
   scroll?: boolean;
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
+  locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
   maxWidth?: number; maxHeight?: number; format?: string; quality?: number;
@@ -44,7 +47,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-05-element-readiness";
+  const QZ_CONTENT_VERSION = "2026-11-05-element-locator";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -106,6 +109,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function toolError(code: string, error: string, details: object = {}) {
     return { error, code, details };
+  }
+
+  function staleElementError(node: Node | null) {
+    return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.",
+      node?.ownerDocument === document && !node.isConnected ? { reason: "node_unavailable" } : {});
   }
 
   /** Return cleaned DOM HTML lines with script, style, and SVG elements removed. */
@@ -783,7 +791,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     if (selector instanceof Element) {
       return selector.isConnected
         ? { elements: [selector] }
-        : { error: toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {}), elements: [] as Element[] };
+        : { error: staleElementError(selector), elements: [] as Element[] };
     }
     if (typeof selector !== "string" || !selector.trim()) {
       return {
@@ -1716,6 +1724,24 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     },
 
     // -- Element selection --
+
+    resolveLocator({ locator, selector, matchSelf = false, countOnly = false, all = false, limit = 20 }) {
+      const scope: unknown = selector;
+      const root = scope instanceof Element ? scope : document;
+      try {
+        const result = resolveElementLocator(root, locator!, { role: getElementRole, name: getAccessibleName }, { matchSelf, all, limit });
+        const observe = (element: Element) => ({ ...getElementSummary(element, { selector: false }), _elementRef: rememberElement(element) });
+        if (countOnly) return { matched: result.matched };
+        if (all) return { matched: result.matched, results: (result.elements || []).map(observe) };
+        return { matched: result.matched, ...(result.element ? {
+          element: observe(result.element),
+        } : {}) };
+      } catch (error) {
+        const failure = error as Error & { code?: string; matched?: number };
+        return toolError(failure.code || "INVALID_ELEMENT_LOCATOR", errorMessage(error),
+          failure.matched === undefined ? {} : { matched: failure.matched });
+      }
+    },
 
     findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
       const rootResult = queryOpenShadowScope(selector);
@@ -2822,16 +2848,29 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getAccessibleName(el: Element) {
-    return el.getAttribute("aria-label")
-      || el.getAttribute("alt")
-      || el.getAttribute("title")
-      || labelTextFor(el)
-      || "";
+    const root = el.getRootNode() as Document | ShadowRoot;
+    const labelledBy = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
+      .map(id => root.getElementById?.(id)?.textContent || "").join(" ").trim();
+    if (labelledBy) return normalizeText(labelledBy);
+    const label = el.getAttribute("aria-label") || labelTextFor(el);
+    if (label) return normalizeText(label);
+    if (el instanceof HTMLImageElement || el instanceof HTMLInputElement && el.type === "image") return el.alt || "";
+    if (el instanceof HTMLInputElement && ["button", "submit", "reset"].includes(el.type)) return el.value || el.getAttribute("title") || "";
+    if (["button", "link", "option", "heading", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio",
+      "tab", "switch", "treeitem", "cell", "columnheader", "rowheader", "tooltip"].includes(getElementRole(el))) {
+      const content = normalizeText(el.textContent);
+      if (content) return content;
+    }
+    return el.getAttribute("title") || "";
   }
 
   function labelTextFor(el: Element) {
+    if ("labels" in el && el.labels) {
+      const text = [...el.labels as NodeListOf<HTMLLabelElement>].map(label => label.textContent || "").join(" ").trim();
+      if (text) return text;
+    }
     if (el.id) {
-      const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      const label = (el.getRootNode() as Document | ShadowRoot).querySelector?.(`label[for="${CSS.escape(el.id)}"]`);
       if (label?.textContent) return label.textContent.trim();
     }
     const wrapped = el.closest("label");
@@ -3127,14 +3166,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     let element = elementFromNode(node);
     // A RootWebArea UID scopes document readers to that document, including iframe documents.
-    if (!element && node instanceof Document && ["pageOverview", "readArticle", "readDom", "findElements",
+    if (!element && node instanceof Document && ["pageOverview", "readArticle", "readDom", "findElements", "resolveLocator",
       "inspectElement", "readElementReadiness", "listImageElements", "getElementScreenshotBounds", "elementPresence"].includes(payload?.action)) {
       element = node.body || node.documentElement;
     }
     const saved = token ? fillRoots.get(token) : undefined;
     if ((!element || !element.isConnected) && saved?.isConnected) element = saved;
     // This script accepts elements in its own document, including a direct child frame it was injected into.
-    if (!element || element.ownerDocument !== document) return toolError("STALE_ELEMENT_UID", "Element target is stale or unknown. Take a fresh get_ax_tree snapshot, then retry.", {});
+    if (!element || element.ownerDocument !== document) return staleElementError(node);
     if (payload?.editingHost && element instanceof HTMLElement && element.isContentEditable) {
       const root = getContentEditableRoot(element);
       if (root.isConnected) {
@@ -3144,7 +3183,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     const handler = handlers[payload?.action];
     if (!handler) return toolError("UNKNOWN_ACTION", `Unknown content action: ${payload?.action}`, { action: payload?.action });
-    const result = await handler({ ...payload, selector: element } as unknown as ContentRequest);
+    const scope = payload.action === "resolveLocator" && node === document ? document : element;
+    const result = await handler({ ...payload, selector: scope } as unknown as ContentRequest);
     const encoded = JSON.stringify(result, (_key, value) => value instanceof Node ? "" : value);
     return encoded === undefined ? {} : JSON.parse(encoded);
   };
