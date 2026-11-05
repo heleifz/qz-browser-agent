@@ -55,11 +55,11 @@ Select an existing profile with --client NAME|UUID; it never falls back to anoth
 local service is restarted once before browser operations. Complete the extension’s connection
 prompt when needed.
 
-Scripts run outside pages and invoke browser tools with explicit tabRef values. Discover compact
-signatures with tools.list_tools() and selected full schemas with tools.list_tools({names:["evaluate"]});
-use tools.evaluate for page DOM access. stdout is JSON {ok,result,trace}: execution status, the returned business value
-and ordered trace messages without levels. Failures put ToolError in result; undefined
-returns become null. The built-in agent delegation commands above remain available when
+Scripts run outside pages and invoke browser tools with explicit `tabRef` values. Discover compact
+signatures with `tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`;
+use `tools.evaluate` for page DOM access. stdout is JSON `{ok,result,trace}`: execution status, the returned business value,
+and ordered error and `trace()`/`console` messages without levels. Failures put `ToolError` in `result`; `undefined`
+returns become `null`. The built-in agent delegation commands above remain available when
 qz should plan and execute the task.
 
 ## Connect an MCP client

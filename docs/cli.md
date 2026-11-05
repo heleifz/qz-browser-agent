@@ -439,14 +439,7 @@ qz session show SESSION_ID
 qz session cancel SESSION_ID
 ```
 
-stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace is an
-ordered string array without levels. Tool traces carry sequence numbers and supplied tabRef values; settled calls include
-the call ID used by the sidebar. result is the returned business value, null for undefined, or a failure in
-`{code,message,hint?,details?}` form. Business trace/traces fields stay inside result. Script
-locations are in details. Exit codes are 0 for success, 1 for execution or connection failure,
-and 2 for invalid arguments. --timeout defaults to 120
-seconds, accepts >0 through 3600, and the request waits 60 seconds longer. The caller's deadline
-must allow that request to finish. A timeout does not undo completed browser actions.
+stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports execution success; `trace` is an ordered string array of errors and explicit `trace()`/`console` diagnostics without levels. `result` is the returned business value, `null` for `undefined`, or a failure in `{code,message,hint?,details?}` form. Business `trace`/`traces` fields stay inside `result`. Script locations are in `details`. Exit codes are `0` for success, `1` for execution or connection failure, and `2` for invalid arguments. `--timeout` defaults to `120` seconds, accepts `>0` through `3600`, and the request waits 60 seconds longer. The caller's deadline must allow that request to finish. A timeout does not undo completed browser actions.
 
 For action-dependent waits, pass `trigger:{name,args}` to the wait tool. It listens before
 executing the trigger once. Use this for navigation, popups and network responses; a wait

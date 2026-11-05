@@ -32,8 +32,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Description of the resource's purpose."
   },
   "resourceContent": {
-    "zh-CN": "资源内容；新 script 使用 runtime:script 外层模式（顶层 await/return，页面代码通过 tools.evaluate），先填 path/title 再填长 content。",
-    "en": "Resource content; new scripts use runtime:script outside pages (top-level await/return, page code through tools.evaluate). Supply path/title before long content."
+    "zh-CN": "资源内容；新建 script 统一使用 runtime:script 外层模式（顶层 await/return，页面内代码通过 tools.evaluate 执行），先填 path/title 再填长 content。",
+    "en": "Resource content; new scripts use runtime:script outside pages (top-level await/return, in-page code via tools.evaluate). Supply path/title before long content."
   },
   "resourceAction": {
     "zh-CN": "资源操作：upsert/set 整体写入；replace/patch/edit 精确替换；rename 重命名；delete/remove 删除（仅传 path+content 时默认 set）。",

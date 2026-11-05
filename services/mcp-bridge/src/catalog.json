@@ -266,7 +266,7 @@
   },
   {
     "name": "qingzhou_stop_session",
-    "description": "结束会话。直驱会话结束后不能再执行工具，无需再 close_tab；默认关闭它创建的标签，用户原有或接管的标签保留。显式 keepTabs:true 保留全部标签。",
+    "description": "结束任务或直驱会话。直驱会话结束后不可再执行工具，也无需再调用 close_tab；默认自动关闭该会话创建的标签页，并保留用户原有或已交回给用户的标签页（显式传 keepTabs:true 可保留全部标签页）。End a task or direct-drive session, closing its created tabs by default while preserving user tabs (pass keepTabs:true to retain all tabs).",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
@@ -282,7 +282,7 @@
   },
   {
     "name": "qingzhou_list_tools",
-    "description": "List default direct-drive tool signatures; sessionId is optional. Inspect loaded Skill tools by name with qingzhou_get_tool and sessionId. This call never creates a session.",
+    "description": "List default direct-drive tool signatures; sessionId is optional. Query non-default or loaded Skill tools by exact name with qingzhou_get_tool (pass sessionId for loaded Skills). For full schemas, call tools.list_tools({names:[...]}) inside run_script. Never creates a session.",
     "inputSchema": {
       "properties": {
         "sessionId": {"title": "Sessionid", "type": "string"},
@@ -380,7 +380,7 @@
   },
   {
     "name": "qingzhou_execute_tool",
-    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务；脚本的 result 为 {ok,result,trace} 回执，trace 是按执行顺序排列的诊断字符串。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools. Script results use {ok,result,trace}, with ordered diagnostic strings in trace.",
+    "description": "在已连接的浏览器里执行现有工具。先调用 qingzhou_create_drive_session 创建会话，再传入该 sessionId（不会隐式创建会话）。单次调用传 name 与 args；已知参数的并发或顺序批次传 calls（每项含 id、name、args，id 仅用于关联结果，不支持跨项插值）；多步逻辑与条件编排可调用 name:\"run_script\"（页面外执行，支持顶层 await/return 与 tools.*，页面内 DOM 函数用 evaluate）。页面工具显式传 tabRef。逐项检查 isError，批次与脚本均非事务；run_script 的 result 为 {ok,result,trace} 回执，trace 按序记录报错与显式 trace()/console 输出。Execute browser tools in an explicitly created session (pass sessionId from qingzhou_create_drive_session). Supply name/args for one call, calls ([{id,name,args}]) for a static batch, or name:\"run_script\" for outer JS orchestration (use evaluate for in-page DOM functions). Page tools require an explicit tabRef. Check isError on each call; batches and scripts are not transactions. run_script returns {ok,result,trace}, where trace lists errors and explicit trace()/console diagnostics in order.",
     "inputSchema": {
       "properties": {
         "scriptApiVersion": {"type": "integer", "minimum": 1, "description": "Script API protocol version; must match the extension before executing the request."},

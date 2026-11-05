@@ -53,7 +53,7 @@ export const content = [
   "有依赖的浏览器步骤和用户决策须 await 完成后再继续；独立分支可在 `run_script` 中用 `Promise.all` 并发，返回前 await 所有必要工作，需要全部结果时用 `Promise.allSettled`，同页动作仍串行。每次工具调用必须带实际参数；需要参数的工具在 trace 中显示 `args:{}` 即为失败，不能以推理文字中写过参数替代。",
   "",
   "- `open_tab` / `navigate`：显式传完整 `url`。探索多个入口时先明确每个 URL 和用途，独立页面可并发；不要发出并行 `{}` 占位调用。",
-  "- `run_script`：传入带顶层 `await`/`return` 的外层编排代码并返回可检查结果。页面操作通过 `tools.*`；DOM、页面 state 和登录态 fetch 放进 `tools.evaluate({ tabRef, code, args })`。页面函数不能捕获外层变量或调用 tools；导航和点击放在外层工具执行，页面卸载可能中断 evaluate，代码不会自动重放。",
+  "- `run_script`：传入带顶层 `await`/`return` 的外层编排代码并返回可检查的业务结果。`tools.*` 调用（含 Skill 工具）await 成功直接返回业务值，失败抛错；DOM、页面 state 和登录态 fetch 放入自包含的 `tools.evaluate({ tabRef, code, args })`（页面函数不能捕获外层变量或调用 tools）。导航和点击通过外层工具执行；页面卸载可能中断单次 evaluate，代码不会自动重放。",
   "- `ask_user` / wait form: 必须显式传 `message` 与非空 `fields`；表单字段必须有稳定 `id`、`label`、`type` 和选项或输入说明。",
   "- 生成或更新 skill: 必须显式传 `name` 和实际修改内容；不要空调用系统工具。",
   "",

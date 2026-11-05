@@ -117,13 +117,13 @@ const messages = defineMessages("skills-model", {
   },
   runtimeGuidance: {
     "zh-CN": `Skill 运行在轻舟浏览器扩展中（非 Node.js 或服务器）：
-- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，截断时加载 qingzhou-documents 用 qingzhou_documents__document_read_chunk 续读）。
-- 页面工具必须用 tabRef 声明和传入页面目标，值为当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用；未知别名报错。
-- 新脚本使用 run_script 外层模式，使用 args、tools、trace() 和顶层 await/return，通过 tools.evaluate 执行页面函数；按已加载 Skill 声明的参数和网络权限调用，保留已有脚本的执行模式。新脚本内的工具调用（包括 Skill）成功直接返回业务值，失败抛错；宿主汇总诊断并向模型返回 {ok,result,trace}。不支持 fs/path/process/require/npm/shell；导航和点击放在外层工具执行。`,
+- content 编写浏览器 SOP；读取 references/模板/脚本等单文件用 load_skill_resource(name, path)（DOCX/XLSX/PDF 自动返回预览与 docModelId，续读长文档先加载 qingzhou-documents 再调用 qingzhou_documents__document_read_chunk）。
+- 页面工具必须用 tabRef 声明并显式传入目标页面（当前任务拥有的标签页别名，或 open_tab、list_tabs 返回的引用；未知别名直接报错）。
+- 新建脚本统一使用 runtime:"script" 外层模式（支持顶层 await/return，提供 args、$plugin、tools、trace()；页面内 DOM 与登录态请求通过 tools.evaluate({tabRef,code,args}) 执行）。按已加载 Skill 声明的参数和网络权限调用，保留存量脚本原有执行模式。新脚本中 await 工具调用（含 Skill 工具）成功直接返回业务值，失败抛错；宿主向模型返回 {ok,result,trace}（trace 仅按序记录报错与显式 trace()/console 输出）。不支持 fs/path/process/require/npm/shell；导航与点击通过外层工具执行。`,
     en: `Skills run in the qz browser extension (not Node.js or a server):
 - Content describes browser SOPs; read individual references, templates, or scripts with load_skill_resource(name, path) (DOCX/XLSX/PDF automatically return a preview and docModelId; load qingzhou-documents and call qingzhou_documents__document_read_chunk if truncated).
-- Require and pass page targets as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs. Unknown aliases fail.
-- New scripts use the outer run_script mode with args, tools, trace(), top-level await/return and tools.evaluate for page functions. Follow the loaded Skill's declared arguments and network permissions; preserve existing scripts' execution modes. Tool calls inside new scripts, including Skill calls, return business values directly and throw on failure; the host collects diagnostics and gives the model {ok,result,trace}. Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through outer tools.`,
+- Declare and pass page targets explicitly as tabRef, using a task-owned tab alias or the reference returned by open_tab or list_tabs (unknown aliases fail).
+- New scripts use the outer runtime:"script" mode (top-level await/return with args, $plugin, tools, and trace(); use tools.evaluate({tabRef,code,args}) for in-page DOM and authenticated requests). Follow the loaded Skill's declared arguments and network permissions while preserving existing scripts' execution modes. Awaited tool calls inside new scripts (including Skill calls) return business values directly and throw on failure; the host returns {ok,result,trace} to the model (trace contains only errors and explicit trace()/console output in order). Scripts cannot use fs/path/process/require/npm/shell; perform navigation and clicks through outer tools.`,
   },
 });
 
