@@ -9,6 +9,13 @@ const route = (tool, args = () => ({}), options = []) => ({ tool, args, options 
 // CLI syntax, documentation, and direct MCP routes have one declaration per command.
 // Task execution and form responses retain their explicit handlers in cli.mjs.
 export const COMMANDS = {
+  cleanup: { options: [], summary: "Stop local services and clean runtime files",
+    help: ["qz cleanup", "Stop registered qz local services across installations and remove their runtime files and logs.",
+      "Uses ~/.qz-browser-agent/run, or QZ_STATE_DIR when set. Browser registrations, tabs, tasks and saved data are preserved.",
+      "Active CLI requests and direct-drive scripts are interrupted. Tasks running in the side panel continue.",
+      "The next browser command starts its service automatically. Use qz cancel TASK_ID or qz session cancel ID to stop a task.",
+      "Services whose identity cannot be verified are reported and left running; an incomplete cleanup exits with code 1."],
+  },
   connect: { options: [...request, "port", "name"], summary: "Print a browser connection URI",
     help: ["qz connect uri [--name NAME | --client NAME|UUID] [--port PORT]", "Print the connection URL without opening a browser or interrupting tasks.",
       "Open the URL in the intended browser profile with qz installed. --name names a new profile; --client selects a registered profile.",

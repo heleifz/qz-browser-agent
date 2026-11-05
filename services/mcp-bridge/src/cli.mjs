@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GUIDE_URL, INSTALL_URL, QzError, withToolClient } from "./client.mjs";
-import { ensureDaemon, findDaemon } from "./daemon.mjs";
+import { cleanupDaemons, ensureDaemon, findDaemon } from "./daemon.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { connectionUri, prepareConnection } from "./connection.mjs";
 import { commandNameFromArgs, parseCommand } from "./args.mjs";
@@ -110,6 +110,13 @@ async function dispatchCommand(parsed, dependencies) {
   const { command, action, id, options = {}, timeoutSeconds, waitTimeoutSeconds } = parsed;
   if (command === "help") return { text: renderHelp(parsed.helpTopic) };
   dependencies.signal?.throwIfAborted();
+  if (command === "cleanup") {
+    const result = await (dependencies.cleanupDaemons || cleanupDaemons)({ signal: dependencies.signal });
+    if (result.skipped) throw new QzError("CLEANUP_INCOMPLETE",
+      `Stopped ${result.stopped} qz services and removed ${result.removedFiles} runtime files; ${result.skipped} entries could not be cleaned.`,
+      { ...result, hint: "Check the reported entries, then retry qz cleanup." });
+    return { result };
+  }
   const open = dependencies.openBrowser || openBrowser;
   const find = dependencies.findDaemon || findDaemon;
   if (command === "install") {

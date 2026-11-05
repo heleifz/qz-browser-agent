@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,8 +23,15 @@ export function buildIdentity(directory = packageDir) {
 export function daemonPaths(options = {}) {
   const identity = options.scopeId && options.buildId ? options : buildIdentity();
   const scopeId = options.scopeId || identity.scopeId;
-  const directory = resolve(options.stateDir || process.env.QZ_STATE_DIR || join(homedir(), ".qz-browser-agent", "run"));
-  return { scopeId, buildId: options.buildId || identity.buildId, directory, state: join(directory, `${scopeId}.json`), lock: join(directory, `${scopeId}.lock`), log: join(directory, `${scopeId}.log`) };
+  return { scopeId, buildId: options.buildId || identity.buildId, ...scopePaths(stateDirectory(options), scopeId) };
+}
+
+function stateDirectory(options) {
+  return resolve(options.stateDir || process.env.QZ_STATE_DIR || join(homedir(), ".qz-browser-agent", "run"));
+}
+
+function scopePaths(directory, scopeId) {
+  return { directory, state: join(directory, `${scopeId}.json`), lock: join(directory, `${scopeId}.lock`), log: join(directory, `${scopeId}.log`) };
 }
 
 async function readJson(path) {
@@ -276,6 +283,91 @@ export async function stopDaemon(options = {}) {
     if (!running) return { stopped: false, connected: false };
     return stopProcess(running);
   }, options);
+}
+
+// Only daemon-owned runtime names participate; pairing registries and unrelated files stay intact.
+const runtimeName = /^([a-f\d]{24})(?:\.json(?:\.[a-f\d-]{36}\.tmp)?|\.log|\.lock(?:\.[a-f\d-]{36}\.pending)?)$/;
+const sameInstance = (left, right) => ["service", "scopeId", "instanceId", "processId", "endpoint"].every(key => left?.[key] === right?.[key]);
+const missing = error => { if (error.code !== "ENOENT") throw error; return null; };
+
+/** Stop registered installations under their startup locks, without creating a service or browser. */
+export async function cleanupDaemons(options = {}) {
+  const directory = stateDirectory(options);
+  options.signal?.throwIfAborted();
+  const names = await readdir(directory).catch(error => missing(error) || []);
+  const scopes = [...new Set(names.map(name => runtimeName.exec(name)?.[1]).filter(Boolean))].sort();
+  const result = { stopped: 0, removedFiles: 0, skipped: 0, services: [] };
+  for (const scopeId of scopes) {
+    options.signal?.throwIfAborted();
+    const paths = scopePaths(directory, scopeId);
+    const item = { scopeId, status: "cleaned" };
+    try {
+      const lock = await lstat(paths.lock).catch(missing);
+      if (lock?.isSymbolicLink()) throw new QzError("CLEANUP_UNVERIFIED", "The service lock is a symbolic link.");
+      await withLock(paths, async () => {
+        const state = await lstat(paths.state).catch(missing);
+        if (state && !state.isFile()) throw new QzError("CLEANUP_UNVERIFIED", "The service record is not a regular file.");
+        const record = state ? await readJson(paths.state) : null;
+        if (state && (!record || record.service !== SERVICE_NAME || record.scopeId !== scopeId
+          || !record.instanceId || !Number.isSafeInteger(record.processId) || record.processId <= 0)) {
+          throw new QzError("CLEANUP_UNVERIFIED", "The service record is invalid; its process cannot be identified.");
+        }
+        if (record) {
+          Object.assign(item, { processId: record.processId, endpoint: record.endpoint });
+          if (processExists(record.processId)) {
+            const running = await findDaemon({ ...options, stateDir: directory, scopeId, buildId: record.buildId || "cleanup", allowIncompatible: true });
+            options.signal?.throwIfAborted();
+            if (running ? !sameInstance(record, running) || !sameInstance(record, await readJson(paths.state)) : processExists(record.processId)) {
+              throw new QzError("CLEANUP_UNVERIFIED", "The live process does not match its registered qz service.");
+            }
+            options.signal?.throwIfAborted();
+            if (running) {
+              await stopProcess(running);
+              result.stopped++;
+              item.status = "stopped";
+            }
+          }
+          const current = await readJson(paths.state);
+          if (current && !sameInstance(record, current)) throw new QzError("CONNECTION_CHANGED", "The service record changed during cleanup.");
+        }
+        options.signal?.throwIfAborted();
+        const remaining = await readdir(directory);
+        for (const name of remaining) {
+          if (runtimeName.exec(name)?.[1] !== scopeId || name === `${scopeId}.lock`) continue;
+          const path = join(directory, name);
+          const entry = await lstat(path).catch(missing);
+          if (!entry) continue;
+          if (entry.isFile()) {
+            await rm(path, { force: true });
+            result.removedFiles++;
+          } else if (entry.isDirectory() && name.endsWith(".pending")) {
+            // A pending starter may already be waiting on our lock. Only dead owners can be removed.
+            let removedOwner = false;
+            for (const ownerName of await readdir(path).catch(error => missing(error) || [])) {
+              if (!/^\d+-[a-f\d-]{36}\.json$/.test(ownerName)) continue;
+              const ownerPath = join(path, ownerName);
+              const owner = await readJson(ownerPath);
+              if (owner && Number.isSafeInteger(owner.processId) && owner.processId > 0 && !processExists(owner.processId)) {
+                await rm(ownerPath, { force: true });
+                result.removedFiles++;
+                removedOwner = true;
+              }
+            }
+            // A starter publishes its owner just after mkdir; leave that fresh empty directory alone.
+            if (removedOwner || Date.now() - entry.mtimeMs > 30000) {
+              await rmdir(path).catch(error => { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code)) throw error; });
+            }
+          }
+        }
+      }, options);
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      result.skipped++;
+      Object.assign(item, { status: "skipped", code: error.code || "CLEANUP_FAILED", message: error.message });
+    }
+    result.services.push(item);
+  }
+  return result;
 }
 
 export async function startManagedBridge({ stateFile, scopeId, buildId = "", instanceId = randomUUID(), port = 18765, startBridge } = {}) {

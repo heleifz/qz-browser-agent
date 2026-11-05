@@ -55,7 +55,7 @@ test("help separates browser scripts from built-in agent commands and keeps thei
   assert.match(renderHelp("script"), /qz script --session ID \[FILE\|-\] \[--args JSON\]/);
   assert.match(renderHelp("script"), /outside the page/);
   for (const action of ["create", "list", "show", "cancel"]) assert.match(renderHelp("session"), new RegExp(`qz session ${action}`));
-  for (const name of ["", "session", "script", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers"]) {
+  for (const name of ["", "session", "script", "create", "tasks", "show", "cancel", "submit", "approve", "reject", "watch", "connect", "install", "status", "mcp", "send", "data", "images", "skills", "settings", "automations", "browsers", "cleanup"]) {
     const commandReference = name ? renderHelp(name) : Object.values(COMMANDS).flatMap(command => command.help || []).join("\n");
     assert.doesNotMatch(commandReference, /qz run|qz tasks (create|list|get|stop)|qz exec\b|qz tools\b|Legacy|--prompt|--tab\b|--client-id/);
     if (name) {

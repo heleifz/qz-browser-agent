@@ -104,6 +104,7 @@ CLI and MCP share the same browser connection. The MCP tool list is in the
 | --- | --- |
 | `qz connect uri` | Print a URL to open in a chosen browser profile |
 | `qz status` | Check the connection and service address |
+| `qz cleanup` | Stop registered local services and remove runtime files and logs |
 | `qz browsers` | List paired browsers, or `forget` an offline one |
 | `qz create "PROMPT"` | Start a task; add `--stream` or `--wait` to follow it |
 | `qz send TASK_ID "MESSAGE"` | Send a follow-up, or `--steer` the current run |
@@ -132,6 +133,10 @@ Timeout or Ctrl-C ends observation while the browser task continues; execute the
 The service accepts connections only on your computer, and ordinary websites cannot use its MCP
 endpoint. Local programs can control connected qz tasks while the service is running. Disconnect
 a profile in its qz connection settings; task cancellation remains a separate operation.
+Run `qz cleanup` to stop local services across installations and remove their runtime files and logs.
+It preserves browser registrations, tabs, tasks and saved data; the next browser command starts its
+service automatically. Active CLI requests and direct-drive scripts are interrupted; side-panel tasks
+continue. `QZ_STATE_DIR` selects a different runtime directory when set.
 Connection settings are stored in `~/.qz-browser-agent/run/`, and pairing credentials never
 leave your computer.
 

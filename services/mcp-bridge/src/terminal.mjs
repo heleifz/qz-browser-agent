@@ -484,6 +484,13 @@ export function renderResult(parsed, result, options = {}) {
     } else if (result?.updateAvailable) {
       out.line("Service update available. Compatible connections remain in use.", "waiting");
     } else if (!result?.connected) out.command("qz connect uri");
+  } else if (command === "cleanup") {
+    out.line(result?.stopped || result?.removedFiles ? "Cleanup complete" : "Nothing to clean", "accent");
+    out.field("Services stopped", result?.stopped ?? 0);
+    out.field("Runtime files removed", result?.removedFiles ?? 0);
+    for (const service of result?.services || []) {
+      if (service.status === "stopped") out.field(`Stopped PID ${service.processId}`, service.endpoint || service.scopeId);
+    }
   } else if (command === "install") {
     out.line(result?.opened ? "Chrome Web Store opened" : "Install qz from the Chrome Web Store", "accent");
     if (!result?.opened) out.line(result?.url);
@@ -544,6 +551,11 @@ export function renderError(payload, options = {}) {
   const waiting = error.code === "CONNECTION_PENDING";
   out.line(waiting ? "Waiting for browser extension" : "qz error", waiting ? "waiting" : "error");
   out.line(error.message || "The command could not be completed.");
+  if (error.code === "CLEANUP_INCOMPLETE") {
+    for (const service of error.services || []) {
+      if (service.status === "skipped") out.field(service.endpoint || service.scopeId, service.message || service.code);
+    }
+  }
   if (waiting || error.code === "CLIENT_OFFLINE") {
     out.field("Stage", error.stage);
     out.field("Browser", error.selectedBrowser?.name);

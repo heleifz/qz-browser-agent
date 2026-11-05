@@ -124,6 +124,13 @@ To disconnect one browser, click **Disconnect: NAME** in its qz Settings. To can
 `qz cancel TASK_ID`, or `qz session cancel ID` for a direct-drive session, adding --client when needed.
 The extension retains browser tasks independently of the local service.
 
+Run `qz cleanup` to stop registered local services from installed packages and development checkouts,
+and remove their runtime files and logs. It uses `~/.qz-browser-agent/run/`, or `QZ_STATE_DIR` when set.
+Browser registrations, tabs, tasks and saved data are preserved. The next browser command starts
+its service automatically. Active CLI requests and direct-drive scripts are interrupted; side-panel
+tasks continue. Unverified or busy entries are reported and preserved; incomplete cleanup
+exits with code 1. Use `--json` for the per-service report.
+
 ### Pair a selected browser from the shell
 
 Print a pairing URL without opening a browser, waiting for a connection or interrupting tasks:
@@ -459,7 +466,7 @@ Native MCP session operations include `qingzhou_list_drive_sessions`,
 
 A CLI process exiting does not close its session's tabs. While the extension runtime runs,
 about 30 minutes of inactivity triggers cleanup. Cancel the session for task cleanup;
-the internal service shutdown disconnects every browser. Full MCP can explicitly retain created tabs with
+`qz cleanup` disconnects browsers from the local services. Full MCP can explicitly retain created tabs with
 `qingzhou_stop_session({sessionId,keepTabs:true,cascade:false})`. Check the session and page
 after an interrupted request before repeating an action; reconnecting does not replay it.
 
@@ -547,7 +554,8 @@ Connection errors include the GitHub setup guide and installation link.
 
 The service accepts connections only on your computer. Ordinary websites cannot use its MCP
 endpoint. Local programs can control connected qz tasks while the service is running.
-Run the internal service shutdown to disconnect all browsers and MCP clients; existing browser tasks keep running.
+Run `qz cleanup` to stop local services and disconnect their browser and MCP connections;
+side-panel tasks keep running, while active direct-drive scripts are interrupted.
 
 Connection settings and browser registrations are stored in `~/.qz-browser-agent/run/`.
 Pairing credentials stay on your computer and are omitted from status output.

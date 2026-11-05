@@ -9,6 +9,13 @@ function rejects(argv, message) {
   assert.throws(() => parseCommand(argv), error => error.code === "INVALID_ARGUMENTS" && (!message || message.test(error.message)), argv.join(" "));
 }
 
+test("cleanup accepts only local cleanup and output options", () => {
+  assert.equal(parseCommand(["cleanup"]).command, "cleanup");
+  assert.equal(parseCommand(["cleanup", "--json"]).options.json, true);
+  assert.equal(parseCommand(["cleanup", "--help"]).helpTopic, "cleanup");
+  for (const args of [["cleanup", "all"], ["cleanup", "--client", "work"], ["cleanup", "--session", "task"], ["cleanup", "--port", "18765"]]) rejects(args);
+});
+
 test("resource commands select explicit operations, exact names, and export formats", () => {
   for (const command of ["data", "images", "skills"]) {
     assert.equal(parseCommand([command]).action, "list");

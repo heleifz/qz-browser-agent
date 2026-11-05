@@ -56,6 +56,53 @@ test("TTY output is formatted; pipes and explicit JSON preserve the machine enve
   }
 });
 
+test("cleanup reports local results without starting or contacting a browser", async () => {
+  const result = { stopped: 2, removedFiles: 4, skipped: 0, services: [
+    { scopeId: "npm", status: "stopped", processId: 123, endpoint: "http://127.0.0.1:18765" },
+    { scopeId: "checkout", status: "stopped", processId: 456, endpoint: "http://127.0.0.1:23456" },
+  ] };
+  const signal = new AbortController().signal;
+  for (const args of [["cleanup", "--json"], ["cleanup", "--plain"]]) {
+    const deps = setup({ signal,
+      cleanupDaemons: async options => { assert.equal(options.signal, signal); return result; },
+      findDaemon: () => assert.fail("cleanup owns local discovery"),
+      ensureDaemon: () => assert.fail("cleanup must not start a service"),
+      callTool: () => assert.fail("cleanup must not call a browser tool"),
+    });
+    assert.equal(await main(args, deps), 0);
+    assert.equal(deps.preparations.length, 0);
+    assert.equal(deps.stderr.text, "");
+    if (args.includes("--json")) assert.deepEqual(JSON.parse(deps.stdout.text), { ok: true, result });
+    else {
+      assert.match(deps.stdout.text, /Cleanup complete/);
+      assert.match(deps.stdout.text, /Services stopped\s+2/);
+      assert.match(deps.stdout.text, /Stopped PID 123/);
+      assert.match(deps.stdout.text, /Stopped PID 456/);
+    }
+  }
+});
+
+test("incomplete cleanup preserves its partial report and exits nonzero", async () => {
+  const result = { stopped: 1, removedFiles: 2, skipped: 1, services: [
+    { scopeId: "unknown", status: "skipped", code: "CONNECTION_UNAVAILABLE", message: "Service identity could not be verified." },
+  ] };
+  for (const format of ["--json", "--plain"]) {
+    const deps = setup({ cleanupDaemons: async () => result });
+    assert.equal(await main(["cleanup", format], deps), 1);
+    if (format === "--json") {
+      const error = JSON.parse(deps.stdout.text);
+      assert.equal(error.code, "CLEANUP_INCOMPLETE");
+      assert.deepEqual(error.details, result);
+      assert.match(error.hint, /retry qz cleanup/);
+      assert.equal(deps.stderr.text, "");
+    } else {
+      assert.equal(deps.stdout.text, "");
+      assert.match(deps.stderr.text, /Stopped 1 qz services/);
+      assert.match(deps.stderr.text, /Service identity could not be verified/);
+    }
+  }
+});
+
 test("plain forces readable text; color preferences never change the output format", async () => {
   for (const [args, tty, env] of [
     [["status", "--plain"], false, {}], [["status", "--no-color"], true, {}],
