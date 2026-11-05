@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInThisContext } from "node:vm";
 import { installFirefoxDebugger } from "../../src/background/firefox/debugger-host.js";
 import { readViewportBands } from "../../src/capabilities/accessibility/viewport.js";
 import { ISOLATED_CONTENT_INVOKE, ISOLATED_CONTENT_PROBE } from "../../src/background/tools/isolated-page-calls.js";
@@ -1589,7 +1590,7 @@ test("isolated content calls run without compiling a function", async () => {
         returnByValue: true,
       });
       assert.equal(main.result.value, 3);
-      assert.equal(compiled, 1, "a main-world expression still compiles");
+      assert.equal(compiled, 0, "main-world compilation uses the native userScripts API");
     });
   } finally {
     globalThis.Function = nativeFunction;
@@ -1691,10 +1692,19 @@ function debuggerBrowser(capture) {
       async get() { return { windowId: 1, url: "https://example.test/" }; },
       async captureTab(_id, options) { return capture ? capture(options) : "data:image/png;base64,aaaa"; },
     },
-    webNavigation: { async getAllFrames() { return []; }, onCommitted: { addListener() {} } },
+    webNavigation: {
+      async getAllFrames() { return []; },
+      async getFrame({ frameId }) { return { documentId: `document-${frameId}` }; },
+      onCommitted: { addListener() {} },
+    },
     scripting: { async executeScript({ func, args }) {
       if (func.name !== "firefoxPageCommand") return [{ result: undefined }];
       return [{ result: await func(...(args || [])) }];
+    } },
+    userScripts: { async execute({ target, js }) {
+      const frameId = Number(target.documentIds[0].slice("document-".length));
+      try { return [{ frameId, result: await runInThisContext(js[0].code) }]; }
+      catch (error) { return [{ frameId, error }]; }
     } },
   };
 }

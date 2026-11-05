@@ -118,7 +118,12 @@ export interface ToolDefinition<S extends ToolSchema, Result, Context, Signal> {
   execute(args: ToolArguments<S> & { timeoutMs?: number } & ("tabRef" extends RequiredKeys<S> ? { tabId: number } : { tabId?: number }), signal: Signal | undefined, context: Context): Result | Promise<Result>;
   model?: Readonly<ToolModelPolicy>;
   behavior?: Readonly<ToolBehavior>;
-  requires?: { browserPermission?: ToolBrowserPermission; images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[] };
+  requires?: {
+    browserPermission?: ToolBrowserPermission;
+    /** Executes caller-supplied page code; the host obtains browser-specific permission before the deadline. */
+    pageScript?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+    images?: boolean; rootSession?: { code: string; message: string }; tools?: readonly string[];
+  };
   /** Trusted tab lifecycle role; ordinary result payloads cannot grant ownership. */
   tabLifecycle?: "created" | "clear" | "claim" | ((args: ToolArguments<S>) => "update" | "claim");
   effects?(args: ToolArguments<S>, result: Result): readonly ToolEffect[];

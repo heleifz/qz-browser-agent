@@ -254,6 +254,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     const runId = handle.driveRunId;
     handle.driveRunId = "";
     if (!handle.releasingDriveRunIds.includes(runId)) handle.releasingDriveRunIds.push(runId);
+    abortRunUserWait(handle, runId);
     return runId;
   }
 
@@ -266,8 +267,10 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
   function clearDriveRunId(sessionId: string) {
     const handle = handles.get(requireSessionId(sessionId));
     if (!handle) return;
+    const runId = handle.driveRunId;
     handle.driveRunId = "";
     handle.releasingDriveRunIds = [];
+    abortRunUserWait(handle, runId);
   }
 
   function getTask(sessionId: string) {
@@ -329,9 +332,8 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
     const normalizedWaitId = normalizeWaitId(waitId);
     if (!normalizedWaitId) throw new TypeError("waitId is required");
     const entry = handles.get(id);
-    assertCurrentEntry(entry);
-    const normalizedRunId = normalizeRunId(runId);
-    if (normalizedRunId && entry.activeRunId && normalizedRunId !== entry.activeRunId) {
+    const normalizedRunId = normalizeRunId(runId) || entry?.activeRunId || entry?.driveRunId || "";
+    if (!entry || !ownsUserWaitRun(entry, normalizedRunId)) {
       throw codedError("STALE_RUN", `session run is stale: ${id}`);
     }
 
@@ -346,7 +348,7 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
       const wait: UserWait = {
         sessionId: id,
         waitId: normalizedWaitId,
-        runId: normalizedRunId || entry.activeRunId || "",
+        runId: normalizedRunId,
         epoch: entry.epoch,
         signal,
         onSettled: typeof onSettled === "function" ? onSettled : null,
@@ -388,27 +390,44 @@ export function createSessionSupervisor<A extends SupervisorAgent>({
   }
 
   function getUserWait(sessionId: string) {
-    const entry = handles.get(normalizeOptionalSessionId(sessionId));
-    const wait = entry?.wait;
-    if (!wait || wait.settled || wait.signal?.aborted || !isCurrentEpoch(entry, wait.epoch)
-      || (wait.runId && entry?.activeRunId !== wait.runId)) return null;
+    const wait = currentUserWait(handles.get(normalizeOptionalSessionId(sessionId)));
+    if (!wait) return null;
     return { sessionId: wait.sessionId, waitId: wait.waitId, runId: wait.runId };
+  }
+
+  // Drive identity survives Agent hydration for viewing history; Agent waits also own their lease epoch.
+  // Releasing drive runs retain cleanup authority, never authority to request or accept user input.
+  function ownsUserWaitRun(entry: SessionHandle<A>, runId: string, epoch = entry.epoch) {
+    return Boolean((runId && entry.driveRunId === runId)
+      || (entry.epoch === epoch && entry.lease?.isActive() && (!runId || entry.activeRunId === runId)));
+  }
+
+  function currentUserWait(entry: SessionHandle<A> | undefined) {
+    const wait = entry?.wait;
+    return entry && wait && !wait.settled && !wait.signal?.aborted
+      && ownsUserWaitRun(entry, wait.runId, wait.epoch) ? wait : null;
+  }
+
+  function abortRunUserWait(entry: SessionHandle<A>, runId: string) {
+    if (runId && entry.wait?.runId === runId) settleWait(entry.wait, {
+      reason: "aborted", error: waitError("OPERATION_ABORTED", "Operation aborted while waiting for user", entry.wait),
+    });
   }
 
   function isWaitingForUser(sessionId = "") {
     const id = normalizeOptionalSessionId(sessionId);
-    if (id) return Boolean(handles.get(id)?.wait);
-    return [...handles.values()].some(handle => Boolean(handle.wait));
+    if (id) return Boolean(currentUserWait(handles.get(id)));
+    return [...handles.values()].some(handle => Boolean(currentUserWait(handle)));
   }
 
   function findWait({ sessionId = "", waitId = "" } = {}) {
     const id = normalizeOptionalSessionId(sessionId);
     const normalizedWaitId = normalizeWaitId(waitId);
     if (id) {
-      const wait = handles.get(id)?.wait || null;
+      const wait = currentUserWait(handles.get(id));
       return wait && (!normalizedWaitId || wait.waitId === normalizedWaitId) ? wait : null;
     }
-    const waits = [...handles.values()].map(handle => handle.wait).filter((wait): wait is UserWait => wait !== null);
+    const waits = [...handles.values()].map(currentUserWait).filter((wait): wait is UserWait => wait !== null);
     if (normalizedWaitId) return waits.find(wait => wait.waitId === normalizedWaitId) || null;
     return waits.length === 1 ? waits[0] : null;
   }

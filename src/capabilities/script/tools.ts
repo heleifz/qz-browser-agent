@@ -186,7 +186,7 @@ function makeRunScriptTargetRequiredError({ skill, script }: { code?: unknown; s
 registerTool({
   name: "run_skill_script",
   behavior: { barrier: true, mayOpenPopup: true, timeoutResult: { kind: "action", pending: "script outcome confirmation" } },
-  requires: { tools: ["run_script"] },
+  requires: { tools: ["run_script"], pageScript: args => !isRunScriptInnerTargetArgs(args) },
   effects: args => args.mutatesPage === true ? [{ type: "context.siteChanged" }] : [],
   get description() { return toolT("runSkillScriptDescription"); },
   get parameters() { return {
@@ -269,6 +269,7 @@ registerTool({
 
 registerTool({
   name: "evaluate",
+  requires: { pageScript: true },
   behavior: { parallelTab: true, mayOpenPopup: true, timeoutResult: { kind: "action", pending: "page evaluation outcome confirmation" } },
   model: { preserveResult: true, scriptResult: "value" },
   effects: () => [{ type: "context.siteChanged" }],
@@ -313,7 +314,7 @@ registerTool({
         }, signal, context);
         return withoutToolAccess(formatCdpScriptResult(evalResult, "cdp"));
       } catch (cdpError) {
-        if (errorCode(cdpError) === "OPERATION_ABORTED") throw cdpError;
+        if (["OPERATION_ABORTED", "BROWSER_PERMISSION_REQUIRED", "BROWSER_PERMISSION_DENIED"].includes(errorCode(cdpError))) throw cdpError;
         if (isToolApiReferenceError(errorMessage(cdpError))) return withoutToolAccess({ ok: false, error: errorMessage(cdpError), engine: "cdp", execution_world: "page" });
         return makePageContextUnavailableResult(cdpError, { tabId: resolvedTabId, reason: "cdp" });
       }
@@ -694,7 +695,7 @@ async function runScriptWithCdpToolBridgeUnlocked(tabId: number, code: string, c
     }, signal, context);
     return formatCdpScriptResult(evalResult, `cdp_${reason}`);
   } catch (err) {
-    if (errorCode(err) === "OPERATION_ABORTED") throw err;
+    if (["OPERATION_ABORTED", "BROWSER_PERMISSION_REQUIRED", "BROWSER_PERMISSION_DENIED"].includes(errorCode(err))) throw err;
     return makePageContextUnavailableResult(err, { tabId, reason });
   }
 }
@@ -838,7 +839,7 @@ function runScriptTraceRuntimeSource({ tabId, reason, scriptArgs, strictResult =
   function __qzTraceText(value) {
     try {
       if (typeof value === "string") return value;
-      if (value instanceof Error) return value.stack || value.message || String(value);
+      if (value instanceof Error) return QZ_SCRIPT_RUNTIME.formatScriptErrorTrace(value);
       if (value && typeof value === "object") return JSON.stringify(__qzSafeValueForMessage(value));
       return String(value);
     } catch(_e) {

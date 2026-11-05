@@ -3,6 +3,14 @@ export { createQzSdk } from "./qz-script-sdk.js";
 
 type ScriptWorld = "page" | "inner";
 
+/** Firefox stacks omit the error header; keep the diagnostic message in every trace. */
+export function formatScriptErrorTrace(error: Error): string {
+  const header = error.message ? `${error.name}: ${error.message}` : error.name;
+  const stack = error.stack || "";
+  if (!stack) return header;
+  return stack === header || stack.startsWith(`${header}\n`) ? stack : `${header}\n${stack}`;
+}
+
 /** Public scripts exchange JSON values without truncating or renaming business fields. */
 export function scriptValue(value: unknown, seen = new Set<object>()): MessageValue {
   if (value === undefined || value === null || typeof value === 'string' || typeof value === 'boolean') return value;

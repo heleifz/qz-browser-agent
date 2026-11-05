@@ -517,6 +517,7 @@ registerTool({
 
 registerTool({
   name: "wait_for_function", behavior: { parallelTab: true, passiveWait: true },
+  requires: { pageScript: true },
   get description() { return toolT("waitForFunctionDescription"); },
   get parameters() { return { type: "object", properties: { ...pageWaitProperties(),
     code: { type: "string", description: toolT("waitForFunctionCode") }, args: {},

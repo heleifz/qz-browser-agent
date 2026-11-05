@@ -1,4 +1,4 @@
-import { safeValueForMessage, scriptValue, scriptToolArguments, installSecurityGuards } from "../shared/script-runtime.js";
+import { safeValueForMessage, scriptValue, scriptToolArguments, installSecurityGuards, formatScriptErrorTrace } from "../shared/script-runtime.js";
 import { createQzSdk } from "../shared/qz-script-sdk.js";
 import type { FetchResult, InnerWorkerInput, InnerWorkerOutput, ScriptEnvelope, ScriptFailure, ToolBridgeResponse, TraceRow, WorkerExecute } from '../shared/contracts/inner-runner.js';
 
@@ -84,7 +84,7 @@ async function runInnerScript(payload: WorkerExecute) {
   function traceText(value: unknown) {
     try {
       if (typeof value === "string") return value;
-      if (value instanceof Error) return value.stack || value.message || String(value);
+      if (value instanceof Error) return formatScriptErrorTrace(value);
       if (value && typeof value === "object") return JSON.stringify(safeValueForMessage(value));
       return String(value);
     } catch (_err) {

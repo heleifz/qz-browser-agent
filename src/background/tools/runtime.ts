@@ -1,4 +1,5 @@
 import { waitForPageCommit } from "./document-readiness.js";
+import { firefoxExtension } from "../../shared/product-text.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { toolError, isToolFailure, pageErrorDetails } from "../../shared/contracts/tool-error.js";
@@ -393,6 +394,7 @@ function resolveLocalizedToolDefinition(name: string, options: ToolOptions, snap
     ...identity,
     parameters: getSkillToolParameters(entry.tool),
     page: isSkillPageTool(entry.tool) ? "owned" : undefined,
+    requires: { ...hostDefinition?.requires, ...(isSkillPageScriptTool(entry.tool) ? { pageScript: true } : {}) },
     model: entry.tool.runtime === "script" || entry.tool.runtime === "inner" || entry.tool.runtime === "page"
       ? { preserveResult: true, scriptResult: "receipt" } : hostDefinition?.model,
     // Only the host-selected script runner grants orchestration; old/privileged Skills retain their barrier.
@@ -671,6 +673,9 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     });
     if (definition.requires?.browserPermission) {
       await ensureToolBrowserPermission(definition.requires.browserPermission, context, signal, getToolRuntimeDependencies(context));
+    }
+    if (firefoxExtension() && toolBehaviorEnabled(definition.requires?.pageScript, executionArgs)) {
+      await ensureToolBrowserPermission("userScripts", context, signal, getToolRuntimeDependencies(context));
     }
     // A dismissed debugging bar pauses the run here, outside the tool timeout.
     await confirmRunReattach({ sessionId: String(context.sessionId || ""), runId: String(context.runId || ""), context, signal });

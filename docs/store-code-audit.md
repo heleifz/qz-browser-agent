@@ -52,7 +52,7 @@ upstream code. Runtime vendor outputs are immutable after generation; maps stay 
   dependency provenance is exempt metadata.
 - [`check-reviewable-code.mjs`](../scripts/check-reviewable-code.mjs) parses every JS/MJS/CJS file,
   recursively inspects build-time script strings, checks script-tag concatenation (including
-  `LT + SCRIPT + GT`), imports, Worker/script sinks, eval/Function and aliases, CDP execution, `_0x` names and
+  `LT + SCRIPT + GT`), imports, Worker/script sinks, eval/Function and aliases, CDP and native user-script execution, `_0x` names and
   executable-line/identifier-density heuristics. Literal data tables and strings do not count as
   compressed executable lines. The JSON report retains raw maximum line lengths too. Regression
   tests scan both real legacy PDF inputs: the worker's unrelated numeric `GT` declaration must not
@@ -93,6 +93,7 @@ TypeScript transforms do not substitute for the production pipeline when reviewi
 | Page-mode `apply` | Evaluates only the literal `navigator.userAgent`. |
 | `contentContextId`, `invokeBound` | Static isolated-world identity/protocol-version probe and literal bridge function; arguments travel as CDP values rather than code. Caller context and the resolved public target are used only to build failure details; a bounded node_unavailable reason supports pre-dispatch locator recovery. The probe and bridge declarations, value-argument channel, and frame selection are unchanged. |
 | Firefox `page-command` invoke | Firefox-only emulation of CDP `Runtime.callFunctionOn` for the same callers. Native exception names are retained as data. Node-array references and `Runtime.getProperties` remain structured data in the isolated world. Coordinate input descends open shadow roots and emits composed pointer/mouse/touch events; these DOM operations do not compile code. It compiles declarations only with the page realm's `Function`, never in the isolated world or extension context. The Chrome package does not contain it. |
+| Firefox `evaluateFirefoxPage` | Native `userScripts.execute` compiles the existing user/Agent expression in the page's `MAIN` world after optional permission and live-run checks. `webNavigation.getFrame` supplies the document ID; the injection targets that exact document and checks context generation again after execution. It never falls back to another document or replays failed code. The enclosing function includes the serialized result/error helper, so changes to that source also require review. Only the Firefox adapter output path is accepted. |
 | `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element; public geometry uses the shared Rect contract. |
 | `clearStaleOptionDisabled` | Calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code. |
 | `bindContentElementRefs` | Resolves bounded batches of original-node tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveElementRefs`; token arrays are CDP values, not code. It validates the frame/document and bounds concurrent node descriptions. Required locator binding validates the node-array response and propagates permission/transport failures; ordinary discovery retains its best-effort fallback. This changes binding error handling, not the packaged declaration or value-only token arguments. |
@@ -100,6 +101,11 @@ TypeScript transforms do not substitute for the production pipeline when reviewi
 On the Firefox-integrated branch, `contentContextId` and `invokeBound` read their probe and bridge
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
 fingerprints do not cover those constants, so changes to that module need the same review.
+
+Page-code permission requirements are checked before tool execution. The CDP evaluator and page
+Skill bridge preserve permission failures and their recovery hints without replay. The shared error
+trace formatter retains the message when Firefox supplies a stack without its error header; this
+changes diagnostic data only, with the Worker and page execution boundaries preserved.
 
 The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,

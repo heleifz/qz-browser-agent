@@ -17,11 +17,11 @@ after(() => {
   else globalThis.SCRIPT_RUNTIME_SOURCE = originalRuntimeSource;
 });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
-function fixture(evaluateCdpScript) {
+function fixture(evaluateCdpScript, name = 'evaluate') {
   const definitions = new Map();
   createScriptTools({ registerTool: definition => definitions.set(definition.name, definition), ToolExecutionError,
     skills: { loadScript: async () => null }, scriptTimeoutProperty: { type: 'number' }, evaluateCdpScript });
-  const definition = definitions.get('evaluate');
+  const definition = definitions.get(name);
   return async (tabId = 7, signal, context = {}, args = {}) => {
     const input = { code: '() => 42', timeout: 5, tabId, ...args };
     definition.validateArgs(input);
@@ -111,6 +111,23 @@ test('script failures preserve supplied recovery hints without inventing advice 
   }
 });
 
+test('page evaluation and legacy page Skills preserve native permission failures without replay', async () => {
+  for (const name of ['evaluate', 'run_skill_script']) {
+    for (const code of ['BROWSER_PERMISSION_REQUIRED', 'BROWSER_PERMISSION_DENIED']) {
+      let calls = 0;
+      const failure = Object.assign(new ToolExecutionError(code, 'Page script permission is unavailable.'), {
+        hint: 'Allow user scripts in the qz side panel, then retry.',
+      });
+      const run = fixture(async () => { calls++; throw failure; }, name);
+      await assert.rejects(run(7, undefined, {}, { skill: 'example', script: 'scripts/example.js' }), error => {
+        assert.equal(error, failure, 'the permission code and hint must survive the page-context error boundary');
+        return true;
+      });
+      assert.equal(calls, 1, 'permission failure never replays page code');
+    }
+  }
+});
+
 test('a page syntax error never replays the function body', async () => {
   let calls = 0;
   const run = fixture(async () => { calls++; return { exceptionDetails: { text: 'SyntaxError: Illegal return statement' } }; });
@@ -126,7 +143,7 @@ test('missing-tool errors from the debugger report unavailable access without re
     const result = await run();
     assert.equal(result.code, 'RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     assert.equal(result.details.automaticReplay, false); assert.equal(calls, 1);
-    assert.match(result.hint, /tools\.name\(\.\.\.\).*evaluate/);
+    assert.match(result.hint, /qz SDK.*page\.evaluate/);
     assert.ok(result.hint.includes('run_script'));
   }
 });

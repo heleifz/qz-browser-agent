@@ -99,6 +99,11 @@ and continue** opens Chrome's permission request and resumes the tool after acce
 This wait is outside the tool execution timeout and ends when the task is stopped. MCP callers
 must complete the same authorization in the side panel.
 
+Firefox also requests the optional `userScripts` permission before executing page scripts
+(`evaluate`, `wait_for_function`, and legacy page Skills). Click **Allow and continue** in the
+qz sidebar, then accept Firefox's permission request. Firefox remembers the grant; revoking it
+prompts again on the next use. Chrome uses its existing debugger permission.
+
 Recording requests `desktopCapture` when the user starts recording. Opening a saved artifact
 requests `downloads.open`; downloading files continues to use the required `downloads` permission.
 Chrome remembers grants until the user revokes them. Subsequent use checks the current grant and

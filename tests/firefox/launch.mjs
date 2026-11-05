@@ -15,6 +15,7 @@ export async function openFirefoxSidebar({
   extensionDir = process.env.QINGZHOU_FIREFOX_EXTENSION_DIR,
   profile: selectedProfile,
   firefoxUserPrefs = {},
+  grantUserScripts = true,
 } = {}) {
   if (!extensionDir) throw new Error("Set QINGZHOU_FIREFOX_EXTENSION_DIR to dist/extension-firefox. npm run verify:firefox builds it.");
   const manifest = assertFirefoxPackage(JSON.parse(await readFile(join(extensionDir, "manifest.json"), "utf8")), extensionDir);
@@ -67,6 +68,16 @@ export async function openFirefoxSidebar({
       extension(target, expression) { return evaluateExtension(session, target, expression); },
       async close() { try { await context.close(); } finally { cleanupProfile(); } },
     };
+    if (grantUserScripts) {
+      // Existing execution fixtures start authorized in their isolated profile. Permission
+      // UI regressions opt out and exercise the actual sidebar/browser approval flow.
+      await sidebar.chrome(`
+        const { ExtensionPermissions } = ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs");
+        const extension = WebExtensionPolicy.getByID(${JSON.stringify(FIREFOX_GECKO_ID)}).extension;
+        await ExtensionPermissions.add(extension.id, { permissions: ["userScripts"], origins: [] }, extension);
+        return true;
+      `);
+    }
     return sidebar;
   } catch (error) {
     await context.close().catch(() => undefined);

@@ -23,24 +23,28 @@ const REVIEWED = new Map([
     files: /^sidepanel\/(?:chunk-[\w.-]+|features\/chat\/math-runtime)\.js$/u,
     reason: "loadMathRuntime loads only packaged vendor/mathjax/startup.js, with a local test-server fallback.",
   }]),
-  ["dynamic-code:9cab56ab46c9cf6f15e1152091a585177a1daf78c6bd281984461a39cea7fc95", {
+  ["dynamic-code:976cd60cbe022e889a24681eb14d41bf9fda68ca8aa62ec23d329db56b3a8f3f", {
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
-    reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. The packaged qz SDK is passed as one additional function parameter and lowers operations to the existing callTool bridge; legacy tool bindings remain available. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Only explicit diagnostics and errors stream as bounded data to the live host request; tool identity remains host-owned. Modern callers unwrap only host-declared Skill receipts once; legacy callers retain receipts and image observations follow the selected business object.",
+    reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. The packaged qz SDK is passed as one additional function parameter and lowers operations to the existing callTool bridge; legacy tool bindings remain available. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Error trace formatting preserves the message when Firefox stacks omit it; only explicit diagnostics and errors stream as bounded data to the live host request; tool identity remains host-owned. Modern callers unwrap only host-declared Skill receipts once; legacy callers retain receipts and image observations follow the selected business object.",
   }],
   ["dynamic-code:faae30dc006ae042a62390cd519bfe75f13bf6170d6f395d94fe629c8fe18719", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world. Deep open-shadow hit testing and composed pointer/mouse/touch events only affect DOM input dispatch. Pointer buttons, click counts and event ordering are data; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
-  ["worker-source:bcec724af6113d10cc6ef36ba6381ed686c1c937e7e1b2fb2d1e3310b4eaba57", {
+  ["user-script-execution:ee8db34ea752f2edf5ae6600be2fbb9ab022f59af5c7d9e7a20442d85ba16e0b", {
+    files: /^background\/firefox\/page-evaluation\.js$/u,
+    reason: "Firefox native MAIN execution of the existing authorized page expression. Optional userScripts access and live scope are checked before dispatch; webNavigation supplies an exact document ID and context generation is checked after execution. No document fallback or replay. The enclosing function includes the serialized, self-contained result/error wrapper; user code stays in the page realm. Chrome does not ship this module.",
+  }],
+  ["worker-source:78126cbbbf0a5318be53b05b1a773a1d21024fdbbbf67d6f9b7890cc4a45d5a3", {
     files: /^runner-sandbox\.js$/u,
-    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only, including its static qz SDK and locator input contract. The host forwards JSON arguments and strict-result mode as data. Embedded Worker traces contain explicit diagnostics and errors; Worker identity, cancellation and message routing are unchanged. ToolError, explicit image observations and streamed diagnostic rows are data in replies. Only the current Worker may publish; trace forwarding and snapshots do not bypass cancellation.",
+    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only, including its static qz SDK and locator input contract. The host forwards JSON arguments and strict-result mode as data. Embedded Worker traces contain explicit diagnostics and errors; Worker identity, cancellation and message routing are unchanged. ToolError, explicit image observations and streamed diagnostic rows are data in replies. The packaged error formatter preserves messages beside Firefox stacks. Only the current Worker may publish; trace forwarding and snapshots do not bypass cancellation.",
   }],
   ...[
-    ["d09093817f046a7c268de7a7ec27ee203303c763d2887c9ebeb4a42694fd3011", "background/tools/cdp-runtime", "CDP evaluator holds an execution lease through evaluation, releasing it in finally for idle cleanup; host-authorized per-call access, cancellation and stale-owner rejection remain enforced. A private read grant permits observation without taking the owner lease; owned evaluation keeps its task authorization. A timeout queues a fixed trace read and termination while its owner and connection identities still match. Late diagnostics cannot terminate a subsequent evaluation. Source and explicit page selection remain reviewed."],
+    ["7568aa891e36a648a894563616d2f771d0d1abcd8e4c9d9a99fba42bf63bbaed", "background/tools/cdp-runtime", "CDP evaluator holds an execution lease through evaluation, releasing it in finally for idle cleanup; host-authorized per-call access, cancellation and stale-owner rejection remain enforced. A private read grant permits observation without taking the owner lease; owned evaluation keeps its task authorization. A timeout queues a fixed trace read and termination while its owner and connection identities still match. Late diagnostics cannot terminate a subsequent evaluation. Optional browser permission errors pass through without replacing their recovery guidance; evaluation source, explicit page selection and lease boundaries are unchanged."],
     ["a36dfc60d9dd63fbe417be448b1ec12a50a982e938a85837212784e1a267bf48", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element; geometry uses the shared Rect contract."],
-    ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run/parent-call identity and arguments as JSON data to the same run-owned evaluator. No caller mode or implicit page is injected."],
+    ["32487d7650cc71f56ee23130e8de01b0adf155cce8c0f3b7a75e97a3364fa410", "capabilities/script/tools", "Page-script tool bridge carries Session/run/parent-call identity and arguments as JSON data to the same run-owned evaluator. Optional browser permission errors propagate without replay. No caller mode or implicit page is injected."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["a5203c6a972363050717b8203449409afe91e157f3e3f0a72e27dd81c80cd214", "capabilities/script/tools", "Entire createScriptTools factory: the existing private page bridge initializes the packaged qz SDK with its same live-parent call channel; locator queries remain data. evaluate receives no SDK bridge. run_script always runs in the existing sandbox Worker; evaluate requires an owned explicit page and a self-contained function defined outside the host closure. Arguments are JSON data. The private Skill page bridge retains live parent authorization. Success and failure traces use trusted host presentation beside business values. Automatic lifecycle trace rows are removed; host collection is scoped to the live execution, includes nested diagnostics, and survives cancellation; Skill callers retain receipts for legacy compatibility. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. Cancellation and packaged security guards remain enforced. No implicit page selection or evaluation replay."],
+    ["0d4c66d6a610211ba04bbe1e24f3884148a974b2995d97a1d0122d9faf41c6fa", "capabilities/script/tools", "Entire createScriptTools factory: the existing private page bridge initializes the packaged qz SDK with its same live-parent call channel; locator queries remain data. evaluate receives no SDK bridge. run_script always runs in the existing sandbox Worker; evaluate requires an owned explicit page and a self-contained function defined outside the host closure. Arguments are JSON data. The private Skill page bridge retains live parent authorization. Success and failure traces use trusted host presentation beside business values. Automatic lifecycle trace rows are removed; host collection is scoped to the live execution, includes nested diagnostics, and survives cancellation; Skill callers retain receipts for legacy compatibility. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. Cancellation and packaged security guards remain enforced. Error formatting preserves messages beside Firefox stacks as data. Page-code requirements obtain browser-specific permission before execution; revoked permission errors propagate. No implicit page selection or evaluation replay."],
     ["60ac3b226baabdc75705c018ae301fdb89773f66bee9b698dd8be223e7829ed0", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant; validates live context identity and the element-reference protocol version. Only public error context changed; probe source and frame selection are unchanged."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
     ["4dd22594a03e425ce0e6857ca199fcee6c7fe54d0d0aac714ee92886c33d13c5", "background/tools/element-runtime", "bindContentElementRefs resolves bounded batches of original-node tokens through the packaged ISOLATED_CONTENT_INVOKE bridge; token arrays are CDP values, not code. It checks the document/frame and limits concurrent node descriptions. Required locator binding validates the returned node list and propagates permission/transport failures; discovery retains its best-effort fallback. The packaged declaration and value-only token arguments are unchanged."],
@@ -49,6 +53,10 @@ const REVIEWED = new Map([
   }]),
   // The unbundled forms differ only in esbuild's expansion of shorthand properties after renaming.
   // Bundling now renames inside page-mode apply as well, so its bundled form needs its own entry.
+  ["cdp-execution:a5203c6a972363050717b8203449409afe91e157f3e3f0a72e27dd81c80cd214", {
+    files: /^background\/service-worker\.js$/u,
+    reason: "Chrome bundled invokeBound: the same packaged ISOLATED_CONTENT_INVOKE bridge and value arguments, with graph-specific shorthand expansion. Public caller context and target are used only for response/error handling; no page-controlled declaration or implicit target.",
+  }],
   ["cdp-execution:945c48ed5587dadc2a473a40ab53c706c2dfa9c26b09b8bd7268fa85b8c84663", {
     files: /^background\/(?:service-worker|tools\/element-runtime)\.js$/u,
     reason: "Bundled invokeBound: same packaged bridge and value arguments; caller context and the resolved public target are used only for failure details, including the bounded node_unavailable reason; the CDP declaration and argument channel are unchanged, with graph-specific shorthand expansion.",
@@ -57,9 +65,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function; caller context and resolved public target are used only for failure details, including the bounded node_unavailable reason. The CDP declaration and argument channel are unchanged.",
   }],
-  ["cdp-execution:c674dcf828e285e3e4a32b870c57077a895e7acac4348e4d2b3a2018307c3f2e", {
+  ["cdp-execution:71ae814c9e41724ef846fa2194c568edc0c002aeb4b54d72145d09c70563cea0", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: the same reviewed outer Worker, explicit owned-page evaluate function and private Skill bridge as the bundled factory. Only the private bridge initializes the packaged qz SDK; it lowers locator data to the existing live-parent channel, while evaluate remains without SDK access. User function source is evaluated outside host lexical bindings; JSON arguments and trusted success/failure traces stay separate. Automatic lifecycle trace rows are removed; host collection includes nested diagnostics from live requests; Skill receipts remain available for legacy callers. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. No implicit page or replay fallback.",
+    reason: "Unbundled createScriptTools: the same reviewed outer Worker, explicit owned-page evaluate function and private Skill bridge as the bundled factory. Only the private bridge initializes the packaged qz SDK; it lowers locator data to the existing live-parent channel, while evaluate remains without SDK access. User function source is evaluated outside host lexical bindings; JSON arguments and trusted success/failure traces stay separate. Automatic lifecycle trace rows are removed; host collection includes nested diagnostics from live requests; Skill receipts remain available for legacy callers. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. The same page-code permission preflight, error propagation and message-preserving error trace formatter apply. No implicit page or replay fallback.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,
@@ -147,6 +155,13 @@ export function inspectJavaScript(source, file = "input.js", depth = 0) {
     if (node.type === "Identifier") return /^(?:eval|Function|AsyncFunction)$/u.test(node.name) ? node.name : codeCallee(bindingValue(node), seen) || node.name;
     return "";
   }
+  function userScriptExecute(node, seen = new Set()) {
+    if (!node || seen.has(node)) return false;
+    seen.add(node);
+    if (node.type === "SequenceExpression") return userScriptExecute(node.expressions.at(-1), seen);
+    if (node.type === "Identifier") return userScriptExecute(bindingValue(node), seen);
+    return node.type === "MemberExpression" && codeCallee(node) === "execute" && codeCallee(node.object) === "userScripts";
+  }
   let shortBindings = 0;
   for (const name of bindings.keys()) if (/^[a-zA-Z_$]{1,2}$/u.test(name)) shortBindings++;
   const statementsByLine = new Map();
@@ -168,6 +183,9 @@ export function inspectJavaScript(source, file = "input.js", depth = 0) {
     if (node.type === "CallExpression" && (node.arguments.some(argument => /^Runtime\.(?:evaluate|compileScript|runScript|callFunctionOn)$/u.test(staticText(argument))) ||
         /^evaluateCdpScript\d*$/u.test(node.callee.name || node.callee.property?.name || ""))) {
       add("cdp-execution", node, "CDP JavaScript execution needs source and target review", ancestors);
+    }
+    if (node.type === "CallExpression" && userScriptExecute(node.callee)) {
+      add("user-script-execution", node, "Native user-script execution needs source and document-target review", ancestors);
     }
     if (node.type === "ImportExpression" || node.type === "ImportDeclaration" || node.type === "ExportNamedDeclaration" && node.source) {
       const target = node.source;

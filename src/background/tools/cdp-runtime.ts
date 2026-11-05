@@ -422,7 +422,7 @@ export function createCdpRuntime({
         }
         return evalResult;
       } catch (err) {
-        if (aborted || ["OPERATION_ABORTED", "CDP_RUN_RELEASED"].includes(String(record(err).code || ""))) throw err;
+        if (aborted || ["OPERATION_ABORTED", "CDP_RUN_RELEASED", "BROWSER_PERMISSION_REQUIRED", "BROWSER_PERMISSION_DENIED"].includes(String(record(err).code || ""))) throw err;
         if (record(err).code === "SESSION_TAB_UNAVAILABLE") throw err;
         throw new ToolExecutionError("CDP_COMMAND_FAILED", `Runtime.evaluate failed: ${String(record(err).message || err)}`, pageErrorDetails(context));
       } finally {

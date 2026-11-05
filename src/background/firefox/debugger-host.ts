@@ -13,6 +13,7 @@ import { cropDataUrl, decodeDataUrl, stitchTiles, stripDataUrl } from "./screens
 import type { ImageClip } from "./screenshot-image.js";
 import type { DebuggerCommandScope } from "../tools/cdp-runtime.js";
 import { createFirefoxEnterInput } from "./enter-input.js";
+import { evaluateFirefoxPage, type FirefoxPageEvaluationHost } from "./page-evaluation.js";
 
 const MARK = Symbol.for("qz.firefox.debugger");
 const COMPAT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -121,7 +122,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     if (method === "DOM.getNodeRects") return run(tabId, frameId, { op: "rects", backendNodeIds: numberList(params.backendNodeIds) });
     if (method === "DOM.resolveNode") return run(tabId, frameId, { op: "resolve", backendNodeId: numberValue(params.backendNodeId), objectGroup: String(params.objectGroup || "") });
     if (method === "Runtime.enable") return enableRuntime(tabId);
-    if (method === "Runtime.evaluate") return evaluate(tabId, frameId, params);
+    if (method === "Runtime.evaluate") return evaluate(tabId, frameId, params, scope);
     if (method === "Runtime.callFunctionOn") {
       const declaration = String(params.functionDeclaration || "");
       const callArgs = Array.isArray(params.arguments) ? params.arguments as { value?: unknown }[] : [];
@@ -334,7 +335,7 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     return created;
   }
 
-  async function evaluate(tabId: number, frameId: number, params: Fields) {
+  async function evaluate(tabId: number, frameId: number, params: Fields, scope: DebuggerCommandScope) {
     if (String(params.expression || "").trim() === "navigator.userAgent") {
       return { result: { type: "string", value: emulation.get(tabId)?.userAgent || COMPAT_USER_AGENT } };
     }
@@ -344,6 +345,16 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
     const expression = String(params.expression || "");
     const targetFrame = selected?.frameId ?? frameId;
     if (isIsolatedContentProbe(expression)) return run(tabId, targetFrame, { op: "probe" }, world);
+    if (world === "MAIN") {
+      const mainGeneration = generations.get(`${tabId}:0`);
+      const frameGeneration = generations.get(`${tabId}:${targetFrame}`);
+      return evaluateFirefoxPage(chromeApi, tabId, targetFrame, expression, () => {
+        scope.check();
+        if (generations.get(`${tabId}:0`) !== mainGeneration || generations.get(`${tabId}:${targetFrame}`) !== frameGeneration) {
+          throw new Error("Execution context was destroyed");
+        }
+      });
+    }
     return run(tabId, targetFrame, { op: "evaluate", expression, awaitPromise: params.awaitPromise === true }, world);
   }
 
@@ -705,7 +716,7 @@ interface DebuggerApi {
   sendCommand(target: DebugSource, method: string, params?: object): Promise<unknown>;
   sendCommandWithScope(target: DebugSource, method: string, params: object, scope: DebuggerCommandScope): Promise<unknown>;
 }
-interface DebuggerChrome {
+interface DebuggerChrome extends FirefoxPageEvaluationHost {
   debugger?: DebuggerApi;
   runtime?: { id?: string; onMessage?: { addListener(listener: (message: { type?: string; record?: ConsoleMessage } | undefined, sender: { tab?: { id?: number } } | undefined) => void): void } };
   tabs?: {
@@ -721,6 +732,7 @@ interface DebuggerChrome {
     update?(windowId: number, options: { state?: string; width?: number; height?: number; left?: number; top?: number; focused?: boolean }): Promise<unknown>;
   };
   webNavigation?: {
+    getFrame?(target: { tabId: number; frameId: number }): Promise<{ documentId?: string } | null>;
     getAllFrames?(query: { tabId: number }): Promise<{ frameId: number; parentFrameId: number; url?: string }[] | undefined>;
     onCommitted?: { addListener(listener: (details: { tabId: number; frameId: number; url?: string }) => void): void };
   };

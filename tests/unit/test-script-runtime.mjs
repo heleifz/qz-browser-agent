@@ -4,13 +4,23 @@ import { createContext, runInContext } from 'node:vm';
 import { compileScriptToolHost } from '../support/script-runtime-fixture.mjs';
 import { compileInnerWorker } from '../../scripts/build-extension.mjs';
 import { runInnerWorker } from '../support/inner-runner-fixture.mjs';
-import { safeValueForMessage, installSecurityGuards } from '../../src/shared/script-runtime.js';
+import { safeValueForMessage, installSecurityGuards, formatScriptErrorTrace } from '../../src/shared/script-runtime.js';
 import { getToolResultTraces } from '../../src/shared/contracts/tool-result-presentation.js';
 
 const rules = [
   { action: 'block', type: 'domain', value: 'blocked.test' },
   { action: 'allow', type: 'pattern', value: 'https://blocked.test/allowed/*' },
 ];
+
+test('script error traces retain the message across Chrome, Firefox and absent stacks', () => {
+  const error = new TypeError('Return a JSON value.');
+  error.stack = 'TypeError: Return a JSON value.\n    at run (script.js:1:2)';
+  assert.equal(formatScriptErrorTrace(error), error.stack, 'Chrome keeps its existing header once');
+  error.stack = 'run@script.js:1:2\n';
+  assert.equal(formatScriptErrorTrace(error), 'TypeError: Return a JSON value.\nrun@script.js:1:2\n');
+  error.stack = undefined;
+  assert.equal(formatScriptErrorTrace(error), 'TypeError: Return a JSON value.');
+});
 
 async function fixture(mode) {
   const calls = [];

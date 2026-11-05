@@ -13,6 +13,10 @@ for (const source of [
   'send("Runtime.evaluate", { expression: remoteCode });',
   'send(target, "Runtime." + "callFunctionOn", { functionDeclaration: remoteCode });',
   'evaluateCdpScript(tabId, { expression: remoteCode });',
+  'browser.userScripts.execute({ target, js: [{ code: remoteCode }] });',
+  'host["userScripts"]["execute"]({ target, js: [{ code: remoteCode }] });',
+  'const scripts = browser.userScripts; scripts.execute({ target, js: [{ code: remoteCode }] });',
+  'const run = browser.userScripts.execute; run({ target, js: [{ code: remoteCode }] });',
   'const lt = "<", tag = "script"; const html = `${lt}${tag}>${payload}</script>`;',
   'import("https://unknown.example/engine.mjs")', 'import(remoteUrl)',
   'importScripts("https://unknown.example/code.js")', 'new Worker(remoteUrl)',
@@ -35,6 +39,22 @@ try {
     const findings = (await auditReviewableCode(outputDir)).flatMap(item => item.findings);
     assert.ok(findings.length > 0);
     assert.deepEqual(findings.filter(item => !item.reviewed), []);
+    const nativeFindings = findings.filter(item => item.rule === 'user-script-execution');
+    assert.equal(nativeFindings.length, browser === 'firefox' ? 1 : 0, 'native page compilation is Firefox-only');
+    if (browser === 'firefox') {
+      const nativePath = 'background/firefox/page-evaluation.js';
+      const nativeCode = await readFile(join(outputDir, nativePath), 'utf8');
+      const inspectNative = (code, path = nativePath) => inspectJavaScript(code, path).findings.filter(item => item.rule === 'user-script-execution');
+      assert.ok(inspectNative(nativeCode)[0].reviewed);
+      assert.equal(inspectNative(nativeCode, 'background/service-worker.js')[0].reviewed, undefined);
+      const unpinned = nativeCode.replace('documentIds: [document.documentId]', 'frameIds: [frameId]');
+      assert.notEqual(unpinned, nativeCode);
+      assert.equal(inspectNative(unpinned)[0].reviewed, undefined, 'changing document identity requires review');
+      const changedWrapper = nativeCode.replace(/await evaluate\d*\.call\(globalThis\)/u, 'await pageControlledFunction()');
+      assert.notEqual(changedWrapper, nativeCode);
+      assert.equal(inspectNative(changedWrapper)[0].reviewed, undefined, 'the serialized helper is covered by the sink fingerprint');
+      assert.equal(inspectNative(`${nativeCode}\nhost.userScripts.execute({target,js:[{code:remoteCode}]});`).filter(item => !item.reviewed).length, 1);
+    }
 
     // Parent-call identity is data, not source. Changing its origin, adding a
     // sink, or moving the code outside its reviewed output path requires review.
