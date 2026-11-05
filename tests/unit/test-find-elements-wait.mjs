@@ -123,7 +123,7 @@ test("cancellation during a pending scan prevents late reference registration", 
   assert.equal(f.reads, 1);
 });
 
-test("host timeout retains snapshot partials but rejects an unfinished match wait", async () => {
+test("host timeout rejects unfinished snapshots and match waits", async () => {
   globalThis.chrome = {
     runtime: { getURL: path => `chrome-extension://test/${path}` },
     storage: { local: { async get() { return {}; } } },
@@ -144,6 +144,6 @@ test("host timeout retains snapshot partials but rejects an unfinished match wai
     await assert.rejects(runtime.execute("find_elements", { tabRef: 7, waitFor: "match", timeout }, undefined, context), { code: "INVALID_TIMEOUT" });
   }
   await assert.rejects(runtime.execute("find_elements", { tabRef: 7, waitFor: "visible" }, undefined, context), { code: "INVALID_ARGUMENTS" });
-  assert.equal((await runtime.execute("find_elements", { tabRef: 7 }, undefined, context)).incomplete.reason, "timeout");
+  await assert.rejects(runtime.execute("find_elements", { tabRef: 7 }, undefined, context), { code: "TOOL_TIMEOUT" });
   await assert.rejects(runtime.execute("find_elements", { tabRef: 7, waitFor: "match" }, undefined, context), { code: "TOOL_TIMEOUT" });
 });

@@ -9,6 +9,9 @@ import { localizeToolFailureCode } from '../../src/shared/tools/tool-error-local
 import { withLanguage } from '../../src/shared/i18n/index.js';
 import { clearTraceLog, getTraceLog } from '../../src/background/trace.js';
 import { resolveToolState } from '../../src/sidepanel/tools/tool-model.js';
+import { createRunScriptBridge } from '../../src/background/tools/run-script-bridge.js';
+import { compileInnerWorker } from '../../scripts/build-extension.mjs';
+import { runInnerWorker } from '../support/inner-runner-fixture.mjs';
 
 const never = () => new Promise(() => {});
 const context = { sessionId: 'partials', runId: 'run', workingTabId: 1 };
@@ -149,17 +152,79 @@ test('ten concurrent page readers isolate targets and cancellation without updat
   }
 });
 
-test('read_article and find_elements retain actual page state when synchronous extraction stalls', async () => {
-  for (const name of ['read_article', 'find_elements']) {
+test('stalled page readers reject with localized recovery and public page state', async () => {
+  for (const language of ['zh-CN', 'en']) for (const name of ['read_article', 'find_elements']) {
     reset();
-    const result = await runtime.execute(name, { tabRef: 1, limit: 100, timeout: 0.01 }, undefined, { ...context, preserveWorkingTab: true });
-    assert.equal(result.incomplete.reason, 'timeout');
-    assert.equal(result.pageState.readyState, 'interactive');
-    assert.equal(resolveToolState({ name, result }), 'incomplete');
-    assert.equal(result.pageState.url, 'https://example.test/old');
-    assert.equal(result.pageState.title, 'Article');
-    assert.equal(result.text, undefined); assert.equal(contentCalls, 1); assert.equal(updates.length, 0);
+    await assert.rejects(runtime.execute(name, { tabRef: 1, limit: 100, timeout: 0.01 }, undefined,
+      { ...context, language, preserveWorkingTab: true }), error => {
+      assert.equal(error.code, 'TOOL_TIMEOUT');
+      assert.match(error.hint, language === 'en' ? /[A-Za-z]/ : /[\u3400-\u9fff]/);
+      assert.equal(error.details.tabRef, 1);
+      assert.ok(error.details.pending);
+      assert.equal(error.details.pageState.readyState, 'interactive');
+      assert.equal(error.details.pageState.url, 'https://example.test/old');
+      assert.equal(error.details.pageState.title, 'Article');
+      assert.equal(resolveToolState({ name, result: error.toJSON() }), 'error');
+      assert.doesNotMatch(JSON.stringify(error), /"(?:text|incomplete|tabId|documentId)":/);
+      return true;
+    });
+    assert.equal(contentCalls, 1); assert.equal(updates.length, 0);
   }
+});
+
+test('qz SDK read failures cross the script bridge, stop processing, and permit explicit retry', async () => {
+  const compiled = await compileInnerWorker({ mode: 'production' });
+  const bridge = createRunScriptBridge({
+    supervisor: { isRunCurrent: () => true, hasAgent: () => true, getAbortSignal: () => undefined },
+    getRuntime: () => ({ status: 'running' }), canManageSessions: async () => true,
+    buildRunProfile: async () => ({ session: { canManageSessions: true } }),
+    getRunToolContext: async () => ({ language: 'en' }), toolRuntime: runtime,
+    collectArtifacts: () => [],
+  });
+  const sendMessage = chrome.tabs.sendMessage;
+  try {
+    for (const recover of [false, true]) {
+      reset();
+      const responses = [];
+      const code = recover ? `
+        const page = qz.tab(1);
+        try { await page.read({timeout: .01}); }
+        catch (error) { trace(error.code); }
+        return (await page.read({timeout: 1})).text.toUpperCase();
+      ` : `
+        const article = await qz.tab(1).read({timeout: .01});
+        trace("processing article");
+        return article.text.toUpperCase();
+      `;
+      chrome.tabs.sendMessage = sendMessage;
+      const { result } = await runInnerWorker(compiled, code, {
+        strictResult: true,
+        async onMessage(message, reply) {
+          if (message.type !== 'tool_call') return;
+          const response = await bridge.handleToolCall({ ...message, sessionId: context.sessionId, runId: context.runId });
+          responses.push(response);
+          if (recover && responses.length === 1) chrome.tabs.sendMessage = async (_id, request) => request.action === 'ping'
+            ? { ok: true, contentType: 'text/html', elementRefs: 1 } : { text: 'Recovered article' };
+          reply({ type: 'tool_response', callId: message.callId, response });
+        },
+      });
+      assert.equal(responses[0].ok, false);
+      assert.equal(responses[0].code, 'TOOL_TIMEOUT');
+      assert.ok(responses[0].hint);
+      assert.equal(responses[0].details.pageState.title, 'Article');
+      assert.equal(result.ok, recover);
+      assert.equal(responses.length, recover ? 2 : 1);
+      assert.ok(!result.trace.some(row => row.message === 'processing article'));
+      if (recover) {
+        assert.equal(result.result, 'RECOVERED ARTICLE');
+        assert.ok(result.trace.some(row => row.message === 'TOOL_TIMEOUT'));
+      } else {
+        assert.equal(result.code, 'TOOL_TIMEOUT');
+        assert.equal(result.hint, responses[0].hint);
+        assert.deepEqual(result.details.pageState, responses[0].details.pageState);
+      }
+    }
+  } finally { chrome.tabs.sendMessage = sendMessage; reset(); }
 });
 
 test('open_tab and navigate retain a loading tab and its current URL on the existing timeout', async () => {
@@ -252,14 +317,21 @@ test('action timeout stays an error in Agent events and never issues effects', a
 defineTool({ name: '__partial_read', description: 'Synthetic staged read', parameters: { type: 'object', properties: { tabRef: { type: 'integer' } }, required: ['tabRef'] }, page: 'owned',
   timeout: 20, behavior: { timeoutResult: { kind: 'read', pending: 'read' } },
   execute: async (_args, _signal, ctx) => {
-    ctx.reportPartial({ text: 'old content', pageState: { documentId: 'old', url: 'https://example.test/old' } }, 'child frames');
+    ctx.reportPartial({ text: 'old content', trace: [{ level: 'info', message: 'Main frame read' }],
+      pageState: { documentId: 'old', url: 'https://example.test/old' } }, 'child frames');
     return never();
   },
 });
 test('timeout rejects closed tabs and drops content from an obsolete document', async () => {
   reset();
-  const result = await runtime.execute('__partial_read', { tabRef: 1 }, undefined, context);
-  assert.equal(result.text, undefined); assert.equal(result.incomplete.pending, 'current document content');
+  await assert.rejects(runtime.execute('__partial_read', { tabRef: 1 }, undefined, context), error => {
+    assert.equal(error.code, 'TOOL_TIMEOUT');
+    assert.equal(error.details.pending, 'current document content');
+    assert.equal(error.details.pageState.url, 'https://example.test/old');
+    assert.deepEqual(error.details.trace, [{ level: 'info', message: 'Main frame read' }]);
+    assert.doesNotMatch(JSON.stringify(error), /old content|"(?:incomplete|documentId)":/);
+    return true;
+  });
   const run = runtime.execute('__partial_read', { tabRef: 1 }, undefined, context);
   await new Promise(resolve => setTimeout(resolve, 5)); tabs.delete(1);
   await assert.rejects(run, { code: 'SESSION_TAB_UNAVAILABLE' });

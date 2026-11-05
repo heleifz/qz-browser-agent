@@ -107,7 +107,12 @@ for (const { seed, kind, outcomes } of plans) test(`page readiness ${kind} fuzz 
       assert.equal(reads.length, 1, label);
     } else {
       assert.equal(reads.length, 0, `${label}: rejected or timed out calls never extract`);
-      if (terminal === "timeout" || terminal === "deadline-race") assert.equal(result.value?.incomplete?.reason, "timeout", label);
+      if (terminal === "timeout" || terminal === "deadline-race") {
+        assert.equal(result.error?.code, "TOOL_TIMEOUT", label);
+        assert.equal(result.value, undefined, `${label}: a timed out read cannot return business data`);
+        assert.equal(typeof result.error.details.pending, "string", label);
+        assert.ok(result.error.details.pageState, `${label}: timeout retains public page state`);
+      }
       else if (["cancel", "obsolete-run", "delete-session"].includes(terminal)) assert.equal(result.error?.code, "OPERATION_ABORTED", label);
       else if (terminal === "blocked") assert.equal(result.error?.code, "SECURITY_GUARDRAIL_BLOCKED", label);
       else if (terminal === "internal" || terminal === "blank-complete") assert.equal(result.error?.code, "SESSION_TAB_NOT_WEB", label);

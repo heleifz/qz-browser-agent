@@ -108,18 +108,17 @@ for (const name of ["read_article", "list_images"]) for (const pendingUrl of [ta
           assert.equal(reads, 1);
           assert.ok(resolves >= 2, "access must be checked again after waiting");
         } else {
+          assert.ok(settled.error, `${outcome} must fail`);
+          assert.equal(settled.value, undefined, "an unsuccessful read must not return business data");
+          if (outcome !== "closed") assert.equal(settled.error.code, {
+            cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
+            "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
+          }[outcome]);
           if (outcome === "timeout" && name === "read_article") {
-            assert.equal(settled.error, undefined);
-            assert.equal(settled.value.incomplete.reason, "timeout");
-            assert.equal(settled.value.pageState.url, "about:blank");
-            assert.equal(settled.value.pageState.pendingUrl, pendingUrl || "");
-            assert.equal(settled.value.pageState.readyState, "unknown", "tab loading does not imply document readiness");
-          } else {
-            assert.ok(settled.error, `${outcome} must fail`);
-            if (outcome !== "closed") assert.equal(settled.error.code, {
-              cancelled: "OPERATION_ABORTED", timeout: "TOOL_TIMEOUT", "access-revoked": "SESSION_TAB_UNAVAILABLE",
-              "blocked-redirect": "SECURITY_GUARDRAIL_BLOCKED",
-            }[outcome]);
+            assert.equal(settled.error.details.pageState.url, "about:blank");
+            assert.equal(settled.error.details.pageState.pendingUrl, pendingUrl || "");
+            assert.equal(settled.error.details.pageState.readyState, "unknown", "tab loading does not imply document readiness");
+            assert.equal(typeof settled.error.details.pending, "string");
           }
           closed = false;
           load();
@@ -179,11 +178,11 @@ for (const [name, args] of pageReaders) {
     tab = { id: 1, url, status: "loading" }; closed = denied = false; reads = 0;
     const result = await runtime.execute(name, { ...args, tabId: 1, timeout: 0.1 }, undefined, context)
       .then(value => ({ value }), error => ({ error }));
-    if (["list_images", "read_image"].includes(name)) assert.equal(result.error?.code, "TOOL_TIMEOUT");
-    else {
-      assert.equal(result.error, undefined);
-      assert.equal(result.value.incomplete.reason, "timeout");
-      assert.equal(result.value.pageState.loading, true);
+    assert.equal(result.error?.code, "TOOL_TIMEOUT");
+    assert.equal(result.value, undefined);
+    if (!["list_images", "read_image"].includes(name)) {
+      assert.equal(result.error.details.pageState.loading, true);
+      assert.equal(typeof result.error.details.pending, "string");
     }
     load(); await pause(70);
     assert.equal(reads, 0, "deadline cannot revive a read after the page commits");
@@ -217,7 +216,11 @@ for (const outcome of ['ready', 'cancelled', 'timeout']) test(`a parsed-document
     if (outcome === 'ready') { assert.equal(result.value.text, 'Loaded article'); assert.equal(reads, 1); }
     else {
       if (outcome === 'cancelled') assert.equal(result.error.code, 'OPERATION_ABORTED');
-      else assert.equal(result.value.incomplete.reason, 'timeout');
+      else {
+        assert.equal(result.error.code, 'TOOL_TIMEOUT');
+        assert.equal(result.error.details.pageState.url, targetUrl);
+        assert.equal(result.value, undefined);
+      }
       completeDocument(); await pause(20);
       assert.equal(reads, 0, 'late DOM readiness never revives cancelled extraction');
     }
@@ -359,12 +362,17 @@ for (const name of ["inspect_element", "find_elements", "act_on_element"]) {
       } else {
         if (outcome === "cancelled") assert.equal(result.error.code, "OPERATION_ABORTED");
         else {
-          assert.equal(result.error, undefined);
           if (name === "act_on_element") {
+            assert.equal(result.error, undefined);
             assert.equal(result.value.code, "TOOL_TIMEOUT");
             assert.equal(result.value.details.status, "unconfirmed");
             assert.equal(result.value.details.automaticReplay, false);
-          } else assert.equal(result.value.incomplete.reason, "timeout");
+          } else {
+            assert.equal(result.error.code, "TOOL_TIMEOUT");
+            assert.equal(result.error.details.pageState.url, targetUrl);
+            assert.equal(typeof result.error.details.pending, "string");
+            assert.equal(result.value, undefined);
+          }
         }
         completeDocument(); await pause(20);
         assert.equal(fixture.dispatched.length, 0, "late parsing must never revive cancelled execution");

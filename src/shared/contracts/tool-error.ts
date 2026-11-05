@@ -7,7 +7,7 @@ const TEXT = [
   'statusText', 'unit', 'key', 'action', 'model', 'provider', 'permission', 'permissionLevel', 'blockedType',
   'blockedDomain', 'blockedPattern', 'host', 'until', 'suggestedNextStep', 'recommendedAction', 'actualType',
   'receivedType', 'recordId', 'artifactId', 'assetId', 'fileId', 'targetType', 'docModelId', 'id', 'stack',
-  'browserMessage',
+  'browserMessage', 'pending',
 ] as const;
 const NUMBER = [
   'line', 'column', 'index', 'timeout', 'timeoutMs', 'bytes', 'maxBytes', 'base64Chars', 'payloadChars',
@@ -27,7 +27,7 @@ const ARRAY = [
 ] as const;
 const OBJECT = [
   'schema', 'expectedSchema', 'retry', 'contentSummary', 'coordinateSpace', 'clip', 'rect', 'bounds',
-  'viewport', 'locator',
+  'viewport', 'locator', 'pageState',
 ] as const;
 const VALUE = [
   'value', 'expected', 'expectedType', 'recommended', 'recovery', 'examples', 'expectedValue', 'currentValue',

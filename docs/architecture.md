@@ -310,6 +310,8 @@ an owned blank tab still marked `loading` when Chrome has dropped `pendingUrl`. 
 the target and security policy before page preparation, even if navigation finished between admission
 and the wait. A web `pendingUrl` also gates reads of an existing document during replacement or
 same-URL reload, so a navigation timeout cannot turn into a successful read of the old page.
+Reader timeouts fail with `TOOL_TIMEOUT`; available recovery diagnostics (public page state,
+pending phase, and trace) live in error details. Incomplete observations never replace a reader's successful value.
 Committed documents remain readable while subresources load. Firefox's host supplies its missing
 `pendingUrl` field from main-frame request and commit events; request IDs isolate cancelled and
 replaced requests. A commit delivered before its request does not re-arm `pendingUrl` when the

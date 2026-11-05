@@ -1,7 +1,7 @@
 import { waitForPageCommit } from "./document-readiness.js";
 import { createdTabResultId } from "../../shared/contracts/page-observation.js";
 import { bindToolResultPresentation, getToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
-import { toolError, isToolFailure } from "../../shared/contracts/tool-error.js";
+import { toolError, isToolFailure, pageErrorDetails } from "../../shared/contracts/tool-error.js";
 import { resolveTabReference, tabReferenceError } from "./tab-reference.js";
 import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
@@ -1058,6 +1058,10 @@ async function finishTimedOutTool(policy: ToolTimeoutResult | undefined, partial
     if (kind === "navigation") result = { ...result, url: pageState.url, status: pageState.status, loading: pageState.loading };
   }
   if (signal?.aborted) throw new ToolExecutionError("OPERATION_ABORTED", "Operation aborted while collecting timeout result");
+  if (kind === "read") throw Object.assign(new ToolExecutionError(timeoutError.code, timeoutError.message, {
+    ...timeoutError.details, ...pageErrorDetails(context), pending, pageState: result.pageState,
+    ...(Array.isArray(partial.result.trace) ? { trace: partial.result.trace } : {}),
+  }), { hint: withLanguage(language, () => toolT("readTimeout")) });
   if (kind === "action") result = { ...toolError(timeoutError.code, timeoutError.message, {
     hint: result.executed === false ? "The operation did not execute. Check the page state before retrying."
       : withLanguage(language, () => toolT("actionTimeout")),

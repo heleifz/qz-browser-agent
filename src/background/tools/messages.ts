@@ -55,6 +55,10 @@ const messages = defineMessages("tool-runtime", {
     "zh-CN": "操作可能已生效，最终状态尚待确认。系统保留本次尝试，请读取页面状态确认结果。",
     en: "The action may have taken effect; its final state is unconfirmed. The system preserves this attempt. Read the page state to confirm the outcome.",
   },
+  readTimeout: {
+    "zh-CN": "读取未完成。请检查页面状态，缩小读取范围或延长超时后重试。",
+    en: "The read did not complete. Check the page state, then narrow the read or increase its timeout before retrying.",
+  },
   timeout: {
     "zh-CN": "超时秒数；省略时用默认超时。",
     en: "Timeout in seconds; defaults to the tool default.",

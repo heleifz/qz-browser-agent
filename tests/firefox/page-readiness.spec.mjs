@@ -26,8 +26,11 @@ test("page readers wait for initial navigation before extracting", async ({ fire
     await expect.poll(() => held.length).toBeGreaterThan(0);
     for (const [name, args] of readers) {
       const result = await callTool(session, name, { ...args, tabId, timeout: 0.1 });
-      if (name === "list_images") expect(result.code, JSON.stringify(result)).toBe("TOOL_TIMEOUT");
-      else expect(result, JSON.stringify(result)).toMatchObject({ incomplete: { reason: "timeout" } });
+      expect(result.code, `${name}: ${JSON.stringify(result)}`).toBe("TOOL_TIMEOUT");
+      expect(result).not.toHaveProperty("incomplete");
+      if (name !== "list_images") {
+        expect(result.details?.pageState, JSON.stringify(result)).toMatchObject({ status: "loading", loading: true });
+      }
       expect(result).not.toHaveProperty("tabId");
       expect(result).not.toHaveProperty("tabRef");
       expect(await session.extension("background", `return (await view.chrome.tabs.get(${tabId})).status;`)).toBe("loading");
@@ -60,7 +63,8 @@ function callTool(session, name, args) {
       return JSON.parse(JSON.stringify(result));
     } catch (error) {
       const failure = Cu.waiveXrays(error);
-      return { code: String(failure.code || ""), message: String(failure.message || failure) };
+      return { code: String(failure.code || ""), message: String(failure.message || failure),
+        ...(failure.details ? { details: JSON.parse(JSON.stringify(failure.details)) } : {}) };
     }
   `);
 }

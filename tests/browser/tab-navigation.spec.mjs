@@ -279,7 +279,10 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         if (outcome === 'ready') release(head);
         const result = await pending;
         if (outcome === 'timeout') {
-          expect(result.incomplete?.reason).toBe('timeout');
+          expect(result, JSON.stringify(result)).toMatchObject({ code: 'TOOL_TIMEOUT', details: {
+            pageState: { url: `${origin}/late-body-${suffix}`, status: 'loading', loading: true },
+          } });
+          expect(result).not.toHaveProperty('incomplete');
           expect(result).not.toHaveProperty('_image'); expect(result).not.toHaveProperty('snapshot'); expect(result).not.toHaveProperty('text');
           release(head);
         } else {
@@ -475,8 +478,11 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     // waiting, and neither the open timeout nor a read timeout may close the tab.
     for (const [name, args] of readers) {
       const result = await call(name, { ...args, tabRef: 'loading', timeout: 0.1 });
-      if (['list_images', 'read_image'].includes(name)) expect(result.code, JSON.stringify(result)).toBe('TOOL_TIMEOUT');
-      else expect(result, JSON.stringify(result)).toMatchObject({ incomplete: { reason: 'timeout' } });
+      expect(result.code, `${name}: ${JSON.stringify(result)}`).toBe('TOOL_TIMEOUT');
+      expect(result).not.toHaveProperty('incomplete');
+      if (!['list_images', 'read_image'].includes(name)) {
+        expect(result.details?.pageState, JSON.stringify(result)).toMatchObject({ status: 'loading', loading: true });
+      }
       expect(await worker.evaluate(tabId => chrome.tabs.get(tabId).then(tab => tab.status), loadingTabId)).toBe('loading');
     }
     release("/open-timeout");
