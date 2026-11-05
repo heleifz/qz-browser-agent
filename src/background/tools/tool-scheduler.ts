@@ -17,6 +17,7 @@ const ancestorScope = (a: ExecutionScope, b: ExecutionScope) => {
 class ExecutionGate {
   active = new Set<ExecutionScope>();
   listeners = new Set<() => void>();
+  committing = false;
   constructor(readonly limit: number) {}
   wake() { for (const listener of this.listeners) listener(); }
   ready(scope: ExecutionScope) {
@@ -42,13 +43,14 @@ function releaseExecution(scope: object) {
 
 /** Trusted declarations grant concurrency; an explicit page is still required. */
 export function independentToolPolicy(policy: ToolBatchTabPolicy | null | undefined, explicit = true): boolean {
-  return policy?.kind === "observe" || (policy?.kind === "create" ? policy.parallel === true && (!policy.targeted || explicit)
+  return policy?.kind === "script" || policy?.kind === "observe" || (policy?.kind === "create" ? policy.parallel === true && (!policy.targeted || explicit)
     : policy?.kind === "target" && (policy.observation || policy.parallel === true) && explicit);
 }
 
 interface Invocation<R> {
   scope: object; group: object | string;
   lane: string | number | null; independent: boolean; observer: boolean; creation: boolean;
+  resolveLane(): string | number | null;
   state: "queued" | "running" | "done" | "committing" | "settled";
   previous: Invocation<unknown>[]; error?: unknown; value?: R;
   produces?: string; producer?: Invocation<unknown>; failed: boolean;
@@ -60,8 +62,8 @@ interface Invocation<R> {
 /**
  * Dynamic descendants use the batch scheduler's trusted roles, lanes and ten-call
  * budget. A parent waiting for descendants becomes a container, rather than
- * holding a slot or waiting behind its own barrier. Each sibling cursor commits
- * in invocation order; descendants have a separate cursor so parents can await them.
+ * holding a slot or waiting behind its own barrier. Ready results commit one at
+ * a time, respecting conflicts without waiting for unrelated executions.
  */
 export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
   const limit = Math.max(1, Math.min(MAX_IN_FLIGHT, Math.floor(maxInFlight || MAX_IN_FLIGHT)));
@@ -78,6 +80,10 @@ export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
     pumping = true;
     try {
       for (const call of calls) {
+        if (call.state === "queued") {
+          call.lane = call.resolveLane();
+          executionScopes.get(call.scope)!.lane = call.lane;
+        }
         if (call.state === "queued" && call.signal?.aborted) {
           call.failed = true;
           call.error = call.signal.reason || Object.assign(new Error("Tool call cancelled"), { code: "OPERATION_ABORTED" });
@@ -85,17 +91,23 @@ export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
         }
       }
       for (const call of calls) {
-        if (call.state !== "done" || !call.previous.every(previous => previous.observer || settled(previous))) continue;
+        const sharedGate = executionScopes.get(call.scope)!.gate;
+        if (call.state !== "done" || sharedGate.committing || call.previous.some(previous =>
+          !previous.observer && (!previous.independent || !call.independent || conflict(previous, call)) && !settled(previous))) continue;
+        sharedGate.committing = true;
         call.state = "committing";
         void (async () => {
           try {
             if (call.failed) throw call.error;
             if (call.signal?.aborted) throw call.signal.reason || Object.assign(new Error("Tool call cancelled"), { code: "OPERATION_ABORTED" });
             const value = call.commit ? await call.commit(call.value) : call.value;
-            call.failed = call.isError?.(call.value) === true;
+            call.failed = call.isError?.(value) === true;
             call.resolve(value);
           } catch (error) { call.failed = true; call.reject(error); }
-          finally { call.state = "settled"; call.cleanup(); pump(); }
+          finally {
+            call.state = "settled"; call.cleanup();
+            sharedGate.committing = false; sharedGate.wake(); pump();
+          }
         })();
       }
       for (const call of calls) {
@@ -126,7 +138,7 @@ export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
   };
   return {
     run<R>(options: {
-      parent?: object; group: object | string; lane: string | number | null;
+      parent?: object; group: object | string; lane: string | number | null | (() => string | number | null);
       policy: ToolBatchTabPolicy | null | undefined; explicit?: boolean; signal?: AbortSignal;
       produces?: string; targetAlias?: string; dependencyFailure?(): unknown; isError?(value: R): boolean;
       execute(scope: object): Promise<R>; commit?(value: R): Promise<R>;
@@ -137,13 +149,16 @@ export function createNestedToolScheduler(maxInFlight = MAX_IN_FLIGHT) {
       const previous = calls.filter(call => call.group === group);
       const independent = independentToolPolicy(options.policy, options.explicit);
       const observer = options.policy?.kind === "observe" || options.policy?.kind === "create" && options.policy.passive === true;
-      const scope = executionScope(gate, options.lane, independent, observer, options.parent);
+      const requestedLane = options.lane;
+      const resolveLane = typeof requestedLane === "function" ? requestedLane : () => requestedLane;
+      const lane = resolveLane();
+      const scope = executionScope(gate, lane, independent, observer, options.parent);
       const sharedGate = executionScopes.get(scope)!.gate;
       if (!gates.has(sharedGate)) sharedGate.listeners.add(pump);
       gates.set(sharedGate, (gates.get(sharedGate) || 0) + 1);
       return new Promise<R>((resolve, reject) => {
         const call: Invocation<R> = {
-          scope, group, previous, lane: options.lane, independent, observer,
+          scope, group, previous, lane, resolveLane, independent, observer,
           creation: options.policy?.kind === "create",
           state: "queued", signal: options.signal,
           produces: options.produces, producer: options.targetAlias ? [...calls].reverse().find(call => call.produces === options.targetAlias) : undefined,
@@ -238,13 +253,14 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
   const drain = async () => {
     committing = true;
     try {
-      while (cursor < nodes.length) {
+      while (cursor < nodes.length && !gate.committing) {
         const node = nodes[cursor]!;
         if (node.state === "skipped") { cursor++; continue; }
         if (node.state !== "done") break;
+        gate.committing = true;
         try { if (!node.failed) await options.commit(node.result!); }
         catch (error) { errors.push(error); }
-        node.state = "committed"; cursor++; wake();
+        finally { node.state = "committed"; cursor++; gate.committing = false; gate.wake(); wake(); }
       }
     } finally { committing = false; wake(); }
   };
@@ -267,9 +283,9 @@ export async function scheduleToolCalls<T, R>(items: readonly T[], options: {
         if (node.state === "queued" && deps.execution.every(done) && deps.commit.every(committed)
           && gate.ready(scope)) launch(node);
       }
-      if (!committing && ["done", "skipped"].includes(nodes[cursor]?.state || "")) void drain();
+      if (!committing && !gate.committing && ["done", "skipped"].includes(nodes[cursor]?.state || "")) void drain();
       if (cursor === nodes.length) break;
-      if (!active && !committing && !gate.active.size && nodes[cursor]?.state === "queued") throw new Error("Unresolvable tool dependency cycle");
+      if (!active && !committing && !gate.committing && !gate.active.size && nodes[cursor]?.state === "queued") throw new Error("Unresolvable tool dependency cycle");
       await changed;
     }
     if (errors.length) throw errors[0];

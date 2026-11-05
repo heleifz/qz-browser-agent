@@ -244,7 +244,7 @@ test("drive script projection carries explicit images from a primitive call coll
   const result = await runDriveCalls([0, 1].map(index => ({ id: String(index), name: 'run_script', args: { index } })), {
     signal: new AbortController().signal,
     context: { resultPresentation: { _display: { parent: true } } },
-    getModelPolicy: () => ({ preserveResult: true }),
+    getModelPolicy: () => ({ preserveResult: true, scriptResult: "value" }),
     getBatchTabPolicy: () => null,
     execute: async (_name, { index }, _signal, context) => {
       assert.deepEqual(context.resultPresentation, {});
@@ -256,7 +256,7 @@ test("drive script projection carries explicit images from a primitive call coll
     onSettled: call => settled.push(call),
   });
   assert.equal(new Set(holders).size, 2);
-  assert.deepEqual(result.results.map(call => call.result), [0, 1]);
+  assert.deepEqual(result.results.map(call => call.result), [0, 1].map(result => ({ok:true,result,trace:[]})));
   assert.deepEqual(result.results[0].images, [{ mimeType: 'image/png', data: 'aGk=' }]);
   assert.equal(Object.hasOwn(result.results[1], 'images'), false);
   assert.deepEqual(settled.map(call => call.resultPresentation._display.script.trace), [[0], [1]]);
@@ -270,7 +270,7 @@ test('batch traces come from each trusted collector, including failures, without
   const failure = toolError('SCRIPT_EVALUATION_FAILED', 'Failed after logging.', { details: { trace: full.slice(-5) } });
   const seen = [];
   const result = await runDriveCalls(['primitive', 'business', 'failure', 'thrown', 'timeout'].map(id => ({ id, name: 'run_script', args: { id } })), {
-    signal: new AbortController().signal, getModelPolicy: () => ({ preserveResult: true }),
+    signal: new AbortController().signal, getModelPolicy: () => ({ preserveResult: true, scriptResult: "value" }),
     execute: async (_name, { id }, _signal, context) => {
       if (id === 'business') return business;
       if (id === 'timeout') return toolError('TOOL_TIMEOUT', 'The script timed out.', { details: { trace: full.slice(-5) } });
@@ -281,18 +281,20 @@ test('batch traces come from each trusted collector, including failures, without
     onSettled: event => seen.push(event),
   });
   const [primitive, authored, failed, thrown, timeout] = result.results;
-  assert.equal(primitive.result, 7);
-  assert.deepEqual(primitive.traces, full.map(row => row.message));
-  assert.equal(authored.result, business);
+  assert.equal(primitive.result.result, 7);
+  assert.deepEqual(primitive.result.trace, full.map(row => row.message));
+  assert.equal(authored.result.result, business);
+  assert.deepEqual(authored.result.trace, []);
   assert.equal(Object.hasOwn(authored, 'traces'), false);
   assert.deepEqual(getDriveToolTraces(business), []);
   assert.equal(failed.isError, true);
-  assert.deepEqual(failed.traces, full.map(row => row.message));
-  assert.deepEqual(failed.result.details.trace, full.slice(-5), 'transport traces do not rewrite the ToolError');
+  assert.deepEqual(failed.result.trace, full.map(row => row.message));
+  assert.equal(failed.result.result.details?.trace, undefined, 'diagnostics sit beside the ToolError');
+  assert.deepEqual(failure.details.trace, full.slice(-5), 'formatting does not mutate the source error');
   assert.equal(thrown.isError, true);
-  assert.deepEqual(thrown.traces, full.map(row => row.message));
+  assert.deepEqual(thrown.result.trace, full.map(row => row.message));
   assert.equal(seen[3].resultPresentation._display.script.valueOnly, undefined, 'a thrown failure cannot acquire a successful value envelope');
-  assert.deepEqual(timeout.traces, full.slice(-5).map(row => row.message), 'hard timeout only has its existing last five entries');
+  assert.deepEqual(timeout.result.trace, full.slice(-5).map(row => row.message), 'hard timeout only has its existing last five entries');
   const error = bindToolResultPresentation(toolError('TEST_FAILURE', 'failed'), { _display: { script: { trace: ['trusted'] } } });
   assert.deepEqual(getDriveToolTraces(error, {}, true), ['trusted']);
 });
@@ -1057,7 +1059,7 @@ test("production normalization creates fresh isolated sessions even with an occu
     assert.equal(read.result.snapshot, `https://example.com/${i}`, "later connections retain only this session's alias");
   }
 
-  await assert.rejects(runtime.executeTool({ sessionId: first.sessionId, name: "run_script",
+  await assert.rejects(runtime.executeTool({ sessionId: first.sessionId, scriptApiVersion: 2, name: "run_script",
     args: { tabRef: "page", timeout: 30, code: "async () => 7" },
   }), error => {
     assert.equal(error.code, "SCRIPT_EVALUATION_FAILED");

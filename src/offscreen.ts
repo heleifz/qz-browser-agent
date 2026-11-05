@@ -123,6 +123,13 @@ window.addEventListener("message", (event) => {
     traceInnerOffscreen(`sandbox.${data.phase || "trace"}`, record(data.details));
     return;
   }
+  if (data.type === "script_trace") {
+    const requestId = String(data.requestId || "");
+    if (pendingRuns.has(requestId)) {
+      void chrome.runtime.sendMessage({ type: "run_script_inner_diagnostic", requestId, row: data.row }).catch(() => {});
+    }
+    return;
+  }
   if (data.type === "result") {
     const requestId = String(data.requestId || "");
     const pending = pendingRuns.get(requestId);

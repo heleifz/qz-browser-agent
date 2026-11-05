@@ -448,23 +448,28 @@ a parallel role. `behavior.uidTargets` extends the singular target fields; mixed
 target sets retain commit barriers, as do implicit targets and undeclared/global operations.
 Capability definitions can set `behavior.barrier` to a boolean or synchronous argument predicate.
 The runtime evaluates it once per call during planning; true or a thrown predicate overrides
-`parallelOpen`, `parallelTab` and `parallelRead`. The Agent reuses this decision for execution.
+`parallelOpen`, `parallelTab`, `parallelRead` and `orchestration`. The Agent reuses this decision for execution.
 Projection preserves target metadata for `tabRef`, and the same graph builder adds preceding-commit
 and following-execution dependencies. No tool-name branch in the scheduler selects this behavior.
 
-`run_script` runs orchestration outside pages and remains a barrier at the Agent call level.
-Its tools proxy invokes the current catalog through the same Session authority and scheduler.
+`run_script` runs orchestration outside pages. Native batches and nested calls schedule it as a
+container; its tools proxy invokes the catalog through the same Session authority, page lanes and
+shared concurrency budget. New Skill tools with `runtime: "script"` delegate to this runner and inherit
+its optional 120-second timeout. Their arguments remain business data until
+a descendant invokes a page tool. Legacy Skill runtimes keep their original contracts and barriers.
 `evaluate` declares tab-local parallel execution: independent pages can advance together while
 calls on one page share its execution lane. Each call supplies tabRef; `mutatesPage` controls
 state effects rather than selecting a page or execution environment.
+
+CLI stdout and Agent tool messages share the script receipt `{ok, result, trace}`. Success carries the script return value; failure carries a ToolError. Trace is a string array collected by the host, including nested Skill calls and progress before failure or cancellation. Script-authored fields never select execution status or diagnostic metadata. Inside `run_script` and `runtime:"script"` Skills, awaited tool calls return business values directly, including calls to script Skills; failures reject. Legacy page/inner callers retain their original return contracts. Renderer paths stay relative to business data.
 
 Page functions passed to `evaluate` receive data through args and return their business value.
 They have document/window access, while the outer script uses tools for browser operations.
 Navigation can interrupt a page evaluation without destroying the outer script. Context loss,
 runtime errors and cancellation never replay code. `run_skill_script` and installed Skill/plugin
 execution retain their permission, ownership, deadline and run checks.
-Tool start and progress events publish during execution, including flow-control waits. A separate
-cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
+Tool start and progress events publish during execution, including flow-control waits. For native
+model batches, a cursor publishes tool-owned Session state, effects, alias bindings, final tool events and model
 messages in the original call order. Completed execution frees a slot immediately, even while its
 result awaits publication. Progress stops when execution settles or cancellation revokes the call.
 The Background runtime tracks overlapping calls and projects the most recently active tool; ending
@@ -495,6 +500,14 @@ permission. Actions await published ownership. Commit checks run authority, live
 security again, then publishes ownership and selection together. Failed or cancelled uncommitted
 creations are closed; terminal cleanup also retries outstanding permits. A navigation timeout retains
 its loading tab only if its ordered commit is still authorized, and retains its alias for dependent and later calls.
+
+Scripts submit dynamic descendants to the same execution gate. Independent branches settle as soon
+as their own execution and state commit finish; an unrelated slow sibling does not delay their
+Promises. Ready commits share one writer with native batch commits. Same-page dependencies and
+global barriers retain their order, and pending aliases resolve their physical lane before execution.
+Parent containers yield execution slots to their descendants. Script exit revokes unfinished calls;
+catching a rejected Promise does not cancel siblings. Transcript cards update by call identity,
+while native model messages retain their batch order.
 
 Only trusted core registrations declare scheduling authority. Page-tool model schemas expose `tabRef`
 (integer or string); numeric strings also select browser IDs. Internal handlers retain numeric `tabId`,

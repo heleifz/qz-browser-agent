@@ -28,7 +28,8 @@ for (const seed of seeds) {
     let state = seed;
     const choose = max => { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return (state >>> 0) % max; };
     const directory = await mkdtemp(join(tmpdir(), 'qz-drive-fuzz-'));
-    const identity = buildIdentity(), contexts = [], report = { seed, calls: [], tasks: [], events: [], scenarios: [] };
+    const identity = buildIdentity(), contexts = [], browserObservers = [];
+    const report = { seed, calls: [], tasks: [], events: [], scenarios: [] };
     const env = { ...process.env, QZ_STATE_DIR: join(directory, 'state'), NO_COLOR: '1' };
     for (const name of Object.keys(env)) if (/API.?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|NODE_OPTIONS|NODE_PATH/i.test(name)) delete env[name];
     const paths = daemonPaths({ ...identity, stateDir: env.QZ_STATE_DIR });
@@ -39,7 +40,7 @@ for (const seed of seeds) {
       await writeFile(paths.state, JSON.stringify({ endpoint: bridge.endpoint, ...identity, instanceId: health.instanceId, processId: health.processId }));
     };
     const cli = async (argv, stdin = '', expected = 0) => {
-      const started = performance.now();
+      const startedAt = Date.now(), started = performance.now();
       const child = spawn(process.execPath, ['services/mcp-bridge/src/bin.mjs', ...argv], {
         cwd: new URL('../../', import.meta.url), env, stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -50,7 +51,7 @@ for (const seed of seeds) {
       let exitCode;
       try { exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); }); }
       finally { clearTimeout(timer); }
-      report.calls.push({ argv, stdin, exitCode, stdout, stderr, stdoutChars: stdout.length, ms: Math.round(performance.now() - started) });
+      report.calls.push({ argv, stdin, exitCode, stdout, stderr, stdoutChars: stdout.length, startedAt, ms: Math.round(performance.now() - started) });
       expect(exitCode, `seed=${seed} ${argv.join(' ')}\n${stdout}\n${stderr}`).toBe(expected);
       return JSON.parse(stdout);
     };
@@ -71,6 +72,18 @@ for (const seed of seeds) {
           args: ['--disable-features=DisableLoadExtensionCommandLineSwitch', `--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
         });
         contexts.push(context);
+        // A renderer can crash before Playwright exposes its Page object.
+        const observer = await context.browser().newBrowserCDPSession(), targets = new Map();
+        browserObservers.push(observer);
+        for (const event of ['targetCreated', 'targetInfoChanged']) {
+          observer.on(`Target.${event}`, ({ targetInfo }) => targets.set(targetInfo.targetId, targetInfo));
+        }
+        observer.on('Target.targetDestroyed', ({ targetId }) => targets.delete(targetId));
+        observer.on('Target.targetCrashed', ({ targetId, status, errorCode }) => report.events.push({
+          kind: 'target-crashed', at: Date.now(), owner: name, targetId, status, errorCode,
+          url: targets.get(targetId)?.url ?? null, type: targets.get(targetId)?.type ?? null,
+        }));
+        await observer.send('Target.setDiscoverTargets', { discover: true });
         await context.route('http://127.0.0.1:18765/**', route => route.abort());
         const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
         const panel = await context.newPage();
@@ -237,6 +250,7 @@ for (const seed of seeds) {
       expect(report.scenarios.map(row => row.id).sort()).toEqual([...scenarioIds].sort());
       expect(report.scenarios.every(row => row.status === 'passed')).toBe(true);
     } finally {
+      await Promise.all(browserObservers.map(observer => observer.detach().catch(() => {})));
       report.summary = { commands: report.calls.length, stdoutChars: report.calls.reduce((sum, row) => sum + row.stdoutChars, 0) };
       const path = info.outputPath('direct-drive-fuzz.json');
       await writeFile(path, JSON.stringify(report, null, 2));

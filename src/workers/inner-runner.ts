@@ -78,7 +78,7 @@ async function runInnerScript(payload: WorkerExecute) {
   const args = input;
   const tabId = null;
   let seq = 0;
-  pushTrace("script.start", [{ sourceLength: source.length }]);
+  let traceIndex = 0;
 
   function traceText(value: unknown) {
     try {
@@ -93,12 +93,15 @@ async function runInnerScript(payload: WorkerExecute) {
 
   function pushTrace(level: string, items: unknown[]) {
     const message = Array.from(items || []).map(traceText).join(" ");
-    traceRows.push({
+    const row = {
+      traceIndex: ++traceIndex,
       time: new Date().toISOString(),
       level: String(level || "trace"),
       message: message.length > 1000 ? message.slice(0, 1000) + "…[truncated]" : message,
-    });
+    };
+    traceRows.push(row);
     if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
+    send({ type: "script_trace", row });
   }
 
   function trace(...items: unknown[]) { pushTrace("trace", items); }
@@ -114,9 +117,8 @@ async function runInnerScript(payload: WorkerExecute) {
   function callTool(name: string, args: unknown = {}) {
     const toolName = String(name || "").trim();
     if (!toolName) throw new Error("tools call requires a tool name");
-    const toolArgs = args && typeof args === "object" && !Array.isArray(args) ? { ...args } : {};
+    const toolArgs: Record<string, unknown> = isRecord(args) && !Array.isArray(args) ? { ...args } : {};
     const safeToolArgs = scriptToolArguments(toolName, toolArgs);
-    pushTrace("tool.start", [toolName]);
     const callId = "inner_tool_" + Date.now() + "_" + (++seq);
     send({
       type: "tool_call",
@@ -128,17 +130,16 @@ async function runInnerScript(payload: WorkerExecute) {
       pendingToolCalls.set(callId, {
         toolName,
         resolve(response) {
-          pushTrace("tool.end", [toolName]);
           addToolArtifacts(response.artifacts || response.artifact);
-          if (response.result && typeof response.result === "object" && response.observation) {
-            observations.set(response.result, response.observation);
+          // Modern scripts receive business values; legacy callers retain the declared receipt.
+          const result = payload.strictResult && response.resultFormat === "receipt" && isRecord(response.result)
+            ? response.result.result : response.result;
+          if (result && typeof result === "object" && response.observation) {
+            observations.set(result, response.observation);
           }
-          resolve(response.result);
+          resolve(result);
         },
-        reject(error) {
-          pushTrace("tool.error", [toolName, failure(error).message || error]);
-          reject(error);
-        },
+        reject,
       });
     });
   }

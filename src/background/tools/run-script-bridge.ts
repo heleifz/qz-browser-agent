@@ -7,6 +7,7 @@ import { projectToolArtifacts } from "../../shared/tools/tool-artifacts.js";
 import { positiveArtifactNumber as positiveNumber } from "../../shared/tools/artifact-projection.js";
 import type { ToolContext } from "../../sdk/background.js";
 import { getToolCallParent } from "./call-lifecycle.js";
+import { inheritScriptTrace, collectScriptResultTrace } from "./script-trace.js";
 import type { RegisteredTool } from "./registry.js";
 import type { ToolBatchTabPolicy, ToolBehavior, ToolModelPolicy } from "../../shared/contracts/tool.js";
 import { toolBehaviorEnabled } from "./behavior.js";
@@ -79,7 +80,7 @@ export function createRunScriptBridge({
   if (typeof collectArtifacts !== "function") throw new TypeError("collectArtifacts is required");
   const schedulers = new Map<string, ReturnType<typeof createNestedToolScheduler>>();
 
-  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, invocationSignal?: AbortSignal) {
+  async function handleToolCall(message: Fields = {}, sender: BridgeSender = {}, invocationSignal?: AbortSignal): Promise<Fields> {
     // The old transport spelling is a hidden alias for the registered catalog tool.
     if (message.toolName === "__list_tools__") message = { ...message, toolName: "list_tools" };
     let rawResult: unknown, resultPresentation: ToolResultPresentation | undefined, observed = false, externalDrive = false;
@@ -92,7 +93,7 @@ export function createRunScriptBridge({
     const record = async (phase: "start" | "end", result: unknown, isError: boolean, startedExecution?: boolean) => {
       try { await recordNestedTool?.({ sessionId, runId, name, toolCallId, parentCallId, parentSpanId, phase, externalDrive,
         args: plainObject(message.args), result, isError, startedExecution,
-        resultPresentation: isError ? undefined : resultPresentation }); }
+        resultPresentation }); }
       catch (error) { logger.debug("[轻舟] persist nested tool failed:", error instanceof Error ? error.message : error); }
     };
     const start = async (startedExecution: boolean) => {
@@ -110,7 +111,7 @@ export function createRunScriptBridge({
       await start(false);
       await record("end", observed && response.isError !== true ? rawResult : response.result ?? response, response.isError === true);
     }
-    return response;
+    return { ...response, toolCallId };
   }
 
   async function executeToolCall(message: Fields, sender: BridgeSender, observe: (result: unknown, presentation?: ToolResultPresentation) => void, observeMode: (externalDrive: boolean) => void, invocationSignal: AbortSignal | undefined, toolCallId: string, start: (executed: boolean) => Promise<void>) {
@@ -173,20 +174,22 @@ export function createRunScriptBridge({
       let scheduler = schedulers.get(key);
       if (!scheduler) { scheduler = createNestedToolScheduler(toolRuntime.maxInFlight); schedulers.set(key, scheduler); }
       const policy = toolRuntime.getBatchTabPolicy?.(toolName, toolArgs, toolContext);
-      const staged = Boolean(toolRuntime.commitToolResult && toolRuntime.discardToolResult)
+      const staged = policy?.kind !== "script" && Boolean(toolRuntime.commitToolResult && toolRuntime.discardToolResult)
         && independentToolPolicy(policy, toolArgs.tabId != null || Object.hasOwn(toolArgs, "tabRef"));
       const aliases = toolRuntime.getTabAliases?.(sessionId) || {};
-      const ref = toolArgs.tabRef;
+      const ref = policy?.kind === "script" ? undefined : toolArgs.tabRef;
       const lane = policy?.kind === "target" && policy.tabId != null ? policy.tabId
         : policy?.kind === "create" && !policy.targeted ? typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? `alias:${toolArgs.tabAlias}` : `create:${crypto.randomUUID()}`
-        : tabReferenceId(ref) ?? (typeof ref === "string" ? aliases[ref] ?? `alias:${ref}` : Number(toolArgs.tabId) || null);
+        : policy?.kind === "script" ? null : tabReferenceId(ref) ?? (typeof ref === "string" ? aliases[ref] ?? `alias:${ref}` : Number(toolArgs.tabId) || null);
       let definition: ReturnType<BridgeHost["toolRuntime"]["resolveDefinition"]>;
       let executionResult: unknown;
       let executionContext: ToolContext = toolContext;
       try { return await scheduler.run<unknown>({
         parent: parent?.nestedToolScope,
         group: String(message.parentCallId || "legacy"),
-        lane,
+        // Pending aliases acquire their physical page lane when the creator commits.
+        lane: () => typeof ref === "string" && lane === `alias:${ref}`
+          ? toolRuntime.getTabAliases?.(sessionId)?.[ref] ?? lane : lane,
         produces: policy?.kind === "create" && typeof toolArgs.tabAlias === "string" && !Object.hasOwn(aliases, toolArgs.tabAlias) ? toolArgs.tabAlias : undefined,
         targetAlias: typeof ref === "string" && tabReferenceId(ref) === null && !Object.hasOwn(aliases, ref) ? ref : undefined,
         dependencyFailure: () => tabReferenceError("dependency_failed", ref, language), isError: isToolFailure,
@@ -203,6 +206,7 @@ export function createRunScriptBridge({
             preserveWorkingTab: policy?.kind === "observe" || policy?.kind === "target" && policy.observation,
             source: "run_script", senderTabId: sender?.tab?.id || null,
           };
+          inheritScriptTrace(parent, executionContext);
           await start(true);
           return executionResult = await toolRuntime.execute(toolName, toolArgs, signal, executionContext);
         },
@@ -215,7 +219,7 @@ export function createRunScriptBridge({
           await applyNestedToolResult({ sessionId, runId, toolName, args: toolArgs, result, isError });
           const resultStopped = stoppedBridgeError(sessionId, runId, toolName, signal);
           if (resultStopped) return respondFailure(resultStopped, { toolName });
-          observe(result, isError ? undefined : executionContext.resultPresentation);
+          observe(result, executionContext.resultPresentation);
           if (isError) {
             return respondFailure(result, { toolName });
           }
@@ -240,6 +244,7 @@ export function createRunScriptBridge({
           return {
             ok: true,
             result: omitObservationImage(modelResult, Boolean(observation)),
+            ...(definition?.model?.scriptResult === "receipt" ? { resultFormat: "receipt" } : {}),
             ...(observation ? { observation } : {}),
             artifacts,
             isError: false,
@@ -247,6 +252,7 @@ export function createRunScriptBridge({
         },
       }) as Fields; }
       finally {
+        collectScriptResultTrace(parent, executionContext);
         await toolRuntime.discardToolResult?.(executionResult, executionContext);
         if (!scheduler.pending && schedulers.get(key) === scheduler) schedulers.delete(key);
       }

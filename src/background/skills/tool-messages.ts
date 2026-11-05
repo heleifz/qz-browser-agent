@@ -11,6 +11,10 @@ const messages = defineMessages("skill-tools", {
     "zh-CN": "必填。Skill 脚本超时，单位秒；<= 0 表示无限等待，> 0 表示最多等待对应秒数。",
     "en": "Required. Skill script timeout in seconds: <= 0 means no time limit; > 0 sets the maximum duration."
   },
+  "defaultScriptTimeout": {
+    "zh-CN": "timeout 单位为秒，默认 120；0 不设置本次截止时间，仍受父调用取消和期限约束。",
+    "en": "timeout is seconds, defaults to 120; 0 removes this call deadline while retaining parent cancellation and deadlines."
+  },
   "tabRef": {
     "zh-CN": "必填 tabRef：当前任务的标签页别名，或 open_tab、list_tabs 返回的页面引用。",
     "en": "Required tabRef: a current-task tab alias or the page reference returned by open_tab or list_tabs."
@@ -32,8 +36,8 @@ const messages = defineMessages("skill-tools", {
     "en": "MCP: {server} / {tool} (runs via remote HTTP MCP; no web tab needed)."
   },
   "innerRuntime": {
-    "zh-CN": "无需网页，可读取 Skill 设置并请求其允许的网络来源。",
-    "en": "Runs without a web page, with access to the Skill's settings and permitted network origins."
+    "zh-CN": "脚本在页面外运行，可调用工具、读取 Skill 设置和请求其允许的网络来源；页面操作显式传 tabRef。",
+    "en": "Runs outside web pages and can call tools, read Skill settings, and access permitted network origins; page operations pass tabRef explicitly."
   },
   "pageTarget": {
     "zh-CN": "页面目标：必须传 tabRef，指定当前任务拥有的标签页别名或 open_tab、list_tabs 返回的引用。",

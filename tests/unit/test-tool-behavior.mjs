@@ -188,8 +188,8 @@ test('capability declarations alone place new tool names into the same graph, wi
   releases.get(4)(); await run; assert.deepEqual(committed, [1, 2, 3, 4]);
 });
 
-test('page evaluation occupies explicit tab lanes and outer orchestration remains a barrier', () => {
-  assert.equal(runtime.resolveDefinition('run_script').behavior.barrier, true);
+test('page evaluation occupies explicit lanes while outer scripts schedule their descendants', async () => {
+  assert.equal(runtime.resolveDefinition('run_script').behavior.orchestration, true);
   assert.equal(runtime.resolveDefinition('run_skill_script').behavior.barrier, true);
   for (const name of ['evaluate', 'run_skill_script']) {
     for (const mutatesPage of [false, true]) for (const code of ['42', 'return input.value + args.extra', 'tools.$list()', 'eval(input.code)', 'async () => {', undefined]) {
@@ -199,8 +199,9 @@ test('page evaluation occupies explicit tab lanes and outer orchestration remain
       assert.equal(runtime.getParallelReadTab(name, { ...args, tabId: 1 }), null);
     }
   }
-  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { code: 'return await tools.list_tabs();' }), { kind: 'barrier' });
-  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { tabRef: 'a', code: 'return 42;' }), { kind: 'barrier' }, 'an obsolete page argument cannot grant orchestration a parallel lane');
+  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { code: 'return await tools.list_tabs();' }), { kind: 'script' });
+  assert.deepEqual(runtime.getBatchTabPolicy('run_script', { tabRef: 'a', code: 'return 42;' }), { kind: 'script' }, 'business arguments cannot change the trusted scheduling role');
+  await assert.rejects(runtime.execute('run_script', { tabRef: 'a', code: 'return 42;' }), { code: 'INVALID_RUN_SCRIPT_INPUT' });
   assert.deepEqual(runtime.getBatchTabPolicy('run_skill_script', { target: 'inner', code: 'return 42', tabRef: 'a' }), { kind: 'barrier' }, 'hidden worker compatibility retains its own scheduling boundary');
 });
 

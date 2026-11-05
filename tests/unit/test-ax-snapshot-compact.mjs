@@ -5,6 +5,7 @@ globalThis.chrome = {
   runtime: { id: "extension-id" },
   i18n: { getUILanguage: () => "zh-CN" },
   tabs: { async get(tabId) { return { id: tabId, url: currentUrl }; } },
+  scripting: { executeScript: async () => [{ result: true }] },
   debugger: { onEvent: { addListener() {} }, onDetach: { addListener() {} } },
 };
 
@@ -423,7 +424,8 @@ assert.match(ghost, /button/);
 assert.match(ghost, /"Ghost"/);
 assert.doesNotMatch(ghost, /target=/);
 
-chrome.scripting = { async executeScript() { return [{ documentId: "doc-live" }]; } };
+const scripting = chrome.scripting;
+chrome.scripting = { async executeScript() { return [{ documentId: "doc-live", result: true }]; } };
 const stamped = await run({
   overview: {
     title: "Document", url: "https://example.com/forms/post",
@@ -438,7 +440,7 @@ const stamped = await run({
 const stampedTarget = line(stamped.snapshot, "Save").match(/target=(uid:\S+)/)?.[1];
 const resolvedStamped = await element.resolveElementReference(8, { target: stampedTarget }, context);
 assert.equal(resolvedStamped.ref.documentId, "doc-live");
-delete chrome.scripting;
+chrome.scripting = scripting;
 
 const treeTarget = budget.snapshot.match(/target=(uid:\S+)/)?.[1];
 const resolvedTree = await element.resolveElementReference(8, { target: treeTarget }, context);

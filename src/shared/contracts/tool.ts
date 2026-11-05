@@ -53,6 +53,8 @@ export interface ToolModelPolicy {
   pageUrlArgument?: string;
   omitArguments?: readonly string[];
   preserveResult?: boolean;
+  /** Script-to-model receipt; internal callers retain the tool's existing return contract. */
+  scriptResult?: 'value' | 'receipt';
   imagePrompt?: string;
   projectResult?(result: unknown): unknown;
 }
@@ -62,16 +64,22 @@ export type ToolBatchTabPolicy =
   | { kind: "create"; parallel?: boolean; targeted?: boolean; passive?: boolean }
   /** Passive event observation does not occupy the page's action lane. */
   | { kind: "observe" }
+  /** Page-independent orchestration; its descendants acquire their own resource lanes. */
+  | { kind: "script" }
   /** `tabId` is the resolved lane for uid-targeted calls: the tab the referenced elements belong to. */
   | { kind: "target"; implicit: boolean; observation: boolean; parallel?: boolean; tabId?: number }
   | { kind: "barrier" };
 
 /** Build-time behavior only. External manifests and tool results cannot grant these roles. */
 export interface ToolBehavior {
+  /** Host-selected script execution. Arguments are business data; child tools own resource access. */
+  orchestration?: boolean;
   /** A passive event listener may overlap the action whose outcome it observes. */
   passiveWait?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Evaluated once during batch planning. True (or a thrown predicate) overrides parallel roles and waits for preceding commits. */
   barrier?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
+  /** Prepare CSS targets using this lookup before execution; tools owning readiness leave it unset. */
+  targetLookup?: "light" | "openShadow";
   /** Pure observations eligible for bounded execution on distinct explicit tabs. */
   parallelRead?: boolean | ((args: Readonly<Record<string, unknown>>) => boolean);
   /** Provisional creation; Session state is published at ordered Agent settlement. */

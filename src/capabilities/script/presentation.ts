@@ -12,7 +12,7 @@ export const presentations = (host: RendererServices): readonly ToolPresentation
     return envelope?.ok === true && !isToolResultErrorLike(envelope) ? false : undefined;
   },
   argsSummary: ({ tool, args, result }) => {
-    if (!isPageContextToolName(tool)) return undefined;
+    if (!isPageContextToolName(tool)) return "";
     const page = result && typeof result === "object" ? result as Record<string, unknown> : {};
     const details = page.details && typeof page.details === "object" ? page.details as Record<string, unknown> : {};
     // A script's returned title/url are user data; only host page metadata identifies its execution page.

@@ -4,6 +4,7 @@ import type { CdpCommand } from '../../sdk/background/browser.js';
 import type { GetToolRuntimeDependencies } from '../../sdk/background/services.js';
 import type { createCdpRuntime } from './cdp-runtime.js';
 import { openChildFrame } from './child-frames.js';
+import { waitForParsedDocument } from './document-readiness.js';
 import { createElementObservation, type ElementObservation } from "../../shared/contracts/element-observation.js";
 
 export interface ElementReference {
@@ -370,6 +371,25 @@ async function bindContentElementRefs(tabId: number, tokens: string[], context: 
     const code = String(record(error).code || "");
     if ((isCdpFallbackForbiddenError(error) && !["SESSION_TAB_UNOWNED", "SESSION_TAB_FOREIGN"].includes(code)) || code.startsWith("STALE_ELEMENT_UID")) throw error;
     return new Map<string, ElementReference>();
+  }
+}
+
+/** Existing CSS targets are usable during parsing; a missing target waits before any action starts. */
+async function prepareCssTargets(tabId: number, targets: unknown[],
+  { index = 0, includeShadow = false }: { index?: number; includeShadow?: boolean }, context: ToolContext) {
+  if (!Number.isInteger(index) || index < 0) return;
+  for (const target of new Set(targets.map(value => String(value || "").trim()))) {
+    const { selector } = parseElementTarget(target);
+    if (!selector) continue;
+    const presence = record(await sendToContent(tabId, "elementPresence", {
+      selector, index, visibleOnly: false, includeShadow, queryOnly: true,
+    }, context));
+    // Invalid selectors keep their normal tool error; no action has been dispatched.
+    if (presence.error || presence.code) return;
+    if (presence.found === false) {
+      await waitForParsedDocument(tabId, context);
+      return;
+    }
   }
 }
 
@@ -832,6 +852,7 @@ function samePageUrl(a: unknown, b: unknown) {
     elementUidTabId,
     assertKnownElementUid,
     isUidElementTarget,
+    prepareCssTargets,
     resolveSelectorTarget,
     resolveElementReference,
     addElementTargetsToFindResult,

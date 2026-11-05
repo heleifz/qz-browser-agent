@@ -3,6 +3,8 @@ import { PROTOCOL_VERSION, QzError, readHealth } from "./client.mjs";
 import { ensureDaemon, findDaemon, restartDaemon } from "./daemon.mjs";
 import { openConnectionBrowser } from "./open-browser.mjs";
 
+import { SCRIPT_API_VERSION } from "./script-call.mjs";
+
 const offlineCodes = new Set(["BRIDGE_NOT_CONNECTED", "BRIDGE_CLIENT_OFFLINE", "BRIDGE_CLIENT_DISCONNECTED", "BRIDGE_REQUEST_TIMEOUT", -32001]);
 
 /** Upgrade a verified service at most once, before any browser operation is submitted. */
@@ -19,7 +21,7 @@ export async function prepareService({ options = {}, script = false } = {}, depe
   }
   const compatible = service => service.compatible !== false
     && (service.health.protocolVersion === undefined || service.health.protocolVersion === PROTOCOL_VERSION)
-    && service.health.features?.browserPairing === 1 && (!script || service.health.features?.scriptApiVersion >= 1);
+    && service.health.features?.browserPairing === 1 && (!script || service.health.features?.scriptApiVersion >= SCRIPT_API_VERSION);
   if (!compatible(running)) {
     running = await (dependencies.restartDaemon || restartDaemon)({ expected: running, preferredPort: Number(new URL(running.endpoint).port), signal });
     signal?.throwIfAborted();

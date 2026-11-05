@@ -6,6 +6,14 @@ import { join } from "node:path";
 import { expect, test } from "./fixtures.mjs";
 import { ensureTestExtension } from "../support/extension-build.mjs";
 
+function successfulScriptResult(receipt) {
+  expect(Object.keys(receipt).sort()).toEqual(['ok', 'result', 'trace']);
+  expect(receipt.ok).toBe(true);
+  expect(Array.isArray(receipt.trace)).toBe(true);
+  expect(receipt.trace.every(line => typeof line === 'string')).toBe(true);
+  return receipt.result;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -30,7 +38,7 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
     }
     if (path === '/early-elements') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end('<!doctype html><body><article>Early body</article><input id="early"><button id="tap" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Tap</button><script src="/head-block-tail"></script></body>');
+      res.end('<!doctype html><body><article>Early body</article><input id="early" class="indexed"><button id="tap" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Tap</button><script src="/head-block-tail"></script><input class="indexed" value="Parsed tail"></body>');
       return;
     }
     if (path.startsWith('/late-body-')) {
@@ -241,7 +249,19 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       expect(await call('wait_for_function', { tabRef: partial.tabRef, code: '() => !!document.querySelector("#early")', timeout: 1 })).toBe(true);
       expect(await call('act_on_element', { tabRef: partial.tabRef, target: 'css:#tap', action: 'click' })).toEqual({});
       expect(await call('evaluate', { tabRef: partial.tabRef, waitUntil: 'commit', code: '() => ({clicks:document.querySelector("#tap").dataset.clicks,state:document.readyState})' })).toEqual({ clicks: '1', state: 'loading' });
+      const probes = await worker.evaluate(tabId => Promise.all([0, 1].map(index => chrome.tabs.sendMessage(tabId,
+        { action: 'elementPresence', selector: '.indexed', index, queryOnly: true }, { frameId: 0 }))), partial.tabRef);
+      expect(probes).toEqual([{ found: true }, { found: false }]);
+      let indexedSettled = false;
+      const indexed = call('inspect_element', { tabRef: partial.tabRef, target: 'css:.indexed', index: 1, timeout: 5 })
+        .then(result => { indexedSettled = true; return result; });
+      void indexed.catch(() => {});
+      const invalid = await call('inspect_element', { tabRef: partial.tabRef, target: 'css:[', timeout: 1 });
+      expect(invalid, JSON.stringify(invalid)).toMatchObject({ code: 'INVALID_SELECTOR' });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(indexedSettled, 'the first match must not satisfy a later index before the parser reaches it').toBe(false);
       release('/head-block-tail');
+      expect(await indexed).toMatchObject({ tag: 'input', value: 'Parsed tail' });
       for (const name of ['read_article', 'get_ax_tree', 'screenshot']) for (const outcome of ['ready', 'timeout']) {
         const suffix = `${name}-${outcome}`, head = `/head-block-${suffix}`;
         held.set(head, []); held.set('/late-image', []);
@@ -319,19 +339,23 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
         const tabs = await chrome.tabs.query({}); return urls.map(url => tabs.find(tab => tab.url === url)?.id);
       }, [left.url, right.url]);
       expect(batchTabIds.every(id => Number.isInteger(id))).toBe(true);
-      expect(batchResult.outputs.find(message => message.id === 'script-ref').content).toBe(`${origin}/batch-open-b`);
+      expect(successfulScriptResult(JSON.parse(batchResult.outputs.find(message => message.id === 'script-ref').content)))
+        .toBe(`${origin}/batch-open-b`);
       release('/late-image');
 
-      // Outer orchestration waits for its explicit page function and blocks later page work on other tabs.
+      // A waiting page function leaves other tabs available; each page still runs its tools in order.
       const scriptRun = worker.evaluate(async ids => {
-        globalThis.scriptBatchStarted = [];
+        globalThis.scriptBatchEvents = [];
         let active = 0, peak = 0;
         const agent = new navigationTestAgent('navigation', { tools: { ...navigationRuntime,
           async execute(name, args, signal, context) {
-            scriptBatchStarted.push(context.toolCallId);
+            scriptBatchEvents.push(`start:${context.toolCallId}`);
             if (name === 'run_script') peak = Math.max(peak, ++active);
             try { return await navigationRuntime.execute(name, args, signal, context); }
-            finally { if (name === 'run_script') active--; }
+            finally {
+              scriptBatchEvents.push(`end:${context.toolCallId}`);
+              if (name === 'run_script') active--;
+            }
           },
         } });
         agent._currentRunId = 'run'; globalThis.navigationActiveAgent = agent;
@@ -348,14 +372,18 @@ for (const watchNetwork of [false, true]) test(`tab navigation commits before re
       }, batchTabIds);
       await expect.poll(() => worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: id },
         world: 'MAIN', func: () => Boolean(globalThis.__scriptStarted) }))[0]?.result, batchTabIds[0])).toBe(true);
-      expect(await worker.evaluate(() => scriptBatchStarted)).toEqual(['script-a']);
+      await expect.poll(() => worker.evaluate(() => scriptBatchEvents.filter(event => !event.endsWith(':script-a'))))
+        .toEqual(['start:script-b', 'end:script-b', 'start:after-script', 'end:after-script']);
+      expect(await worker.evaluate(() => scriptBatchEvents.filter(event => event.endsWith(':script-a'))))
+        .toEqual(['start:script-a']);
       await worker.evaluate(id => chrome.scripting.executeScript({ target: { tabId: id }, world: 'MAIN',
         func: () => { globalThis.__scriptRelease = true; } }), batchTabIds[0]);
       const scripts = await scriptRun;
       expect(scripts.peak).toBe(1);
       expect(scripts.ids).toEqual(['script-a', 'script-b', 'after-script']);
       expect(scripts.ends.every(event => !event.isError)).toBe(true);
-      expect(scripts.outputs.slice(0, 2)).toEqual(['script a', 'script b']);
+      expect(scripts.outputs.slice(0, 2).map(content => successfulScriptResult(JSON.parse(content))))
+        .toEqual(['script a', 'script b']);
       for (const event of batchResult.ends.filter(event => event.toolName === 'open_tab')) await call('close_tab', { tabRef: event.result.tabRef });
 
       const observations = [];

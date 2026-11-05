@@ -9,6 +9,11 @@ export function positiveSeconds(value: unknown): number | null {
 
 export const DOCUMENT_HOST_TIMEOUT_MS = 120_000;
 
+/** All current script entry points share the same default; parents retain their own deadline. */
+export function orchestrationTimeout(args: Record<string, unknown>, name: string): number {
+  return scriptTimeout({ ...args, timeout: args.timeout ?? 120 }, name);
+}
+
 export function documentHostTimeout(args: Record<string, unknown>, name: string): number {
   if (args.timeout == null || args.timeout === "") return DOCUMENT_HOST_TIMEOUT_MS;
   return scriptTimeout(args, name);

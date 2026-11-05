@@ -303,7 +303,7 @@ test("drive timeline retains repeated batch IDs and nested script calls as separ
     await expect(cards).toHaveCount(10);
     const scriptReceipt = scriptOutput(stdout, stderr);
     expect(scriptReceipt.result).toEqual({ title: "returned value is not the page title" });
-    expect(scriptReceipt.traces).toContain("drive timeline trace");
+    expect(scriptReceipt.trace).toContain("drive timeline trace");
     expect((await cards.last().locator(".tool-args-preview").allTextContents()).join(" ")).not.toMatch(/First page|Second page|returned value is not the page title/);
     await expect(cards.last()).not.toContainText("当前页面");
     const result = await callTool(bridge.endpoint, "qingzhou_execute_tool", { sessionId, calls: [
@@ -416,16 +416,17 @@ async function scriptTool(dependencies, stdout, stderr, { sessionId, name, args 
     ...dependencies, readStdin: async () => "return await tools[input.name](input.args);",
   });
   expect([0, 1]).toContain(code);
-  const { result: body, traces } = scriptOutput(stdout, stderr);
-  return { code, text: stdout.text, body, traces };
+  const { result: body, trace } = scriptOutput(stdout, stderr);
+  return { code, text: stdout.text, body, trace };
 }
 
 function scriptOutput(stdout, stderr) {
   expect(stderr.text, "These scripts return no images; their traces belong in stdout").toBe("");
   const value = JSON.parse(stdout.text);
-  expect(Object.keys(value).sort()).toEqual(["result", "traces"]);
-  expect(Array.isArray(value.traces)).toBe(true);
-  expect(value.traces.every(trace => typeof trace === "string")).toBe(true);
+  expect(Object.keys(value).sort()).toEqual(["ok", "result", "trace"]);
+  expect(typeof value.ok).toBe("boolean");
+  expect(Array.isArray(value.trace)).toBe(true);
+  expect(value.trace.every(trace => typeof trace === "string")).toBe(true);
   return value;
 }
 

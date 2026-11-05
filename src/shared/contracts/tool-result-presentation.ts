@@ -28,16 +28,22 @@ export function copyToolResultPresentation<T>(source: unknown, target: T): T {
   return bindToolResultPresentation(target, getToolResultPresentation(source));
 }
 
-/** Preserve execution order and action meaning without exposing UI trace levels. */
+/** Retain diagnostics when an execution fails after producing a value. */
+export function toolFailurePresentation(error: unknown, collected: ToolResultPresentation = {}): ToolResultPresentation {
+  const presentation = { ...collected, ...getToolResultPresentation(error) };
+  const display = presentation._display as { script?: { valueOnly?: boolean } } | undefined;
+  if (display?.script?.valueOnly !== true) return presentation;
+  const { valueOnly, ...script } = display.script;
+  return { ...presentation, _display: { ...display, script } };
+}
+
+/** Return authored diagnostics and errors in execution order. */
 export function traceMessages(rows: unknown): readonly string[] {
   if (!Array.isArray(rows)) return [];
   return rows.flatMap(row => {
     if (typeof row === "string") return [row];
     if (!row || typeof row !== "object" || typeof row.message !== "string") return [];
-    if (row.level === "script.start") return ["Script started."];
-    const action = row.level === "tool.start" ? "started" : row.level === "tool.end" ? "completed" : row.level === "tool.error" ? "failed" : "";
-    const match = action && /^(\S+)(?:\s+([\s\S]*))?$/.exec(row.message);
-    return [match ? `${match[1]} ${action}${match[2] ? `: ${match[2]}` : ""}` : row.message];
+    return [row.message];
   });
 }
 

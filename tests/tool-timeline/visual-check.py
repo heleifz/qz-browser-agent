@@ -743,15 +743,15 @@ def run_edge_case_matrix(page):
         expect("tabId" not in text and "标签页" not in text and "1887129433" not in text, f"run_script summary leaked tab id: {text}")
     record("tool-summary", "run-script-no-page", check_run_script_no_page_summary)
 
-    def check_run_script_host_page_title_summary():
+    def check_evaluate_host_page_title_summary():
         text = page.evaluate("""() => window.visualTimelineTest.debugToolSummaryText({
-            name: 'run_script',
-            args: { timeout: 10, tabRef: 'report', code: 'return rows;' },
+            name: 'evaluate',
+            args: { timeout: 10, tabRef: 'report', code: '() => rows' },
             result: { _pageTitle: '订单详情页', _pageUrl: 'https://example.com/order/1', ok: true, result: { _pageTitle: '业务返回标题', count: 3 } }
         })""")
-        expect("订单详情页" in text and "业务返回标题" not in text, f"run_script summary should use host page metadata, got {text}")
-        expect("tabId" not in text and "标签页" not in text and "1887129433" not in text, f"run_script title summary leaked tab id: {text}")
-    record("tool-summary", "run-script-host-title", check_run_script_host_page_title_summary)
+        expect("订单详情页" in text and "业务返回标题" not in text, f"evaluate summary should use host page metadata, got {text}")
+        expect("tabId" not in text and "标签页" not in text and "1887129433" not in text, f"evaluate title summary leaked tab id: {text}")
+    record("tool-summary", "evaluate-host-title", check_evaluate_host_page_title_summary)
 
     def check_plugin_tool_family_grouping():
         expect_plugin_tool_family_grouping(page)

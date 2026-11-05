@@ -86,14 +86,16 @@ Build-time tools can declare `behavior.parallelRead` for pure observations. The 
 to explicit tab lanes. `parallelOpen` permits provisional creation; `parallelTab` permits tab-local
 mutations such as navigation and element actions. `barrier` accepts a boolean or synchronous argument
 predicate, evaluated once per call during batch planning. True or a thrown predicate waits for every
-preceding commit and blocks later execution until its own commit. It overrides all three parallel
-roles while retaining page targeting and `tabRef` validation. All ready calls share one execution limit of ten.
+preceding commit and blocks later execution until its own commit. It overrides parallel roles and
+orchestration while retaining page targeting and `tabRef` validation. All ready calls share one
+execution limit of ten.
 Same-tab work follows execution dependencies. UID-targeted calls use their registered tab lane when
 all targets are known UIDs on one tab and the definition grants a parallel role. Declare additional
 target fields through `behavior.uidTargets`; the extractor extends `target`, `selector`, and `root`.
 Return every target, including non-UID values, so mixed or cross-tab calls retain commit barriers.
-Implicit targets and undeclared/global tools also retain commit barriers. Runtime-owned Session writes, effects, final events and results publish in
-original call order, independently of execution completion order. Start and progress events publish
+Implicit targets and undeclared/global tools also retain commit barriers. Native model batches publish
+Session writes, effects, final events and results in original call order, independently of execution
+completion order. Start and progress events publish
 during execution, including flow-control waits. A `parallelOpen` handler obtains
 its new tab's execution context from `context.prepareCreatedTab` before page preparation. Declared
 parallel handlers leave Session ownership and selection writes to the runtime's ordered commit.
@@ -104,13 +106,16 @@ model arguments and result
 payloads cannot grant scheduling authority; the selected definition must come from a core registry
 snapshot. Any build-time capability can use these fields through `qz.registerTool`; there is no tool-name
 allowlist. For example, `qz.registerTool({ ...definition, behavior: { ...definition.behavior, barrier: true } })`
-marks a tool that may touch global resources. Skill/plugin tools (`source: "plugin"`) are always barriers;
-manifest fields cannot opt them into parallel execution. `run_skill_script` remains a barrier.
-`run_script` declares `parallelTab: true` and a barrier predicate: execution without `tabRef` or code
-that may use host tools is a barrier; no-tools page code uses the normal tab lane. Supplying `tabRef`
-selects page execution, and `mutatesPage` controls effects rather than classification. The capability's conservative static
-classifier also selects bridge installation. Input/args-only code needs no bridge. Unknown syntax
-stays a barrier; missing tool access in a no-bridge invocation returns an error without replay.
+marks a tool that may touch global resources. Public `run_script` declares `behavior.orchestration`:
+its arguments are business data, and its descendant tools acquire the actual page lanes. New Skill
+tools with `runtime: "script"` use this same runner, optional 120-second timeout
+and trusted scheduling definition. Native batches and nested calls can run these containers concurrently.
+Manifest behavior fields cannot grant scheduling authority. Legacy Skill runtimes retain their barriers
+and result contracts through the hidden `run_skill_script` host. All descendants share execution lanes
+and the concurrency budget;
+ready results commit one at a time and resolve their Promises without waiting for unrelated executions.
+`evaluate` declares `parallelTab: true` and runs a self-contained function on an explicit `tabRef`,
+with data passed through `args`. Page functions have DOM access; orchestration uses `tools`.
 Parallel page observations read the current page mode without restoring a disconnected
 mobile preference, because restoration may reload the document.
 
@@ -134,6 +139,8 @@ that result into a call-local slot, reads it only at the existing hard timeout, 
 updates. Use concise `pending` text naming the unfinished work. `behavior.timeoutResult` selects the
 host's page-read, action-uncertainty or navigation fallback. Page identity and safety checks still
 apply; an image partial is an observation without coordinates.
+
+At the model boundary, scripts produce `{ok, result, trace}` on success and failure; failure `result` is a ToolError. Inside `run_script` and `runtime:"script"` Skills, tool calls return business values directly, including script Skill calls; failures reject. Legacy page/inner callers retain their original return contracts. The host collects errors and explicit trace()/console output from nested scripts independently of the returned business data. Successful tool calls add no trace entries.
 
 Tools return business data; `bindToolResultPresentation` from `#sdk/background/tools` keeps display
 metadata beside that result until the host builds the renderer event. Package imports are limited to their own files, pinned

@@ -36,7 +36,7 @@ export interface SkillTool extends Omit<ToolMetadata, 'sets'> {
   rendererId?: string;
   id: string; pluginId: string; skillName: string; name: string; capabilityId: string; source: string;
   localName: string; rawName: string; description: string; parameters: ToolSchema; familyTitle: string;
-  script: string; runtime: 'page' | 'inner' | 'host' | 'mcp'; mcp: { server: string; rawServer: string; tool: string } | null;
+  script: string; runtime: 'script' | 'page' | 'inner' | 'host' | 'mcp'; mcp: { server: string; rawServer: string; tool: string } | null;
   needsPage: boolean; hidden: boolean; includeTrace: boolean; args: Data; renderer: SkillRenderer | null;
 }
 export interface SkillManifest extends SkillManifestIdentity {
@@ -575,7 +575,8 @@ function normalizeSkillToolRuntime(value: unknown = "", item: Data = {}): SkillT
   const raw = String(input?.type || value || "").trim().toLowerCase();
   if (raw === "mcp" || item?.mcp || item?.mcpTool) return "mcp";
   if (raw === "host") return "host";
-  if (raw === "inner") return "inner";
+  if (raw === "script" || raw === "inner") return raw;
+  // Installed Skills without a runtime still use their original page execution ABI.
   return "page";
 }
 

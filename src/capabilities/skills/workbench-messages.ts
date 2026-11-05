@@ -32,8 +32,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Description of the resource's purpose."
   },
   "resourceContent": {
-    "zh-CN": "资源内容；script 须为浏览器 JS（推荐单个 async () => { ... } 表达式），先填 path/title 再填长 content。",
-    "en": "Resource content; scripts must be browser JS (prefer a single async () => { ... } expression). Supply path/title before long content."
+    "zh-CN": "资源内容；新 script 使用 runtime:script 外层模式（顶层 await/return，页面代码通过 tools.evaluate），先填 path/title 再填长 content。",
+    "en": "Resource content; new scripts use runtime:script outside pages (top-level await/return, page code through tools.evaluate). Supply path/title before long content."
   },
   "resourceAction": {
     "zh-CN": "资源操作：upsert/set 整体写入；replace/patch/edit 精确替换；rename 重命名；delete/remove 删除（仅传 path+content 时默认 set）。",
@@ -148,8 +148,8 @@ const messages = defineMessages("skill-workbench", {
     "en": "Text to prepend for prepend."
   },
   "setContent": {
-    "zh-CN": "set 时的完整资源内容（文本或可序列化 JSON）。path=plugin.json 时，settings.fields[].type 只支持 text|secret|url|boolean|number|select，width 只支持 full|half，分组用 settings.layout.sections（完整约束见已加载 skill-workbench）；script 资源须为浏览器 JS（推荐单个 async () => { ... } 表达式）。一次调用只改一个资源，先填 path/type/title/description，最后填写本字段。",
-    "en": "Full resource content for set (string or serializable JSON). For path=plugin.json, settings.fields[].type supports text|secret|url|boolean|number|select, width supports full|half, and sections use settings.layout.sections (see the loaded skill-workbench for the full contract); scripts must be browser JS (prefer a single async () => { ... } expression). Edit one resource per call, supplying path/type/title/description first and this field last."
+    "zh-CN": "set 时的完整资源内容（文本或可序列化 JSON）。path=plugin.json 时，settings.fields[].type 只支持 text|secret|url|boolean|number|select，width 只支持 full|half，分组用 settings.layout.sections（完整约束见已加载 skill-workbench）；新 script 资源使用 runtime:script 外层模式（顶层 await/return，页面代码通过 tools.evaluate）。一次调用只改一个资源，先填 path/type/title/description，最后填写本字段。",
+    "en": "Full resource content for set (string or serializable JSON). For path=plugin.json, settings.fields[].type supports text|secret|url|boolean|number|select, width supports full|half, and sections use settings.layout.sections (see the loaded skill-workbench for the full contract); new scripts use runtime:script outside pages (top-level await/return, page code through tools.evaluate). Edit one resource per call, supplying path/type/title/description first and this field last."
   },
   "updateName": {
     "zh-CN": "必填。要更新的 Skill 名称。",

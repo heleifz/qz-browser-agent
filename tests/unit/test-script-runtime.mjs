@@ -20,7 +20,12 @@ async function fixture(mode) {
   const console = Object.fromEntries(['log', 'info', 'warn', 'error', 'debug'].map(level => [level, () => {}]));
   const context = createContext({ URL, TransformStream, TextEncoder, TextDecoder, fetch, XMLHttpRequest, navigator, console, setTimeout, clearTimeout,
     location: { href: 'https://blocked.test/current' },
-    chrome: { storage: { local: { get: async () => ({ securityGuardrails: { rules } }) } }, scripting: { executeScript: async options => { calls.push({ kind: 'bridge', files: options.files }); return []; } } },
+    chrome: { storage: { local: { get: async () => ({ securityGuardrails: { rules } }) } },
+      tabs: { get: async id => ({ id, url: 'https://blocked.test/current', status: 'complete' }) },
+      scripting: { executeScript: async options => {
+        if (!options.files) return [{ result: true }];
+        calls.push({ kind: 'bridge', files: options.files }); return [];
+      } } },
   });
   runInContext("globalThis.window = globalThis; globalThis.document = { [Symbol.toStringTag]: 'Document' };", context);
   runInContext(await compileScriptToolHost(mode), context);
@@ -148,12 +153,16 @@ for (const mode of ['development', 'production']) {
       executions++;
       void runInnerWorker(workerSource, message.source, {
         scriptArgs: message.scriptArgs, strictResult: message.strictResult,
-        onMessage(message, reply) {
-          if (message.type !== 'tool_call') return;
-          nested.push({ name: message.toolName, args: message.args });
-          reply({ type: 'tool_response', callId: message.callId, response: message.toolName === 'fail'
+        onMessage(call, reply) {
+          if (call.type === 'script_trace') {
+            f.runtime.handleRunScriptInnerRuntimeMessage({ type: 'run_script_inner_diagnostic', requestId: message.requestId, row: call.row });
+            return;
+          }
+          if (call.type !== 'tool_call') return;
+          nested.push({ name: call.toolName, args: call.args });
+          reply({ type: 'tool_response', callId: call.callId, response: call.toolName === 'fail'
             ? { ok: false, code: 'TEST_FAILURE', message: 'Could not save.', hint: 'Choose another value.', details: { action: 'save' } }
-            : { ok: true, result: { saved: message.args.value } } });
+            : { ok: true, result: { saved: call.args.value } } });
         },
       }).then(({ result }) => f.runtime.handleRunScriptInnerRuntimeMessage({ type: 'run_script_inner_result', requestId: message.requestId, result }));
       return { ok: true, accepted: true };
@@ -172,7 +181,7 @@ for (const mode of ['development', 'production']) {
     assert.match(failed.message, /Could not save/);
     assert.equal(failed.hint, 'Choose another value.');
     assert.equal(failed.details.action, 'save');
-    assert.ok(failed.details.trace.some(row => row.level === 'tool.error'));
+    assert.ok(failed.details.trace.some(row => row.level === 'error' && row.message.includes('Could not save.')));
     assert.deepEqual(Object.keys(failed).sort(), ['code', 'details', 'hint', 'message']);
     for (const kind of ['throw', 'tool']) {
       nested.length = 0;
@@ -181,22 +190,22 @@ for (const mode of ['development', 'production']) {
         console.log('completed steps');
         await tools.data_store({value: 'done'});
         trace('next step');
+        for (let step = 0; step < 6; step++) trace('checkpoint-' + step);
         ${kind === 'throw' ? 'throw new Error("ordinary failure");' : 'await tools.fail({});'}
       }`, {}, { resultPresentation: presentation });
       const traces = [...getToolResultTraces(failure, presentation)];
       assert.equal(failure.code, kind === 'throw' ? 'SCRIPT_EVALUATION_FAILED' : 'TEST_FAILURE');
-      assert.deepEqual(traces.slice(0, 5), ['Script started.', 'completed steps', 'data_store started', 'data_store completed', 'next step']);
-      assert.ok(traces.length > 5, 'failure metadata retains more than the compact ToolError tail');
+      // Only explicit checkpoints and the execution error reach the trace.
+      assert.deepEqual(traces.slice(0, 2), ['completed steps', 'next step']);
+      assert.deepEqual(traces.slice(2, 8), Array.from({ length: 6 }, (_, index) => `checkpoint-${index}`));
+      assert.equal(traces.length, 9, 'failure retains eight explicit checkpoints and one error');
       assert.ok(traces.every(row => typeof row === 'string'));
       assert.equal(Object.hasOwn(presentation._display.script, 'valueOnly'), false, 'failure metadata never marks a successful return');
       assert.equal(failure.details.trace.length, 5, 'the native error retains its bounded structured diagnostic tail');
-      assert.ok(failure.details.trace.some(row => row.level === 'tool.end'));
+      assert.ok(failure.details.trace.some(row => row.level === 'error'));
       if (kind === 'tool') {
-        assert.ok(traces.includes('fail started'));
-        assert.ok(traces.includes('fail failed: Could not save.'));
-        assert.ok(failure.details.trace.some(row => row.level === 'tool.error'));
+        assert.match(traces.at(-1), /Could not save/);
       } else {
-        assert.ok(failure.details.trace.some(row => row.level === 'tool.start'));
         assert.match(traces.at(-1), /ordinary failure/);
       }
       assert.equal(executions, before + 1, 'a failed script is never replayed');
@@ -207,7 +216,7 @@ for (const mode of ['development', 'production']) {
       traces: ['business trace'], trace: ['authored'], _display: {script: {trace: ['authored metadata']}}
     };`, {}, { resultPresentation: presentation });
     assert.deepEqual(structuredClone(business), { traces: ['business trace'], trace: ['authored'], _display: { script: { trace: ['authored metadata'] } } });
-    assert.deepEqual([...getToolResultTraces(business, presentation)], ['Script started.', 'ready']);
+    assert.deepEqual([...getToolResultTraces(business, presentation)], ['ready']);
     assert.deepEqual(getToolResultTraces(structuredClone(business)), [], 'untrusted same-named fields cannot forge execution traces');
     const schema = f.definitions.get('run_script').parameters;
     assert.equal(schema.required.includes('tabRef'), false);

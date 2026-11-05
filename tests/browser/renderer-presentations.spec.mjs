@@ -148,6 +148,47 @@ test("compact element receipts retain trusted action labels and rich-text eviden
   }
 });
 
+test("errors render one complete trace in live and exported cards, including legacy records", async ({ page }) => {
+  await page.goto("/__test_health");
+  const snapshots = await page.evaluate(async () => {
+    const { renderToolEvent, disposeRendererTree } = await import("/extension/sidepanel/tools/tool-renderer.js");
+    const messages = Array.from({ length: 6 }, (_, index) => `Checkpoint ${index + 1}`);
+    const rows = messages.map(message => ({ level: "trace", message }));
+    const failure = { code: "SCRIPT_EVALUATION_FAILED", message: "Evaluation failed", hint: "Retry the saved step." };
+    const results = [
+      { ...failure, details: { trace: rows.slice(-3) }, _display: { script: { trace: rows } } },
+      { ok: false, error: failure.message, hint: failure.hint, details: { trace: rows } },
+      { ...failure, trace: messages },
+    ];
+    const snapshots = [];
+    for (const name of ["run_script", "evaluate", "fixture_error_tool"]) {
+      for (const staticOutput of [false, true]) for (const result of results) {
+        const before = JSON.stringify(result);
+        const root = renderToolEvent({ name, args: {}, result, isError: true },
+          { expanded: true, lazyDetails: false, static: staticOutput });
+        document.body.replaceChildren(root);
+        snapshots.push({ name, staticOutput,
+          traces: root.querySelectorAll(".tool-script-trace").length,
+          messages: [...root.querySelectorAll(".tool-script-trace-message")].map(node => node.textContent),
+          error: root.querySelector(".tool-error-section")?.textContent,
+          hints: (root.querySelector(".tool-details")?.textContent.match(/Retry the saved step\./g) || []).length,
+          unchanged: before === JSON.stringify(result),
+          fallbacks: root.querySelectorAll(".tool-renderer-fallback").length });
+        disposeRendererTree(root);
+      }
+    }
+    return snapshots;
+  });
+  for (const snapshot of snapshots) {
+    expect(snapshot.traces).toBe(1);
+    expect(snapshot.messages).toEqual(Array.from({ length: 6 }, (_, index) => `Checkpoint ${index + 1}`));
+    expect(snapshot.error).not.toContain("Checkpoint");
+    expect(snapshot.hints).toBe(1);
+    expect(snapshot.unchanged).toBe(true);
+    expect(snapshot.fallbacks).toBe(0);
+  }
+});
+
 test("raw script values retain authored keys while host traces and execution status stay separate", async ({ page }) => {
   await page.goto("/__test_health");
   const snapshots = await page.evaluate(async () => {

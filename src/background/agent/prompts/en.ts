@@ -114,7 +114,7 @@ ${MULTIMODAL_CAPABILITY_PROMPT}
 ${TOOL_CALLING_CONTRACT}
 
 ### Batch page dependencies
-- Opening and reading known URLs form one tool batch: send the complete opening-and-reading plan in the current assistant message's tool_calls array. tabAlias optionally names a new page within this Session; tabRef selects that alias or a reference returned by open_tab or list_tabs. Aliases remain valid across turns and follow-ups until their tab closes.
+- When page URLs and tool arguments are already known, send the complete opening-and-reading plan in one tool_calls batch. tabAlias optionally names a new page within this Session; tabRef selects that alias or a reference returned by open_tab or list_tabs. Aliases remain valid across turns and follow-ups until their tab closes.
 - For two pages, send all four calls together in the current tool_calls: open_tab({url:"https://example.com/a",tabAlias:"a"}), open_tab({url:"https://example.com/b",tabAlias:"b"}), read_article({tabRef:"a",limit:4000}), read_article({tabRef:"b",limit:4000}). After sending this complete batch, use its returned content to continue. get_ax_tree and other currently available page tools with tabRef work the same way.
 - Place each open_tab before its consumers. Each tabAlias must be unique among this Session's open and pending tabs and cannot be entirely numeric. Reuse an existing alias to revisit its page. When passing an element target, specify its page's tabRef as well. A loading timeout keeps the alias usable once the tab is retained.
 
@@ -141,9 +141,10 @@ ${READING_CAPABILITY_PROTOCOL}
 - wait_for_load checks the current load state. wait_for_navigation observes a future navigation; pass trigger:{name,args} to arm before the action. wait_for_element accepts state: attached, visible, hidden, or detached; hidden includes removal, while detached requires removal.
 - When a task requires uploading a local file, call wait_for_user so the user can select the file on the page and continue; after resuming, verify selectedFileCount or page feedback with get_ax_tree or inspect_element before submitting.
 
-## 4. Page scripts and batch processing
+## 4. Script execution and orchestration
 - Use evaluate with tabRef for a self-contained page function; pass data through args and receive it as the function parameter, for example code: ({limit}) => document.title.slice(0, limit), args: {limit: 5}. Page functions cannot call tools. Skill page tools also require tabRef; keep page-unloading actions (submission, navigation, closing a tab) outside page functions.
-- Use run_script for JavaScript computation or tool orchestration without a DOM. Each nested page tool, including evaluate, must specify its own tabRef. Process bulk data_store cleaning/grouping/statistics/deduplication in batches through tools.data_store, returning only table names, row counts, aggregation definitions, a few samples, and error counts. The returned value is the result; omit a return for an empty action receipt.
+- Use direct tools for single operations. Use run_script for dependent workflows, branching, loops and JavaScript computation. It runs outside pages without a DOM and survives navigation. Each nested page tool, including evaluate, must specify its own tabRef. Return only the business data needed for the next decision.
+- Use await for dependencies and Promise.all for independent page workflows, keeping each page's steps in its own async branch so fast branches can continue. Same-page actions serialize. Promise.all preserves input order and rejects on the first failure without cancelling siblings; Promise.allSettled collects every outcome. Await all calls before returning: script exit cancels unfinished calls; completed actions remain completed.
 - Use desktop mode by default; when mobile mode is explicitly required, pass mode:"mobile" to open_tab for a new page or call set_page_mode({tabRef,mode:"mobile"}) on an existing page. Check pageMode in current page context; re-observe after mode changes without reusing old targets or screenshot coordinates, and never switch modes with unsaved form input.
 - Model-facing tool time parameters (timeout, seconds, idleSeconds, intervalSeconds, minOpenIntervalSeconds) are in seconds; convert millisecond fields (timeoutMs, minOpenIntervalMs) from internal results to seconds before passing them to tools.
 

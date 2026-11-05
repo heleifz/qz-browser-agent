@@ -144,7 +144,7 @@ assert.ok(
 );
 assert.doesNotMatch(source, /qz-run-script-trace/, "page scripts must not broadcast trace rows");
 assert.match(source, /Object\.defineProperty\(__qzPromise, "__qzTrace"/, "page traces stay on the promise held by CDP");
-assert.doesNotMatch(innerWorkerSource, /script_trace/, "inner traces stay in the worker until one snapshot");
+assert.match(innerWorkerSource, /script_trace/, "inner diagnostics reach the host before a script completes");
 assert.match(innerWorkerSource, /liveInnerTraces/, "inner traces stay addressable for the timeout snapshot");
 {
   const hung = wrapRunScriptSource("async () => { for (let i = 0; i < 8; i += 1) trace('row-' + i); await new Promise(() => {}); }");
@@ -168,7 +168,7 @@ assert.match(innerWorkerSource, /liveInnerTraces/, "inner traces stay addressabl
       worker.postMessage({ type: "trace_snapshot", requestId: "hung" });
     });
     assert.deepEqual(snapshot.map(row => row.message), ["row-3", "row-4", "row-5", "row-6", "row-7"]);
-    assert.equal(seen.includes("script_trace"), false);
+    assert.equal(seen.includes("script_trace"), true);
   } finally {
     await worker.terminate();
   }

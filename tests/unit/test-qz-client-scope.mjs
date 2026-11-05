@@ -149,7 +149,7 @@ test("connection diagnostics survive public JSON and script output without submi
     let now = 1000000, stdout = "";
     t.mock.method(Date, "now", () => now += 10);
     const selected = { clientId: "offline-uuid", name: "Work profile", privateData: "not diagnostic" };
-    const health = { protocolVersion: 1, features: { browserPairing: 1, scriptApiVersion: 1 },
+    const health = { protocolVersion: 1, features: { browserPairing: 1, scriptApiVersion: 2 },
       status: { clients: [], browsers: [selected] } };
     const running = { endpoint: "http://127.0.0.1:18765", health };
     const families = scenario === "exhausted" ? ["Chrome", "Firefox"] : ["Chrome", "Firefox", "Edge"];
@@ -327,14 +327,14 @@ test("an existing session is found across authorized browsers before its script 
       return { ok: true, result: { session: null } };
     }
     assert.equal(target.id, owner.id, "only the proven owner receives the script API preflight or script");
-    if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: 1 } };
+    if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: 2 } };
     assert.equal(request.method, "execute_tool");
-    return { ok: true, result: { isError: false, traces: ["Script started."], result: { city: "Hangzhou" } } };
+    return { ok: true, result: { scriptApiVersion: 2, isError: false, result: { ok: true, result: { city: "Hangzhou" }, trace: ["Script started."] } } };
   }, () => runCli(["script", "--session", "existing"], {
     ...deps, readStdin: async () => 'return { city: "Hangzhou" };',
     openConnectionBrowser: () => assert.fail("a found task cannot be moved to a new browser"),
   }));
-  assert.deepEqual(JSON.parse(value.text), { traces: ["Script started."], result: { city: "Hangzhou" } });
+  assert.deepEqual(JSON.parse(value.text), { ok: true, result: { city: "Hangzhou" }, trace: ["Script started."] });
   assert.equal(requests.filter(request => request.method === "get_drive_session").length, 2);
   assert.equal(requests.filter(request => request.method === "execute_tool").length, 1);
 });
@@ -363,7 +363,7 @@ test("script incompatibility after admission is reported without restart, reconn
   for (const failureStage of ["api-preflight", "execute"]) {
     const { requests } = await scriptedBrowsers(bridge, [browser], async request => {
       if (request.method === "ping") return { ok: true, result: { pong: true } };
-      if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: failureStage === "api-preflight" ? 0 : 1 } };
+      if (request.method === "capabilities") return { ok: true, result: { scriptApiVersion: failureStage === "api-preflight" ? 1 : 2 } };
       assert.equal(request.method, "execute_tool");
       return { ok: false, error: { code: "UPGRADE_REQUIRED", message: "The operation may already have run." } };
     }, () => assert.rejects(runCli(["script", "--session", "existing", "--client", browser.id], {
@@ -380,7 +380,7 @@ test("script incompatibility after admission is reported without restart, reconn
 test("session cancellation reaches the browser while its script is awaiting a result", async t => {
   const { bridge, browser, deps, respond, nextRequest } = await fixture(t);
   const script = runCli(["script", "--session", "drive"], { ...deps, readStdin: async () => "async () => await tools.wait({seconds:30})" });
-  await respond("capabilities", { scriptApiVersion: 1 });
+  await respond("capabilities", { scriptApiVersion: 2 });
   const pending = await nextRequest();
   assert.equal(pending.method, "execute_tool");
   assert.equal(pending.params.sessionId, "drive");
@@ -389,7 +389,7 @@ test("session cancellation reaches the browser while its script is awaiting a re
   assert.equal(stop.params.sessionId, "drive");
   assert.equal((await cancelled).result.status, "ended");
   assert.equal(completeBrowser(bridge.state, pending.id, { clientId: browser.id, ok: true,
-    result: { isError: true, result: { code: "OPERATION_ABORTED", message: "Session ended." } } }), true);
+    result: { scriptApiVersion: 2, isError: true, result: { ok: false, result: { code: "OPERATION_ABORTED", message: "Session ended." }, trace: [] } } }), true);
   assert.equal((await script).exitCode, 1);
 });
 
@@ -543,7 +543,7 @@ test("automatic preparation reports an initialization failure without opening an
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const started = Date.now();
   await assert.rejects(runCli(["session", "create", "--title", "Initialization failure"], {
-    findDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1, scriptApiVersion: 1 }, status: { clients: [{ clientId: "browser" }] } } }),
+    findDaemon: async () => ({ endpoint: `http://127.0.0.1:${server.address().port}`, health: { features: { browserPairing: 1, scriptApiVersion: 2 }, status: { clients: [{ clientId: "browser" }] } } }),
     openConnectionBrowser: () => assert.fail("a protocol failure must not open another browser"),
     restartDaemon: () => assert.fail("failed MCP initialization cannot authorize a service restart"),
   }), error => error.code === "CONNECTION_ERROR");

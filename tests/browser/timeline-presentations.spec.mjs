@@ -83,7 +83,7 @@ test("page evaluation summaries use explicit references or host context while ou
       card({ name: "third_party_script", profileFamily: "script", pageContext: true, args: { code: "return 1" }, result: returned(business) }),
     ];
   });
-  expect(results).toEqual(["(标签页 report)", "(Host page)", "(标签页 report)", "(code=return 1)", "(code=return args, args={...})", ""]);
+  expect(results).toEqual(["(标签页 report)", "(Host page)", "(标签页 report)", "", "", ""]);
 });
 
 test("malformed and asynchronous timeline declarations fall back without poisoning other contributions", async ({ page }) => {

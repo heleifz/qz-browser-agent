@@ -24,10 +24,10 @@ interface SkillToolRuntime { skillSettings?: { getExecutionConfig?(plugin: Skill
 type HostCallTool = (name: string, args?: Fields) => Promise<unknown>;
 import { resolveSkillHostBinding } from "./skill-host-registry.js";
 import { copySkillManifestTrust, isTrustedSkillManifest } from "../../shared/skills/skill-provenance.js";
-import { copyToolEffects } from "../tools/effects.js";
 import { bindToolResultPresentation } from "../../shared/contracts/tool-result-presentation.js";
 import { summarizeSkillArgsForTrace } from "../tools/trace-summary.js";
-import { listSkills } from "./runtime.js";
+import { listSkills, loadSkillScript } from "./runtime.js";
+import { orchestrationTimeout } from "../tools/timing.js";
 import { trace as runtimeTrace } from "../trace.js";
 import {
   discoverSkillManifests,
@@ -220,7 +220,7 @@ export async function executeSkillTool(name: string, args: unknown = {}, signal:
     const result = tool.runtime === "mcp"
       ? await executeMcpSkillTool(plugin, tool, inputArgs, signal)
       : await executeScriptSkillTool(plugin, tool, inputArgs, signal, context, executeBuiltinTool, runtime);
-    const normalized = normalizeSkillToolResult(plugin, tool, result);
+    const normalized = normalizeSkillToolResult(plugin, tool, result, context);
     runtimeTrace(`[skill] execute done tool=${name} runtime=${tool.runtime || "page"} plugin=${plugin.id} skill=${plugin.skillName} durationMs=${Date.now() - startedAt} result=${summarizeSkillArgsForTrace(normalized)}`);
     return normalized;
   } catch (err) {
@@ -242,6 +242,7 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
   }
   const controlArgs = isDocumentHostTool(tool)
     ? pickDocumentHostControlArgs(inputArgs)
+    : tool.runtime === "script" ? { timeout: orchestrationTimeout(inputArgs, name) / 1000 }
     : isSkillScriptTool(tool)
       ? pickRequiredScriptSkillToolControlArgs(inputArgs, name)
       : pickSkillToolControlArgs(inputArgs);
@@ -264,6 +265,14 @@ async function executeScriptSkillTool(plugin: SkillManifest, tool: SkillTool, in
     },
   };
   if (tool.runtime === "host") return executeHostSkillScript(plugin, tool, scriptArgs, signal, context, executeBuiltinTool);
+  if (tool.runtime === "script") {
+    const code = await loadSkillScript(plugin.skillName, tool.script, context.language);
+    assertSkillExecutionActive(signal);
+    return executeBuiltinTool("run_script", { code, args: scriptArgs, timeout: controlArgs.timeout }, signal, {
+      ...context, source: "plugin_tool", pluginId: plugin.id, skillToolName: tool.name,
+      skillExecution: { plugin, config: skillConfig, resultMode: "receipt" },
+    });
+  }
   const innerRuntime = tool.runtime === "inner";
   const tabId = Number(inputArgs.tabId);
   const runSkillScriptArgs = {
@@ -299,7 +308,7 @@ async function resolveSkillExecutionConfig(plugin: SkillManifest, tool: SkillToo
     const error = new ToolExecutionError("SKILL_SETTINGS_UNAVAILABLE", "Skill settings runtime is unavailable", { pluginId: plugin.id, skillName: plugin.skillName });
     throw error;
   }
-  const includeSecrets = tool.runtime === "inner" || tool.runtime === "host";
+  const includeSecrets = tool.runtime === "script" || tool.runtime === "inner" || tool.runtime === "host";
   return await skillSettings.getExecutionConfig(plugin, { includeSecrets });
 }
 
@@ -436,27 +445,11 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
     runtimeTrace(`[skill] host unavailable plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt}`);
     throw err;
   }
-  const traceRows: { time: string; level: string; message: string }[] = [];
-  const trace = (...items: unknown[]) => {
-    traceRows.push({
-      time: new Date().toISOString(),
-      level: "trace",
-      message: items.map(item => {
-        try {
-          return typeof item === "string" ? item : JSON.stringify(item);
-        } catch (_err) {
-          return String(item);
-        }
-      }).join(" "),
-    });
-    if (traceRows.length > 80) traceRows.splice(0, traceRows.length - 80);
-  };
   const callTool: HostCallTool = async (toolName, toolArgs = {}) => {
     const targetName = String(toolName || "").trim();
     const toolStartedAt = Date.now();
     if (!targetName) throw new Error("Skill host tool call requires a tool name");
     assertSkillExecutionActive(signal);
-    trace("tool.start", { tool: targetName, args: copySkillTraceValue(toolArgs || {}) });
     runtimeTrace(`[skill] host tool.start plugin=${plugin.id} hostTool=${tool.name} target=${targetName} args=${summarizeSkillArgsForTrace(toolArgs)}`);
     try {
       const result = await executeBuiltinTool(targetName, toolArgs && typeof toolArgs === "object" ? toolArgs : {}, signal, {
@@ -465,7 +458,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
         pluginId: plugin.id,
         skillToolName: tool.name,
       });
-      trace("tool.end", { tool: targetName, result: copySkillTraceValue(result) });
       runtimeTrace(`[skill] host tool.end plugin=${plugin.id} hostTool=${tool.name} target=${targetName} durationMs=${Date.now() - toolStartedAt} result=${summarizeSkillArgsForTrace(result)}`);
       return result;
     } catch (err) {
@@ -477,11 +469,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
     const result = target
       ? await callTool(target, omitHostControlArgs(scriptArgs))
       : await handler!(omitHostControlArgs(scriptArgs), { callTool, tool, signal, context });
-    if (tool.includeTrace !== false && result && typeof result === "object" && !Array.isArray(result) && traceRows.length && !record(result).trace) {
-      const withTrace = copyToolEffects(result, { ...result, trace: traceRows });
-      runtimeTrace(`[skill] host done plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt} result=${summarizeSkillArgsForTrace(withTrace)}`);
-      return withTrace;
-    }
     runtimeTrace(`[skill] host done plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} durationMs=${Date.now() - startedAt} result=${summarizeSkillArgsForTrace(result)}`);
     return result;
   } catch (cause) {
@@ -493,7 +480,6 @@ async function executeHostSkillScript(plugin: SkillManifest, tool: SkillTool, sc
       skillName: plugin.skillName,
       tool: tool.name,
       script: tool.script,
-      trace: traceRows,
     };
     runtimeTrace(`[skill] host error plugin=${plugin.id} skill=${plugin.skillName} tool=${tool.name} code=${record(err).code || ""} message=${err instanceof Error ? err.message : err} durationMs=${Date.now() - startedAt}`);
     throw err;
@@ -742,21 +728,6 @@ function countSkillTools(snapshot: { plugins?: SkillManifest[] } = {}) {
   return (snapshot.plugins || []).reduce((sum, plugin) => sum + (plugin.tools?.filter(tool => !tool.hidden).length || 0), 0);
 }
 
-function copySkillTraceValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
-  if (value == null || typeof value !== "object") return value;
-  if (depth >= 6) return "[truncated]";
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.slice(0, 50).map(item => copySkillTraceValue(item, depth + 1, seen));
-  }
-  const out: Fields = {};
-  for (const [key, raw] of Object.entries(value).slice(0, 50)) {
-    out[key] = copySkillTraceValue(raw, depth + 1, seen);
-  }
-  return out;
-}
-
 function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
   const renderer = resolveSkillToolRenderer(plugin, tool);
   const pageTool = isSkillPageTool(tool);
@@ -768,10 +739,10 @@ function buildSkillToolDescription(plugin: SkillManifest, tool: SkillTool) {
     plugin.skillName ? `Skill: ${plugin.skillName}` : "",
     plugin.skillName ? skillToolT("loadInstructions", { name: JSON.stringify(plugin.skillName) }) : "",
     tool.runtime === "mcp" && tool.mcp ? skillToolT("mcpRuntime", { server: mcpServerRef(plugin, resolveSkillMcpServer(plugin, tool.mcp.server) || { id: tool.mcp.server }), tool: tool.mcp.tool }) : "",
-    tool.runtime === "inner" ? skillToolT("innerRuntime") : "",
+    tool.runtime === "script" || tool.runtime === "inner" ? skillToolT("innerRuntime") : "",
     pageTool ? skillToolT("pageTarget") : "",
     scriptTool
-      ? (isDocumentHostTool(tool) ? skillToolT("documentHostTimeout") : skillToolT("requiredTimeout"))
+      ? (isDocumentHostTool(tool) ? skillToolT("documentHostTimeout") : tool.runtime === "script" ? skillToolT("defaultScriptTimeout") : skillToolT("requiredTimeout"))
       : skillToolT("optionalTimeout"),
     renderer ? buildSkillRendererReturnContract(renderer) : "",
   ].filter(Boolean);
@@ -801,10 +772,14 @@ function withSkillToolControlParameters(parameters: ToolSchema, tool: Partial<Sk
   } else if (isSkillScriptTool(tool)) {
     const { timeout: _timeout, ...restProperties } = next.properties;
     next.properties = {
-      timeout: { ...SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY },
+      timeout: tool.runtime === "script"
+        ? { type: "number", description: skillToolT("defaultScriptTimeout") }
+        : { ...SKILL_SCRIPT_TOOL_TIMEOUT_SECONDS_PROPERTY },
       ...restProperties,
     };
-    next.required = uniqueRequired(["timeout", ...(Array.isArray(next.required) ? next.required : [])]);
+    next.required = uniqueRequired(tool.runtime === "script"
+      ? (next.required || []).filter(field => field !== "timeout")
+      : ["timeout", ...(Array.isArray(next.required) ? next.required : [])]);
   } else if (!next.properties.timeout) {
     next.properties.timeout = { ...SKILL_TOOL_TIMEOUT_SECONDS_PROPERTY };
   }
@@ -908,8 +883,7 @@ function skillToolPresentation(plugin: SkillManifest, tool: SkillTool) {
   };
 }
 
-function normalizeSkillToolResult(plugin: SkillManifest, tool: SkillTool, result: unknown) {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+function normalizeSkillToolResult(plugin: SkillManifest, tool: SkillTool, result: unknown, context: ToolContext) {
   const meta = {
     id: plugin.id,
     name: plugin.name,
@@ -919,6 +893,7 @@ function normalizeSkillToolResult(plugin: SkillManifest, tool: SkillTool, result
     tool: tool.name,
     ...skillToolPresentation(plugin, tool),
   };
+  if (context.resultPresentation) context.resultPresentation._plugin = meta;
   return bindToolResultPresentation(result, { _plugin: meta });
 }
 

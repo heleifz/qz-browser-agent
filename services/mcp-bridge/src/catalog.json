@@ -380,10 +380,10 @@
   },
   {
     "name": "qingzhou_execute_tool",
-    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务；结果可附带按执行顺序排列的 traces 消息字符串。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools. Results may include ordered traces as message strings.",
+    "description": "在已连接的浏览器里执行现有工具。先 qingzhou_create_drive_session，再传返回的 sessionId；不会隐式创建会话。单次传 name 和 args，固定标签别名的多步操作可传 calls（每项含 id、name、args）。id 仅用于关联结果，不插值前项返回值；未知依赖拆请求。逐项检查 isError，批次不是事务；脚本的 result 为 {ok,result,trace} 回执，trace 是按执行顺序排列的诊断字符串。页面调用显式传 tabRef。Execute tools in an explicitly created session; use name/args or calls, with explicit tabRef for page tools. Script results use {ok,result,trace}, with ordered diagnostic strings in trace.",
     "inputSchema": {
       "properties": {
-        "scriptApiVersion": {"type": "integer", "minimum": 1, "description": "Required script API version; checked before executing the request."},
+        "scriptApiVersion": {"type": "integer", "minimum": 1, "description": "Script API protocol version; must match the extension before executing the request."},
         "name": {"title": "Name", "type": "string"},
         "args": {"anyOf": [{"additionalProperties": true, "type": "object"}, {"type": "null"}], "default": null, "title": "Args"},
         "calls": {

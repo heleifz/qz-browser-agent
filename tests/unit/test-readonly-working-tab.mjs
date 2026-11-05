@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { documentReadiness } from "../../src/shared/document-readiness.js";
 import test from "node:test";
 import { createSessionSupervisor } from "../../src/background/session/supervisor.js";
 import { createSessionTabs } from "../../src/background/session/tabs.js";
@@ -36,7 +37,7 @@ globalThis.chrome = {
       return { ok: true };
     },
   },
-  scripting: { async executeScript() { return [{ result: null }]; } },
+  scripting: { async executeScript({ func }) { return [{ result: func === documentReadiness ? true : null }]; } },
 };
 
 const tools = await import("../../src/background/tools/runtime.js");

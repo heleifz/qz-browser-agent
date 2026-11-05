@@ -23,24 +23,24 @@ const REVIEWED = new Map([
     files: /^sidepanel\/(?:chunk-[\w.-]+|features\/chat\/math-runtime)\.js$/u,
     reason: "loadMathRuntime loads only packaged vendor/mathjax/startup.js, with a local test-server fallback.",
   }]),
-  ["dynamic-code:458a0b827e90f88c808c7b35ff181eaf0de589a798183c7e78020d252e17d70a", {
+  ["dynamic-code:8caea773019a9518aaeedf8d536a741e3e98755edc5b0ffdb925072b5bf204a3", {
     files: /^(?:runner-sandbox\.js#embedded-1|\.qingzhou-debug\/embedded\/workers\/inner-runner\.js)$/u,
-    reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Traces stay in the worker; a timeout reads the last five once.",
+    reason: "Outer user/Agent script executor in the existing isolated sandbox Worker; no extension APIs. Code and JSON arguments enter through validated host messages. Only declared function arguments are serialized as source; raw business values and explicitly returned host image observations use separate channels. Tool calls retain host policy, ownership and cancellation. Bounded diagnostics stream as data to the live host request; tool identity remains host-owned. Modern callers unwrap only host-declared Skill receipts once; legacy callers retain receipts and image observations follow the selected business object.",
   }],
   ["dynamic-code:81fe6123d9379eaf3a7984ce93a65fba133bd41bdaa7d964e467da13b55748c4", {
     files: /^background\/(?:firefox\/page-command|service-worker)\.js$/u,
     reason: "Firefox-only emulation of CDP Runtime.callFunctionOn for reviewed callers. Native exception names are retained as data. Node-array references/getProperties, weak node indexing and separate object-group handles stay data in the isolated world; explicit user/Agent script compilation remains in the page realm only, never the extension context.",
   }],
-  ["worker-source:5e83acbaad3752eddb422d4987be9965fc3ff593056cbc1f34b18026be3615e0", {
+  ["worker-source:01832cb1983f22c22c934d28eff7b3b854f4c6654aa980f86ffc261aa98e3a0d", {
     files: /^runner-sandbox\.js$/u,
-    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. The host forwards JSON arguments and strict-result mode as data; Worker identity, cancellation and message routing are unchanged. ToolError and explicit image observations are data in replies; trace snapshots do not bypass cancellation.",
+    reason: "startWorkerRun creates a Blob Worker from the packaged, recursively audited inner-runner only. The host forwards JSON arguments and strict-result mode as data; Worker identity, cancellation and message routing are unchanged. ToolError, explicit image observations and streamed diagnostic rows are data in replies. Only the current Worker may publish; trace forwarding and snapshots do not bypass cancellation.",
   }],
   ...[
     ["2075f8762098a5eb7c464e1bb88fd3b3890a050f999a008af27562a8d5f8e4c8", "background/tools/cdp-runtime", "CDP evaluator with host-authorized per-call access, cancellation and stale-owner rejection. A private read grant permits observation without taking the owner lease; owned evaluation keeps its task authorization. A timeout reads the last five traces with a fixed Runtime.callFunctionOn on the CDP-held promise, then terminates. Source and explicit page selection remain reviewed."],
     ["a36dfc60d9dd63fbe417be448b1ec12a50a982e938a85837212784e1a267bf48", "capabilities/media/tools", "Calls only the packaged bounds function on a resolved page element; geometry uses the shared Rect contract."],
     ["c4b36975737f7133ffa80a6398950ff2174ca84befdb6ee026670f823c511fbc", "capabilities/script/tools", "Page-script tool bridge carries Session/run/parent-call identity and arguments as JSON data to the same run-owned evaluator. No caller mode or implicit page is injected."],
     ["2262d3ad0ea465f9ac9f74cece546f998cf578252c960a95aa886f2799d2f62f", "capabilities/tabs/page-mode", "Evaluates only the literal navigator.userAgent for mobile emulation."],
-    ["1d6a81901e7f746e10a6b0165c32219c4c8083876b679707d6bd012ae4db4c5f", "capabilities/script/tools", "Entire createScriptTools factory: run_script always runs in the existing sandbox Worker; evaluate requires an owned explicit page and a self-contained function defined outside the host closure. Arguments are JSON data. The private Skill page bridge retains live parent authorization. Success and failure traces use trusted host presentation beside business values; only successful values receive the valueOnly marker. Cancellation and packaged security guards remain enforced. No implicit page selection or evaluation replay."],
+    ["85c64ee8e9e2f671afecce3517031c63e2dfacd5c2a2beab63b26b7fa85cbd9a", "capabilities/script/tools", "Entire createScriptTools factory: run_script always runs in the existing sandbox Worker; evaluate requires an owned explicit page and a self-contained function defined outside the host closure. Arguments are JSON data. The private Skill page bridge retains live parent authorization. Success and failure traces use trusted host presentation beside business values. Host collection is scoped to the live execution, includes nested diagnostics, and survives cancellation; Skill callers retain receipts for legacy compatibility. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. Cancellation and packaged security guards remain enforced. No implicit page selection or evaluation replay."],
     ["60ac3b226baabdc75705c018ae301fdb89773f66bee9b698dd8be223e7829ed0", "background/tools/element-runtime", "Isolated-world probe using the packaged ISOLATED_CONTENT_PROBE constant; validates live context identity and the element-reference protocol version. Only public error context changed; probe source and frame selection are unchanged."],
     ["8e177aed927806daf6fc4e73005a6eaa450143a33981f607f0cb26a4eeb0f29b", "capabilities/accessibility/tools", "clearStaleOptionDisabled calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code."],
     ["310c1da6f6f300ce376933ce009128593452efba2f7ecb5aceb8afed362de17b", "background/tools/element-runtime", "bindContentElementRefs resolves bounded batches of original-node tokens through the packaged ISOLATED_CONTENT_INVOKE bridge; token arrays are CDP values, not code. It checks the document/frame and limits concurrent node descriptions."],
@@ -57,9 +57,9 @@ const REVIEWED = new Map([
     files: /^background\/tools\/element-runtime\.js$/u,
     reason: "Unbundled invokeBound: same ISOLATED_CONTENT_INVOKE bridge constant and value arguments as the bundled reviewed function; caller context is used only for public failure details.",
   }],
-  ["cdp-execution:a9a24093666360443c02460390e0e6a46bb3f37e3a23a65e617a44a64e484c09", {
+  ["cdp-execution:9ef2dde36c8d989ecbabb04f43c08ee35498bb4e42a3a65636925fb9b745f640", {
     files: /^capabilities\/script\/tools\.js$/u,
-    reason: "Unbundled createScriptTools: the same reviewed outer Worker, explicit owned-page evaluate function and private Skill bridge as the bundled factory. User function source is evaluated outside host lexical bindings; JSON arguments and trusted success/failure traces stay separate. Only success receives the valueOnly marker. No implicit page or replay fallback.",
+    reason: "Unbundled createScriptTools: the same reviewed outer Worker, explicit owned-page evaluate function and private Skill bridge as the bundled factory. User function source is evaluated outside host lexical bindings; JSON arguments and trusted success/failure traces stay separate. Host collection includes nested diagnostics from live requests; Skill receipts remain available for legacy callers. Only successful raw values receive the valueOnly marker. Localized recovery hints are data. No implicit page or replay fallback.",
   }],
   ["cdp-execution:fd8e4ae64e94143af4a077d5318fd519eaea39ed16675c93875a993e21dc73c3", {
     files: /^background\/service-worker\.js$/u,

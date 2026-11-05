@@ -149,12 +149,17 @@ export const driveTaskScenarios = [
     expect(ended.result.code).toBe('DRIVE_SESSION_ENDED');
     return { canceled: true };
   }],
-  ['timeout-no-replay', async ({ run, page }) => {
-    const failed = await run(`return await tools.wait_for_response({tabRef:'main',urlPattern:'/never-matches',timeout:0.2,
-      trigger:{name:'act_on_element',args:{tabRef:'main',target:'css:#more',action:'click'}}});`, {}, 1);
+  ['timeout-no-replay', async ({ run, page, site }) => {
+    const before = site.requests.filter(row => row.path === '/api/more').length;
+    // Establish a committed effect before starting the deliberately short wait.
+    const failed = await run(`await tools.wait_for_response({tabRef:'main',urlPattern:'/api/more',
+      trigger:{name:'act_on_element',args:{tabRef:'main',target:'css:#more',action:'click'}}});
+      await tools.wait_for_function({tabRef:'main',code:()=>document.body.dataset.more==='loaded'});
+      return await tools.wait_for_response({tabRef:'main',urlPattern:'/never-matches',timeout:0.2});`, {}, 1);
     expect(failed.result.code).toBe('TOOL_TIMEOUT');
-    expect(failed.result.hint).toBeUndefined();
+    expect(failed.result.hint).toBe('Check the page state, then retry with the required condition or a longer timeout.');
     await run(`return await tools.wait_for_function({tabRef:'main',code:()=>document.body.dataset.more==='loaded'});`);
+    expect(site.requests.filter(row => row.path === '/api/more')).toHaveLength(before + 1);
     await expect(page.locator('#more')).toHaveAttribute('data-clicks', '1');
     await expect(page.locator('#count')).toHaveText('2');
   }],

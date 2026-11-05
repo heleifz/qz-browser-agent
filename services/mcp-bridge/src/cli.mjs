@@ -15,7 +15,7 @@ import { resourceRequest, settingsPatch } from "./cli-resources.mjs";
 import { PACKAGE_NAME, PACKAGE_VERSION } from "./package-info.mjs";
 import { optionTerminator, shellArgument } from "./shell.mjs";
 import { driveGuide } from "./drive-guide.mjs";
-import { buildScriptRequest, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
+import { buildScriptRequest, presentScriptFailure, presentScriptResult, scriptTimeouts } from "./script-call.mjs";
 
 export const HELP = renderHelp();
 
@@ -112,7 +112,15 @@ async function dispatchCommand(parsed, dependencies) {
   dependencies.signal?.throwIfAborted();
   const open = dependencies.openBrowser || openBrowser;
   const find = dependencies.findDaemon || findDaemon;
-  if (command === "install") return { result: await open(INSTALL_URL) };
+  if (command === "install") {
+    try { return { result: await open(INSTALL_URL) }; }
+    catch (error) {
+      if (error?.code === "BROWSER_OPEN_FAILED" && !error.hint && !error.details?.hint) {
+        error.hint = "Open the store URL manually, or configure a default browser and retry qz install.";
+      }
+      throw error;
+    }
+  }
   if (command === "connect") {
     const running = await find({ allowIncompatible: true }) || await (dependencies.ensureDaemon || ensureDaemon)(options.port === undefined ? {} : { preferredPort: options.port });
     if (options.port !== undefined && Number(new URL(running.endpoint).port) !== options.port) throw new QzError("PORT_MISMATCH",
@@ -355,7 +363,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     live?.finish();
     const payload = errorPayload(error);
     const scriptCommand = (parsed?.command ?? commandNameFromArgs(argv)) === "script";
-    if (scriptCommand) stdout.write(presentScriptResult({ isError: true, result: payload }).text);
+    if (scriptCommand) stdout.write(presentScriptFailure(payload).text);
     else if (mode.json) stdout.write(`${JSON.stringify(payload)}\n`);
     else stderr.write(renderError(payload, { ...mode, color: mode.color && Boolean(stderr.isTTY) }));
     return payload.code === "INVALID_ARGUMENTS" ? 2 : !scriptCommand && payload.code === "INTERRUPTED" ? 130 : 1;

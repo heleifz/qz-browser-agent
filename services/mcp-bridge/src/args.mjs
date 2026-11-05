@@ -4,7 +4,9 @@ import { browserName } from "./browser-registry.mjs";
 import { COMMANDS, DRIVE_SESSION_REQUIRED, commandOptions } from "./commands.mjs";
 
 function invalid(message) {
-  throw new QzError("INVALID_ARGUMENTS", message);
+  throw new QzError("INVALID_ARGUMENTS", message, {
+    hint: "Run qz --help, or npm run qz -- --help, to check the command and its arguments.",
+  });
 }
 
 function requireDriveSession(command, options) {

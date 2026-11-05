@@ -162,10 +162,11 @@ async function qz({ argv, stdin = "" }) {
   let value; try { value = JSON.parse(entry.stdout); } catch { /* Plain CLI help is useful model input too. */ }
   if (entry.exitCode !== 0) report.codedErrors.push({ argv, exitCode: entry.exitCode, stdout: entry.stdout, stderr: entry.stderr });
   if (parsed?.command === 'script') {
-    assert.deepEqual(Object.keys(value).sort(), ['result', 'traces']);
-    assert.ok(Array.isArray(value.traces) && value.traces.every(trace => typeof trace === 'string'), 'CLI traces are plain strings');
-    entry.traces = value.traces;
-    for (const trace of value.traces.filter(trace => trace.trim())) {
+    assert.deepEqual(Object.keys(value).sort(), ['ok', 'result', 'trace']);
+    assert.equal(value.ok, entry.exitCode === 0, 'receipt status matches the CLI exit code');
+    assert.ok(Array.isArray(value.trace) && value.trace.every(trace => typeof trace === 'string'), 'CLI traces are plain strings');
+    entry.trace = value.trace;
+    for (const trace of value.trace.filter(trace => trace.trim())) {
       assert.equal(entry.stderr.split(/\r?\n/).includes(trace), false, 'script traces are in stdout, not stderr');
     }
     value = value.result;
@@ -261,7 +262,7 @@ try {
       return false;
     });
   });
-  const tools = [{ type: "function", function: { name: "qz", description: "Run the real qz CLI in the already connected isolated browser. argv excludes the qz executable. stdin supplies script JavaScript. Script stdout contains traces and the returned result; use --json for other structured receipts. This is the current unpublished source, not npx.",
+  const tools = [{ type: "function", function: { name: "qz", description: "Run the real qz CLI in the already connected isolated browser. argv excludes the qz executable. stdin supplies script JavaScript. Script stdout is {ok,result,trace}: execution status, the returned value and ordered trace messages; use --json for other structured receipts. This is the current unpublished source, not npx.",
     parameters: { type: "object", properties: { argv: { type: "array", items: { type: "string" } }, stdin: { type: "string" } }, required: ["argv"], additionalProperties: false } } }];
   const messages = [{ role: "system", content: `${skill}\n\nThis browser is already installed, connected and consented. Use only the qz tool to drive it. Use qz session create for the titled task, qz script --session for every browser operation, and qz session cancel to finish. Do not install/configure anything or start a built-in qz model. The tool executes CLI arguments directly, so no shell expansion, pipes or file-writing are available; pass JavaScript through stdin. Work within 30 model turns and ten minutes. Every qz command starts a new process. Read the CLI receipts and finish the task before your final response.` },
     { role: "user", content: "On public English Wikipedia (https://en.wikipedia.org/wiki/Main_Page), verify the site's navigation without signing in. Create exactly one readable titled session for this task and give the page a readable alias. Find the encyclopedia Contents link with find_elements and click that exact returned target. From the Contents page, list the site's logo image with list_images and click that exact returned target to return to Main Page. After returning to Main Page, fill CSS target css:input[name=\"search\"] with Hangzhou without submitting. Use qz script to log one concise verified page observation and return a small business object containing the verified document title, URL, and searchValue read from that search input. Keep the same session and alias throughout; then cancel the task to finish. Report what you verified and the source URL. Choose your own calls and inspect each response; never invent an element target." }];
@@ -291,11 +292,11 @@ try {
     if (parseCommand(report.cli[index].argv).command !== 'script') return [];
     const response = JSON.parse(message.content);
     const receipt = JSON.parse(response.stdout);
-    return [{ toolCallId: message.tool_call_id, traces: receipt.traces }];
+    return [{ toolCallId: message.tool_call_id, trace: receipt.trace }];
   });
-  assert.deepEqual(modelReceipts.map(receipt => receipt.traces), report.cli.filter(entry => parseCommand(entry.argv).command === 'script').map(entry => entry.traces),
+  assert.deepEqual(modelReceipts.map(receipt => receipt.trace), report.cli.filter(entry => parseCommand(entry.argv).command === 'script').map(entry => entry.trace),
     'the model receives every CLI trace unchanged through the complete stdout');
-  const modelTraces = modelReceipts.flatMap(receipt => receipt.traces).filter(trace => trace.trim());
+  const modelTraces = modelReceipts.flatMap(receipt => receipt.trace).filter(trace => trace.trim());
   report.modelVisibleTraces = { receipts: modelReceipts.length, nonEmpty: modelTraces.length,
     samples: modelTraces.slice(0, 5), transport: 'complete CLI stdout in model tool responses' };
   assert.ok(modelTraces.length > 0, 'real external model requests include non-empty CLI traces');

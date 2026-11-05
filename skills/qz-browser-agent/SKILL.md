@@ -42,9 +42,9 @@ Page tools always pass tabRef, including each call inside a script. A missing ta
 
 ## Scripts and tool discovery
 
-`qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as input/args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools/tool and trace/log, but no document/window, Node.js, fs, process, require or import.
+`qz script --session ID [FILE|-] [--args JSON]` reads a local file or stdin. --args accepts a JSON value available as args. Use top-level await and return, beginning with a short comment stating the script's purpose. The script runs outside web pages and survives their navigation. It has tools and trace(), but no document/window, Node.js, fs, process, require or import.
 
-Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools.
+Call tools by their catalog names. Use `tools.list_tools()` for compact signatures, then `tools.list_tools({names:["evaluate","wait_for_navigation"]})` for selected full schemas. Read the relevant schema before using an unfamiliar tool; loaded Skills can add tools. Awaited calls, including Skill tools, return business values directly; failures throw.
 
 ```sh
 qz script --session "$SID" - <<'JS'
@@ -61,7 +61,7 @@ qz script --session "$SID" --args '{"limit":1000}' - <<'JS'
 return await tools.evaluate({
   tabRef: "page",
   code: ({ limit }) => ({ title: document.title, text: document.body.innerText.slice(0, limit) }),
-  args: input
+  args
 });
 JS
 ```
@@ -92,7 +92,21 @@ return await tools.wait_for_navigation({
 
 wait_for_navigation observes a new navigation after listening begins, including same-URL reloads and SPA changes; a completed old page cannot satisfy it. wait_for_load waits for the current page load. wait_for_element defaults to visible; use attached when only DOM presence is needed. A body with zero height can contain visible children, so waiting for body visibility is not a page-readiness check. Read the tools' schemas for popup, response and timeout options. Prefer an observable condition to a fixed sleep.
 
-Execute known steps serially in one script, then observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. trace/log and console diagnostics are returned as ordered strings in traces.
+Use await for dependent steps and Promise.all for independent page workflows. Each branch can open and read its page without waiting for slower branches; same-page actions stay serialized. Promise.all returns results in input order and rejects on the first failure without cancelling siblings. Use Promise.allSettled when every outcome matters. Await all tool calls before returning: script exit cancels unfinished calls.
+
+```sh
+qz script --session "$SID" - <<'JS'
+// Open and read each page independently.
+return await Promise.all(
+  ["https://example.com", "https://example.org"].map(async url => {
+    const { tabRef } = await tools.open_tab({ url });
+    return await tools.read_article({ tabRef, limit: 1500 });
+  })
+);
+JS
+```
+
+Observe the relevant result once. If the next step depends on an unknown target or page state, inspect that result before choosing the action. Scripts are not transactions: completed actions remain completed after a later failure. Return only the business data needed for the task. Use trace() at key checkpoints, such as completed stages and counts, to help recover after a failure. trace contains only errors and explicit trace()/console output, in order.
 
 ## Documents and larger results
 
@@ -102,7 +116,7 @@ Images and files stay in their artifact stores; return their references. Busines
 
 ## Output and recovery
 
-stdout is JSON `{traces,result}` on success and failure. traces contains execution messages in order, without levels; result is the returned business value, or null for undefined. Use return for business output and console/trace for progress. A tool failure rejects its awaited call with `{code,message,hint?,details?}`; an uncaught failure puts that error in result. Keep its code, message and recovery guidance. Script locations are in details. Successful scripts exit 0; execution and connection failures exit 1; invalid CLI arguments exit 2.
+stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace contains errors and explicit diagnostics in order, without levels; result is the returned business value, or null for undefined. Use return for business output and console/trace for progress. A tool failure rejects its awaited call with `{code,message,hint?,details?}`; an uncaught failure puts that error in result. Keep its code, message and recovery guidance. Script locations are in details. Successful scripts exit 0; execution and connection failures exit 1; invalid CLI arguments exit 2.
 
 --timeout sets script execution seconds, defaults to 120, and accepts >0 through 3600. The request waits 60 seconds longer. Give the calling shell a longer deadline. A timeout or interrupted connection does not prove that a browser action was undone; inspect the session and page before repeating it.
 

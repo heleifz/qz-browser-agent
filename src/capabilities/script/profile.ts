@@ -3,7 +3,7 @@ import type { RendererServices } from "#sdk/sidepanel";
 import * as presentation from "#sdk/sidepanel/presentation";
 
 /** Read caller feedback while retaining stored pre-contract script results. */
-export function appendScriptFeedback(parent: HTMLElement, value: unknown) {
+function appendScriptFeedback(parent: HTMLElement, value: unknown) {
   const envelope = presentation.record(value);
   const script = presentation.record(presentation.record(envelope._display).script);
   const details = presentation.record(envelope.details);

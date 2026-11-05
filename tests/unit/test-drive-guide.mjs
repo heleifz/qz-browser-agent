@@ -33,8 +33,8 @@ test("the packaged guide matches the installed Skill and keeps one script vocabu
   assert.match(guide, /Ordinary success returns `\{\}`/);
   assert.match(guide, /trigger/);
   assert.match(guide, /not transactions/);
-  assert.match(guide, /stdout is JSON `\{traces,result\}`/);
-  assert.match(guide, /trace\/log and console diagnostics are returned as ordered strings in traces/);
+  assert.match(guide, /stdout is JSON `\{ok,result,trace\}`/);
+  assert.match(guide, /trace\(\) and console diagnostics are returned as ordered strings in trace/);
   assert.match(guide, /load_skill.*qingzhou-documents/);
   assert.match(guide, /timed out|timeout/i);
   assert.doesNotMatch(guide, /\bMCP\b|\bqingzhou_(?:guide|create_drive_session|execute_tool|list_tools|get_tool|bridge_status|stop_session)\b|keepTabs:true/i);
@@ -60,14 +60,14 @@ test("MCP server instructions retain their explicit session and page-reference c
 test("outer scripts pass args separately and present traces with values by transport status", () => {
   assert.throws(() => buildScriptRequest({ code: "return 1" }), /requires --session/);
   assert.deepEqual(buildScriptRequest({ code: "return input", sessionId: " s ", args: [1, 2] }), {
-    name: "run_script", sessionId: "s", scriptApiVersion: 1, args: { timeout: 120, code: "return input", args: [1, 2] },
+    name: "run_script", sessionId: "s", scriptApiVersion: 2, args: { timeout: 120, code: "return input", args: [1, 2] },
   });
   const business = { ok: false, code: "APP_CODE", message: "business", result: 7, trace: [1] };
-  assert.deepEqual(presentScriptResult({ isError: false, result: business }), { text: JSON.stringify({ traces: [], result: business }) + "\n", exitCode: 0 });
+  assert.deepEqual(presentScriptResult({ scriptApiVersion: 2, isError: false, result: { ok: true, result: business, trace: [] } }), { text: JSON.stringify({ ok: true, result: business, trace: [] }) + "\n", exitCode: 0 });
   const error = { code: "SCRIPT_EVALUATION_FAILED", message: "SyntaxError", hint: "Fix the function.", details: { line: 2, column: 4 } };
-  const bad = presentScriptResult({ isError: true, result: error });
+  const bad = presentScriptResult({ scriptApiVersion: 2, isError: true, result: { ok: false, result: error, trace: [] } });
   assert.equal(bad.exitCode, 1);
-  assert.deepEqual(JSON.parse(bad.text), { traces: [], result: error });
+  assert.deepEqual(JSON.parse(bad.text), { ok: false, result: error, trace: [] });
   const oldExtension = presentScriptResult({ result: business });
   assert.equal(oldExtension.exitCode, 1);
   assert.equal(JSON.parse(oldExtension.text).result.code, "UPGRADE_REQUIRED");

@@ -420,8 +420,9 @@ the session and clean up its created tabs, including while a script is running. 
 preserved. Further execution returns `DRIVE_SESSION_ENDED`.
 
 `qz script --session ID [FILE|-] [--args JSON]` runs JavaScript outside the page. It reads a local
-file or stdin; --args accepts a JSON value exposed as input/args. The script can await tools
-using the same names as the native Agent. Discover compact signatures with
+file or stdin; --args accepts a JSON value exposed as args. The script can await tools
+using the same names as the native Agent. Awaited calls, including Skill tools, return business values
+directly; failures throw. Discover compact signatures with
 `tools.list_tools()` and selected full schemas with `tools.list_tools({names:["evaluate"]})`.
 Each page tool passes its own explicit tabRef. `tools.evaluate` runs a
 self-contained function in that page; pass data through args and return its value. Outer
@@ -438,8 +439,9 @@ qz session show SESSION_ID
 qz session cancel SESSION_ID
 ```
 
-stdout is JSON `{traces,result}` on success and failure. traces is an ordered string array
-without levels; result is the returned business value, null for undefined, or a failure in
+stdout is JSON `{ok,result,trace}` on success and failure. ok reports execution success; trace is an
+ordered string array without levels. Tool traces carry sequence numbers and supplied tabRef values; settled calls include
+the call ID used by the sidebar. result is the returned business value, null for undefined, or a failure in
 `{code,message,hint?,details?}` form. Business trace/traces fields stay inside result. Script
 locations are in details. Exit codes are 0 for success, 1 for execution or connection failure,
 and 2 for invalid arguments. --timeout defaults to 120
@@ -453,7 +455,8 @@ wait. Tool schemas specify the available filters and deadlines.
 
 MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns
 `{toolName,sessionId,isError,result}`: inspect isError, then read result as the business value or
-ToolError. Do not infer execution status from keys inside a script's returned object. Batches
+ToolError; script calls carry the `{ok,result,trace}` receipt in result. Do not infer execution status
+from keys inside a script's returned object. Batches
 correlate each result by call ID and are not transactions. The service extends script request
 waiting to at least the execution budget plus 60 seconds without rewriting execution budgets.
 Native MCP session operations include `qingzhou_list_drive_sessions`,

@@ -186,7 +186,7 @@ assert.match(builtin.content, /导入页面 Zip/);
 assert.match(builtin.content, /不扫描 DOM、Network 或猜测 URL/);
 assert.match(builtin.content, /探测并导入 Git 仓库/);
 assert.match(builtin.content, /安装 Skill 到 Git/);
-const settingsDslSection = builtin.content.match(/## Skill 设置 DSL 与 inner 网络([\s\S]*?)## 脚本约定/)?.[1] || "";
+const settingsDslSection = builtin.content.match(/## Skill 设置 DSL 与脚本网络访问([\s\S]*?)## 脚本约定/)?.[1] || "";
 assert.ok(settingsDslSection, "workbench should contain a dedicated Skill settings DSL section");
 for (const fieldType of SKILL_SETTING_FIELD_TYPES) {
   assert.ok(settingsDslSection.includes("`" + fieldType + "`"), `workbench should document the ${fieldType} setting field type`);
@@ -255,7 +255,7 @@ assert.match(siteSkillAuthorBuiltin.content, /首次创建带工具的站点 Ski
 assert.match(siteSkillAuthorBuiltin.content, /qingzhou_skill_author__edit_skill_resource/);
 assert.match(siteSkillAuthorBuiltin.content, /一次调用只改一个资源/);
 assert.doesNotMatch(siteSkillAuthorBuiltin.content, /resourceEdits:\[\{ action:"set"/);
-assert.match(siteSkillAuthorBuiltin.content, /runtime tool 的正式 smoke 必须在 skill 的 `domains` 和 `urlPatterns` 匹配到的真实执行域完成/);
+assert.match(siteSkillAuthorBuiltin.content, /正式 runtime smoke 必须调用生成后的工具[\s\S]*`tools.evaluate` 使用匹配的页面[\s\S]*manifest 许可的外层 fetch/);
 assert.deepEqual(siteSkillAuthorBuiltin.resources, []);
 
 assert.match(SYSTEM_PROMPT, /Durable 产物协议/);

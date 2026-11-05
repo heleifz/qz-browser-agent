@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { main } from '../../services/mcp-bridge/src/cli.mjs';
 import { readHealth } from '../../services/mcp-bridge/src/client.mjs';
+import { exerciseSkillScripts } from './script-skill-acceptance.mjs';
 import { startOuterScriptPage } from './outer-script-page.mjs';
 
 /** The same public CLI acceptance runs against the loaded Chrome and Firefox packages. */
-export async function exerciseOuterScripts({ endpoint, page, context, ui, observe, expect, step, testInfo }) {
+export async function exerciseOuterScripts({ endpoint, page, context, ui, observe, expect, step, testInfo, interleavings = false, skillScripts = false }) {
   const fixture = await startOuterScriptPage(), transcript = [];
   let sessionId, stopped = false;
   const observeTools = observe || (() => page.evaluate(async () => {
@@ -31,9 +32,10 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     const entry = { argv, stdin, exitCode, stdout: stdout.text, stderr: stderr.text, value };
     transcript.push(entry);
     if (argv[0] === 'script') {
-      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(['result', 'traces']);
-      expect(Array.isArray(value.traces), JSON.stringify(entry)).toBe(true);
-      expect(value.traces.every(trace => typeof trace === 'string'), JSON.stringify(entry)).toBe(true);
+      expect(Object.keys(value || {}).sort(), JSON.stringify(entry)).toEqual(['ok', 'result', 'trace']);
+      expect(value.ok, JSON.stringify(entry)).toBe(exitCode === 0);
+      expect(Array.isArray(value.trace), JSON.stringify(entry)).toBe(true);
+      expect(value.trace.every(trace => typeof trace === 'string'), JSON.stringify(entry)).toBe(true);
     }
     return entry;
   };
@@ -50,6 +52,14 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     const created = await cli(['session', 'create', '--title', 'Outer script browser acceptance', '--json']);
     expect(created.exitCode, JSON.stringify(created)).toBe(0);
     sessionId = created.value.result.sessionId;
+    if (skillScripts) {
+      await exerciseSkillScripts({ page, script, cli, sessionId, events, fixture, expect });
+      return;
+    }
+    if (interleavings) {
+      await exerciseInterleavedBranches({ script, fixture, expect });
+      return;
+    }
 
     await step('outer script survives real document navigation and continues through evaluate', async () => {
       const result = await script(`async () => {
@@ -71,7 +81,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       expect(result.after.token).not.toBe(result.before.token);
       expect(result.after.path).toBe('/next'); expect(result.after.title).toBe('Outer script /next');
       expect(result.continued).toBe('yes'); expect(result.navigation.status).toBe('navigated');
-      expect(transcript.at(-1).value.traces.filter(value => ['navigation.begin', 'navigation.arrived', 'navigation.continued'].includes(value)))
+      expect(transcript.at(-1).value.trace.filter(value => ['navigation.begin', 'navigation.arrived', 'navigation.continued'].includes(value)))
         .toEqual(['navigation.begin', 'navigation.arrived', 'navigation.continued']);
       await expect.poll(async () => (await events()).filter(event => event.toolName === 'run_script').length).toBe(1);
       expect((await events()).map(event => event.toolName).sort()).toEqual([
@@ -130,6 +140,51 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       expect(await script(`async () => tools.evaluate({tabRef:'main',code:()=>document.querySelector('#edit').value})`)).toBe('2');
     });
 
+    await step('fast open-read branches finish before a held navigation and keep Promise.all result order', async () => {
+      const parallel = script(`return await Promise.all(['slow-open','fast-open'].map(async tabAlias => {
+        const opened = await tools.open_tab({tabAlias,url:input.origin+(tabAlias==='slow-open'?'/popup-late':'/fast')});
+        const result = await tools.evaluate({tabRef:opened.tabRef,code:()=>({path:location.pathname,title:document.title})});
+        trace(tabAlias+'.read');
+        return {tabAlias,...result};
+      }));`, { origin: fixture.origin });
+      void parallel.catch(() => {});
+      try {
+        await expect.poll(() => fixture.pending('popup-late'), { timeout: 10_000 }).toBe(1);
+        await expect.poll(async () => (await events()).filter(event => event.toolName === 'evaluate'
+          && event.args?.tabRef === 'fast-open' && !event.isError).length, { timeout: 10_000 }).toBe(1);
+        expect(fixture.pending('popup-late')).toBe(1, 'fast branch returns before the slow navigation is released');
+      } finally { fixture.release('popup-late'); }
+      expect(await parallel).toEqual([
+        { tabAlias: 'slow-open', path: '/popup-late', title: 'Outer script /popup-late' },
+        { tabAlias: 'fast-open', path: '/fast', title: 'Outer script /fast' },
+      ]);
+      expect(transcript.at(-1).value.trace.filter(value => value.endsWith('.read'))).toEqual(['fast-open.read', 'slow-open.read']);
+    });
+
+    await step('caught Promise.all errors leave siblings running and allSettled preserves every outcome', async () => {
+      const parallel = script(`const slow = tools.evaluate({tabRef:'other',code:async()=>{
+        await fetch('/hold?lane=caught-sibling'); return 'sibling-completed';
+      }});
+      let caught;
+      try { await Promise.all([slow,tools.evaluate({tabRef:'main',code:()=>{throw new Error('branch-failed')}})]); }
+      catch(error) { caught=error.message; }
+      const outcomes=await Promise.allSettled([slow,tools.evaluate({tabRef:'main',code:()=>{throw new Error('second-failure')}})]);
+      return {caught,outcomes:outcomes.map(outcome=>outcome.status==='fulfilled'
+        ? {status:outcome.status,value:outcome.value} : {status:outcome.status,message:outcome.reason.message})};`);
+      void parallel.catch(() => {});
+      try {
+        await expect.poll(() => fixture.pending('caught-sibling'), { timeout: 10_000 }).toBe(1);
+        await expect.poll(async () => (await events()).filter(event => event.isError
+          && JSON.stringify(event.result).includes('second-failure')).length, { timeout: 10_000 }).toBe(1);
+        expect(fixture.pending('caught-sibling')).toBe(1);
+      } finally { fixture.release('caught-sibling'); }
+      const result = await parallel;
+      expect(result.caught).toContain('branch-failed');
+      expect(result.outcomes[0]).toEqual({status:'fulfilled',value:'sibling-completed'});
+      expect(result.outcomes[1].status).toBe('rejected');
+      expect(result.outcomes[1].message).toContain('second-failure');
+    });
+
     await step('page errors stay canonical and future-event waits reject an already complete document', async () => {
       const failure = await cli(['script', '--session', sessionId, '--json', '--timeout', '10', '-'],
         `async () => { trace('failure.begin'); await tools.evaluate({tabRef:'main',code:()=>{
@@ -139,8 +194,8 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       expect(failure.exitCode, JSON.stringify(failure)).toBe(1);
       expect(failure.value.result.code).toBeTruthy(); expect(failure.value.result.message).toContain('outer-fixture-failure');
       expect(Object.keys(failure.value.result).every(key => ['code', 'message', 'hint', 'details'].includes(key))).toBe(true);
-      expect(failure.value.traces.filter(value => value === 'failure.begin')).toHaveLength(1);
-      expect(failure.value.traces).not.toContain('failure.unreached');
+      expect(failure.value.trace.filter(value => value === 'failure.begin')).toHaveLength(1);
+      expect(failure.value.trace).not.toContain('failure.unreached');
       const taskPage=context.pages().find(candidate=>candidate.url()===`${fixture.origin}/next`);
       await expect(taskPage.locator('body')).toHaveAttribute('data-partial-runs','1');
       const timeout = await cli(['script', '--session', sessionId, '--json', '--timeout', '10', '-'],
@@ -216,5 +271,65 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
     if (sessionId && !stopped) await cli(['cancel', sessionId, '--json']).catch(() => {});
     await testInfo.attach('outer-script-cli-transcript.json', { body: Buffer.from(JSON.stringify(transcript, null, 2)), contentType: 'application/json' });
     await fixture.close();
+  }
+}
+
+async function exerciseInterleavedBranches({ script, fixture, expect }) {
+  const refs = await script(`return await Promise.all([null,'stress-one','stress-two'].map(async tabAlias => {
+    const opened=await tools.open_tab({url:input.origin+'/start',...(tabAlias?{tabAlias}:{})});
+    return opened.tabRef;
+  }));`, { origin: fixture.origin });
+  for (const seed of [7, 29, 83]) {
+    let random = seed, finished = false;
+    const labels = Array.from({ length: 30 }, (_, i) => `${seed}-${Math.floor(i / 5)}-${i % 5}`);
+    const pending = script(`const branches=Array.from({length:6},(_,branch)=>(async()=>{
+      const reference=input.refs[branch%3], tabRef=branch%2?String(reference):reference, results=[];
+      for(let step=0;step<5;step++){
+        const ticket=input.seed+'-'+branch+'-'+step;
+        try {
+          results.push(await tools.evaluate({tabRef,code:async ({ticket,fail})=>{
+            if(document.body.dataset.busy) throw new Error('overlapping-page-actions');
+            document.body.dataset.busy=ticket;
+            try {
+              await fetch('/hold?lane='+ticket);
+              if(fail) throw new Error('expected-branch-error');
+              return ticket;
+            } finally { delete document.body.dataset.busy; }
+          },args:{ticket,fail:branch===1&&step===1}}));
+        } catch(error) {
+          if(!error.message.includes('expected-branch-error')) throw error;
+          results.push('caught:'+ticket);
+        }
+        if(step===2&&branch<3) await tools.wait_for_navigation({tabRef,timeout:10,
+          trigger:{name:'act_on_element',args:{tabRef,target:'css:#navigate',action:'click'}}});
+        if(step===3) await Promise.all([
+          tools.find_elements({tabRef,pattern:'Continue'}),
+          tools.evaluate({tabRef,code:()=>document.title}),
+        ]);
+      }
+      return results;
+    })());
+    return (await Promise.allSettled(branches)).map(row=>row.status==='fulfilled'
+      ? {status:row.status,value:row.value} : {status:row.status,error:row.reason.message});`, { refs, seed });
+    void pending.then(() => { finished = true; }, () => { finished = true; });
+    try {
+      for (let round = 0; round < 120 && !finished; round++) {
+        await expect.poll(() => finished || labels.some(label => fixture.pending(label)), { timeout: 10_000, intervals: [10, 20, 50] }).toBeTruthy();
+        const available = labels.filter(label => fixture.pending(label));
+        for (let lane = 0; lane < 3; lane++) expect(available.filter(label => Number(label.split('-')[1]) % 3 === lane).length).toBeLessThanOrEqual(1);
+        if (available.length) {
+          random = (Math.imul(random, 1664525) + 1013904223) >>> 0;
+          fixture.release(available[random % available.length]);
+        }
+      }
+      expect(finished).toBe(true);
+      const result = await pending;
+      expect(result).toEqual(Array.from({ length: 6 }, (_, branch) => ({ status: 'fulfilled',
+        value: Array.from({ length: 5 }, (_, step) => `${branch === 1 && step === 1 ? 'caught:' : ''}${seed}-${branch}-${step}`),
+      })));
+      const requests = fixture.requests.filter(request => request.path === '/hold' && request.lane.startsWith(`${seed}-`));
+      expect(requests).toHaveLength(30);
+      expect(new Set(requests.map(request => request.lane)).size).toBe(30);
+    } finally { for (const label of labels) fixture.release(label); }
   }
 }
