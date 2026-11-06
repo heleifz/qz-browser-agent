@@ -7,6 +7,7 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { finder, attr as finderAttribute } from "@medv/finder";
+import { computeAccessibleName } from "dom-accessibility-api";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
@@ -47,7 +48,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-05-element-locator";
+  const QZ_CONTENT_VERSION = "2026-11-06-accessible-name";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -1767,11 +1768,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
       for (let order = 0; order < candidates.length; order += 1) {
         const el = candidates[order];
+        if (roleSet.size && !roleSet.has(getElementRole(el))) continue;
+        if (tagSet.size && !tagSet.has(el.tagName.toLowerCase())) continue;
+        if (typeSet.size && !typeSet.has((el.getAttribute("type") || "").toLowerCase())) continue;
         const summary = getElementSummary(el);
         if (!includeHidden && !summary.visible) continue;
-        if (roleSet.size && !roleSet.has(summary.role)) continue;
-        if (tagSet.size && !tagSet.has(summary.tag)) continue;
-        if (typeSet.size && !typeSet.has(String(summary.type || "").toLowerCase())) continue;
 
         const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
         if (regex && !matchInfo.matched) continue;
@@ -2838,36 +2839,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getAccessibleName(el: Element) {
-    const root = el.getRootNode() as Document | ShadowRoot;
-    const labelledBy = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean)
-      .map(id => root.getElementById?.(id)?.textContent || "").join(" ").trim();
-    if (labelledBy) return normalizeText(labelledBy);
-    const label = el.getAttribute("aria-label") || labelTextFor(el);
-    if (label) return normalizeText(label);
-    if (el instanceof HTMLImageElement || el instanceof HTMLInputElement && el.type === "image") return el.alt || "";
-    if (el instanceof HTMLInputElement && ["button", "submit", "reset"].includes(el.type)) return el.value || el.getAttribute("title") || "";
-    if (["button", "link", "option", "heading", "checkbox", "radio", "menuitem", "menuitemcheckbox", "menuitemradio",
-      "tab", "switch", "treeitem", "cell", "columnheader", "rowheader", "tooltip"].includes(getElementRole(el))) {
-      const content = normalizeText(el.textContent);
-      if (content) return content;
-    }
-    return el.getAttribute("title") || "";
-  }
-
-  function labelTextFor(el: Element) {
-    // A control's own content is not part of the label that names it.
-    const textFor = (node: Node): string => node === el ? "" : node.nodeType === Node.TEXT_NODE
-      ? node.textContent || "" : Array.from(node.childNodes, textFor).join("");
-    if ("labels" in el && el.labels) {
-      const text = [...el.labels as NodeListOf<HTMLLabelElement>].map(textFor).join(" ").trim();
-      if (text) return text;
-    }
-    if (el.id) {
-      const label = (el.getRootNode() as Document | ShadowRoot).querySelector?.(`label[for="${CSS.escape(el.id)}"]`);
-      if (label) return textFor(label).trim();
-    }
-    const wrapped = el.closest("label");
-    return wrapped ? textFor(wrapped).trim() : "";
+    return computeAccessibleName(el, { computedStyleSupportsPseudoElements: true });
   }
 
   function getElementValue(el: Element, full = false) {

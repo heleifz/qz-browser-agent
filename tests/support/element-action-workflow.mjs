@@ -6,7 +6,7 @@ export async function startElementActionWorkflow() {
     if (request.url === '/popup') { response.end('<!doctype html><title>Action popup</title><p>Popup result</p>'); return; }
     if (request.url === '/frame') {
       response.end(`<!doctype html><title>Action frame</title><button id="frame-hover" style="width:160px;height:44px"
-        onmousemove="this.dataset.hovered='yes'">Frame hover</button>`);
+        onmousemove="this.dataset.hovered='yes'"><span aria-label="Frame hover">Frame icon</span></button>`);
       return;
     }
     response.end(`<!doctype html><meta charset="utf-8"><title>Element action workflow</title>
@@ -22,10 +22,10 @@ export async function startElementActionWorkflow() {
       <button id="delayed" disabled>Delayed button</button>
       <span id="covered"><button id="uncovered">Covered button</button><span id="overlay"></span></span>
       <button id="never" disabled>Never ready</button>
-      <button id="hover">Hover target</button><button id="double">Double target</button>
+      <button id="hover">Hover target<span aria-hidden="true">Decoration</span></button><button id="double">Double target</button>
       <button id="popup" onclick="window.open('/popup','_blank')">Open popup</button>
       <input id="readonly" readonly value="Initial value" aria-label="Initially readonly">
-      <label>Track <select id="track"><option value="">-- choose --</option>
+      <label><span aria-label="Track">Route</span> <select id="track"><option value="">-- choose --</option>
         <option value="web">Web automation</option><option value="data">Data extraction</option></select></label>
       <div><span class="hover-cover"><button id="hover-ready">Hover then ready</button></span>
         <span class="hover-cover"><button id="hover-never">Hover then blocked</button></span>
@@ -127,6 +127,7 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   await page.evaluate(() => { document.getElementById('never').disabled = false; });
 
   const found = await call('find_elements', { roles: ['button'], limit: 20 });
+  expect(found.results.some(item => item.name === 'Hover target' && item.text.includes('Decoration'))).toBe(true);
   const targetFor = label => {
     const target = found.results.find(item => item.name === label || item.text === label)?.target;
     expect(target, JSON.stringify(found)).toMatch(/^uid:/);
@@ -151,6 +152,7 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   const tree = await call('get_ax_tree', { scope: 'full', depth: 12, limit: 80 });
   const frameTarget = tree.snapshot?.split('\n').find(line => line.includes('"Frame hover"'))?.match(/target=(uid:\S+)/)?.[1];
   expect(frameTarget, JSON.stringify(tree)).toMatch(/^uid:/);
+  expect(await call('inspect_element', { target: frameTarget })).toMatchObject({ name: 'Frame hover' });
   expect(await call('act_on_element', { target: frameTarget, action: 'hover' })).toEqual({});
   await expect(page.frameLocator('iframe').locator('#frame-hover')).toHaveAttribute('data-hovered', 'yes');
   expect(await page.locator('#never').getAttribute('data-clicks'), 'timed-out preparation must not click after becoming ready').toBeNull();

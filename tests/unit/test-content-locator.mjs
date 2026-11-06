@@ -28,9 +28,8 @@ test.before(async () => {
   page = await browser.newPage();
 });
 
-test.beforeEach(async () => {
-  await page.setContent(html);
-  await page.evaluate(() => {
+async function installContent(target) {
+  await target.evaluate(() => {
     delete window.__QZ_CONTENT_VERSION;
     let listener;
     if (!window.chrome) window.chrome = {};
@@ -41,7 +40,12 @@ test.beforeEach(async () => {
     } });
     window.callContent = (action, args = {}) => new Promise(resolve => listener({ action, ...args }, {}, resolve));
   });
-  await page.addScriptTag({ content });
+  await target.addScriptTag({ content });
+}
+
+test.beforeEach(async () => {
+  await page.setContent(html);
+  await installContent(page);
 });
 
 test.after(async () => { await browser?.close(); });
@@ -88,6 +92,57 @@ test("wrapping labels exclude their control's own text from its accessible name"
   assert.equal((await resolve({ role: "combobox", name: "Track Required" })).matched, 1);
 });
 
+test("accessible names follow references, label precedence, hidden content and SVG titles", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `
+    <label>Native label<input aria-label="Explicit label"></label>
+    <span id="reference"><span aria-label="Referenced name">Ignored text</span></span>
+    <button aria-labelledby="reference" aria-label="Fallback name">Other text</button>
+    <span id="hidden-reference" hidden>Hidden reference</span><button aria-labelledby="hidden-reference">Other text</button>
+    <button>Visible name<span hidden>hidden suffix</span><span aria-hidden="true">ignored suffix</span></button>
+    <style>#generated-name::before { content: "Generated "; }</style><button id="generated-name">name</button>
+    <svg role="img"><title>Route icon</title><path d="M0 0h10v10z"/></svg>`));
+  for (const [role, name] of [["textbox", "Explicit label"], ["button", "Referenced name"],
+    ["button", "Hidden reference"], ["button", "Visible name"], ["button", "Generated name"], ["img", "Route icon"]]) {
+    assert.equal(await page.getByRole(role, { name, exact: true }).count(), 1);
+    const found = await resolve({ role, name });
+    assert.equal(found.matched, 1, `accessible name: ${name}`);
+    assert.equal(found.element.name, name);
+  }
+});
+
+test("shadow names use their own ID scope and assigned slot content", async () => {
+  await page.evaluate(() => {
+    const host = document.querySelector("#shadow");
+    host.innerHTML = '<span slot="caption">Slotted action</span>';
+    host.attachShadow({ mode: "open" }).innerHTML = `
+      <span id="city">Shadow destination</span><button aria-labelledby="city">Other text</button>
+      <button><slot name="caption"></slot></button>`;
+  });
+  for (const name of ["Shadow destination", "Slotted action"]) {
+    assert.equal(await page.getByRole("button", { name, exact: true }).count(), 1);
+    const found = await resolve({ role: "button", name });
+    assert.equal(found.matched, 1, name);
+    assert.equal(found.element.name, name);
+  }
+});
+
+test("iframe names resolve references in the owning document", async () => {
+  await page.evaluate(() => {
+    const frame = document.createElement("iframe");
+    frame.srcdoc = '<span id="city">Frame destination</span><button aria-labelledby="city">Other text</button>';
+    document.body.append(frame);
+  });
+  const frame = await (await page.locator("iframe").elementHandle()).contentFrame();
+  await frame.waitForSelector("button");
+  await installContent(frame);
+  assert.equal(await frame.getByRole("button", { name: "Frame destination", exact: true }).count(), 1);
+  const found = await frame.evaluate(() => window.callContent("resolveLocator", {
+    locator: { role: "button", name: "Frame destination" },
+  }));
+  assert.equal(found.matched, 1);
+  assert.equal(found.element.name, "Frame destination");
+});
+
 test("strict queries report ambiguity; nth is explicit and preserves tree order", async () => {
   const ambiguous = await resolve({ target: "css:.twin" });
   assert.deepEqual(ambiguous, { matched: 2 });
@@ -106,8 +161,11 @@ test("attached hidden nodes remain queryable and counting does not bind nodes", 
   const hidden = await resolve({ target: "css:#hidden" });
   assert.equal(hidden.matched, 1);
   assert.equal(hidden.element.visible, false);
+  assert.equal(hidden.element.name, "");
   const count = await resolve({ role: "button" }, { countOnly: true });
   assert.deepEqual(count, { matched: 5 });
+  await page.evaluate(() => { document.querySelector("#hidden").hidden = false; });
+  assert.equal((await resolve({ role: "button", name: "Hidden" })).matched, 1);
   await page.evaluate(() => document.querySelector("#hidden").remove());
   assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
 });
