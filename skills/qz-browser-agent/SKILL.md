@@ -99,22 +99,21 @@ const { tabRef } = await qz.tab("page").locator({ role: "link", name: "Details" 
 return await qz.tab(tabRef).read({ limit: 2000 });
 ```
 
-Navigation waits observe new navigations, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches the full URL using a regular expression string or a `RegExp`. For in-page updates, use `page.waitForFunction(code, args?, options?)` to confirm the requested result is complete, then read it. Keep action, condition, and focused result in one script. An existing element or changed text alone does not establish completion. Reserve fixed delays for tasks that require elapsed time.
+Navigation waits observe new navigations, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches the full URL using a regular expression string or a `RegExp`. For in-page updates, use `page.waitForFunction(code, args?, options?)` to wait for the specific fields needed by the next step and return them. Keep action, condition, and focused result in one script. Match the requested item or mode as well as its required fields. Reserve fixed delays for tasks that require elapsed time.
 
 ```js
-// Search a new term. This page exposes the rendered query and busy state on #results.
+// Open a place's details. This page clears the old detail fields while loading.
 const page = qz.tab("page");
-await page.locator({ role: "textbox", name: "Search" }).fill(args.query);
-await page.locator({ role: "button", name: "Search" }).click();
-return await page.waitForFunction(query => {
-  const results = document.querySelector("#results");
-  if (!results || results.getAttribute("data-query") !== query
-      || results.getAttribute("aria-busy") !== "false") return null;
-  return { text: results.innerText };
-}, args.query, { timeout: 20 });
+await page.locator(args.itemTarget).click();
+return await page.waitForFunction(name => {
+  const panel = document.querySelector(".place-details");
+  const title = panel?.querySelector("h2")?.textContent?.trim();
+  const address = panel?.querySelector(".address")?.textContent?.trim();
+  return title === name && address ? { name: title, address } : null;
+}, args.place, { timeout: 20 });
 ```
 
-Choose conditions from the actual page: this example requires a query different from the previous result and observed `data-query` / `aria-busy` attributes. For a selected mode or filter, verify the completed result belongs to that mode or filter.
+Use selectors and fields observed on the page. If it retains previous values while loading, also wait for a completion signal that distinguishes the selected item's result.
 
 `page.find` is exploratory: it returns current candidates, including an empty list; `waitFor:"match",timeout:10` waits for a candidate. Its `pattern` is a case-insensitive regular expression by default, unlike Locator `name` and `text`. `page.axTree` uses `scope:"viewport"` or `"full"`; narrow `target` or `limit` when inspecting one control. Reserve screenshots for visual checks.
 
