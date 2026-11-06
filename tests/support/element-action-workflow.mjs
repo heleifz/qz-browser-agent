@@ -25,6 +25,8 @@ export async function startElementActionWorkflow() {
       <button id="hover">Hover target</button><button id="double">Double target</button>
       <button id="popup" onclick="window.open('/popup','_blank')">Open popup</button>
       <input id="readonly" readonly value="Initial value" aria-label="Initially readonly">
+      <label>Track <select id="track"><option value="">-- choose --</option>
+        <option value="web">Web automation</option><option value="data">Data extraction</option></select></label>
       <div><span class="hover-cover"><button id="hover-ready">Hover then ready</button></span>
         <span class="hover-cover"><button id="hover-never">Hover then blocked</button></span>
         <span class="move-cover"><button id="old-point">Old point trap</button><button id="moving">Moves on hover</button></span></div>
@@ -59,6 +61,9 @@ export async function startElementActionWorkflow() {
         document.getElementById('readonly').addEventListener('input',event=>{
           if(event.currentTarget.value==='Filled once') event.currentTarget.dataset.fills=String(Number(event.currentTarget.dataset.fills||0)+1);
         });
+        document.getElementById('track').addEventListener('change',event=>{
+          event.currentTarget.dataset.changes=String(Number(event.currentTarget.dataset.changes||0)+1);
+        });
         let dragging=false;
         document.getElementById('source').addEventListener('pointerdown',()=>{dragging=true});
         document.addEventListener('pointermove',()=>{if(dragging)document.getElementById('source').dataset.moved='yes'});
@@ -84,6 +89,10 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   const schema = await call('list_tools', { names: ['act_on_element'] });
   expect(schema.tools[0].parameters.properties.action.enum).toEqual(expect.arrayContaining(['hover', 'double_click', 'drag']));
   await exerciseElementMatchWait({ page, call, expect });
+
+  expect(await call('act_on_element', { locator: { role: 'combobox', name: 'Track' }, action: 'select', value: 'data', timeout: 5 })).toEqual({});
+  await expect(page.getByRole('combobox', { name: 'Track', exact: true })).toHaveValue('data');
+  await expect(page.locator('#track')).toHaveAttribute('data-changes', '1');
 
   await page.evaluate(() => { setTimeout(() => { document.getElementById('delayed').disabled = false; }, 1200); });
   expect(await call('act_on_element', { target: 'css:#delayed', action: 'click', timeout: 5 })).toEqual({});

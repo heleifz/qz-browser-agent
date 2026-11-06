@@ -69,6 +69,25 @@ test("semantic names use the named field, implicit roles, labels and content", a
   assert.ok(discovery.results.some(element => element.name === save.element.name));
 });
 
+test("wrapping labels exclude their control's own text from its accessible name", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `
+    <label><span>Tr</span>ack <select id="track"><option value="">-- choose --</option>
+      <option value="data">Data extraction</option><option value="web">Web automation</option></select></label>
+    <label for="notes">Notes <textarea id="notes">Prefilled note</textarea></label>
+    <label>Count <output id="count">42</output></label>`));
+  for (const [role, name] of [["combobox", "Track"], ["textbox", "Notes"], ["status", "Count"]]) {
+    assert.equal(await page.getByRole(role, { name, exact: true }).count(), 1);
+    const found = await resolve({ role, name });
+    assert.equal(found.matched, 1, `${role} must use the same name as the browser`);
+    assert.equal(found.element.name, name);
+  }
+  await page.getByRole("combobox", { name: "Track", exact: true }).selectOption("data");
+  assert.equal((await resolve({ role: "combobox", name: "Track" })).matched, 1);
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", '<label for="track">Required</label>'));
+  assert.equal(await page.getByRole("combobox", { name: "Track Required", exact: true }).count(), 1);
+  assert.equal((await resolve({ role: "combobox", name: "Track Required" })).matched, 1);
+});
+
 test("strict queries report ambiguity; nth is explicit and preserves tree order", async () => {
   const ambiguous = await resolve({ target: "css:.twin" });
   assert.deepEqual(ambiguous, { matched: 2 });

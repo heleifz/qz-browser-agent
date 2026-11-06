@@ -2855,16 +2855,19 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function labelTextFor(el: Element) {
+    // A control's own content is not part of the label that names it.
+    const textFor = (node: Node): string => node === el ? "" : node.nodeType === Node.TEXT_NODE
+      ? node.textContent || "" : Array.from(node.childNodes, textFor).join("");
     if ("labels" in el && el.labels) {
-      const text = [...el.labels as NodeListOf<HTMLLabelElement>].map(label => label.textContent || "").join(" ").trim();
+      const text = [...el.labels as NodeListOf<HTMLLabelElement>].map(textFor).join(" ").trim();
       if (text) return text;
     }
     if (el.id) {
       const label = (el.getRootNode() as Document | ShadowRoot).querySelector?.(`label[for="${CSS.escape(el.id)}"]`);
-      if (label?.textContent) return label.textContent.trim();
+      if (label) return textFor(label).trim();
     }
     const wrapped = el.closest("label");
-    return wrapped?.textContent?.trim() || "";
+    return wrapped ? textFor(wrapped).trim() : "";
   }
 
   function getElementValue(el: Element, full = false) {
