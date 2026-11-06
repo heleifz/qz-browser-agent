@@ -74,18 +74,18 @@ Use outer SDK methods for clicks, form input, and navigation. `page.evaluate` wa
 
 ## Observe, act, and verify
 
-Use `page.read({limit})` for document text, lists, and tables. Use a scoped `page.axTree(...)` or `page.find(...)` to discover interactive elements. Element observations identify nodes by `target` (`uid:t<tab>.<snap>.<n>` or `css:...`); `rect` is `{x,y,width,height}`. Pass returned targets unchanged to `page.locator(target)`. A `uid:` always identifies its original node; navigation or DOM replacement can make it stale, requiring a new observation.
+Observe the relevant controls and choose the result needed by the next step. Use `page.read({limit})` for document text, lists, and tables, or a scoped `page.axTree(...)` / `page.find(...)` for controls. Element observations identify nodes by `target` (`uid:t<tab>.<snap>.<n>` or `css:...`); `rect` is `{x,y,width,height}`. Pass returned targets unchanged to `page.locator(target)`. A `uid:` always identifies its original node; navigation or DOM replacement can make it stale, requiring a new observation.
 
 `page.locator(query)` stores a query and resolves it when an operation runs. Queries accept `target`, `role`, `name`, `text`, `exact`, `scope`, and `nth`; at least one of `target`, `role`, `name`, or `text` is required. `name` means accessible name; `text` means element text. Both normalize whitespace and match exactly, case-sensitively, by default; `exact:false` matches a substring. `scope` is an observed `uid:` or `css:` root, including a frame document reference. A pinned UID already identifies its scope; do not combine it with `scope`. Element operations require one match: narrow an ambiguous query or explicitly choose `locator.nth(index)` using a zero-based index.
 
-Locator methods are `click(options?)`, `doubleClick(options?)`, `hover(options?)`, `fill(value, options?)`, `press(key, options?)`, `select(value, options?)`, `check(options?)`, `uncheck(options?)`, `scroll(options?)`, and `dragTo(destination, options?)` on the same tab. Actions locate and wait for a usable element within their shared `timeout` budget (seconds, default 20, maximum 120), then dispatch once. Dispatched actions are never automatically replayed. Ordinary success returns `{}`, with `navigated`/`url` or `navigationPending` when navigation is detected, and `popups` for observed new Tabs. If `confirmationRequired` is true, verify the field locally before continuing.
+Locator methods are `click(options?)`, `doubleClick(options?)`, `hover(options?)`, `fill(value, options?)`, `press(key, options?)`, `select(value, options?)`, `check(options?)`, `uncheck(options?)`, `scroll(options?)`, and `dragTo(destination, options?)` on the same tab. Actions locate and wait for a usable element within their shared `timeout` budget (seconds, default 20, maximum 120), then dispatch once. Call the next locator operation directly; it handles readiness. Dispatched actions are never automatically replayed. Ordinary success returns `{}`, with `navigated`/`url` or `navigationPending` when navigation is detected, and `popups` for observed new Tabs. If `confirmationRequired` is true, verify the field locally before continuing.
 
 ```js
 // Fill an observed form and choose its asynchronously appearing suggestion.
 const page = qz.tab("page");
 await page.locator(args.fieldTarget).fill(args.query);
 await page.locator({ role: "option", name: args.expectedOption }).click({ timeout: 10 });
-return await page.read({ limit: 2000 });
+return await page.locator(args.fieldTarget).inspect();
 ```
 
 Use `locator.inspect()` for current element state and `locator.read({limit})` for its text. `locator.wait({state:"visible",timeout:10})` waits for `attached`, `visible` (default), `hidden`, or `detached` state. Hidden includes removal or invisibility; detached requires removal. `locator.count()` reads the current attached match count, including hidden elements; `locator.wait({count:3,timeout:10})` waits for exactly that count, including zero. Use either `state` or `count` per wait. A match or count describes the current moment; it does not prove a dynamic list has finished updating.
@@ -99,7 +99,22 @@ const { tabRef } = await qz.tab("page").locator({ role: "link", name: "Details" 
 return await qz.tab(tabRef).read({ limit: 2000 });
 ```
 
-Navigation waits observe a new navigation, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches its full URL against a regular expression string or a `RegExp` with its flags. Use `page.waitForFunction(code, args?, options?)` for application-specific conditions. Keep actions, the wait for their expected result, and one focused observation in the same script. Choose a condition that distinguishes the new result from any previous result; prefer observable conditions over fixed sleeps.
+Navigation waits observe new navigations, including reloads, SPA transitions, and hash changes. `page.waitForLoad()` checks the current load state; `page.waitForURL(pattern)` matches the full URL using a regular expression string or a `RegExp`. For in-page updates, use `page.waitForFunction(code, args?, options?)` to confirm the requested result is complete, then read it. Keep action, condition, and focused result in one script. An existing element or changed text alone does not establish completion. Reserve fixed delays for tasks that require elapsed time.
+
+```js
+// Search a new term. This page exposes the rendered query and busy state on #results.
+const page = qz.tab("page");
+await page.locator({ role: "textbox", name: "Search" }).fill(args.query);
+await page.locator({ role: "button", name: "Search" }).click();
+return await page.waitForFunction(query => {
+  const results = document.querySelector("#results");
+  if (!results || results.getAttribute("data-query") !== query
+      || results.getAttribute("aria-busy") !== "false") return null;
+  return { text: results.innerText };
+}, args.query, { timeout: 20 });
+```
+
+Choose conditions from the actual page: this example requires a query different from the previous result and observed `data-query` / `aria-busy` attributes. For a selected mode or filter, verify the completed result belongs to that mode or filter.
 
 `page.find` is exploratory: it returns current candidates, including an empty list; `waitFor:"match",timeout:10` waits for a candidate. Its `pattern` is a case-insensitive regular expression by default, unlike Locator `name` and `text`. `page.axTree` uses `scope:"viewport"` or `"full"`; narrow `target` or `limit` when inspecting one control. Reserve screenshots for visual checks.
 

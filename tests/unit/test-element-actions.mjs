@@ -197,49 +197,41 @@ test("page changes during click preparation form the baseline instead of being a
   } finally { chrome.tabs.get = get; }
 });
 
-for (const method of ["href_navigation", "content_fallback"]) {
-  for (const outcome of ["no start", "stopped without commit", "already loading", "committed"]) {
-    test(`${method} observes ${outcome} without repeating the request`, async t => {
-      t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-      const hidden = method === "href_navigation";
-      const f = fixture({ hidden }), get = chrome.tabs.get, update = chrome.tabs.update;
-      const href = "https://example.test/done";
-      let inspections = 0, requests = 0;
-      const request = () => {
+for (const outcome of ["no start", "stopped without commit", "already loading", "committed"]) {
+  test(`content fallback observes ${outcome} without repeating the request`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const f = fixture(), get = chrome.tabs.get;
+    const href = "https://example.test/done";
+    let inspections = 0, requests = 0;
+    chrome.tabs.get = async (...args) => outcome === "committed" && requests
+      ? { url: href, title: "Done", status: "complete" }
+      : { ...await get(...args), status: outcome === "already loading" ? "loading" : "complete" };
+    f.onContent(action => {
+      if (action === "readElementReadiness" && ++inspections === 2) throw new Error("CDP preparation failed");
+      if (action === "actOnElement") {
         requests++;
+        f.state.navigated = true;
+        f.state.href = href;
         if (outcome === "stopped without commit") {
           for (const status of ["loading", "complete"]) {
             for (const listener of navigationListeners) listener(7, { status });
           }
         }
-      };
-      chrome.tabs.get = async (...args) => outcome === "committed" && requests
-        ? { url: href, title: "Done", status: "complete" }
-        : { ...await get(...args), status: outcome === "already loading" ? "loading" : "complete" };
-      chrome.tabs.update = async (tabId, options) => {
-        assert.equal(tabId, 7);
-        assert.equal(options.url, href);
-        request();
-      };
-      if (hidden) f.state.navigateUrl = href;
-      f.onContent(action => {
-        if (!hidden && action === "readElementReadiness" && ++inspections === 2) throw new Error("CDP preparation failed");
-        if (action === "actOnElement") { request(); f.state.navigated = true; f.state.href = href; }
-      });
-      try {
-        const pending = f.call({ action: "click" });
-        await new Promise(setImmediate);
-        t.mock.timers.tick(180);
-        const result = await pending;
-        assert.deepEqual(result, outcome === "committed" ? { navigated: true, url: href } : {});
-        assert.equal(f.observations[0].pageAfter.url, outcome === "committed" ? href : "https://example.test/");
-        assert.equal(result._pageUrl, undefined);
-        assert.equal(requests, 1);
-        assert.equal(f.messages.filter(message => message.action === "actOnElement").length, hidden ? 0 : 1);
-        assert.equal(navigationListeners.size, 0);
-      } finally { chrome.tabs.get = get; chrome.tabs.update = update; }
+      }
     });
-  }
+    try {
+      const pending = f.call({ action: "click" });
+      await new Promise(setImmediate);
+      t.mock.timers.tick(180);
+      const result = await pending;
+      assert.deepEqual(result, outcome === "committed" ? { navigated: true, url: href } : {});
+      assert.equal(f.observations[0].pageAfter.url, outcome === "committed" ? href : "https://example.test/");
+      assert.equal(result._pageUrl, undefined);
+      assert.equal(requests, 1);
+      assert.equal(f.messages.filter(message => message.action === "actOnElement").length, 1);
+      assert.equal(navigationListeners.size, 0);
+    } finally { chrome.tabs.get = get; }
+  });
 }
 
 test('select dispatches Content once and does not enable page events or replay a lost response', async () => {

@@ -15,10 +15,13 @@ const PAGE = `<!doctype html>
 <input id="link-check" type="checkbox" style="display:none"><label for="link-check" style="display:block;width:180px;height:40px"><a id="label-link" href="#unexpected" style="display:block;width:100%;height:100%">Independent link</a></label>
 <input id="button-check" type="checkbox" style="display:none"><label for="button-check" style="display:block;width:180px;height:40px"><button id="label-button" type="button" style="width:100%;height:100%">Independent button</button></label>
 <input id="keys" type="text" aria-label="Keys">
+<div id="image-button" hidden><img id="image" src="/icon.svg" alt="Transit" width="32" height="32"></div>
 <script>
   window.clicks = 0;
   window.checks = 0;
   window.keys = 0;
+  window.imageClicks = [];
+  document.querySelector('#image-button').addEventListener('click', event => imageClicks.push(event.target.id));
   window.overlayEvents = [];
   for (const type of ['click', 'input', 'change']) document.addEventListener(type, event => {
     overlayEvents.push({type, id:event.target.id, trusted:event.isTrusted});
@@ -32,6 +35,11 @@ const PAGE = `<!doctype html>
 
 test("uid and css input succeed once on a page without a content CSP", async ({ firefoxSidebar }) => {
   const server = createServer((_request, response) => {
+    if (_request.url === '/icon.svg') {
+      response.writeHead(200, { 'content-type': 'image/svg+xml' });
+      response.end('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>');
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(PAGE);
   });
@@ -129,12 +137,28 @@ test("uid and css input succeed once on a page without a content CSP", async ({ 
       expect(marks).toEqual(Array(count).fill(true));
     }
     const safeUrl = page.url();
+    // Bound these negative checks below the extension test bridge's 20-second deadline.
     for (const id of ['disabled-check', 'link-check', 'button-check']) {
-      expect(await callTool(firefoxSidebar, 'act_on_element', { tabRef: tabId, target: `css:#${id}`, action: 'check' })).toHaveProperty('message');
+      expect(await callTool(firefoxSidebar, 'act_on_element', { tabRef: tabId, target: `css:#${id}`, action: 'check', timeout: 2 })).toHaveProperty('message');
       await expect(page.locator(`#${id}`)).not.toBeChecked();
       expect(page.url()).toBe(safeUrl);
     }
     expect(await page.evaluate(() => overlayEvents.filter(event => ['label-link', 'label-button'].includes(event.id) && event.type === 'click'))).toEqual([]);
+    expect(await callTool(firefoxSidebar, 'act_on_element', {
+      tabRef: tabId, target: 'css:#image', action: 'click',
+    })).toMatchObject({ code: 'ELEMENT_NOT_READY' });
+    expect(page.url()).toBe(safeUrl);
+    expect(await page.evaluate(() => imageClicks)).toEqual([]);
+    const images = await callTool(firefoxSidebar, 'list_images', {
+      tabRef: tabId, target: 'css:#image', visibleOnly: false, minWidth: 0, minHeight: 0,
+    });
+    expect(images.images).toEqual([expect.objectContaining({ src: new URL('/icon.svg', safeUrl).href })]);
+    await page.evaluate(() => { document.querySelector('#image-button').hidden = false; });
+    expect(await callTool(firefoxSidebar, 'act_on_element', {
+      tabRef: tabId, target: 'css:#image', action: 'click',
+    })).toEqual({});
+    expect(await page.evaluate(() => imageClicks)).toEqual(['image']);
+    expect(page.url()).toBe(safeUrl);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

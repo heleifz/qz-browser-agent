@@ -2101,10 +2101,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       if (op === "click") {
         const target = resolveClickTarget(el);
         if ("error" in target) return target;
-        if (target.navigateUrl) {
-          location.href = target.navigateUrl;
-          return { action: op, selector, index, navigated: true, href: target.navigateUrl, element: getElementSummary(el) };
-        }
         simulateClick(target.element);
         return { action: op, selector, index, clicked: true, element: getElementSummary(target.element), originalElement: getElementSummary(el) };
       }
@@ -2200,7 +2196,6 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         resolvedSelector: summary.selector,
         clickablePoint: target.point,
         href: target.href,
-        navigateUrl: target.navigateUrl,
         element: summary,
         originalElement: getElementSummary(el),
       };
@@ -2555,11 +2550,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       parent = parent.parentElement;
     }
 
-    const href = getHref(el);
-    if (href) return { element: el, point: null, href, navigateUrl: href };
-
     return {
-      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable box and no href to navigate", readinessOnly ? getElementReadiness(el) : getElementSummary(el)),
+      ...toolError("NO_CLICKABLE_TARGET", "Element has no visible clickable target", readinessOnly ? getElementReadiness(el) : getElementSummary(el)),
       ...(readinessOnly ? {} : { interactable: getInteractableElements() }),
     };
   }
@@ -2889,13 +2881,12 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getHref(el: Element) {
-    const href = el.getAttribute?.("href") || el.getAttribute?.("src") || "";
+    const href = el.getAttribute?.("href") || "";
     if (href) {
       try { return new URL(href, document.baseURI || location.href).href; }
       catch(_e) { return String(href); }
     }
     if ("href" in el && typeof el.href === "string") return el.href;
-    if ("src" in el && typeof el.src === "string") return el.src;
     return "";
   }
 

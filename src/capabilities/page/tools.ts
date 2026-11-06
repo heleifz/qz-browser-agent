@@ -707,26 +707,6 @@ registerTool({
       if (!clickPointReady(current)) {
         resolved = await sendToContent(tabId, "resolveClickTarget", { selector, index }, bound, context);
         if (resolved.error && !["NO_CLICKABLE_TARGET", "ELEMENT_NOT_FOUND"].includes(String(resolved.code))) return withElementActionHelp(resolved, normalizedAction, resolvedTarget);
-        if (resolved.navigateUrl && !(current.visible === true && current.state?.obscuredAtCenter === true)) {
-          const preparedNavigation = await prepareKnownPageNavigation({
-            url: resolved.navigateUrl,
-            pageBefore,
-            guardrails: securityGuardrails,
-            context,
-            signal: _signal,
-            toolName: "act_on_element",
-            toolArgs: toolArgsForUpdates,
-            tabId,
-            source: "resolved_href",
-          });
-          const navigationUrl = preparedNavigation?.url || resolved.navigateUrl;
-          const observation = await beginPageNavigationObservation(tabId, _signal, { deadlineAt: deadline });
-          try {
-            dispatchedAction();
-            await chrome.tabs.update(tabId, { url: navigationUrl });
-            return complete(await observeElementNavigation(tabId, pageBefore, preparedNavigation, securityGuardrails, observation));
-          } finally { observation.dispose(); }
-        }
         if (resolved.resolvedSelector) {
           const resolvedInspection = await sendToContent(tabId, "scrollElementIntoView", {
             selector,

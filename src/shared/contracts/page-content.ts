@@ -38,13 +38,13 @@ export function isPageOverview(value: unknown): value is PageOverview {
 
 export interface PagePoint { x: number; y: number }
 export interface ElementReply extends Record<string, unknown> {
-  error?: string; code?: string; selector?: string; href?: string; navigateUrl?: string; resolvedSelector?: string;
+  error?: string; code?: string; selector?: string; href?: string; resolvedSelector?: string;
   clicked?: boolean; navigated?: boolean; visible?: boolean; disabled?: boolean; clickablePoint?: PagePoint | null;
   state?: { inViewport?: boolean; clickablePointInViewport?: boolean; obscuredAtCenter?: boolean };
 }
 export function isElementReply(value: unknown): value is ElementReply {
   return object(value)
-    && fields(value, ["error", "code", "selector", "href", "navigateUrl", "resolvedSelector"], "string")
+    && fields(value, ["error", "code", "selector", "href", "resolvedSelector"], "string")
     && fields(value, ["clicked", "navigated", "visible", "disabled"], "boolean")
     && (value.clickablePoint == null || (object(value.clickablePoint)
       && typeof value.clickablePoint.x === "number" && Number.isFinite(value.clickablePoint.x)

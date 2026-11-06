@@ -47,7 +47,10 @@ async function createHarness(mode, launchOptions = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://fixture.test");
     res.setHeader("Content-Type", "text/html");
-    if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
+    if (url.pathname === "/transit-icon.svg") {
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.end('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>');
+    } else if (["/navigation-download", "/navigation-no-content", "/navigation-blocked"].includes(url.pathname)) {
       navigationRequests.push(url.pathname);
       if (url.pathname === "/navigation-no-content") { res.writeHead(204); res.end(); }
       else if (url.pathname === "/navigation-download") {
@@ -600,15 +603,57 @@ test("a click that navigates is not reported as undelivered input", async () => 
   } finally { await h.close(); }
 });
 
+test("image clicks preserve resource URLs and wait for the actual click target", async () => {
+  const h = await createHarness("desktop");
+  try {
+    const beforeUrl = h.page.url();
+    const imageUrl = new URL("/transit-icon.svg", beforeUrl).href;
+    await h.page.setContent(`<!doctype html><title>Transit mode</title>
+      <div id="mode" hidden><img id="icon" src="${imageUrl}" alt="Transit" width="32" height="32"></div>
+      <a id="hidden-link" href="/navigation-blocked" hidden>Hidden destination</a>
+      <script>
+        window.clicks = [];
+        document.querySelector('#mode').addEventListener('click', event => clicks.push({target:event.target.id,trusted:event.isTrusted}));
+      </script>`);
+    const contentClick = selector => h.worker.evaluate(async ({ selector, url }) => {
+      const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
+      return chrome.tabs.sendMessage(tab.id, { action: "actOnElement", elementAction: "click", selector });
+    }, { selector, url: beforeUrl });
+    for (const id of ["icon", "hidden-link"]) {
+      expect(await h.act(id, "click")).toMatchObject({ code: "ELEMENT_NOT_READY" });
+      expect(h.page.url()).toBe(beforeUrl);
+      expect(await contentClick(`#${id}`)).toMatchObject({ code: "NO_CLICKABLE_TARGET" });
+      expect(h.page.url()).toBe(beforeUrl);
+    }
+    expect(h.navigationRequests).toEqual([]);
+    expect(await h.page.evaluate(() => clicks)).toEqual([]);
+    const images = await h.worker.evaluate(() => elementHarness.call("list_images", {
+      target: "css:#icon", visibleOnly: false, minWidth: 0, minHeight: 0,
+    }));
+    expect(images.images).toEqual([expect.objectContaining({ src: imageUrl })]);
+    const inspected = await h.worker.evaluate(() => elementHarness.call("inspect_element", { target: "css:#icon" }));
+    expect(inspected.href).toBe("");
+    await h.page.evaluate(() => { setTimeout(() => { document.querySelector('#mode').hidden = false; }, 500); });
+    expect(await h.act("icon", "click", { timeout: 5 })).toEqual({});
+    expect(await h.page.evaluate(() => clicks)).toEqual([{ target: "icon", trusted: true }]);
+    expect(h.page.url()).toBe(beforeUrl);
+    expect(await contentClick("#icon")).toMatchObject({ clicked: true });
+    expect(await h.page.evaluate(() => clicks)).toEqual([
+      { target: "icon", trusted: true }, { target: "icon", trusted: false },
+    ]);
+    expect(h.page.url()).toBe(beforeUrl);
+  } finally { await h.close(); }
+});
+
 for (const outcome of ["download", "no-content", "blocked"]) {
-  test(`a hidden link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
+  test(`a clicked link whose navigation ends as ${outcome} does not wait for a document commit`, async () => {
     test.setTimeout(120_000);
     const h = await createHarness("desktop");
     try {
       const beforeUrl = h.page.url();
       await h.page.setContent(`<!doctype html><title>Original document</title>
         <button id="activate">Enable unload confirmation</button>
-        <a id="request" href="/navigation-${outcome}" hidden>Request</a>
+        <a id="request" href="/navigation-${outcome}" style="display:block;width:160px;height:40px">Request</a>
         <script>window.originalDocument = crypto.randomUUID();</script>`);
       const documentMarker = await h.page.evaluate(() => window.originalDocument);
       const downloads = [];
