@@ -48,14 +48,16 @@ function fixture(initialUrl = "https://example.test/old") {
   };
 }
 
-for (const initial of ["about:blank", "https://example.test/old", url]) {
-  test(`navigation from ${initial} waits for a new document, even if the URL is unchanged`, async () => {
+for (const [initial, pendingUrl] of [["about:blank"], ["https://example.test/old"], [url], [url, "https://example.test/other"]]) {
+  test(`navigation from ${initial} with pending ${pendingUrl || "none"} waits for a new document`, async () => {
     const f = fixture(initial);
+    if (pendingUrl) Object.assign(f.pages.get(1), { pendingUrl, status: "loading" });
     const controller = new AbortController();
     let finished = false;
     const pending = navigateTab(1, url, controller.signal).then(() => { finished = true; });
     try {
       await f.started();
+      assert.deepEqual(f.calls, [{ id: 1, url }]);
       await pause(65);
       assert.equal(finished, false);
       if (initial !== "about:blank") {
@@ -70,6 +72,64 @@ for (const initial of ["about:blank", "https://example.test/old", url]) {
   });
 }
 
+for (const initial of ["https://example.test/old", url]) {
+  test(`navigation from ${initial} joins an already pending destination without replay`, async () => {
+    const f = fixture(initial);
+    Object.assign(f.pages.get(1), { pendingUrl: url, status: "loading" });
+    const controller = new AbortController();
+    let finished = false;
+    const pending = navigateTab(1, url, controller.signal).then(() => { finished = true; });
+    try {
+      await pause(65);
+      assert.equal(finished, false);
+      assert.deepEqual(f.calls, []);
+      f.commit(1, { status: "loading" });
+      await pending;
+      assert.deepEqual(f.calls, []);
+    } finally { controller.abort(); await pending.catch(() => {}); }
+  });
+}
+
+for (const committedUrl of [url, "https://redirect.test/landed"])
+test(`joining navigation accepts ${committedUrl} committed during the baseline probe`, async () => {
+  const f = fixture();
+  Object.assign(f.pages.get(1), { pendingUrl: url, status: "loading" });
+  f.onProbe(() => { if (f.probes.length === 1) f.commit(1, { url: committedUrl }); });
+  await navigateTab(1, url, AbortSignal.timeout(1000));
+  assert.deepEqual(f.calls, []);
+  assert.ok(f.probes.length >= 2, "the committed document is still checked");
+  assert.equal(f.listeners.size, 0);
+});
+
+test("joining navigation does not accept the old page when loading stops", async () => {
+  const f = fixture();
+  Object.assign(f.pages.get(1), { pendingUrl: url, status: "loading" });
+  const controller = new AbortController();
+  let finished = false;
+  const pending = navigateTab(1, url, controller.signal).then(() => { finished = true; });
+  const rejected = assert.rejects(pending, { code: "OPERATION_ABORTED" });
+  try {
+    await pause(65);
+    f.commit(1, { url: "https://example.test/old", documentId: "1:old" });
+    await pause(65);
+    assert.equal(finished, false);
+    assert.deepEqual(f.calls, []);
+  } finally { controller.abort(); await rejected; }
+});
+
+test("cancelling a joined navigation releases the wait without replaying it", async () => {
+  const f = fixture();
+  Object.assign(f.pages.get(1), { pendingUrl: url, status: "loading" });
+  const controller = new AbortController();
+  const pending = assert.rejects(navigateTab(1, url, controller.signal), { code: "OPERATION_ABORTED" });
+  await pause(65);
+  controller.abort();
+  await pending;
+  assert.deepEqual(f.calls, []);
+  assert.equal(f.listeners.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
 test("a redirect's new document is accepted without waiting for slow subresources", async () => {
   const f = fixture();
   f.onUpdate(() => f.commit(1, { url: "https://redirect.test/landed", status: "loading" }));
@@ -82,6 +142,7 @@ for (const [before, target] of [[url, `${url}#section`], [`${url}#section`, `${u
     const f = fixture(before);
     f.onUpdate(() => f.commit(1, { url: target, documentId: "1:old" }));
     await navigateTab(1, target);
+    assert.deepEqual(f.calls, [{ id: 1, url: target }]);
     assert.equal(f.pages.get(1).documentId, "1:old");
   });
 }

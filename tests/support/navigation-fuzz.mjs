@@ -212,7 +212,10 @@ export async function runNavigationFuzz(api, { seed, watchNetwork = false, scena
             await success(await read("page"), label + "-reopened");
             assert.ok(isToolFailure(await call("read_article", { tabRef: tabId, limit: 1200 })), "old numeric ID cannot follow a reused alias");
           } else if (scenario === "combo-same-url-replace") {
-            await api({ op: "update", tabId, url: target });
+            const retried = await call("navigate", { tabRef: tabId, url: target, timeout: 1 });
+            assert.equal(retried.incomplete?.reason, "timeout", JSON.stringify(retried));
+            assert.equal(route(target).count, 2, "retry waits for the pending navigation without replaying it");
+            await api({ op: "reload", tabId });
             await wait(() => route(target).count >= 3, "second same-URL request");
             await pending(calls);
             const queued = route(target).pending.splice(0); route(target).hold = false;

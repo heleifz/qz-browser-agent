@@ -51,6 +51,8 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
   try {
     const destination = new URL(url).href;
     const before = await getTab();
+    // Continue the pending navigation instead of dispatching the same request twice.
+    const joiningNavigation = before.pendingUrl === destination;
     // A busy old renderer must not prevent Chrome from starting navigation.
     const previousId = isPageTabUrl(before.url) ? await wait(Promise.race([
       documentId().catch(() => null),
@@ -64,8 +66,9 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     // Without a baseline, require a load completion observed after navigation starts.
     listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
     if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
-    try { await wait(chrome.tabs.update(tabId, { url })); }
-    catch (error) { await getTab(); throw error; }
+    try {
+      if (!joiningNavigation) await wait(chrome.tabs.update(tabId, { url }));
+    } catch (error) { await getTab(); throw error; }
     let missingFrames = 0;
     for (;;) {
       const tab = await getTab();
@@ -74,8 +77,9 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
           const currentId = await documentId();
           check();
           missingFrames = 0;
-          if (listenForCompletion ? completed && tab.status === "complete"
-            : currentId !== previousId || (sameDocument && tab.url === destination)) return;
+          if ((joiningNavigation && tab.status === "complete" && (tab.url === destination || tab.url !== before.url))
+            || (listenForCompletion ? completed && tab.status === "complete"
+            : currentId !== previousId || (sameDocument && tab.url === destination))) return;
         } catch (error) {
           check();
           if (error instanceof ToolExecutionError) throw error;
