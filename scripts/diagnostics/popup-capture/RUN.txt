@@ -1,0 +1,29 @@
+Run this on the original QA machine with Fork-7 and the local test site already running.
+Requires Node.js 24 and the installed qz CLI. No npm install is needed.
+
+Terminal 1: start capture and wait for "Capture ready".
+
+node capture-popup.mjs --cdp http://127.0.0.1:9229 --extension-id ghbaodmonhcgkfeejcpffknlggbjhjgj --origin http://127.0.0.1:8870 --out popup-capture --duration 180
+
+Terminal 2: run the existing multitab task, or this single-popup probe in a new session.
+
+qz session create --client browser-2 --title "Popup diagnostic" --json > popup-session.json
+QZ_POPUP_SESSION=$(node -e 'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync("popup-session.json","utf8")); if(!x.ok||!x.result?.sessionId) process.exit(1); process.stdout.write(x.result.sessionId)')
+qz script --client browser-2 --session "$QZ_POPUP_SESSION" --timeout 60 popup-probe.js > popup-result.json
+
+The probe reports the popup, the Session tab list before/after, and either page values or the read error.
+It intentionally leaves its Session open for inspection.
+
+After the failure/result is recorded, press Ctrl-C in Terminal 1. Verify it reports "Hooks restored: true".
+Then clean up only the diagnostic Session:
+
+qz session cancel "$QZ_POPUP_SESSION" --client browser-2
+
+Return popup-capture/events.jsonl, popup-capture/summary.json, popup-result.json,
+the matching local server log, and Fork-7's actual version/startup parameters from chrome://version.
+
+Capture attaches only to the specified extension worker and records the target origin's navigation/tab events,
+raw failed tab queries, and extension tab-removal calls. It preserves page execution and navigation.
+Attaching keeps that extension worker alive while recording; results apply to this observed run.
+If the worker restarts or CDP disconnects, capture stops and records that boundary.
+No production files were changed for this capture. The existing ownership fix is bbbb7c2.
