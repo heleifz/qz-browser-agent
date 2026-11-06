@@ -68,6 +68,11 @@ test('passive navigation observation arms while a replacement document is still 
   tab.pendingUrl = targetUrl; tab.status = 'loading';
   const listeners = new Set();
   chrome.tabs.onUpdated = { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn) };
+  const committed = new Set();
+  chrome.webNavigation = Object.fromEntries(['onBeforeNavigate', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onErrorOccurred'].map(name =>
+    [name, { addListener() {}, removeListener() {} }]));
+  chrome.webNavigation.onCommitted = { addListener: fn => committed.add(fn), removeListener: fn => committed.delete(fn) };
+  chrome.webNavigation.getFrame = async () => ({ url: tab.url, documentId: 'document', errorOccurred: false });
   const controller = new AbortController();
   const waiting = runtime.execute('wait_for_navigation', { tabId: 1, timeout: 1 }, controller.signal, context);
   try {
@@ -75,6 +80,7 @@ test('passive navigation observation arms while a replacement document is still 
     assert.equal(listeners.size, 1, 'listener must precede the commit, not wait behind it');
     load();
     for (const listener of listeners) listener(1, { status: 'loading' }, tab);
+    for (const listener of committed) listener({ tabId: 1, frameId: 0, url: tab.url, documentId: 'document' });
     for (const listener of listeners) listener(1, { status: 'complete' }, tab);
     assert.equal((await waiting).status, 'navigated');
     assert.equal(listeners.size, 0);

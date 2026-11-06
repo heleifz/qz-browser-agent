@@ -181,7 +181,19 @@ export function installFirefoxDebugger(chromeApi: DebuggerChrome & NetworkChrome
       state.touch = params.enabled === true;
       return {};
     }
-    if (method === "Accessibility.getFullAXTree") return run(tabId, frameId, { op: "ax", depth: typeof params.depth === "number" ? params.depth : undefined });
+    if (method === "Accessibility.getFullAXTree") {
+      if (await run(tabId, frameId, { op: "semantics" }) !== 1) {
+        scope.check();
+        const results = await chromeApi.scripting!.executeScript({
+          target: { tabId, frameIds: [frameId] }, world: "ISOLATED", injectImmediately: true,
+          files: ["content/article-extractor.js", "content/content-script.js"],
+        });
+        const failed = results.find(item => item?.error);
+        if (failed) throw new Error(typeof failed.error === "string" ? failed.error : "Firefox content initialization failed");
+      }
+      scope.check();
+      return run(tabId, frameId, { op: "ax", depth: typeof params.depth === "number" ? params.depth : undefined });
+    }
     if (method === "Network.enable") { network.enable(tabId); return {}; }
     if (method === "Network.disable") { network.disable(tabId); return {}; }
     if (method === "Network.getResponseBody") return network.body(tabId, String(params.requestId || ""));
@@ -736,5 +748,5 @@ interface DebuggerChrome extends FirefoxPageEvaluationHost {
     getAllFrames?(query: { tabId: number }): Promise<{ frameId: number; parentFrameId: number; url?: string }[] | undefined>;
     onCommitted?: { addListener(listener: (details: { tabId: number; frameId: number; url?: string }) => void): void };
   };
-  scripting?: { executeScript(injection: { target: ScriptTarget; world?: ScriptWorld; injectImmediately?: boolean; args?: unknown[]; func: (...args: never[]) => unknown }): Promise<ScriptResult[]> };
+  scripting?: { executeScript(injection: { target: ScriptTarget; world?: ScriptWorld; injectImmediately?: boolean; args?: unknown[]; func?: (...args: never[]) => unknown; files?: string[] }): Promise<ScriptResult[]> };
 }

@@ -422,6 +422,8 @@ for (const scenario of [
   { name: "observer setup / empty value / no focus", trigger: "observer", copy: false, focus: false },
   { name: "focus / empty value", trigger: "focus", copy: false, focus: true },
   { name: "input / copied value", trigger: "input", copy: true, focus: true },
+  { name: "same-id input / copied value", trigger: "input", copy: true, focus: true, retainId: true },
+  { name: "same-id observer / copied value", trigger: "observer", copy: true, focus: true, retainId: true },
   { name: "UID / delayed mount", trigger: "observer", copy: true, focus: true, uid: true, delay: 100 },
   { name: "missing successor", trigger: "observer", missing: true },
   { name: "pre-existing same-name field is not a successor", trigger: "observer", missing: true, existing: true },
@@ -449,6 +451,7 @@ for (const scenario of [
           if (scenario.missing) { document.querySelector('#sink').focus(); return; }
           const next = document.createElement('input');
           next.name = 'search'; next.type = 'search'; next.setAttribute('aria-label', 'Search');
+          if (scenario.retainId) next.id = original.id;
           if (scenario.copy) next.value = original.value;
           marker.replaceWith(next);
           if (scenario.ambiguous) next.after(next.cloneNode());
@@ -467,15 +470,16 @@ for (const scenario of [
     // after the first value/focus readback but before Enter. No input dispatch is mocked.
     await h.worker.evaluate(() => {
       const execute = chrome.scripting.executeScript.bind(chrome.scripting);
-      chrome.scripting.executeScript = async options => {
-        if (options.injectImmediately && String(options.func).includes("=> null")) {
-          await execute({ target: options.target, world: "MAIN", func: () => {
+      const getFrame = chrome.webNavigation.getFrame.bind(chrome.webNavigation);
+      chrome.webNavigation.getFrame = async target => {
+        if (target.frameId === 0) {
+          await execute({ target: { tabId: target.tabId, frameIds: [0] }, world: "MAIN", func: () => {
             // UID observation also reads document identity before editing. Only the
             // post-fill observer is the intended trigger for this replacement.
             if (window.original?.value === '灵隐寺') window.finishMount?.();
           } });
         }
-        return execute(options);
+        return getFrame(target);
       };
     });
     let target = "css:#searchInput";
@@ -741,7 +745,7 @@ for (const scenario of ["cross", "none", "hash", "push", "same", "slow", "shift"
       } else {
         const afterUrl = ["cross"].includes(scenario) ? `${origin}/navigation-done?scenario=${scenario}&delay=${delay}`
           : scenario === "hash" ? `${beforeUrl}#sent` : scenario === "push" ? `${origin}/navigation-press?sent=1` : beforeUrl;
-        const navigated = ["cross", "push", "same"].includes(scenario);
+        const navigated = ["cross", "hash", "push", "same"].includes(scenario);
         expect(result).toEqual(scenario === "slow" ? { navigationPending: true } : navigated ? { navigated: true, url: afterUrl } : {});
         expect(h.page.url()).toBe(afterUrl);
       }
@@ -762,7 +766,8 @@ const clickFrameDocument = `<!doctype html><style>html,body{margin:0;height:100%
   <script>window.clicks=0;document.querySelector("#inner").addEventListener("click",()=>{window.clicks+=1});</script>`;
 const keyFrameDocument = `<!doctype html><style>html,body{margin:0}input{width:100%;height:48px;margin:0;box-sizing:border-box}</style>
   <input id="keys">
-  <script>window.keys=[];document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
+  <script>window.keys=[];document.querySelector("#keys").setAttribute("aria-label", window.name + " keys");
+  document.querySelector("#keys").addEventListener("keydown",event=>{window.keys.push(event.key)});</script>`;
 
 async function installFrames(page, frames) {
   await page.setContent("<!doctype html><title>frames</title><body></body>");
@@ -812,8 +817,12 @@ test("an iframe click lands once and its key still arrives", async () => {
       expect(result).toEqual({});
       expect(clicks).toBe(1);
     }
-    for (const [id, name] of [["keyframe", "same-key"], ["xokey", "cross-key"]]) {
-      const result = await h.act(id, "press", { key: "a" });
+    const tree = await h.worker.evaluate(() => elementHarness.call("get_ax_tree", { scope: "full" }));
+    for (const name of ["same-key", "cross-key"]) {
+      // Press focuses its explicit target; the iframe's center is not an implicit click target.
+      const target = tree.snapshot?.split("\n").find(line => line.includes(`"${name} keys"`))?.match(/target=(uid:\S+)/)?.[1];
+      expect(target, JSON.stringify(tree)).toMatch(/^uid:/);
+      const result = await h.worker.evaluate(target => elementHarness.call("act_on_element", { target, action: "press", key: "a" }), target);
       const keys = await h.page.frame({ name }).evaluate(() => window.keys);
       expect(result).toEqual({});
       expect(keys).toContain("a");
@@ -825,7 +834,7 @@ test("an iframe click lands once and its key still arrives", async () => {
   }
 });
 
-test("a confirmed miss is one click and an unknown receipt still presses", async () => {
+test("a confirmed click miss is not replayed and press is independent of click receipts", async () => {
   test.setTimeout(120_000);
   const h = await createHarness("desktop");
   try {
@@ -854,9 +863,9 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
       code: "INPUT_NOT_DELIVERED", details: { clickDispatched: true, inputDelivered: false },
     });
     expect(await h.page.evaluate(() => window.clicks)).toBe(1);
-    const skipped = await h.act("keys", "press", { key: "a" });
-    expect(skipped, JSON.stringify(skipped)).toMatchObject({ code: "INPUT_NOT_DELIVERED", details: { clickDispatched: true } });
-    expect(await h.page.evaluate(() => window.keys)).toEqual([]);
+    const firstPress = await h.act("keys", "press", { key: "a" });
+    expect(firstPress, JSON.stringify(firstPress)).toEqual({});
+    expect(await h.page.evaluate(() => window.keys)).toEqual(["a"]);
 
     await h.worker.evaluate(() => { receiptMode = "unknown"; });
     const clicked = await h.act("once", "click");
@@ -864,6 +873,6 @@ test("a confirmed miss is one click and an unknown receipt still presses", async
     expect(await h.page.evaluate(() => window.clicks)).toBe(2);
     const pressed = await h.act("keys", "press", { key: "a" });
     expect(pressed).toEqual({});
-    expect(await h.page.evaluate(() => window.keys)).toContain("a");
+    expect(await h.page.evaluate(() => window.keys)).toEqual(["a", "a"]);
   } finally { await h.close(); }
 });

@@ -1,4 +1,3 @@
-import { elementAriaRole } from "./implicit-aria-role.js";
 import { refreshContentLanguage, t } from "./i18n.js";
 import { documentReadiness } from "../shared/document-readiness.js";
 import { normalizeImage } from "../shared/images/normalize.js";
@@ -7,7 +6,7 @@ import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { finder, attr as finderAttribute } from "@medv/finder";
-import { computeAccessibleName } from "dom-accessibility-api";
+import { elementAriaRole, elementAccessibleName, elementIsVisible, elementIsHiddenForAria, textNodeIsVisible, withDomSemantics } from "./dom-semantics.js";
 import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
@@ -22,7 +21,7 @@ interface ElementSummary extends PageAction {
 }
 interface ContentRequest {
   scroll?: boolean;
-  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; source?: string; offset?: number; limit?: number;
+  action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; retainRef?: boolean; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
   locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
@@ -41,14 +40,22 @@ interface ContentGlobals {
   __QZ_CONTENT_VERSION?: string; __QZ_CONTENT_READY?: boolean; __qzElementRefVersion?: number; QingzhouArticleExtractor?: ArticleExtractor;
   __QZ_CONTENT_MESSAGE_LISTENER?: ContentMessageListener;
   __qzInvoke?: (node: Node | null, payload: ContentRequest) => Promise<unknown>;
+  __qzDomSemantics?: {
+    version: 1; role: typeof elementAriaRole; name: typeof elementAccessibleName;
+    hidden: typeof elementIsHiddenForAria; textVisible: typeof textNodeIsVisible; read: typeof withDomSemantics;
+  };
 }
 const host = globalThis as typeof globalThis & ContentGlobals;
+host.__qzDomSemantics = Object.freeze({
+  version: 1, role: elementAriaRole, name: elementAccessibleName, hidden: elementIsHiddenForAria,
+  textVisible: textNodeIsVisible, read: withDomSemantics,
+});
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 // DOM reads and interactions run in Chrome's isolated world; page scripts cannot access this state.
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-06-accessible-name";
+  const QZ_CONTENT_VERSION = "2026-11-06-element-outcomes";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -835,6 +842,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       element = resolved.element;
     }
     return { element, matched: query.elements.length };
+  }
+
+  function queryActionElement(selector: unknown, index: number, references: string[] = []) {
+    if (!references.length) return queryElement(selector, index);
+    const element = elementRefs.get(references[0])?.deref();
+    if (!element?.isConnected || element.ownerDocument !== document) {
+      return toolError("ELEMENT_NOT_FOUND", "The original element is no longer attached");
+    }
+    return { element, matched: 1 };
   }
 
   function parseElementLocator(selector: unknown) {
@@ -1830,7 +1846,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const targetResult = queryElement(selector, index, clickTarget);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
-      el.scrollIntoView({ behavior: "instant", block, inline: "center" });
+      scrollElementBoxIntoView(el, block);
       return getElementInspection(el, {
         ...(clickTarget ? {} : { selector, index }),
         matched,
@@ -2045,6 +2061,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         return toolError("NOT_EDITABLE_ELEMENT", "Element is not editable", getElementSummary(el));
       }
       const target = el.isContentEditable ? getContentEditableRoot(el) : el;
+      const validated = validateFillValue(target, value);
+      if ("error" in validated) return validated;
       if (isDisabled(el) || isDisabled(target)) {
         return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(target));
       }
@@ -2069,15 +2087,44 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
           return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus while selecting its contents", getElementSummary(target));
         }
       }
-      return { ...getElementSummary(target), fillMode, contentEditable: target.isContentEditable };
+      return { ...getElementSummary(target), fillMode, contentEditable: target.isContentEditable,
+        expectedValue: validated.value, _elementRef: rememberElement(target) };
     },
 
-    async readElementActionState({ selector, index = 0 }) {
-      await settleElementAction();
+    async prepareElementPress({ selector, index = 0 }) {
       const targetResult = queryElement(selector, index);
       if ("error" in targetResult) return targetResult;
+      const element = targetResult.element instanceof HTMLElement && targetResult.element.isContentEditable
+        ? getContentEditableRoot(targetResult.element) : targetResult.element;
+      element.scrollIntoView({ behavior: "instant", block: "center" });
+      if (element instanceof HTMLElement || element instanceof SVGElement) element.focus({ preventScroll: true });
+      await settleElementAction();
+      if (!element.isConnected || !elementHasFocus(element)) {
+        return toolError("ELEMENT_FOCUS_FAILED", "Element could not retain focus", getElementSummary(element));
+      }
+      return { _elementRef: rememberElement(element) };
+    },
+
+    verifyElementFocus({ elementRefs: references = [], retainRef = false }) {
+      const token = references[0] || "";
+      const target = queryActionElement(null, 0, [token]);
+      if (!retainRef || "error" in target) elementRefs.delete(token);
+      if ("error" in target) return target;
+      const { element } = target;
+      if (!elementHasFocus(element)) {
+        elementRefs.delete(token);
+        return toolError("ELEMENT_FOCUS_FAILED", "Element lost focus before the key was sent", getElementSummary(element));
+      }
+      return { focused: true };
+    },
+
+    async readElementActionState({ selector, index = 0, value, elementRefs: references = [], retainRef = false }) {
+      await settleElementAction();
+      const targetResult = queryActionElement(selector, index, references);
+      if (!retainRef || "error" in targetResult) for (const token of references) elementRefs.delete(token);
+      if ("error" in targetResult) return targetResult;
       const { element: el } = targetResult;
-      return elementActionState(el);
+      return { ...elementActionState(el), ...(value !== undefined ? { valueMatches: fillValueMatches(el, value) } : {}) };
     },
 
     resolveCheckTarget({ selector, index = 0, scroll = true }) {
@@ -2086,9 +2133,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return checkTargetReadiness(targetResult.element, scroll);
     },
 
-    actOnElement({ selector, index = 0, action, elementAction = "", value = "", key = "", submit = false }) {
+    async actOnElement({ selector, index = 0, action, elementAction = "", value = "", key = "", submit = false, elementRefs: references = [] }) {
       const op = String(elementAction || action || "").trim();
-      const targetResult = queryElement(selector, index);
+      const targetResult = queryActionElement(selector, index, references);
       if ("error" in targetResult) return targetResult;
       const { element: el, matched } = targetResult;
 
@@ -2107,9 +2154,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
 
       if (op === "fill") {
-        const filled = setElementValue(el, value, submit);
+        const filled = await setElementValue(el, value, submit);
         if ("error" in filled) return filled;
-        return { action: op, selector, index, filled: true, submitted: submit, fill: filled, element: getElementSummary(el) };
+        return { action: op, selector, index, filled: true, submitted: filled.submitted, fill: filled, element: getElementSummary(el) };
       }
 
       if (op === "select") {
@@ -2322,7 +2369,37 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     el.dispatchEvent(new MouseEvent("click", { ...commonProps, buttons: 0 }));
   }
 
-  function setElementValue(el: Element, value: unknown, submit = false) {
+  function validateFillValue(el: Element, value: unknown) {
+    const text = normalizeLineBreaks(value);
+    if (el instanceof HTMLElement && el.isContentEditable || el instanceof HTMLTextAreaElement) return { value: text };
+    if (!(el instanceof HTMLInputElement)
+      || ["checkbox", "radio", "file", "button", "submit", "reset", "image", "hidden"].includes(el.type)) {
+      return toolError("NOT_EDITABLE_ELEMENT", "Element does not accept text values", getElementSummary(el));
+    }
+    // Let the browser validate the type and constraints without changing the live field.
+    const probe = el.cloneNode(false) as HTMLInputElement;
+    probe.value = text;
+    let accepted = probe.value === text;
+    if (["date", "datetime-local", "time", "month", "week", "number"].includes(el.type)) {
+      // These native parsers clear invalid values but may canonicalize valid ones.
+      accepted = text === "" || probe.value !== "";
+    } else if (el.type === "range") {
+      const number = document.createElement("input");
+      number.type = "number";
+      number.value = text;
+      accepted = Number.isFinite(number.valueAsNumber) && number.valueAsNumber === probe.valueAsNumber;
+    } else if (el.type === "email" || el.type === "url") {
+      accepted = probe.value === text.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
+    } else if (el.type === "color") {
+      accepted = probe.value === text.toLowerCase();
+    }
+    if (!accepted) {
+      return toolError("ELEMENT_VALUE_MISMATCH", "The input cannot represent the requested value", getElementSummary(el));
+    }
+    return { value: probe.value };
+  }
+
+  async function setElementValue(el: Element, value: unknown, submit = false) {
     if (isDisabled(el)) {
       return toolError("ELEMENT_DISABLED", "Element is disabled", getElementSummary(el));
     }
@@ -2334,7 +2411,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       return toolError("ELEMENT_READONLY", "Element is readonly", getElementSummary(editableRoot));
     }
 
-    const text = String(value ?? "");
+    const validated = validateFillValue(editableRoot, value);
+    if ("error" in validated) return validated;
+    const text = validated.value;
     let target = el;
     let richText = null;
     target.focus();
@@ -2342,7 +2421,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       target = getContentEditableRoot(el);
       target.focus();
       if (hasLineBreaks(text)) {
-        richText = setContentEditableMultilineValue(target, text);
+        richText = await setContentEditableMultilineValue(target, text);
       } else {
         target.textContent = text;
       }
@@ -2356,7 +2435,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     target.dispatchEvent(new Event("input", { bubbles: true }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
 
-    if (submit) {
+    await settleElementAction();
+    if (!target.isConnected) return staleElementError(target);
+    const matches = fillValueMatches(target, text);
+    if (matches === false) return toolError("ELEMENT_VALUE_MISMATCH", "Element did not retain the requested value", getElementSummary(target));
+    if (matches === null && richText) richText.warning = "The editor's value could not be verified.";
+
+    const submitted = submit && matches === true && !richText?.warning;
+    if (submitted) {
       const form = target.closest("form");
       if (form) {
         form.requestSubmit ? form.requestSubmit() : form.submit();
@@ -2366,6 +2452,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     }
     return {
       ok: true,
+      submitted,
       multiline: hasLineBreaks(text),
       method: richText?.method || (el.isContentEditable ? "textContent" : "value"),
       richText,
@@ -2386,20 +2473,26 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return el;
   }
 
-  function setContentEditableMultilineValue(el: HTMLElement, value: unknown) {
+  async function setContentEditableMultilineValue(el: HTMLElement, value: unknown) {
     const text = normalizeLineBreaks(value);
     const html = multilineTextToParagraphHtml(text);
     const expected = getExpectedRichTextShape(text);
-    const attempts = [];
+    const attempts: { method: string; ok: boolean; error?: string; defaultPrevented?: boolean }[] = [];
 
+    if (fillValueMatches(el, text) === true) return { method: "unchanged", expected, structure: getEditableRichTextStructure(el), attempts, warning: "" };
+    const before = el.innerHTML;
     selectEditableContents(el);
-    attempts.push(dispatchSyntheticRichPaste(el, text, html));
+    const paste = dispatchSyntheticRichPaste(el, text, html);
+    attempts.push(paste);
+    await settleElementAction();
     let structure = getEditableRichTextStructure(el);
-    if (isAcceptableRichTextStructure(structure, expected)) {
-      return { method: "paste", expected, structure, attempts };
+    if (fillValueMatches(el, text) === true || paste.defaultPrevented || el.innerHTML !== before
+      || !el.isConnected || !elementHasFocus(el)) {
+      return { method: "paste", expected, structure, attempts, warning: "" };
     }
 
     selectEditableContents(el);
+    if (!el.isConnected || !elementHasFocus(el)) return { method: "paste", expected, structure, attempts, warning: "" };
     const execCommandAttempt: { method: string; ok: boolean; error?: string } = { method: "execCommand.insertHTML", ok: false };
     try {
       execCommandAttempt.ok = document.execCommand("insertHTML", false, html);
@@ -2407,9 +2500,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       execCommandAttempt.error = errorMessage(err);
     }
     attempts.push(execCommandAttempt);
+    await settleElementAction();
     structure = getEditableRichTextStructure(el);
-    if (isAcceptableRichTextStructure(structure, expected)) {
-      return { method: "insertHTML", expected, structure, attempts };
+    if (fillValueMatches(el, text) === true || execCommandAttempt.ok || el.innerHTML !== before
+      || !el.isConnected || !elementHasFocus(el)) {
+      return { method: "insertHTML", expected, structure, attempts, warning: "" };
     }
 
     el.innerHTML = html;
@@ -2498,9 +2593,42 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     };
   }
 
-  function isAcceptableRichTextStructure(structure: ReturnType<typeof getEditableRichTextStructure>, expected: ReturnType<typeof getExpectedRichTextShape>) {
-    if (!expected.requiresBlocks) return true;
-    return structure.paragraphCount > 1 || structure.brCount > 0 || structure.blockCount > 1;
+  function fillValueMatches(el: Element, expected: string): boolean | null {
+    if (!(el instanceof HTMLElement && el.isContentEditable)) return getElementValue(el, true) === expected;
+    const text = editableText(el);
+    return text === null ? null : text === normalizeLineBreaks(expected).replace(/\u00a0/g, " ");
+  }
+
+  /** Logical editing lines, not innerText's extra paragraph spacing. Keep empty blocks. */
+  function editableText(root: HTMLElement, block = true): string | null {
+    const blocks: string[] = [];
+    let inline: string | null = null;
+    const children = Array.from(root.childNodes).filter(child => child.nodeType !== Node.COMMENT_NODE);
+    for (const [index, child] of children.entries()) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        inline = (inline ?? "") + normalizeLineBreaks(child.textContent).replace(/\u00a0/g, " ");
+        continue;
+      }
+      if (!(child instanceof HTMLElement) || child.contentEditable === "false"
+        || ["IMG", "INPUT", "TEXTAREA", "SELECT", "TABLE"].includes(child.tagName)) return null;
+      if (child.tagName === "BR") {
+        // A final BR is the browser's empty-line placeholder; preceding BRs are line breaks.
+        inline = (inline ?? "") + (block && index === children.length - 1 ? "" : "\n");
+        continue;
+      }
+      const display = getComputedStyle(child).display;
+      if (!["block", "flow-root", "list-item", "inline", "contents"].includes(display)) return null;
+      const childBlock = ["block", "flow-root", "list-item"].includes(display);
+      const text = editableText(child, childBlock);
+      if (text === null) return null;
+      if (childBlock) {
+        if (inline !== null) blocks.push(inline);
+        blocks.push(text);
+        inline = null;
+      } else inline = (inline ?? "") + text;
+    }
+    if (inline !== null) blocks.push(inline);
+    return blocks.join("\n");
   }
 
   function dispatchKey(el: Element, key: string) {
@@ -2559,22 +2687,50 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function clickablePointFor(el: Element) {
     if (!isVisible(el)) return null;
-    const rects = [...el.getClientRects()]
+    const rects = elementClientRects(el)
       .filter(rect => rect.width > 0 && rect.height > 0)
       .sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    const rect = rects[0];
-    if (!rect) return null;
-    return {
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-    };
+    const points = rects.map(rect => {
+      const left = Math.max(0, rect.left), right = Math.min(window.innerWidth, rect.right);
+      const top = Math.max(0, rect.top), bottom = Math.min(window.innerHeight, rect.bottom);
+      return right > left && bottom > top
+        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
+        : { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    if (points.length === 1) return points[0];
+    return points.find(point => {
+      const hit = elementAtPoint(el, point.x, point.y);
+      return hit === el || !!hit && el.contains(hit);
+    }) || points[0] || null;
+  }
+
+  // A display:contents element has no own box. Read its rendered content without
+  // changing the element identity used by the action and its completion checks.
+  function elementClientRects(el: Element) {
+    if (getComputedStyle(el).display !== "contents") return [...el.getClientRects()];
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return [...range.getClientRects()];
+  }
+
+  function elementBounds(el: Element) {
+    if (getComputedStyle(el).display !== "contents") return el.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect();
+  }
+
+  function scrollElementBoxIntoView(el: Element, block: ScrollLogicalPosition = "center") {
+    const target = getComputedStyle(el).display === "contents"
+      ? [...el.querySelectorAll("*")].find(child => isVisible(child) && child.getClientRects().length) || el
+      : el;
+    target.scrollIntoView({ behavior: "instant", block, inline: "center" });
   }
 
   /** Repeated action preparation reads only state and geometry, never page descriptions. */
   function getElementReadiness(el: Element) {
-    const rect = el.getBoundingClientRect();
-    const point = rect.width > 0 && rect.height > 0
-      ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) } : null;
+    const rect = elementBounds(el);
+    const point = clickablePointFor(el);
     return {
       tag: el.tagName.toLowerCase(), type: el.getAttribute("type") || "",
       visible: isVisible(el), disabled: isDisabled(el), readOnly: isReadOnly(el), editable: isEditableElement(el),
@@ -2611,7 +2767,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getElementSummary(el: Element, { selector = true, labels = true } = {}) {
-    const rect = el.getBoundingClientRect();
+    const rect = elementBounds(el);
     const tag = el.tagName.toLowerCase();
     const isFileInput = el instanceof HTMLInputElement
       && String(el.type || el.getAttribute("type") || "").toLowerCase() === "file";
@@ -2635,9 +2791,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         w: Math.round(rect.width),
         h: Math.round(rect.height),
       },
-      clickablePoint: rect.width > 0 && rect.height > 0
-        ? { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
-        : null,
+      clickablePoint: clickablePointFor(el),
     };
     if (isFileInput) {
       summary.accept = String(el.accept || "");
@@ -2782,8 +2936,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function elementPresence(element: Element | null, visibleOnly = true) {
-    const found = Boolean(element?.isConnected && (!visibleOnly || isVisible(element)
-      && (!element.checkVisibility || element.checkVisibility({ opacityProperty: true, visibilityProperty: true }))));
+    const found = Boolean(element?.isConnected && (!visibleOnly || isVisible(element)));
     return { found, element: found && element ? { ...getElementSummary(element), _elementRef: rememberElement(element) } : null };
   }
 
@@ -2839,7 +2992,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function getAccessibleName(el: Element) {
-    return computeAccessibleName(el, { computedStyleSupportsPseudoElements: true });
+    return elementAccessibleName(el);
   }
 
   function getElementValue(el: Element, full = false) {
@@ -2910,13 +3063,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function isVisible(el: Element) {
-    const rect = el.getBoundingClientRect();
-    const style = getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) !== 0;
+    return elementIsVisible(el);
   }
 
   function isInViewport(el: Element) {
-    const rect = el.getBoundingClientRect();
+    const rect = elementBounds(el);
     return rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
   }
 
@@ -2935,11 +3086,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   }
 
   function isObscuredAtCenter(el: Element) {
-    const rect = el.getBoundingClientRect();
-    if (!rect.width || !rect.height) return false;
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const top = elementAtPoint(el, x, y);
+    const point = clickablePointFor(el);
+    if (!point) return false;
+    const top = elementAtPoint(el, point.x, point.y);
     if (el instanceof HTMLLabelElement && top === el.control) return false;
     return !!top && top !== el && !el.contains(top);
   }

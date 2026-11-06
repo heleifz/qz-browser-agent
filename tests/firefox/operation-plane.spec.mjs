@@ -19,5 +19,14 @@ test('Firefox actions wait for readiness and reuse element targets for pointer o
         ...(failure.details?{details:JSON.parse(JSON.stringify(failure.details))}:{})}; }
     `);
     await exerciseElementActionWorkflow({ page, call, expect });
+    await page.evaluate(() => {
+      const section = document.createElement('section');
+      section.innerHTML = '<p>Inventory remains readable.</p><div style="visibility:hidden"><button style="visibility:visible">Visible descendant</button></div>';
+      document.body.append(section);
+    });
+    const tree = await call('get_ax_tree', { scope: 'full', limit: 200 });
+    expect(tree.snapshot, JSON.stringify(tree)).toContain('combobox "Track"');
+    expect(tree.snapshot).toContain('Inventory remains readable.');
+    expect(tree.snapshot).toContain('button "Visible descendant"');
   } finally { await page.close(); await fixture.close(); }
 });

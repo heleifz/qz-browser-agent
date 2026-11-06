@@ -14,6 +14,11 @@ globalThis.chrome = {
     async get(tabId) { return { id: tabId, url: "https://example.test/page" }; },
     async update() {},
   },
+  webNavigation: {
+    ...Object.fromEntries(['onBeforeNavigate', 'onCommitted', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onErrorOccurred']
+      .map(name => [name, { addListener() {}, removeListener() {} }])),
+    async getFrame() { return { url: 'https://example.test/page', documentId: 'document-live', errorOccurred: false }; },
+  },
   debugger: {
     onEvent: { addListener(listener) { listeners.add(listener); } },
     onDetach: { addListener() {} },
@@ -48,7 +53,13 @@ function replyFor(action, params = {}) {
     index: params.index,
   };
   if (action === "inspectElement" && state.bindCss) body._elementRef = "observed-element";
-  if (action === "prepareElementFill") return { ...body, fillMode: "text", contentEditable: false };
+  if (action === "prepareElementFill") return { ...body, fillMode: "text", contentEditable: false,
+    expectedValue: String(params.value ?? ""), _elementRef: "filled-element" };
+  if (action === "readElementActionState" && params.value !== undefined) {
+    assert.deepEqual(params.elementRefs, ["filled-element"]);
+    return { ...body, valueMatches: state.value === params.value };
+  }
+  if (action === "verifyElementFocus") assert.deepEqual(params.elementRefs, ["filled-element"]);
   if (action === "readDom") return { content: "scoped-text", selector: params.selector || "" };
   if (action === "resolveCheckTarget") return { ...body, element: { ...body } };
   return body;
@@ -66,7 +77,7 @@ const element = createElementRuntime({
   async assertTabAllowed() {},
   async initializeContentScript() {},
   async sendToContent(tabId, action, params = {}) {
-    contentCalls.push({ tabId, action, selector: params.selector, index: params.index, via: "content" });
+    contentCalls.push({ tabId, action, selector: params.selector, index: params.index, elementRefs: params.elementRefs, via: "content" });
     return replyFor(action, params);
   },
   async withDebugger(tabId, callback) {
@@ -89,7 +100,7 @@ const element = createElementRuntime({
       if (method === "Runtime.callFunctionOn") {
         const payload = params.arguments?.[0]?.value || {};
         if (payload.action === "resolveElementRefs") return { result: { subtype: "array", objectId: "observed-elements" } };
-        contentCalls.push({ tabId, action: payload.action, selector: payload.selector, index: payload.index, via: "node" });
+        contentCalls.push({ tabId, action: payload.action, selector: payload.selector, index: payload.index, elementRefs: payload.elementRefs, via: "node" });
         return { result: { value: replyFor(payload.action, payload) } };
       }
       if (method === "Runtime.getProperties") return { result: [{ name: "0", value: { subtype: "node", objectId: "observed-node" } }] };
@@ -105,7 +116,7 @@ registerPageElementTools({
   registerTool(definition) { tools.set(definition.name, definition); },
   ToolExecutionError,
   async sendToContent(tabId, action, params = {}) {
-    contentCalls.push({ tabId, action, selector: params.selector, index: params.index, via: "content" });
+    contentCalls.push({ tabId, action, selector: params.selector, index: params.index, elementRefs: params.elementRefs, via: "content" });
     return replyFor(action, params);
   },
   resolveSelectorTarget: element.resolveSelectorTarget,

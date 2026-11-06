@@ -157,6 +157,120 @@ export async function exerciseElementActionWorkflow({ page, call, expect }) {
   await expect(page.frameLocator('iframe').locator('#frame-hover')).toHaveAttribute('data-hovered', 'yes');
   expect(await page.locator('#never').getAttribute('data-clicks'), 'timed-out preparation must not click after becoming ready').toBeNull();
   expect(await page.locator('#hover-never').locator('..').getAttribute('data-downs'), 'timed-out hover must not press after its overlay disappears').toBeNull();
+  await exerciseFillAndPress({ page, call, expect });
+}
+
+async function exerciseFillAndPress({ page, call, expect }) {
+  await page.evaluate(() => {
+    const fixture = document.createElement('section');
+    fixture.id = 'fill-press-workflow';
+    fixture.innerHTML = `
+      <div id="paragraph-editor" contenteditable="true"><p>old</p><p>old</p></div>
+      <input id="invalid-date" type="date" value="2024-01-02">
+      <input id="invalid-range" type="range" min="0" max="10" value="5">
+      <input id="invalid-color" type="color" value="#112233">
+      <input id="invalid-checkbox" type="checkbox" value="original">
+      <input id="normalized-date-time" type="datetime-local">
+      <input id="normalized-email" type="email"><input id="normalized-url" type="url">
+      <input id="transparent-input" value="old" style="opacity:0">
+      <div id="contents-scroll" style="overflow:auto;height:100px"><div style="height:500px"></div>
+        <button id="contents-button" type="button" style="display:contents"><span style="display:inline-block;padding:16px">Contents button</span></button>
+      </div>
+      <button id="space-button" type="button">Space button</button>
+      <input id="space-checkbox" type="checkbox">
+      <input id="replacement-fill" value="original">
+      <input id="redirect-focus" value="original"><input id="detach-focus" value="original">
+      <input id="focus-sink" value="untouched">`;
+    document.body.append(fixture);
+    for (const element of fixture.querySelectorAll('input,button,[contenteditable]')) {
+      for (const type of ['click', 'mousedown', 'keydown', 'input', 'change']) {
+        element.addEventListener(type, () => {
+          element.dataset[type] = String(Number(element.dataset[type] || 0) + 1);
+        });
+      }
+    }
+    document.getElementById('redirect-focus').addEventListener('focus', () => document.getElementById('focus-sink').focus());
+    document.getElementById('detach-focus').addEventListener('focus', event => {
+      event.currentTarget.remove(); document.getElementById('focus-sink').focus();
+    });
+    document.getElementById('replacement-fill').addEventListener('input', event => {
+      const previous = event.currentTarget, successor = previous.cloneNode();
+      successor.value = previous.value; successor.dataset.successor = 'yes';
+      successor.dataset.keydown = '0';
+      successor.addEventListener('keydown', () => { successor.dataset.keydown = String(Number(successor.dataset.keydown) + 1); });
+      previous.replaceWith(successor); successor.focus();
+    }, { once: true });
+  });
+
+  const act = (id, action, args = {}) => call('act_on_element', { target: `css:#${id}`, action, ...args });
+  const state = id => page.locator(`#${id}`).evaluate(element => ({
+    value: element.value, checked: element.checked,
+    events: Object.fromEntries(['click', 'mousedown', 'keydown', 'input', 'change'].map(type => [type, Number(element.dataset[type] || 0)])),
+  }));
+  expect(await act('paragraph-editor', 'fill', { value: 'First line\n\nThird line' })).toEqual({});
+  const editor = await page.locator('#paragraph-editor').evaluate(element => ({
+    html: element.innerHTML,
+    // Browser editing may keep P elements or create DIV elements. Inspect each
+    // resulting block so a blank paragraph cannot be hidden by textContent.
+    lines: Array.from(element.childNodes, node => node.textContent || ''),
+  }));
+  expect(editor.lines, editor.html).toEqual(['First line', '', 'Third line']);
+
+  for (const [id, value] of [
+    ['invalid-date', '2025-02-30'], ['invalid-range', '99'],
+    ['invalid-color', 'not-a-color'], ['invalid-checkbox', 'changed'],
+  ]) {
+    const before = await state(id);
+    const result = await act(id, 'fill', { value, timeout: 1 });
+    expect(result.code, JSON.stringify({ id, result })).toMatch(/^[A-Z][A-Z_]+$/);
+    expect(await state(id), `${id} must reject before changing its value or dispatching input`).toEqual(before);
+  }
+
+  for (const [id, value, expected] of [
+    ['normalized-date-time', '2026-11-06 12:34:00', '2026-11-06T12:34'],
+    ['invalid-range', '5.0', '5'],
+    ['normalized-email', '  alice@example.com  ', 'alice@example.com'],
+    ['normalized-url', '  https://example.com/  ', 'https://example.com/'],
+  ]) {
+    expect(await act(id, 'fill', { value }), id).toEqual({});
+    if (id === 'invalid-range') await expect(page.locator(`#${id}`)).toHaveJSProperty('valueAsNumber', Number(expected));
+    else await expect(page.locator(`#${id}`)).toHaveValue(expected);
+  }
+
+  expect(await act('transparent-input', 'fill', { value: 'Transparent input filled' })).toEqual({});
+  await expect(page.locator('#transparent-input')).toHaveValue('Transparent input filled');
+  const contents = await call('inspect_element', { target: 'css:#contents-button' });
+  expect(contents).toMatchObject({ target: expect.stringMatching(/^uid:/), attrs: { id: 'contents-button' } });
+  expect(await call('act_on_element', { target: contents.target, action: 'click' })).toEqual({});
+  expect((await state('contents-button')).events.click).toBe(1);
+  expect(await page.locator('#contents-scroll').evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+
+  for (const id of ['space-button', 'space-checkbox']) {
+    expect(await act(id, 'press', { key: 'Space' })).toEqual({});
+    const after = await state(id);
+    expect(after.events).toMatchObject({ click: 1, mousedown: 0, keydown: 1 });
+    if (id === 'space-checkbox') {
+      expect(after.checked).toBe(true);
+      expect(after.events.change).toBe(1);
+    }
+  }
+  for (const id of ['redirect-focus', 'detach-focus']) {
+    const result = await act(id, 'press', { key: 'x', timeout: 1 });
+    expect(result.code, JSON.stringify({ id, result })).toMatch(/^[A-Z][A-Z_]+$/);
+    const sink = await state('focus-sink');
+    expect(sink.value).toBe('untouched');
+    expect(sink.events).toMatchObject({ keydown: 0, input: 0 });
+  }
+  const replaced = await act('replacement-fill', 'fill', { value: 'Copied by successor', submit: true });
+  expect(replaced.code, JSON.stringify(replaced)).toMatch(/^[A-Z][A-Z_]+$/);
+  await expect(page.locator('#replacement-fill')).toHaveAttribute('data-successor', 'yes');
+  await expect(page.locator('#replacement-fill')).toBeFocused();
+  const successor = await state('replacement-fill');
+  expect(successor.value).toBe('Copied by successor');
+  expect(successor.events.keydown, 'a same-id successor must not receive the original field’s submit key').toBe(0);
+  await expect(page.locator('#redirect-focus')).toHaveValue('original');
+  expect((await state('redirect-focus')).events.keydown).toBe(0);
+  await expect(page.locator('#detach-focus')).toHaveCount(0);
 }
 
 async function exerciseElementMatchWait({ page, call, expect }) {

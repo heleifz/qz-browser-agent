@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
+import { playwrightDomSources } from "../../scripts/vendor/playwright-dom.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -36,6 +37,7 @@ test.before(async () => {
     platform: "browser",
     target: "chrome114",
     logLevel: "silent",
+    plugins: [playwrightDomSources()],
   });
   browser = await chromium.launch({ headless: true });
   page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -219,7 +221,7 @@ test("check readiness reuses safe label resolution without scrolling during obse
   const result = await page.evaluate(async () => {
     const root = document.createElement("div");
     root.style.cssText = "position:fixed;left:20px;top:20px;z-index:2147483647;background:white";
-    root.innerHTML = '<input id="readiness-check" type="checkbox" style="opacity:0;width:20px;height:20px"><label for="readiness-check" style="display:block;width:120px;height:30px">Agree</label>';
+    root.innerHTML = '<input id="readiness-check" type="checkbox" style="display:none"><label for="readiness-check" style="display:block;width:120px;height:30px">Agree</label>';
     document.body.append(root);
     const control = root.querySelector("input"), label = root.querySelector("label");
     let scrolls = 0;

@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { playwrightDomSources } from '../../scripts/vendor/playwright-dom.mjs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -13,7 +14,7 @@ export async function createAxViewportHarness({ baseline = false } = {}) {
       if (baseline) b.onLoad({ filter: /capabilities\/accessibility\/(tools|tool-messages)\.ts$/ }, args => ({ contents: execFileSync('git', ['show', `cbac588:${args.path.slice(process.cwd().length + 1)}`], { encoding: 'utf8' }), loader: 'ts' }));
     } }] });
   const { registerAccessibilityTools, withLanguage, bindBrowserApi } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}#${crypto.randomUUID()}`);
-  const content = (await build({ entryPoints: ['src/content/content-script.ts'], bundle: true, write: false, format: 'iife' })).outputFiles[0].text;
+  const content = (await build({ entryPoints: ['src/content/content-script.ts'], bundle: true, write: false, format: 'iife', plugins: [playwrightDomSources()] })).outputFiles[0].text;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();

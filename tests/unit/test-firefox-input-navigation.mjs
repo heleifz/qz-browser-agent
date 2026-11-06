@@ -26,7 +26,7 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   const trace = [], submissions = [], keys = [], keyFrames = [], hostErrors = [];
   const original = errorKind === 'missing-string' ? MISSING : errorKind === 'reject-value' ? { reason: 'unloading' }
     : new Error(errorKind === 'world-error' ? 'ISOLATED world disappeared' : 'unrelated failure');
-  let value = '', committed = false, scheduled = false, removed = false, current = true, execute, method = '', finishProbe;
+  let value = '', committed = false, scheduled = false, removed = false, current = true, execute, method = '', finishProbe, focusRef;
   const timers = new Set();
   const later = (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); };
   t.after(() => { for (const timer of timers) clearTimeout(timer); });
@@ -42,7 +42,11 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
       if (removed) throw new Error('No tab with id: 7');
       return { id: 7, url: committed && !sameUrl ? AFTER : BEFORE, title: committed ? 'After' : 'Before', status: 'complete' };
     } },
-    webNavigation: { onCommitted: event(), async getAllFrames() {
+    webNavigation: { onBeforeNavigate: event(), onCommitted: event(), onHistoryStateUpdated: event(),
+      onReferenceFragmentUpdated: event(), onErrorOccurred: event(),
+      async getFrame() { return { frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url,
+        documentId: committed ? 'after' : 'before', errorOccurred: false }; },
+      async getAllFrames() {
       return [{ frameId: 0, parentFrameId: -1, url: (await api.tabs.get()).url },
         ...(frameId ? [{ frameId, parentFrameId: 0, url: BEFORE }] : [])];
     } },
@@ -103,8 +107,17 @@ function fixture(t, { fault = '', navigation = true, sameUrl = false, interrupt 
   const context = { sessionId: 'owner', runId: 'run', signal: controller.signal, runProfile: { platform: { os: 'mac' } } };
   const inspect = () => ({ tag: 'input', type: 'text', editable: true, focused: true, visible: true, value,
     clickablePoint: { x: 10, y: 10 }, inViewport: true });
-  const content = async (_tabId, action) => {
-    return { ...inspect(), ...(action === 'prepareElementFill' ? { fillMode: 'text' } : {}) };
+  const content = async (_tabId, action, params) => {
+    if (action === 'prepareElementFill' || action === 'prepareElementPress') {
+      focusRef = action === 'prepareElementFill' ? 'filled-element' : 'focused-element';
+      return { ...inspect(), _elementRef: focusRef,
+        ...(action === 'prepareElementFill' ? { fillMode: 'text', expectedValue: params.value } : {}) };
+    }
+    if (action === 'verifyElementFocus') {
+      assert.deepEqual(params.elementRefs, [focusRef]);
+      if (!params.retainRef) focusRef = undefined;
+    }
+    return { ...inspect(), ...(action === 'readElementActionState' ? { valueMatches: value === params.value } : {}) };
   };
   api.tabs.sendMessage = async () => ({});
   registerPageElementTools({

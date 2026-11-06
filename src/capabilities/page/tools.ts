@@ -11,7 +11,7 @@ export type { PageState, PreparedNavigation, PageNavigationHost } from "#sdk/bac
 type PageElementHost = Pick<ToolExtensionAPI,
   "registerTool" | "ToolExecutionError" | "sendToContent" | "clickPointReady"
   | "clickNotReadyResult" | "sendCdp" | "withDebugger"
-  | "getPageContext" | "getTabPageState" | "pageStateDelta"
+  | "getPageContext" | "getTabPageState"
   | "prepareKnownPageNavigation" | "commitObservedPageNavigation"> & Pick<ToolExtensionAPI["element"],
   "resolveSelectorTarget" | "resolveElementReference" | "resolveLocatorTarget" | "findLocatorElements" | "countLocatorMatches" | "addElementTargetsToFindResult"
   | "elementTargetForSelector" | "elementTargetGrammar" | "getElementTargetDescription" | "useElement" | "readMainDocumentId">;
@@ -115,7 +115,6 @@ export function registerPageElementTools({
   elementTargetGrammar: ELEMENT_TARGET_GRAMMAR,
   getElementTargetDescription,
   getTabPageState,
-  pageStateDelta,
   prepareKnownPageNavigation,
   commitObservedPageNavigation,
   clickPointReady,
@@ -172,13 +171,10 @@ function readBound<T>(binding: ElementTarget, context: ToolContext, fn: (call?: 
 }
 async function observeElementNavigation(tabId: number, pageBefore: PageState, prepared: PreparedNavigation | null,
   guardrails: SecurityGuardrails, observation: Awaited<ReturnType<typeof beginPageNavigationObservation>>) {
-  const { pageBefore: dispatchPage, pageAfter, documentChanged, navigationPending, navigationStarted } = await observation.finish(pageBefore);
-  const delta = pageStateDelta(dispatchPage, pageAfter);
-  const navigated = delta.urlChanged || documentChanged === true
-    || (navigationPending || navigationStarted === null ? null : documentChanged ?? (navigationStarted ? null : false));
-  commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId });
+  const { pageBefore: dispatchPage, pageAfter, navigationCommitted, navigationPending } = await observation.finish(pageBefore);
+  if (navigationCommitted) commitObservedPageNavigation({ pageBefore: dispatchPage, pageAfter, prepared, guardrails, toolName: "act_on_element", tabId });
   return {
-    ...(navigated === true ? { navigated: true, url: pageAfter.url } : {}),
+    ...(navigationCommitted ? { navigated: true, url: pageAfter.url } : {}),
     ...(navigationPending ? { navigationPending: true } : {}),
   };
 }
@@ -539,10 +535,10 @@ registerTool({
     if (ready.error) return withElementActionHelp(ready, normalizedAction, resolvedTarget);
     const inspected = await inspect();
     if (inspected.error) return withElementActionHelp(inspected, normalizedAction, resolvedTarget);
-    const complete = async (navigation: Record<string, unknown> = {}, fill?: unknown) => {
+    const complete = async (navigation: Record<string, unknown> = {}, fill?: unknown, uncertain = false) => {
       const richText = asRecord(asRecord(fill).richText);
       const popups = await context.observedPopups?.();
-      return bindToolResultPresentation({ ...navigation, ...(popups?.length ? { popups } : {}), ...(richText.warning ? {
+      return bindToolResultPresentation({ ...navigation, ...(popups?.length ? { popups } : {}), ...(uncertain || richText.warning ? {
         confirmationRequired: true, hint: "Verify the editor saved the value before continuing.",
       } : {}) }, {
         _display: { elementAction: {
@@ -873,8 +869,15 @@ registerTool({
           ...(submit ? { submit } : {}) }, bound, context);
         assertActive();
         if (prepared.error) return withElementActionHelp(prepared, normalizedAction, resolvedTarget);
+        if (typeof prepared.expectedValue !== "string" || typeof prepared._elementRef !== "string") throw new ToolExecutionError("CONTENT_SCRIPT_MESSAGE_FAILED",
+          t("contentScriptReturnedAnInvalidResponse", { action: "prepareElementFill" }));
+        const expectedValue = prepared.expectedValue;
         // Preparation may resolve an inherited contenteditable child to its editing host.
-        const field = prepared.selector ? { selector: prepared.selector, index: 0 } : { selector, index };
+        const field = { ...(prepared.selector ? { selector: prepared.selector, index: 0 } : { selector, index }),
+          elementRefs: [prepared._elementRef] };
+        const focused = await sendToContent(tabId, "verifyElementFocus", { elementRefs: field.elementRefs, retainRef: true }, bound, context);
+        assertActive();
+        if (focused.error) return withElementActionHelp(focused, normalizedAction, resolvedTarget);
         const textInput = prepared.fillMode === "text";
         const inputKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_tabId, method, params) => {
           if (params.type !== "keyUp") assertActive();
@@ -883,32 +886,32 @@ registerTool({
         let fill: unknown;
         if (textInput) {
           assertActive();
-          if (value) await send("Input.insertText", { text: value });
+          if (expectedValue) await send("Input.insertText", { text: expectedValue });
           else await inputKeyboard.press(tabId, "Backspace", context);
           assertActive();
         } else {
           // Rich-text paragraphs and non-keyboard fields retain their specialized writer.
-          const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value, submit: false }, bound, context);
+          const result = await sendToContent(tabId, "actOnElement", { ...field, elementAction: "fill", value: expectedValue, submit: false }, bound, context);
           if (result.error) return withElementActionHelp(result, normalizedAction, resolvedTarget);
           fill = result.fill;
         }
         const observation = submit ? await beginPageNavigationObservation(tabId, _signal, { deadlineAt: deadline }) : null;
         try {
           assertActive();
-          const actual = await sendToContent(tabId, "readElementActionState", field, bound, context);
+          const actual = await sendToContent(tabId, "readElementActionState", { ...field, value: expectedValue, retainRef: submit }, bound, context);
           assertActive();
           if (actual.error) return withElementActionHelp(actual, normalizedAction, resolvedTarget);
-          // Chromium uses NBSP to preserve boundary spaces in contenteditable text.
-          const equivalentText = (text: string) => prepared.contentEditable ? text.replace(/\u00a0/g, " ") : text;
-          const valueMatches = !textInput || (typeof actual.value === "string"
-            && equivalentText(actual.value) === equivalentText(value.replace(/\r\n?/g, "\n")));
-          if (!valueMatches) return { ...toolError("ELEMENT_VALUE_MISMATCH", t("elementValueMismatch"), {
+          if (actual.valueMatches !== true && actual.valueMatches !== null) return { ...toolError("ELEMENT_VALUE_MISMATCH", t("elementValueMismatch"), {
             hint: "Inspect the target and verify its current value before retrying.", details: { ...identity, value: actual.value, submitDispatched: false },
           }) };
+          if (actual.valueMatches === null || asRecord(asRecord(fill).richText).warning) return complete({}, fill, true);
           if (submit) {
             if (!actual.focused) return { ...toolError("ELEMENT_FOCUS_FAILED", t("elementFocusLost"), {
               hint: "Inspect the target and restore focus before submitting.", details: { ...identity, filled: true, value: actual.value, submitDispatched: false },
             }) };
+            const confirmed = await sendToContent(tabId, "verifyElementFocus", { elementRefs: field.elementRefs }, bound, context);
+            assertActive();
+            if (confirmed.error) return withElementActionHelp(confirmed, normalizedAction, resolvedTarget);
             // Enter preserves page key handlers and native form validation. Never replay after a CDP failure.
             await inputKeyboard.press(tabId, "Enter", context);
             assertActive();
@@ -1007,48 +1010,28 @@ registerTool({
       };
       const finishPress = async () => complete(pageBefore && guardrails && observation
         ? await observeElementNavigation(tabId!, pageBefore, null, guardrails, observation) : {});
-      let dispatched = false;
       try {
-        let delivered = !inspected.clickablePoint;
-        await withDebugger(tabId, async (_target, send) => {
-          if (inspected.clickablePoint) {
-            await ensurePageSurface(tabId, send, { frameId });
-            const confirmed = await preparePointer(send, readReadiness, frameId, getPageContext(tabId).pageMode !== "mobile");
-            if (confirmed.error) throw new ToolExecutionError(String(confirmed.code || "ELEMENT_NOT_READY"), String(confirmed.error), { target: resolvedTarget });
-            const point = confirmed.clickablePoint!;
-            const receiptId = await armPageInputReceipt(tabId);
-            try {
-              if (observeNavigation) await startObservation();
-              await checkPointerDocument();
-              dispatched = true;
-              dispatchedAction();
-              await send("Input.dispatchMouseEvent", {
-                type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1,
-              });
-              await send("Input.dispatchMouseEvent", {
-                type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1,
-              });
-            } finally { delivered = await inputWasDelivered(tabId, receiptId); }
-          }
-          if (delivered) {
-            if (observeNavigation) await startObservation();
-            dispatched = true;
-            dispatchedAction();
-            const guardedKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_id, method, params) => send(method, params) });
-            await guardedKeyboard.press(tabId!, preparedKey, context);
-          }
+        return await withDebugger(tabId, async (_target, send) => {
+          await ensurePageSurface(tabId, send, { frameId });
+          if (observeNavigation) await startObservation();
+          await checkPointerDocument();
+          dispatchedAction();
+          const focused = await sendToContent(tabId, "prepareElementPress", { selector, index }, bound, context);
+          assertActive();
+          if (focused.error) return withElementActionHelp(focused, normalizedAction, resolvedTarget);
+          await checkPointerDocument();
+          // Verify the exact focused node, including CSS targets that a focus handler could replace.
+          const confirmed = await sendToContent(tabId, "verifyElementFocus", { elementRefs: [focused._elementRef] }, bound, context);
+          assertActive();
+          if (confirmed.error) return withElementActionHelp(confirmed, normalizedAction, resolvedTarget);
+          const guardedKeyboard = createCdpKeyboard({ ToolExecutionError, sendCdp: (_id, method, params) => {
+            if (params.type !== "keyUp") assertActive();
+            return send(method, params);
+          } });
+          await guardedKeyboard.press(tabId!, preparedKey, context);
+          assertActive();
+          return await finishPress();
         }, context);
-        if (!delivered) return inputNotDelivered({ action: "press", target: resolvedTarget, index, key: pressedKey });
-        return await finishPress();
-      } catch (err) {
-        rethrowStaleElement(err);
-        assertActive();
-        if (dispatched || frameId || asRecord(err).code === "ELEMENT_NOT_READY" || isCdpFallbackForbiddenError(err)) throw err;
-        if (observeNavigation) await startObservation();
-        dispatchedAction();
-        const fallback = await sendToContent(tabId, "actOnElement", { selector, index, elementAction: "press", value, key: pressedKey, submit }, bound, context);
-        if (fallback.error) return withElementActionHelp(fallback, normalizedAction, resolvedTarget);
-        return await finishPress();
       } finally { observation?.dispose(); }
     }
 

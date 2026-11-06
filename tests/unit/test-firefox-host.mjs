@@ -689,7 +689,8 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     dispatchEvent(event) { this.events.push(event.type); return true; },
   };
   const document = {
-    nodeType: 9, nodeName: "#document", title: "Example", documentElement: element, body: element, activeElement: element,
+    nodeType: 9, nodeName: "#document", title: "Example", body: element, activeElement: element,
+    documentElement: { nodeName: 'HTML', nodeType: 1, children: [element], childNodes: [element], getAttribute() { return null; } },
     scrollingElement: { scrollLeft: 0, scrollTop: 0, scrollWidth: 100, scrollHeight: 100, clientWidth: 50, clientHeight: 40 },
     querySelectorAll: selector => selector === "button" ? [element] : [],
     elementFromPoint: () => element,
@@ -718,6 +719,7 @@ test("the debugger shim reports frames, isolated contexts, clicks, and network b
     },
   };
   await withPage(document, async () => {
+    installFixtureSemantics(new Map([[element, { role: 'button', name: 'Go' }]]));
     installFirefoxDebugger(browser);
     browser.debugger.onEvent.addListener((source, method, params) => events.push({ source, method, params }));
     browser.debugger.onDetach.addListener((_source, reason) => events.push({ reason }));
@@ -1083,6 +1085,41 @@ test("click, press, and paste failures name the missing target", async () => {
   });
 });
 
+test("the accessibility adapter installs shared semantics once per document and replaces stale versions", async () => {
+  const browser = debuggerBrowser();
+  const versions = new Map([[0, 0], [7, 99]]), calls = [];
+  browser.webNavigation.getAllFrames = async () => [
+    { frameId: 0, parentFrameId: -1, url: 'https://example.test/' },
+    { frameId: 7, parentFrameId: 0, url: 'https://child.test/' },
+  ];
+  browser.scripting.executeScript = async ({ target, world, files, args }) => {
+    const frameId = target.frameIds[0];
+    if (files) {
+      assert.deepEqual(files, ['content/article-extractor.js', 'content/content-script.js']);
+      assert.equal(world || 'ISOLATED', 'ISOLATED');
+      assert.equal(target.tabId, 6);
+      calls.push(['install', frameId]);
+      versions.set(frameId, 1);
+    } else if (args?.[0]?.op === 'semantics') {
+      return [{ result: versions.get(frameId) }];
+    } else if (args?.[0]?.op === 'ax') {
+      calls.push(['ax', frameId]);
+      return [{ result: { nodes: [] } }];
+    }
+    return [{ result: undefined }];
+  };
+  installFirefoxDebugger(browser);
+  await browser.debugger.attach({ tabId: 6 }, '1.3');
+  await browser.debugger.sendCommand({ tabId: 6 }, 'Target.setAutoAttach', { autoAttach: true });
+  const read = frameId => browser.debugger.sendCommand({ tabId: 6,
+    ...(frameId ? { sessionId: `ff-6-${frameId}` } : {}) }, 'Accessibility.getFullAXTree', {});
+  for (const frameId of [0, 7]) { await read(frameId); await read(frameId); }
+  assert.deepEqual(calls, [['install', 0], ['ax', 0], ['ax', 0], ['install', 7], ['ax', 7], ['ax', 7]]);
+  versions.set(7, 0); // A replacement document starts without the provider.
+  await read(7);
+  assert.deepEqual(calls.slice(-2), [['install', 7], ['ax', 7]]);
+});
+
 test("the accessibility walk names shadow and nested-frame boundaries", async () => {
   const inner = {
     nodeName: "BUTTON", nodeType: 1, textContent: "Inner",
@@ -1125,6 +1162,8 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
   const document = { nodeType: 9, title: "Example", documentElement: root, defaultView: { getComputedStyle: () => ({}) } };
   const browser = debuggerBrowser();
   await withPage(document, async () => {
+    const semantics = new Map([[inner, { role: 'button', name: 'Inner' }], [linked, { role: 'link', name: 'In' }]]);
+    installFixtureSemantics(semantics);
     installFirefoxDebugger(browser);
     await browser.debugger.attach({ tabId: 6 }, "1.3");
     const tree = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", {});
@@ -1143,6 +1182,8 @@ test("the accessibility walk names shadow and nested-frame boundaries", async ()
       childNodes: [],
       getAttribute() { return null; },
     };
+    button.childNodes = button.children;
+    semantics.set(button, { role: 'button', name: 'Go' });
     document.documentElement = button;
     const limited = await browser.debugger.sendCommand({ tabId: 6 }, "Accessibility.getFullAXTree", { depth: 1 });
     const bounded = limited.nodes.find(node => values(node).includes("children below this depth were omitted"));
@@ -1446,7 +1487,8 @@ test("clicks dispatch events without explicit navigation or submission", async (
         events.length = 0;
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mousePressed", x: 1, y: 1, button: "left", clickCount });
         await browser.debugger.sendCommand({ tabId: 6 }, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 1, y: 1, button: "left", clickCount });
-        assert.deepEqual(events, ["pointerdown", "mousedown", "pointerup", "mouseup", "click", ...(clickCount === 2 ? ["dblclick"] : [])]);
+        assert.deepEqual(events, target === link && !link.allow ? ["pointerdown", "pointerup", "click"]
+          : ["pointerdown", "mousedown", "pointerup", "mouseup", "click", ...(clickCount === 2 ? ["dblclick"] : [])]);
         assert.deepEqual(assigned, []);
         assert.deepEqual(opened, []);
         assert.deepEqual(submitted, []);
@@ -1709,6 +1751,11 @@ function debuggerBrowser(capture) {
   };
 }
 
+function installFixtureSemantics(entries) {
+  globalThis.__qzDomSemantics = { version: 1, read: fn => fn(), hidden: () => false, textVisible: () => true,
+    role: node => entries.get(node)?.role || '', name: node => entries.get(node)?.name || '' };
+}
+
 let pageLock = Promise.resolve();
 async function withPage(document, fn) {
   const wait = pageLock;
@@ -1725,6 +1772,7 @@ async function withPage(document, fn) {
     delete globalThis.__qzFirefoxPage;
     delete globalThis.__qzInvoke;
     delete globalThis.__qzExtensionInputEvents;
+    delete globalThis.__qzDomSemantics;
     release();
   }
 }

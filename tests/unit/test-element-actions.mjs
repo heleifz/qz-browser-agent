@@ -5,10 +5,19 @@ import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 import { getToolResultPresentation } from "../../src/shared/contracts/tool-result-presentation.js";
 
 const navigationListeners = new Set();
+const frameNavigationListeners = new Set();
 globalThis.chrome = {
   storage: { local: { async get() { return {}; } } },
   tabs: { async get() { return { url: "https://example.test/", title: "Fixture", status: "complete" }; },
     onUpdated: { addListener: listener => navigationListeners.add(listener), removeListener: listener => navigationListeners.delete(listener) } },
+  webNavigation: {
+    ...Object.fromEntries(['onBeforeNavigate', 'onCommitted', 'onHistoryStateUpdated', 'onReferenceFragmentUpdated', 'onErrorOccurred']
+      .map(name => [name, { addListener: listener => frameNavigationListeners.add(listener), removeListener: listener => frameNavigationListeners.delete(listener) }])),
+    async getFrame({ tabId }) {
+      const tab = await chrome.tabs.get(tabId);
+      return { url: tab.url, documentId: tab.url, errorOccurred: false };
+    },
+  },
 };
 const context = { sessionId: "owner", runId: "run", runProfile: { platform: { os: "linux" } } };
 
@@ -22,16 +31,22 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
     return [{ frameId: 0, documentId: "fixture", result: arm ? 0 : receiptCount }];
   } };
   const state = { value: "old", checked };
-  let execute, onCommand = async () => {}, onContent = async () => {};
+  let execute, focusRef, onCommand = async () => {}, onContent = async () => {};
   const inspection = () => ({ selector: "#target", tag: "input", type: checked === undefined ? "text" : "checkbox",
     editable: checked === undefined, disabled: false, readOnly: false, focused: true, ...state,
     clickablePoint: hidden ? null : state.clickablePoint || { x: 20, y: 20 }, clickablePointInViewport: true, inViewport: true });
   const content = async (action, params) => {
     messages.push({ action, params });
+    if (action === "prepareElementFill") focusRef = "filled-element";
+    if (action === "prepareElementPress") focusRef = "focused-element";
     const reply = await onContent(action, params);
     if (reply !== undefined) return reply;
     if (action === "elementPresence") return { found: true };
-    return { ...inspection(), ...(action === "prepareElementFill" ? { fillMode: "text" } : {}) };
+    if (action === "prepareElementFill") return { ...inspection(), fillMode: "text", expectedValue: String(params.value ?? ""), _elementRef: "filled-element" };
+    if (action === "prepareElementPress") return { ...inspection(), _elementRef: "focused-element" };
+    if (action === "verifyElementFocus") assert.deepEqual(params.elementRefs, [focusRef]);
+    return { ...inspection(), ...(action === "readElementActionState" && params.value !== undefined
+      ? { valueMatches: state.value === params.value } : {}) };
   };
   const send = async (method, params = {}) => {
     commands.push({ method, params });
@@ -81,6 +96,7 @@ function fixture({ checked, mobile = false, frameId = "", hidden = false, observ
 function assertNoReplay(f) {
   assert.equal(f.messages.some(message => message.action === "actOnElement"), false,
     "a failed trusted input must never replay through synthetic Content actions");
+  assert.equal(frameNavigationListeners.size, 0, "native navigation listeners must be released");
 }
 
 for (const action of ["click", "check", "press"]) test(`a failed child surface preparation cannot dispatch or synthesize ${action}`, async () => {
@@ -157,12 +173,12 @@ test("a committed URL still undergoes navigation security checks while resources
 
 for (const documentChanged of [false, true, null]) test(`Firefox Enter keeps pending and document evidence separate (${documentChanged})`, async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
-  const f = fixture(), get = chrome.tabs.get, execute = chrome.scripting.executeScript;
+  const f = fixture(), get = chrome.tabs.get;
   const pressed = () => f.commands.some(command => command.method === 'Input.dispatchKeyEvent');
   t.mock.method(chrome.tabs, 'get', async (...args) => ({ ...await get(...args), ...(pressed() ? { status: 'loading', pendingUrl: 'https://example.test/' } : {}) }));
-  t.mock.method(chrome.scripting, 'executeScript', async options => (await execute(options)).map(frame => ({
-    ...frame, documentId: documentChanged === null ? undefined : pressed() && documentChanged ? 'new-document' : 'same-document',
-  })));
+  t.mock.method(chrome.webNavigation, 'getFrame', async () => ({ url: 'https://example.test/', errorOccurred: false,
+    documentId: documentChanged === null ? undefined : pressed() && documentChanged ? 'new-document' : 'same-document',
+  }));
   const pending = f.call({ action: 'press', key: 'Enter' });
   await new Promise(setImmediate);
   t.mock.timers.tick(180);
@@ -190,8 +206,7 @@ test("page changes during click preparation form the baseline instead of being a
     t.mock.timers.tick(180);
     const result = await pending;
     assert.deepEqual(result, {}, "pre-existing loading is not reported as navigation caused by the action");
-    assert.equal(f.observations[0].pageBefore.url, tab.url);
-    assert.equal(f.observations[0].pageAfter.url, tab.url);
+    assert.equal(f.observations.length, 0, "an unchanged document must not commit a navigation");
     assert.equal(f.commands.filter(command => command.params.type === "mouseReleased").length, 1);
     assert.equal(navigationListeners.size, 0);
   } finally { chrome.tabs.get = get; }
@@ -225,7 +240,8 @@ for (const outcome of ["no start", "stopped without commit", "already loading", 
       t.mock.timers.tick(180);
       const result = await pending;
       assert.deepEqual(result, outcome === "committed" ? { navigated: true, url: href } : {});
-      assert.equal(f.observations[0].pageAfter.url, outcome === "committed" ? href : "https://example.test/");
+      assert.equal(f.observations.length, outcome === "committed" ? 1 : 0);
+      if (outcome === "committed") assert.equal(f.observations[0].pageAfter.url, href);
       assert.equal(result._pageUrl, undefined);
       assert.equal(requests, 1);
       assert.equal(f.messages.filter(message => message.action === "actOnElement").length, 1);
@@ -270,7 +286,7 @@ for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
     const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
     f.onCommand((method, params) => {
       if (!method.startsWith("Input.") || params.type === "mouseMoved") return;
-      assert.equal(navigationListeners.size, 1, "observe before the focusing click as well as the key");
+      assert.equal(navigationListeners.size, 1, "observe before dispatching the key");
       changed = true;
     });
     const pending = f.call({ action: "press", ...args });
@@ -279,9 +295,12 @@ for (const args of [{ key: "Enter" }, { value: "Enter" }, { key: " Enter " }]) {
     const result = await pending;
     assert.deepEqual(result, hidden ? {} : { navigated: true, url: pageAfter.url });
     assert.equal(added.mock.callCount(), 1);
-    assert.equal(f.observations.length, 1);
-    assert.equal(f.observations[0].prepared, null);
+    assert.equal(f.observations.length, hidden ? 0 : 1);
+    if (!hidden) assert.equal(f.observations[0].prepared, null);
     assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, 1);
+    assert.equal(f.commands.some(command => command.method === "Input.dispatchMouseEvent"), false);
+    assert.deepEqual(f.messages.filter(message => ["prepareElementPress", "verifyElementFocus"].includes(message.action))
+      .map(message => message.action), ["prepareElementPress", "verifyElementFocus"]);
     assert.equal(navigationListeners.size, 0);
     assert.equal(f.receipts.size, 0);
     assertNoReplay(f);
@@ -304,16 +323,18 @@ for (const key of ["Shift+Enter", "Ctrl+Enter", "Alt+Enter", "Meta+Enter", "Esca
   });
 }
 
-for (const boundary of ["mousePressed", "mouseReleased", "keyDown", "keyUp"]) {
+for (const boundary of ["prepareElementPress", "verifyElementFocus", "keyDown", "keyUp"]) {
   test(`press Enter disposes and never replays a lost ${boundary} response`, async () => {
     const f = fixture();
+    f.onContent(action => { if (action === boundary) throw new Error("input response lost"); });
     f.onCommand((method, params) => {
       if (!method.startsWith("Input.") || params.type === "mouseMoved") return;
       assert.equal(navigationListeners.size, 1);
       if (params.type === boundary) throw new Error("input response lost");
     });
     await assert.rejects(f.call({ action: "press", key: "Enter" }), /input response lost/);
-    assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, 1);
+    assert.equal(f.commands.some(command => command.method === "Input.dispatchMouseEvent"), false);
+    assert.equal(f.messages.filter(message => message.action === "prepareElementPress").length, 1);
     assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, boundary.startsWith("key") ? 1 : 0);
     assert.equal(navigationListeners.size, 0);
     assert.equal(f.receipts.size, 0);
@@ -321,13 +342,14 @@ for (const boundary of ["mousePressed", "mouseReleased", "keyDown", "keyUp"]) {
   });
 }
 
-for (const boundary of ["observer setup", "mouseReleased", "keyDown", "observation wait"]) {
+for (const boundary of ["observer setup", "prepareElementPress", "verifyElementFocus", "keyDown", "observation wait"]) {
   test(`press Enter cancellation at ${boundary} disposes without further dispatch or fallback`, async t => {
     const f = fixture();
     if (boundary === "observer setup") t.mock.method(chrome.tabs.onUpdated, "addListener", listener => {
       navigationListeners.add(listener);
       queueMicrotask(() => f.controller.abort());
     });
+    f.onContent(action => { if (action === boundary) f.controller.abort(); });
     f.onCommand((_method, params) => { if (params.type === boundary) f.controller.abort(); });
     const pending = f.call({ action: "press", key: "Enter" });
     const rejected = assert.rejects(pending, { code: "OPERATION_ABORTED" });
@@ -337,7 +359,7 @@ for (const boundary of ["observer setup", "mouseReleased", "keyDown", "observati
       f.controller.abort();
     }
     await rejected;
-    assert.equal(f.commands.filter(command => command.params.type === "mousePressed").length, boundary === "observer setup" ? 0 : 1);
+    assert.equal(f.commands.some(command => command.method === "Input.dispatchMouseEvent"), false);
     assert.equal(f.commands.filter(command => command.params.type === "keyDown").length, ["keyDown", "observation wait"].includes(boundary) ? 1 : 0);
     assert.equal(navigationListeners.size, 0);
     assert.equal(f.receipts.size, 0);
@@ -378,22 +400,17 @@ test('click cancellation during final receipt read rejects success without repla
   assertNoReplay(f);
 });
 
-test("press Enter disposes on a confirmed focusing-click miss without sending the key", async t => {
+for (const boundary of ["prepareElementPress", "verifyElementFocus"]) test(`press Enter stops on ${boundary} rejection without sending the key`, async t => {
   const f = fixture();
-  const execute = chrome.scripting.executeScript;
-  t.mock.method(chrome.scripting, "executeScript", async options => {
-    const frames = await execute(options);
-    return options.args?.[1] === false ? frames.map(frame => ({ ...frame, result: 0 })) : frames;
-  });
+  f.onContent(action => action === boundary ? { code: "ELEMENT_FOCUS_FAILED", error: "Focus moved to another element" } : undefined);
   const added = t.mock.method(chrome.tabs.onUpdated, "addListener");
   const result = await f.call({ action: "press", key: "Enter" });
-  assert.equal(result.code, "INPUT_NOT_DELIVERED");
-  assert.equal(result.details.inputDelivered, false);
+  assert.equal(result.code, "ELEMENT_FOCUS_FAILED");
+  assert.deepEqual(result.details, { target: "css:#target", action: "press" });
   assert.equal(result.message.length > 0, true);
-  assert.equal(result.hint.length > 0, true);
   assert.equal(added.mock.callCount(), 1);
   assert.equal("pageBefore" in result, false);
-  assert.equal(f.commands.some(command => command.method === "Input.dispatchKeyEvent"), false);
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
   assert.equal(navigationListeners.size, 0);
   assert.equal(f.receipts.size, 0);
   assertNoReplay(f);
@@ -417,50 +434,16 @@ test("press Enter observation failure after dispatch disposes without replay", a
   assertNoReplay(f);
 });
 
-for (const outcome of ["success", "error reply", "throw", "cancel", "observation failure"]) {
-  test(`press Enter Content fallback observes once and disposes on ${outcome}`, async t => {
-    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-    const observedNavigation = { url: "https://example.test/done" };
-    const f = fixture({ observedNavigation });
-    let inspections = 0, fallbackCalls = 0;
-    f.onContent(action => {
-      if (action === "readElementReadiness" && ++inspections === 2) throw new Error("CDP preparation failed");
-      if (action !== "actOnElement") return;
-      fallbackCalls++;
-      assert.equal(navigationListeners.size, 1);
-      if (outcome === "throw") throw new Error("fallback response lost");
-      if (outcome === "cancel") f.controller.abort();
-      return outcome === "error reply" ? { error: "Not editable", code: "NOT_EDITABLE" } : { pressed: true, key: "Enter" };
-    });
-    t.mock.method(chrome.tabs, "get", async () => {
-      if (fallbackCalls && outcome === "observation failure") throw new Error("tab closed while observing");
-      return { url: fallbackCalls ? observedNavigation.url : "https://example.test/", title: "Fixture", status: "complete" };
-    });
-    const pending = f.call({ action: "press", value: "Enter" });
-    const rejected = ["throw", "cancel", "observation failure"].includes(outcome)
-      ? assert.rejects(pending, outcome === "cancel" ? { code: "OPERATION_ABORTED" } : /fallback response lost|tab closed while observing/) : null;
-    await new Promise(setImmediate);
-    t.mock.timers.tick(180);
-    if (rejected) await rejected;
-    else {
-      const result = await pending;
-      if (outcome === "error reply") {
-        assert.equal(result.code, "NOT_EDITABLE");
-        assert.equal(result.message, "Not editable");
-        assert.deepEqual(result.details, { target: "css:#target", action: "press" });
-        assert.match(result.hint, /find_elements/);
-        assert.deepEqual(Object.keys(result).sort(), ["code", "message", "hint", "details"].sort());
-      } else {
-        assert.deepEqual(result, { navigated: true, url: observedNavigation.url });
-        assert.equal(f.observations[0].pageAfter.url, observedNavigation.url);
-      }
-    }
-    assert.equal(fallbackCalls, 1);
-    assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
-    assert.equal(navigationListeners.size, 0);
-    assert.equal(f.receipts.size, 0);
-  });
-}
+test("press rejects a document replaced by focus without retargeting or replay", async () => {
+  const f = fixture();
+  f.onContent(action => { if (action === "prepareElementPress") f.state.documentId = "replacement-document"; });
+  await assert.rejects(f.call({ action: "press", key: "Enter" }), { code: "STALE_ELEMENT_UID" });
+  assert.equal(f.messages.filter(message => message.action === "prepareElementPress").length, 1);
+  assert.equal(f.messages.some(message => message.action === "verifyElementFocus"), false);
+  assert.equal(f.commands.some(command => command.method.startsWith("Input.")), false);
+  assert.equal(navigationListeners.size, 0);
+  assertNoReplay(f);
+});
 
 test("a lost insertText response does not replay input or submit", async () => {
   const f = fixture();
@@ -472,12 +455,13 @@ test("a lost insertText response does not replay input or submit", async () => {
   assertNoReplay(f);
 });
 
-for (const boundary of ["prepare", "insert", "readback"]) {
+for (const boundary of ["prepare", "insert", "readback", "focus"]) {
   test(`cancellation after ${boundary} prevents later input and submission`, async () => {
     const f = fixture();
-    f.onContent(action => {
+    f.onContent((action, params) => {
       if ((boundary === "prepare" && action === "prepareElementFill")
-        || (boundary === "readback" && action === "readElementActionState")) f.controller.abort();
+        || (boundary === "readback" && action === "readElementActionState")
+        || (boundary === "focus" && action === "verifyElementFocus" && params.retainRef !== true)) f.controller.abort();
     });
     f.onCommand(method => { if (boundary === "insert" && method === "Input.insertText") f.controller.abort(); });
     await assert.rejects(f.call({ action: "fill", value: "new", submit: true }));
@@ -487,16 +471,21 @@ for (const boundary of ["prepare", "insert", "readback"]) {
   });
 }
 
-test("a replaced field is not refilled or submitted", async () => {
+for (const boundary of ["before input", "readback", "before submit"]) test(`a same-id replacement is rejected ${boundary} despite copying the value and focus`, async () => {
   const f = fixture();
-  f.onContent(action => {
-    if (action !== "readElementActionState") return;
-    return { error: "Element not found", code: "ELEMENT_NOT_FOUND" };
+  f.onContent((action, params) => {
+    if (!["readElementActionState", "verifyElementFocus"].includes(action)) return;
+    assert.deepEqual(params.elementRefs, ["filled-element"], "readback and submission must keep the prepared node identity");
+    const reject = boundary === "readback" ? action === "readElementActionState"
+      : action === "verifyElementFocus" && (boundary === "before input" ? params.retainRef === true : params.retainRef !== true);
+    if (reject) return { error: "The original element was replaced", code: "STALE_ELEMENT_UID" };
+    return { ...f.inspection(), valueMatches: true };
   });
   const result = await f.call({ action: "fill", value: "new", submit: true });
-  assert.equal(result.code, "ELEMENT_NOT_FOUND");
+  assert.equal(f.state.value, boundary === "before input" ? "old" : "new", "value alone cannot establish the original field identity");
+  assert.equal(result.code, "STALE_ELEMENT_UID");
   assert.equal(result.submitDispatched, undefined);
-  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
+  assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, boundary === "before input" ? 0 : 1);
   assert.equal(f.commands.some(command => command.params.key === "Enter"), false);
   assert.equal(f.messages.some(message => message.action === "refreshElementFill"), false);
   assertNoReplay(f);
@@ -511,6 +500,8 @@ for (const submit of [false, true]) test(`ordinary fill verifies the field and r
   assert.equal(f.commands.filter(command => command.params.key === 'Enter' && command.params.type === 'keyDown').length, Number(submit));
   assert.equal(f.state.value, "new");
   assert.equal(f.messages.filter(message => message.action === "readElementActionState").length, 1);
+  assert.deepEqual(f.messages.find(message => message.action === "readElementActionState").params.elementRefs, ["filled-element"]);
+  assert.equal(f.messages.filter(message => message.action === "verifyElementFocus").length, 1 + Number(submit));
   assert.equal(f.commands.filter(command => command.method === "Input.insertText").length, 1);
   assert.equal(f.messages.some(message => message.action === "refreshElementFill" || message.action === "releaseElementFill"), false);
   assertNoReplay(f);
@@ -521,8 +512,9 @@ for (const uncertain of [false, true]) test(`rich-text evidence stays in present
   const structure = { paragraphCount: 2, brCount: 0, blockCount: 2, lineBreakCount: 1, htmlSample: "<p>One</p><p>Two</p>" };
   f.onContent((action, params) => {
     if (action === "inspectElement") return { ...f.inspection(), role: "textbox", name: "Article" };
-    if (action === "prepareElementFill") return { ...f.inspection(), fillMode: "content", contentEditable: true };
+    if (action === "prepareElementFill") return { ...f.inspection(), fillMode: "content", contentEditable: true, expectedValue: params.value, _elementRef: "filled-element" };
     if (action === "actOnElement") {
+      assert.deepEqual(params.elementRefs, ["filled-element"], "the specialized writer must use the prepared editing host");
       f.state.value = params.value;
       return { filled: true, fill: { value: params.value, richText: { structure,
         ...(uncertain ? { method: "innerHTML", warning: "Editor state requires verification" } : {}),
@@ -538,6 +530,24 @@ for (const uncertain of [false, true]) test(`rich-text evidence stays in present
   assert.deepEqual(getToolResultPresentation(result)._display, {
     elementAction: { element: { role: "textbox", name: "Article", text: undefined }, structure },
   });
+});
+
+for (const valueMatches of [false, null]) test(`rich-text ${valueMatches === null ? "unknown" : "mismatched"} value cannot submit`, async () => {
+  const f = fixture();
+  f.onContent((action, params) => {
+    if (action === "prepareElementFill") return { ...f.inspection(), fillMode: "content", expectedValue: "One\nTwo", _elementRef: "filled-element" };
+    if (action === "actOnElement") return { filled: true };
+    if (action === "readElementActionState") {
+      assert.equal(params.value, "One\nTwo", "readback must compare the prepared expected value");
+      return { ...f.inspection(), contentEditable: true, valueMatches };
+    }
+  });
+  const result = await f.call({ action: "fill", value: "One\r\nTwo", submit: true });
+  if (valueMatches === null) assert.equal(result.confirmationRequired, true);
+  else assert.equal(result.code, "ELEMENT_VALUE_MISMATCH");
+  assert.equal(f.messages.filter(message => message.action === "actOnElement").length, 1);
+  assert.equal(f.commands.some(command => command.method === "Input.dispatchKeyEvent"), false);
+  assert.equal(navigationListeners.size, 0);
 });
 
 test("a replacement non-checkable input cannot count as a successful check", async () => {
@@ -764,7 +774,7 @@ test("a permanently obscured click times out without input or a Content fallback
   assertNoReplay(f);
 });
 
-for (const action of ["click", "check", "press", "double_click", "drag"]) {
+for (const action of ["click", "check", "double_click", "drag"]) {
   test(`${action} waits after hover changes its hit target and uses the newly observed point`, async () => {
     const f = fixture({ checked: action === "check" ? false : undefined });
     let hovered = false, reveal;
@@ -799,7 +809,7 @@ for (const action of ["click", "check", "press", "double_click", "drag"]) {
   });
 }
 
-for (const action of ["click", "check", "press", "double_click", "drag"]) {
+for (const action of ["click", "check", "double_click", "drag"]) {
   test(`${action} rejects CSS retargeting into a document loaded by hover`, async () => {
     const f = fixture({ checked: action === "check" ? false : undefined });
     f.onCommand((_method, params) => { if (params.type === "mouseMoved") f.state.documentId = "new-document"; });

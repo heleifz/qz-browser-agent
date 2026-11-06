@@ -151,7 +151,9 @@ function assertElementActionRoutingContract() {
   assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: normalizedAction/, "act_on_element should not let element actions overwrite the content message route");
   assert.match(tools, /sendToContent\(tabId, "prepareElementFill"/, "fill should prepare the resolved editing surface before trusted input");
   assert.match(tools, /sendToContent\(tabId, "readElementActionState"/, "element mutations should read back the page's actual state");
-  assert.match(tools, /sendToContent\(tabId, "actOnElement", \{ selector, index, elementAction: "press"/, "press fallback should use the elementAction payload field");
+  assert.match(tools, /sendToContent\(tabId, "prepareElementPress"/, "press should focus its resolved target without clicking it");
+  assert.match(tools, /sendToContent\(tabId, "verifyElementFocus"/, "press should verify the same focused node before sending a key");
+  assert.doesNotMatch(tools, /elementAction: "press"/, "press must not replay through a synthetic fallback");
   assert.match(contentScript, /actOnElement\(\{ selector, index = 0, action, elementAction = ""/, "content actOnElement should read an explicit elementAction payload");
   assert.match(contentScript, /const op = String\(elementAction \|\| action \|\| ""\)\.trim\(\)/, "content actOnElement should keep direct handler compatibility");
   assert.match(contentScript, /if \(op === "select"\)/, "content actOnElement should support native select");
@@ -231,8 +233,6 @@ function assertFileInputHandoffContract() {
 
   assert.match(contentScript, /type: item\.type/, "pageOverview actions should retain the input type");
   assert.match(contentScript, /selectedFileCount: item\.selectedFileCount/, "pageOverview actions should retain selected file count");
-  const implicitRoles = read("src/content/implicit-aria-role.ts");
-  assert.match(`${contentScript}\n${implicitRoles}`, /if \(type === "file"\) return "button"/, "file inputs should not be presented as textboxes");
   assert.match(contentScript, /String\(el\.type \|\| ""\)\.toLowerCase\(\) !== "file"/, "file inputs should not be presented as editable text fields");
   assert.match(tools, /inputType && inputType !== String\(compact\.role \|\| ""\)/, "AX snapshot should keep a useful input type");
   assert.match(tools, /Number\.isFinite\(Number\(action\?\.selectedFileCount\)\)/, "AX snapshot should keep file selection state");
@@ -264,7 +264,8 @@ function assertNavigationWaitContract() {
   assert.match(navigation.description, /之后发生的新导航[\s\S]*已完成的旧页面不会命中/, "navigation waits observe a future event");
   assert.deepEqual(navigation.parameters.properties.trigger.required, ["name"], "an optional triggering tool is an explicit action descriptor");
   assert.match(resolveToolDefinition("wait_for_load").description, /当前文档加载完成[\s\S]*已加载完成则立即返回/, "load waits inspect current state");
-  assert.match(waitTools, /onHistoryStateUpdated/, "navigation waits include same-document changes");
+  assert.match(waitTools, /observeNextPageNavigation/, "navigation waits use the browser navigation observer");
+  assert.match(read("src/background/tools/page-navigation.ts"), /onHistoryStateUpdated/, "navigation waits include same-document changes");
 }
 
 function assertScreenshotDestinationContract() {

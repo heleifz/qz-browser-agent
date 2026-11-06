@@ -1,9 +1,9 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
-import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, operationErrorDetails, type WaitTrigger, type WaitObservation } from "#sdk/background/tools";
+import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, operationErrorDetails, type WaitTrigger } from "#sdk/background/tools";
 import { bindCreatedTabResult, createdTabResultId, elementLocatorSchema, locatorReferences, validateElementLocator } from "#sdk/shared/browser";
-import { isCdpFallbackForbiddenError, type ElementAccess } from "#sdk/background/browser";
+import { isCdpFallbackForbiddenError, observeNextPageNavigation, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
 
 import {
@@ -400,48 +400,6 @@ function waitBudget(input: Record<string, unknown>) {
   return input.timeoutMs != null ? Math.max(0, Number(input.timeoutMs) || 0) : secondsToMs(input.timeout, 10000);
 }
 
-function observeNavigation(tabId: number, signal: AbortSignal): WaitObservation<{ status: string; url: string; title: string }> {
-  let started = false, disposed = false;
-  let resolve!: (value: { status: string; url: string; title: string }) => void, reject!: (error: unknown) => void;
-  const result = new Promise<{ status: string; url: string; title: string }>((yes, no) => { resolve = yes; reject = no; });
-  const finish = async (tab?: chrome.tabs.Tab) => {
-    try {
-      const current = tab || await chrome.tabs.get(tabId);
-      if (!disposed) resolve({ status: "navigated", url: current.url || "", title: current.title || "" });
-    } catch (error) { reject(error); }
-  };
-  const updated = (id: number, change: chrome.tabs.OnUpdatedInfo, tab: chrome.tabs.Tab) => {
-    if (id !== tabId) return;
-    if (change.status === "loading" || change.url != null) started = true;
-    if (started && (change.status === "complete" || tab.status === "complete" && change.url != null)) void finish(tab);
-  };
-  const committed = (event: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-    if (event.tabId !== tabId || event.frameId !== 0) return;
-    started = true;
-    void finish();
-  };
-  const sameDocument = (event: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
-    if (event.tabId === tabId && event.frameId === 0) void finish();
-  };
-  const removed = (id: number) => { if (id === tabId) reject(new ToolExecutionError("TAB_CLOSED", "The page closed while waiting for navigation.")); };
-  const abort = () => reject(signal.reason);
-  chrome.tabs.onUpdated.addListener(updated);
-  chrome.tabs.onRemoved?.addListener(removed);
-  chrome.webNavigation?.onCommitted?.addListener(committed);
-  chrome.webNavigation?.onHistoryStateUpdated?.addListener(sameDocument);
-  chrome.webNavigation?.onReferenceFragmentUpdated?.addListener(sameDocument);
-  signal.addEventListener("abort", abort, { once: true });
-  return { result, dispose() {
-    disposed = true;
-    chrome.tabs.onUpdated.removeListener(updated);
-    chrome.tabs.onRemoved?.removeListener(removed);
-    chrome.webNavigation?.onCommitted?.removeListener(committed);
-    chrome.webNavigation?.onHistoryStateUpdated?.removeListener(sameDocument);
-    chrome.webNavigation?.onReferenceFragmentUpdated?.removeListener(sameDocument);
-    signal.removeEventListener("abort", abort);
-  } };
-}
-
 registerTool({
   name: "wait_for_load", behavior: { parallelTab: true, passiveWait: true },
   get description() { return toolT("waitForLoadDescription"); },
@@ -464,7 +422,7 @@ registerTool({
   execute: async (input, signal, context = {}) => runWaitWithTrigger({
     tool: "wait_for_navigation", timeoutMs: waitBudget(input), signal, context, trigger: input.trigger as WaitTrigger | undefined,
     details: waitDetails(context),
-  }, current => observeNavigation(Number(input.tabId), current)),
+  }, current => observeNextPageNavigation(Number(input.tabId), current)),
 });
 
 registerTool({

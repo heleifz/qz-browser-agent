@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
 import { chromium } from "playwright";
+import { playwrightDomSources } from "../../scripts/vendor/playwright-dom.mjs";
 import { withLanguage } from "../../src/shared/i18n/index.js";
 import { localizeToolFailureError, localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.js";
 
@@ -22,6 +23,7 @@ test.before(async () => {
   const built = await build({
     entryPoints: ["src/content/content-script.ts"], bundle: true, write: false,
     format: "iife", platform: "browser", target: "chrome114", logLevel: "silent",
+    plugins: [playwrightDomSources()],
   });
   content = built.outputFiles[0].text;
   browser = await chromium.launch({ headless: true });
@@ -100,9 +102,12 @@ test("accessible names follow references, label precedence, hidden content and S
     <span id="hidden-reference" hidden>Hidden reference</span><button aria-labelledby="hidden-reference">Other text</button>
     <button>Visible name<span hidden>hidden suffix</span><span aria-hidden="true">ignored suffix</span></button>
     <style>#generated-name::before { content: "Generated "; }</style><button id="generated-name">name</button>
-    <svg role="img"><title>Route icon</title><path d="M0 0h10v10z"/></svg>`));
+    <svg><title>Route icon</title><path d="M0 0h10v10z"/></svg>
+    <button role="presentation">Apply changes</button>
+    <table><tr><th>Price</th><td>$42</td></tr><tr><th>Stock</th><td>Available</td></tr></table>`));
   for (const [role, name] of [["textbox", "Explicit label"], ["button", "Referenced name"],
-    ["button", "Hidden reference"], ["button", "Visible name"], ["button", "Generated name"], ["img", "Route icon"]]) {
+    ["button", "Hidden reference"], ["button", "Visible name"], ["button", "Generated name"], ["img", "Route icon"],
+    ["button", "Apply changes"], ["rowheader", "Price"]]) {
     assert.equal(await page.getByRole(role, { name, exact: true }).count(), 1);
     const found = await resolve({ role, name });
     assert.equal(found.matched, 1, `accessible name: ${name}`);

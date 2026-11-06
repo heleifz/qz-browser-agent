@@ -10,10 +10,12 @@ function event() {
     emit: (...args) => { for (const fn of listeners) fn(...args); }, get size() { return listeners.size; } };
 }
 function fixture() {
-  const updated = event(), removed = event(), committed = event(), history = event(), fragment = event();
+  const updated = event(), removed = event(), before = event(), committed = event(), history = event(), fragment = event(), failed = event();
   const tab = { id: 5, status: 'complete', url: 'https://example.test/start', title: 'Page' };
+  const frame = { documentId: 'document', errorOccurred: false };
   globalThis.chrome = { tabs: { get: async () => ({ ...tab }), onUpdated: updated, onRemoved: removed },
-    webNavigation: { onCommitted: committed, onHistoryStateUpdated: history, onReferenceFragmentUpdated: fragment } };
+    webNavigation: { onBeforeNavigate: before, onCommitted: committed, onHistoryStateUpdated: history,
+      onReferenceFragmentUpdated: fragment, onErrorOccurred: failed, getFrame: async () => ({ url: tab.url, ...frame }) } };
   const definitions = new Map(), calls = [];
   let attached = true, visible = true, popup, observationSignal;
   const presence = (_id, _action, args, context) => {
@@ -32,7 +34,7 @@ function fixture() {
       elementTargetForSelector: value => `css:${value}` },
   });
   const context = { sessionId: 'task', runId: 'run', requestedTabRef: 'page' };
-  return { tab, updated, removed, committed, history, fragment, definitions, calls, context,
+  return { tab, frame, updated, removed, before, committed, history, fragment, failed, definitions, calls, context,
     get observationSignal() { return observationSignal; },
     state(a, v) { attached = a; visible = v; }, setPopup(value) { popup = value; },
     run: (name, args = {}, extra = {}, signal) => definitions.get(name).execute({ tabId: 5, timeout: 0.2, ...args }, signal, { ...context, ...extra }) };
@@ -64,6 +66,56 @@ test('navigation is armed before its action and observes same-URL reloads and sa
     assert.equal(result.status, 'navigated'); assert.equal(result.url, f.tab.url);
     assert.equal(f.updated.size, 0); assert.equal(f.history.size, 0);
   }
+});
+
+test('an error document is navigation failure even after its tab reports complete', async () => {
+  const f = fixture(); let clicks = 0;
+  await assert.rejects(f.run('wait_for_navigation', { trigger: { name: 'click' } }, { async invokeTool() {
+    clicks++;
+    f.tab.url = 'https://example.test/failed';
+    f.frame.documentId = 'error-document'; f.frame.errorOccurred = true;
+    f.before.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 10 });
+    f.failed.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 20, documentId: 'error-document', error: 'net::ERR_EMPTY_RESPONSE' });
+    f.updated.emit(5, { status: 'complete' }, f.tab);
+    return {};
+  } }), error => error.code === 'NAVIGATION_FAILED' && error.details.url === f.tab.url);
+  assert.equal(clicks, 1);
+  for (const event of [f.updated, f.removed, f.before, f.committed, f.history, f.fragment, f.failed]) assert.equal(event.size, 0);
+});
+
+test('a cancelled request without a new document cannot satisfy a navigation wait', async () => {
+  const f = fixture();
+  await assert.rejects(f.run('wait_for_navigation', { timeout: 0.02, trigger: { name: 'click' } }, { async invokeTool() {
+    f.before.emit({ tabId: 5, frameId: 0, url: 'https://example.test/download' });
+    f.failed.emit({ tabId: 5, frameId: 0, url: 'https://example.test/download', error: 'net::ERR_ABORTED' });
+    f.updated.emit(5, { status: 'loading' }, { ...f.tab, status: 'loading' });
+    f.updated.emit(5, { status: 'complete' }, f.tab);
+    return {};
+  } }), { code: 'TOOL_TIMEOUT' });
+});
+
+test('a replacement navigation invalidates an error snapshot and late old failure events', async () => {
+  const f = fixture(); let frameReads = 0;
+  const readFrame = chrome.webNavigation.getFrame;
+  const result = await f.run('wait_for_navigation', { timeout: 0.5, trigger: { name: 'click' } }, { async invokeTool() {
+    f.frame.errorOccurred = true; f.frame.documentId = 'failed-document';
+    f.before.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 10 });
+    f.failed.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 20, documentId: 'failed-document', error: 'net::ERR_EMPTY_RESPONSE' });
+    chrome.webNavigation.getFrame = async () => {
+      const snapshot = await readFrame();
+      if (++frameReads === 1) {
+        f.before.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 30 });
+        f.frame.errorOccurred = false; f.frame.documentId = 'replacement';
+        f.committed.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 40, documentId: 'replacement' });
+        f.failed.emit({ tabId: 5, frameId: 0, url: f.tab.url, timeStamp: 20, documentId: 'failed-document', error: 'late old failure' });
+      }
+      return snapshot;
+    };
+    return {};
+  } });
+  assert.equal(result.status, 'navigated');
+  assert.ok(frameReads >= 2);
+  assert.equal(f.failed.size, 0);
 });
 
 test('trigger failures win over observed success or failure, and all listeners are removed', async () => {

@@ -61,7 +61,7 @@ export { createCdpTouch } from "../../background/tools/cdp-touch.js";
 export type { MappedKey } from "../../background/tools/cdp-keyboard.js";
 export { isCdpFallbackForbiddenError } from "../../background/tools/cdp-runtime.js";
 export type { PageNavigationHost, PageState, PreparedNavigation } from "../../background/tools/page-navigation.js";
-export { beginPageNavigationObservation } from "../../background/tools/page-navigation.js";
+export { beginPageNavigationObservation, observeNextPageNavigation } from "../../background/tools/page-navigation.js";
 export type { PageObservationHost, Screenshot, ScreenshotOptions } from "../../background/tools/page-observation.js";
 export { elementPageFunction } from "../../background/tools/page-scripts.js";
 export { armPageInputReceipt, ensurePageSurface, readPageInputReceipt } from "../../background/tools/page-surface.js";
