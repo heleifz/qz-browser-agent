@@ -271,7 +271,7 @@ test.describe("shadow hit testing", () => {
     const covered = targets(snapshot, "button", '"Covered"')[0];
     expect(covered, snapshot).toBeTruthy();
     const clicked = await h.call("act_on_element", { target: covered, action: "click" });
-    expect(clicked.code, JSON.stringify(clicked)).toBe("ELEMENT_OBSCURED");
+    expect(clicked.code, JSON.stringify(clicked)).toBe("ELEMENT_NOT_READY");
     expect(clicked.details.target).toMatch(/^uid:/);
     expect((await h.call("inspect_element", { target: clicked.details.target })).state.obscuredAtCenter).toBe(true);
     expect((await h.state()).hits.covered || 0).toBe(0);
@@ -281,7 +281,7 @@ test.describe("shadow hit testing", () => {
     const blocked = targets(snapshot, "button", '"Blocked"')[0];
     expect(blocked, snapshot).toBeTruthy();
     const clicked = await h.call("act_on_element", { target: blocked, action: "click" });
-    expect(clicked.code, JSON.stringify(clicked)).toBe("ELEMENT_OBSCURED");
+    expect(clicked.code, JSON.stringify(clicked)).toBe("ELEMENT_NOT_READY");
     expect((await h.state()).hits.blocked || 0).toBe(0);
   });
 

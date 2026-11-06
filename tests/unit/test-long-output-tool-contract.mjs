@@ -46,7 +46,7 @@ const readArticle = resolveToolDefinition("read_article");
 assert.deepEqual(readArticle.parameters.required, ["limit", "tabRef"], "read_article should require an explicit context budget limit");
 assertPropertyOrder(readArticle.parameters, ["tabRef", "source", "target", "offset", "limit"], "read_article should keep a small flat parameter surface");
 assert.doesNotMatch(Object.keys(readArticle.parameters.properties).join(" "), /includeHtml|includeLinks/, "read_article should not expose HTML or link-list toggles");
-assert.match(readArticle.description, /target\/linkCount/, "read_article should return one target and link count for follow-up tools");
+assert.match(readArticle.description, /返回 \{text,totalChars,hasMore,nextOffset,target,linkCount,outline\}/, "read_article should return one target and link count for follow-up tools");
 assert.match(readArticle.description, /outline.*offset\/endOffset\/charCount/, "read_article outline should expose chapter ranges through the existing offset model");
 
 const dataStore = resolveToolDefinition("data_store");

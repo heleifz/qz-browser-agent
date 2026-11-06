@@ -81,7 +81,7 @@ test('all element readers share node UIDs, consumers accept target/legacy select
     const clicked = await invoke('act_on_element', { target: alpha.target, action: 'click' });
     expect(clicked).toEqual({});
     expect(await invoke('inspect_element', { target: alpha.target })).toMatchObject({
-      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: '', text: 'Alpha', attrs: { id: 'alpha' },
+      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: 'Alpha', text: 'Alpha', attrs: { id: 'alpha' },
       rect: { x: expect.any(Number), y: expect.any(Number), width: expect.any(Number), height: expect.any(Number) },
     });
     const cssClick = await invoke('act_on_element', { target: 'css:#alpha', action: 'click' });

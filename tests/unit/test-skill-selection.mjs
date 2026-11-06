@@ -174,11 +174,19 @@ test('real tool runtime stops collection timeout before human wait, isolates Ses
     resources: [{ path: 'plugin.json', type: 'json', content: JSON.stringify({ format: 'qingzhou.plugin', schemaVersion: 1, id: 'selection',
       tools: [{ name: 'choose', runtime: 'inner', script: 'scripts/choose.js', parameters: { type: 'object', properties: { slow: { type: 'boolean' }, bad: { type: 'boolean' } } }, renderer }] }) },
     { path: 'scripts/choose.js', type: 'script', content: 'async () => ({})' }] }]);
-  const supervisor = createSessionSupervisor({ createAgent: () => ({ getRunState: () => ({ runId: 'run' }), abort() {} }) });
+  const supervisor = createSessionSupervisor({ createAgent: () => {
+    let emit = () => {};
+    return {
+      subscribe(listener) { emit = listener; return () => { emit = () => {}; }; },
+      start() { emit({ type: 'agent_start', runId: 'run', eventSeq: 1 }); },
+      getRunState: () => ({ runId: 'run' }), abort() {},
+    };
+  } });
   const events = [];
   const runtime = createToolRuntime({ sessions: supervisor, emit: event => events.push(event) });
   const run = async (id, args = {}) => {
-    await supervisor.getAgent(id);
+    const agent = await supervisor.getAgent(id);
+    agent.start();
     return runtime.execute('selection__choose', { timeout: 0.1, ...args }, undefined,
       { sessionId: id, runId: 'run', language: 'en', skillToolRegistrySnapshot: snapshot });
   };

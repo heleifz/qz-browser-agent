@@ -87,9 +87,7 @@ const sessions = {
   getRuntime: () => ({ ...runtimeState }),
 };
 
-const defaultDriveNames = ["open_tab", "list_skills"];
-const guideDriveNames = ["read_dom", "browse_history"];
-const driveToolNames = [...defaultDriveNames, ...guideDriveNames];
+const driveToolNames = ["open_tab", "list_skills", "read_dom", "browse_history"];
 const blockedToolNames = [
   "manage_bookmarks", "manage_sessions", "wait_for_user", "ask_user",
   "qingzhou_skill_author__delete_skill", "mcp_call_tool",
@@ -242,13 +240,13 @@ assert.deepEqual(listedTools.tools.map(tool => tool.name), [...driveToolNames, .
 assert.equal(runProfiles.at(-1).externalDrive, false);
 const blankTools = await runtime.listTools();
 assert.equal(runProfiles.at(-1).externalDrive, true);
-assert.deepEqual(blankTools.tools.map(tool => tool.name), defaultDriveNames);
+assert.deepEqual(blankTools.tools.map(tool => tool.name), driveToolNames);
 await assert.rejects(runtime.listTools({ sessionId: "not-created" }), { code: "DRIVE_SESSION_NOT_FOUND" });
 assert.equal(Object.hasOwn(metadata, "not-created"), false);
 metadata["drive-listed"] = { id: "drive-listed", source: "external-drive" };
 const driveTools = await runtime.listTools({ sessionId: "drive-listed" });
 assert.equal(runProfiles.at(-1).externalDrive, true);
-assert.deepEqual(driveTools.tools.map(tool => tool.name), defaultDriveNames);
+assert.deepEqual(driveTools.tools.map(tool => tool.name), driveToolNames);
 assert.deepEqual(toolReadinessReasons, ["mcp_list_tools", "mcp_list_tools", "mcp_list_tools", "mcp_list_tools"]);
 const inputContext = { marker: true };
 const occupiedBefore = executed.length;

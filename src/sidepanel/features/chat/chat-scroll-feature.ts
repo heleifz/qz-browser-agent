@@ -320,6 +320,9 @@ function scheduleViewportCenterAnchorCapture() {
   viewportCenterCaptureFrame = requestAnimationFrame(() => {
     viewportCenterCaptureFrame = 0;
     if (viewportResizeLease || shouldFollowChatTail() || !isActive()) return;
+    // A resize can reflow text before ResizeObserver runs. Keep the old anchor
+    // until that observer restores it, rather than capturing the shifted content.
+    if (Math.abs(messagesEl.getBoundingClientRect().width - observedMessagesWidth) >= VIEWPORT_RESIZE_WIDTH_EPSILON_PX) return;
     viewportCenterAnchor = captureViewportCenterAnchor() || viewportCenterAnchor;
   });
 }

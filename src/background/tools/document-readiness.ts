@@ -17,7 +17,7 @@ async function waitForDocument(tabId: number, context: ToolContext, parsed: bool
   });
   const wait = <T>(operation: Promise<T>) => Promise.race([operation, aborted]);
   const getTab = () => wait(chrome.tabs.get(tabId).catch(() => {
-    throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The page closed while preparing the document.", pageErrorDetails(context));
+    throw new ToolExecutionError("SESSION_TAB_UNAVAILABLE", "The page could not be accessed while preparing the document.", pageErrorDetails(context));
   }));
   const pending = (tab: chrome.tabs.Tab) => isPageTabUrl(tab.pendingUrl)
     || ((!tab.url || tab.url === "about:blank") && tab.status === "loading");

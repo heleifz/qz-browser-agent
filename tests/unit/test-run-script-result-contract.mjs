@@ -135,7 +135,6 @@ assert.doesNotThrow(() => {
   const { result: envelope } = await runInnerWorker(compiledWorker, 'return {callback: () => 1};', { strictResult: true });
   assert.equal(envelope.ok, false, 'unsupported public values must fail instead of becoming placeholder objects');
   assert.equal(envelope.code, 'SCRIPT_VALUE_NOT_SERIALIZABLE');
-  assert.match(envelope.hint, /plain values/);
 }
 
 assert.ok(

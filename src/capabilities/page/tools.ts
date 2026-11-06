@@ -571,7 +571,9 @@ registerTool({
     };
     const preparePointer = (send: CdpCommand, read: () => Promise<ElementReply>, frame = frameId, move = true, hover = false) => {
       const observe = () => pointerObservation(send, read, frame);
-      return waitForElementReady({ inspect: observe, target: resolvedTarget, signal: _signal, deadline: readinessDeadline, stable: true,
+      // Pointer acknowledgement can take seconds in a background tab;
+      // it shares the remaining action deadline, including the final readiness check.
+      return waitForElementReady({ inspect: observe, target: resolvedTarget, signal: _signal, deadline, stable: true,
         readiness: element => clickPointReady(hover ? { ...element, disabled: false } : element) ? undefined : "element is hidden, disabled, or obscured",
         ...(move ? { confirm: async (element: ElementReply) => {
           await checkPointerDocument();

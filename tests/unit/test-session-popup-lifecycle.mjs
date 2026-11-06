@@ -117,7 +117,9 @@ test('cancellation during popup persistence removes the popup and rejects its ob
   let finishPersist;
   f.persist(() => new Promise(resolve => { finishPersist = resolve; }));
   const arriving = arrive(f, f.popup(3));
-  f.persist(async () => {}); f.current.delete('a'); controller.abort(); finishPersist();
+  f.persist(async () => {}); f.current.delete('a'); controller.abort();
+  await f.host.settleStoppedDriveTabs('a', { ownedTabIds: [3], createdTabIds: [3], runIds: ['run-a'] });
+  finishPersist();
   await arriving; await rejected;
   assert.deepEqual(f.removed, [3]);
   assert.equal(f.host.owns('a', 3), false);
@@ -235,6 +237,27 @@ test('popup receipt confirmation stops with its call without waiting for stalled
   controller.abort();
   await assert.rejects(receipt, { code: 'OPERATION_ABORTED' });
   capture.dispose(); f.persist(async () => {}); finishPersist(); await arriving;
-  assert.deepEqual(f.removed, [3]);
+  assert.deepEqual(f.removed, [], 'cancelling a call does not cancel its owning session');
+  assert.equal(f.host.owns('a', 3), true);
   assert.deepEqual(await capture.observed(), []);
+});
+
+
+test('published loading popups survive a run change while ownership confirmation is pending', async () => {
+  const f = fixture(), capture = f.host.beginPopupCapture(f.scope);
+  const confirmations = [];
+  f.persist(() => new Promise(resolve => confirmations.push(resolve)));
+  const arrivals = [3, 4, 5].map(id => arrive(f, f.popup(id)));
+  assert.deepEqual(getOwnedTabIds(f.runtimes.get('a')), [1, 3, 4, 5]);
+  capture.dispose();
+  f.current.set('a', 'run-next');
+  f.runtimes.set('a', { ...f.runtimes.get('a'), runId: 'run-next' });
+  const next = f.host.beginPopupCapture({ ...f.scope, runId: 'run-next' });
+  f.persist(async () => {});
+  confirmations.forEach(resolve => resolve());
+  await Promise.all(arrivals);
+  assert.deepEqual(f.removed, [], 'completion of an old run must not close published session pages');
+  assert.deepEqual(getOwnedTabIds(f.runtimes.get('a')), [1, 3, 4, 5]);
+  assert.deepEqual(await next.observed(), [], 'old confirmations cannot enter the next run receipt');
+  next.dispose();
 });

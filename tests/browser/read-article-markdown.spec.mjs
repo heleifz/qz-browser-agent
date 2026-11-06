@@ -82,6 +82,9 @@ test("read_article returns canonical Markdown with GFM tables, pagination, and o
 
   const full = await readArticle(page, { source: "selector", selector: "#story", limit: 20_000 });
   expect(Object.hasOwn(full, "format")).toBe(false);
+  expect(await page.evaluate(target => target.startsWith("css:") && document.querySelector(target.slice(4))?.id, full.target)).toBe("story");
+  expect(full.linkCount).toBe(1);
+  expect(["html", "links", "sourceSelector"].filter(key => Object.hasOwn(full, key))).toEqual([]);
   expect(full.text).toContain("# Structured article");
   expect(full.text).toContain("**important**");
   expect(full.text).toContain("[documentation](https://example.test/docs)");

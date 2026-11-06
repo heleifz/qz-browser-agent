@@ -51,7 +51,7 @@ test("uid and css input succeed once on a page without a content CSP", async ({ 
     expect(tabId).toBeGreaterThan(0);
 
     const tree = await callTool(firefoxSidebar, "get_ax_tree", { tabRef: tabId });
-    expect(tree.thrown, JSON.stringify(tree)).toBeUndefined();
+    expect(tree.message, JSON.stringify(tree)).toBeUndefined();
     const button = targetFor(tree.snapshot, "Add");
     const field = targetFor(tree.snapshot, "Name");
     expect(button, tree.snapshot).toMatch(/^uid:/);
@@ -161,9 +161,8 @@ function callTool(session, name, args) {
       const result = await tools.execute(request.name, toolArgs, undefined, context);
       return JSON.parse(JSON.stringify(result));
     } catch (error) {
-      const code = error && error.code ? String(error.code) : "";
-      const message = error && error.message ? String(error.message) : String(error);
-      return { thrown: code ? code + ": " + message : message };
+      const failure = Cu.waiveXrays(error);
+      return { code: String(failure.code || ""), message: String(failure.message || failure) };
     }
   `);
 }

@@ -8,7 +8,7 @@ import { tokenizer } from "acorn";
 import { loadExtension, loadRules, runRules, formatJson } from "storecheck";
 
 const STORECHECK_VERSION = "0.1.0";
-const SANDBOX_TOKENS = "a430e7957b2f0c49a4f1043588b61419764956c2cad4ece08fd3f72d7d9be5eb";
+const SANDBOX_TOKENS = "3b9373ff0af017d8df6453d821e76652df420bf9be17798e2c29d3e3958c2997";
 const REQUIRED_CLEAN = /^(?:code\/(?:obfuscated-code|minified-without-source)|privacy\/(?:remote-code-execution|remote-script-tag)|csp\/)/u;
 const identity = finding => JSON.stringify([finding.ruleId, finding.file, finding.line, finding.message]);
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Validator } from '@cfworker/json-schema';
 import { createToolRegistry } from '../../src/background/tools/registry.js';
 import { registerWaitTools } from '../../src/capabilities/wait/tools.js';
 import { ToolExecutionError } from '../../src/background/tools/arguments.js';
@@ -25,7 +26,7 @@ function runtimeFixture() {
   return { runtime, targets, context: { sessionId: 's', runId: 'run', workingTabId: 5 } };
 }
 
-test('five public schemas expose target only, while legacy selector is canonicalized before scheduling and validation', async () => {
+test('public element schemas hide selector, while legacy input is canonicalized before scheduling and validation', async () => {
   const f = runtimeFixture(), registry = createToolRegistry(), seen = [];
   const names = ['read_article', 'read_dom', 'find_elements', 'list_images', 'wait_for_element'];
   const schemas = getToolSchemas();
@@ -34,7 +35,14 @@ test('five public schemas expose target only, while legacy selector is canonical
     const schema = schemas.find(item => item.function.name === name).function.parameters;
     assert.equal(schema.properties.selector, undefined, name);
     assert.equal(schema.properties.target.type, 'string', name);
-    if (name === 'wait_for_element') assert.ok(schema.required.includes('target'));
+    if (name === 'wait_for_element') {
+      const validator = new Validator(structuredClone(schema));
+      for (const reference of [{ target: 'css:#chosen' }, { locator: { role: 'button' } }]) {
+        assert.equal(validator.validate({ tabRef: 5, ...reference }).valid, true);
+      }
+      assert.equal(validator.validate({ tabRef: 5 }).valid, false);
+      assert.equal(validator.validate({ tabRef: 5, target: 'css:#chosen', locator: { role: 'button' } }).valid, false);
+    }
     registry.forCapability('reference-test')({ ...definition, execute: args => { seen.push(args); return { ok: true }; } });
   }
   const ref = f.runtime.element.registerElementBinding({ tabId: 5, sessionId: 's', backendNodeId: 42, loaderId: 'doc', snapshotId: 't5.000001' });

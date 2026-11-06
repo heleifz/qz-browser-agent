@@ -24,6 +24,7 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   ABORTED: { label: "toolError.ABORTED.label", message: "toolError.ABORTED.message" },
   BATCH_TAB_REFERENCE_ERROR: { label: "toolError.BATCH_TAB_REFERENCE_ERROR.label", message: "toolError.BATCH_TAB_REFERENCE_ERROR.message" },
   BATCH_TAB_DEPENDENCY_FAILED: { label: "toolError.BATCH_TAB_DEPENDENCY_FAILED.label", message: "toolError.BATCH_TAB_DEPENDENCY_FAILED.message" },
+  AMBIGUOUS_ELEMENT: { label: "toolError.AMBIGUOUS_ELEMENT.label" },
   AGENT_ALREADY_RUNNING: { label: "toolError.AGENT_ALREADY_RUNNING.label" },
   SESSION_PERSIST_FAILED: { label: "toolError.SESSION_PERSIST_FAILED.label" },
   STALE_AGENT_LEASE: { label: "toolError.STALE_AGENT_LEASE.label" },
@@ -120,6 +121,8 @@ const ERROR_CATALOG: Readonly<Record<string, { label: BackendMessageKey; message
   INVALID_BOOKMARK_ACTION: { label: "toolError.INVALID_BOOKMARK_ACTION.label" },
   INVALID_DATA_ACTION: { label: "toolError.INVALID_DATA_ACTION.label" },
   INVALID_DOCUMENT_URL: { label: "toolError.INVALID_DOCUMENT_URL.label", message: "toolError.INVALID_DOCUMENT_URL.message" },
+  INVALID_ELEMENT_LOCATOR: { label: "toolError.INVALID_ELEMENT_LOCATOR.label" },
+  INVALID_ELEMENT_WAIT: { label: "toolError.INVALID_ELEMENT_WAIT.label" },
   INVALID_ELEMENT_TARGET: { label: "toolError.INVALID_ELEMENT_TARGET.label", message: "toolError.INVALID_ELEMENT_TARGET.message" },
   INVALID_ELEMENT_SCREENSHOT_BOUNDS: { label: "toolError.INVALID_ELEMENT_SCREENSHOT_BOUNDS.label", message: "toolError.INVALID_ELEMENT_SCREENSHOT_BOUNDS.message" },
   INVALID_GUARDRAILS_ACTION: { label: "toolError.INVALID_GUARDRAILS_ACTION.label" },
@@ -457,7 +460,10 @@ export function localizeToolFailureText(message: unknown = "", context: FailureC
   const text = String(message || "").replace(/\s+/g, " ").trim();
   const details = objectValue(context.details);
   const code = String(context.code || "").trim();
-  if (code === "INVALID_SELECTOR") return text || localizeToolFailureCode(code, details);
+  if (["INVALID_SELECTOR", "INVALID_ELEMENT_LOCATOR", "INVALID_ELEMENT_WAIT", "AMBIGUOUS_ELEMENT"].includes(code)) return text || localizeToolFailureCode(code, details);
+  if (code === "SESSION_TAB_UNAVAILABLE" || code === "TAB_CLOSED") {
+    return getLanguage() === "en" && text && !CJK_RE.test(text) ? text : localizeToolFailureCode(code, details);
+  }
   const toolName = String(context.toolName || details.toolName || details.tool || details.name || "").trim();
   const preferPattern = [
     "CDP_COMMAND_FAILED",

@@ -57,7 +57,7 @@ assert.doesNotMatch(
 
 assert.match(READING_CAPABILITY_PROTOCOL, /^### 视觉读取协议\n- 需要分析页面中的某张图片时/m, "visual reading protocol should include its title");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /1\. 首次观察目标页面：用 get_ax_tree\(\{tabRef\}\) 总览[\s\S]*只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。/, "visual observations should allow explicit read-only access across task ownership");
-assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 \{\}/, "element actions should require task ownership and describe compact success receipts");
+assert.match(VISUAL_SCREEN_ACTION_RULE, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 \{\}/, "element actions should require task ownership and describe compact success receipts");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /3\. 目标位于 Canvas 或没有可靠 target 时，调用 screenshot/, "visual actions should reserve screenshots for the screen-action branch");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /页面结构发生变化或 target 失效时，重新从第 1 步开始/, "visual actions should restart discovery after structural changes");
 assert.match(VISUAL_SCREEN_ACTION_RULE, /screenshot\(\{tabRef,actionable:true\}\)/, "visual screen actions should start from an actionable screenshot");
@@ -72,7 +72,7 @@ assert.match(VISUAL_SCREEN_ACTION_RULE, /显式返回选定的截图或动作结
 assert.doesNotMatch(VISUAL_SCREEN_ACTION_RULE, /会滚动、缩放、改尺寸.*主 Agent 逐步执行/, "the prompt should not blanket-ban action kinds whose effects depend on the page");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /^### 文本读取协议\n- 当前模型不能看图/m, "text-only reading protocol should include its title");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /1\. 首次观察目标页面：用 get_ax_tree\(\{tabRef\}\) 总览[\s\S]*只读观察可访问其他任务拥有的页面，每次都显式传 tabRef。/, "text-only observations should allow explicit read-only access across task ownership");
-assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。成功返回 \{\}/, "text-only element actions should require task ownership and describe compact success receipts");
+assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /2\. 对当前任务拥有的页面，有可靠 target 时使用 act_on_element。动作派发前会等待目标可操作。成功返回 \{\}/, "text-only element actions should require task ownership and describe compact success receipts");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /3\. 没有可靠 target 时，使用 find_elements、inspect_element 或页面读取工具继续定位/, "text-only actions should keep locating without visual tools");
 assert.match(TEXT_ONLY_READING_CAPABILITY_PROTOCOL, /仍无法定位就说明限制，不进行视觉猜测操作/, "text-only actions should fail clearly instead of guessing visually");
 assert.match(SYSTEM_PROMPT, /### 视觉读取协议\n- 需要分析页面中的某张图片时/, "system prompt should embed the visual reading protocol as one unit");

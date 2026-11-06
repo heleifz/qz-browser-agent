@@ -170,10 +170,10 @@ async function assertWaitToolNotesAreCompact() {
     }, "a current load-state wait returns concise page state");
     assert.equal(Object.hasOwn(navigation.parameters.properties, "screenshot"), false);
     await assert.rejects(navigation.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
-      error.code === "TOOL_TIMEOUT" && Boolean(error.hint), "a previously complete page does not satisfy a future-navigation wait");
+      error.code === "TOOL_TIMEOUT" && error.details.tabRef === "page", "a previously complete page does not satisfy a future-navigation wait");
     status = "loading";
     await assert.rejects(load.execute({ tabId: 42, timeout: 0.001 }, undefined, pageContext), error =>
-      error.code === "TOOL_TIMEOUT" && Boolean(error.hint), "load timeout is a recoverable ToolError, not a successful screenshot receipt");
+      error.code === "TOOL_TIMEOUT" && error.details.tabRef === "page", "load timeout is a recoverable ToolError, not a successful screenshot receipt");
     const pending = navigation.execute({ tabId: 42, timeout: 0.1 }, undefined, pageContext);
     setTimeout(() => {
       for (const listener of listeners) listener(42, { status: "loading" }, { id: 42, status: "loading" });

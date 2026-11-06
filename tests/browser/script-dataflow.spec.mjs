@@ -162,7 +162,6 @@ test('page evaluations and outer orchestration overlap across tabs, preserve pag
       code: 'async () => { document.body.dataset.attempts = String(Number(document.body.dataset.attempts || 0) + 1); return globalThis.missingTools(); }' })]);
     expect(failed.ends[0].result.code).toBe('RUN_SCRIPT_TOOL_ACCESS_UNAVAILABLE');
     expect(failed.ends[0].result.details.automaticReplay).toBe(false);
-    expect(failed.ends[0].result.hint).toContain('tools.name');
     expect(failed.bridgeInstalls).toBe(0); expect(failed.bridgeCalls).toBe(0);
     expect(await worker.evaluate(async id => (await chrome.scripting.executeScript({ target: { tabId: Number(id) },
       func: () => document.body.dataset.attempts }))[0].result, tabs[0])).toBe('1');

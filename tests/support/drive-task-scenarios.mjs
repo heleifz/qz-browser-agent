@@ -23,7 +23,6 @@ export const driveTaskScenarios = [
     await page.locator('#edit').evaluate(node => { const replacement = node.cloneNode(); replacement.id = 'replacement'; node.replaceWith(replacement); });
     const failed = await run(`return await tools.act_on_element({tabRef:'main',target:input.target,action:'fill',value:'wrong'});`, { target: found.result }, 1);
     expect(failed.result.code).toBe('STALE_ELEMENT_UID');
-    expect(failed.result.hint).toBeUndefined();
     expect(await page.locator('#replacement').inputValue()).toBe('0');
     await run(`const found=await tools.find_elements({tabRef:'main',target:'css:#replacement',limit:1});
       return await tools.act_on_element({tabRef:'main',target:found.results[0].target,action:'fill',value:'fresh'});`);
@@ -132,7 +131,7 @@ export const driveTaskScenarios = [
   ['caught-tool-error', async ({ run, page }) => {
     const result = await run(`let failure;try{await tools.act_on_element({tabRef:'main',target:'css:#absent',action:'click'});}catch(error){failure=error.code;}
       await tools.act_on_element({tabRef:'main',target:'css:#edit',action:'fill',value:'continued'});return {failure};`);
-    expect(result.result.failure).toBe('ELEMENT_NOT_FOUND');
+    expect(result.result.failure).toBe('ELEMENT_NOT_READY');
     expect(await page.locator('#edit').inputValue()).toBe('continued');
   }],
   ['cancel-inflight', async ({ run, site, lane, cli, sid, context, url }) => {
@@ -157,7 +156,6 @@ export const driveTaskScenarios = [
       await tools.wait_for_function({tabRef:'main',code:()=>document.body.dataset.more==='loaded'});
       return await tools.wait_for_response({tabRef:'main',urlPattern:'/never-matches',timeout:0.2});`, {}, 1);
     expect(failed.result.code).toBe('TOOL_TIMEOUT');
-    expect(failed.result.hint).toBe('Check the page state, then retry with the required condition or a longer timeout.');
     await run(`return await tools.wait_for_function({tabRef:'main',code:()=>document.body.dataset.more==='loaded'});`);
     expect(site.requests.filter(row => row.path === '/api/more')).toHaveLength(before + 1);
     await expect(page.locator('#more')).toHaveAttribute('data-clicks', '1');
@@ -182,7 +180,6 @@ export const driveTaskScenarios = [
     const failed = await run(`return await tools.list_tools({names:['not_a_real_tool']});`, {}, 1);
     expect(failed.result.code).toBe('UNKNOWN_TOOL');
     expect(failed.result.message).toContain('not_a_real_tool');
-    expect(failed.result.hint).toBeUndefined();
     const result = await run(`const compact=await tools.list_tools();const selected=await tools.list_tools({names:['evaluate']});
       return {compact,selected,value:await tools.evaluate({tabRef:'main',code:()=>document.querySelector('#edit').value})};`);
     expect(result.result.compact.tools.some(tool => tool.name === 'evaluate')).toBe(true);

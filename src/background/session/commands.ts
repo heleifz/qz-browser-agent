@@ -2099,6 +2099,7 @@ async function stopSingleSessionRuntime(sessionId: string, meta: Fields = {}, si
     beforeRelease: async (snapshot) => {
       const liveState = snapshot.liveState || {};
       const checkpoint = sessionSupervisor.getRuntime(id) || before;
+      captured.stoppedTabs = snapshotStoppedTabs(checkpoint);
       if (externalDrive && checkpoint.status === "aborted") {
         keepDriveTabs = object(checkpoint).driveKeepTabs === true;
         keepTabIds = normalizeSessionTabIds(object(checkpoint).driveKeepTabIds);

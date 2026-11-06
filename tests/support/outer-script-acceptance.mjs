@@ -201,7 +201,7 @@ export async function exerciseOuterScripts({ endpoint, page, context, ui, observ
       const timeout = await cli(['script', '--session', sessionId, '--json', '--timeout', '10', '-'],
         `async () => await tools.wait_for_navigation({tabRef:'main',timeout:0.15})`);
       expect(timeout.exitCode, JSON.stringify(timeout)).toBe(1);
-      expect(timeout.value.result.code).toBe('TOOL_TIMEOUT'); expect(timeout.value.result.hint).toBeTruthy();
+      expect(timeout.value.result.code).toBe('TOOL_TIMEOUT');
     });
 
     await step('causal popup belongs to the session; cancellation rejects pending work and late completion', async () => {

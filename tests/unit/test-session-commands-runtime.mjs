@@ -59,6 +59,7 @@ await cancelledRemoteAdmissionsDoNotStartWork();
 await cancelledRemoteTerminalCommandsLeaveTasksIntact();
 await externalDriveSessionsRejectBuiltInMessages();
 await idleDriveStopPersistsTerminalState();
+await stopCapturesPopupsAcceptedBeforeRevocation();
 await selectedDriveTabsAreValidatedBeforeStop();
 await concurrentDriveStopsKeepTheFirstRetentionDecision();
 await retentionCleanupRetriesWithoutOrphaningTheSession();
@@ -2179,6 +2180,27 @@ async function idleDriveStopPersistsTerminalState() {
   assert.equal(f.runtimes.get('idle-drive').driveKeepTabs, true, 'repeated cancel preserves the original keep decision');
   assert.ok(persisted.some(item => item.id === 'idle-drive' && item.options.terminal && item.state.status === 'aborted'));
   assert.equal(f.agents.has('idle-drive'), false);
+}
+
+async function stopCapturesPopupsAcceptedBeforeRevocation() {
+  let stopping = false, f;
+  f = createFixture({ wrapRepository: repository => ({
+    ...repository,
+    async listMetadata() {
+      if (stopping) {
+        stopping = false;
+        f.setRuntime('late-popup-stop', { ownedTabIds: [11, 12], createdTabIds: [11, 12], popupTabIds: [12] });
+      }
+      return repository.listMetadata();
+    },
+  }) });
+  await f.repository.createMetadata({ id: 'late-popup-stop', source: 'external-drive' });
+  f.setRuntime('late-popup-stop', { status: 'running', running: true, runId: 'run',
+    ownedTabIds: [11], createdTabIds: [11], popupTabIds: [] });
+  stopping = true;
+  await f.commands.stopSessionRuntime('late-popup-stop');
+  assert.deepEqual(f.closedTabs[0][1].createdTabIds, [11, 12],
+    'stop must include pages accepted while it loads metadata, before write authority is revoked');
 }
 
 async function selectedDriveTabsAreValidatedBeforeStop() {

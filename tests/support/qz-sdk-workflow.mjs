@@ -6,6 +6,12 @@ import { buildScriptRequest } from '../../services/mcp-bridge/src/script-call.mj
 async function startPage() {
   const server = createServer((request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    if (request.url.startsWith('/item/')) {
+      const item = request.url.slice('/item/'.length);
+      response.end(`<!doctype html><title>Item ${item}</title><div id="inventory">Loading</div>
+        <script>setTimeout(()=>document.querySelector('#inventory').textContent='In stock: 12; Price: 35',300)</script>`);
+      return;
+    }
     if (request.url === '/frame') {
       response.end(`<!doctype html><title>Locator frame</title><button id="framed" aria-label="Frame target"
         onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Frame target</button>`);
@@ -21,6 +27,9 @@ async function startPage() {
       <button id="cancel" disabled aria-label="Cancelled target">Cancelled target</button>
       <button id="no-navigation" aria-label="No navigation">No navigation</button>
       <a id="popup" href="/?popup" target="_blank">Open details</a>
+      <a id="item-a" href="/item/a" target="_blank">Item a</a>
+      <a id="item-b" href="/item/b" target="_blank">Item b</a>
+      <a id="item-c" href="/item/c" target="_blank">Item c</a>
       <button id="trap-Precise" data-testid="Precise" aria-label="Other name">Other name</button>
       <button id="precise" aria-label="Precise">Precise</button>
       <div id="state">Loading state</div><div id="counted"></div><div id="shadow"></div><iframe src="/frame"></iframe>
@@ -198,8 +207,9 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
     });
 
     await step('an unsuccessful navigation wait does not replay its dispatched click', async () => {
+      // Let background pointer dispatch finish before the intentionally absent navigation times out.
       const timeout = await script(`
-        await qz.tab('page').locator('css:#no-navigation').click({timeout:5,waitFor:'navigation',waitOptions:{timeout:1}});
+        await qz.tab('page').locator('css:#no-navigation').click({timeout:20,waitFor:'navigation',waitOptions:{timeout:10}});
       `, {}, false);
       expect(timeout.code).toMatch(/TIMEOUT/);
       expect(timeout.details).toMatchObject({
@@ -221,6 +231,30 @@ export async function exerciseQzSdk({ endpoint, context, expect, step, testInfo 
       expect(result.popup.tabRef).toBeTruthy();
       expect(result.matched.url).toBe(`${fixture.url}?popup`);
       expect(result.title).toBe('Locator workflow');
+    });
+
+    await step('three task popups remain readable across CLI scripts and asynchronous inventory updates', async () => {
+      const opened = await script(`
+        const tabs=[];
+        for (const item of ['a','b','c']) {
+          tabs.push(await qz.tab('page').locator('css:#item-'+item).click({waitFor:'popup',timeout:10}));
+        }
+        return tabs;
+      `);
+      expect(new Set(opened.map(tab => tab.tabRef)).size).toBe(3);
+      const result = await script(`
+        const inventory = await Promise.all(args.tabs.map(async tab => {
+          const page=qz.tab(tab.tabRef);
+          const title=await page.evaluate(()=>document.title);
+          await page.locator({text:'In stock: 12; Price: 35'}).wait({state:'visible'});
+          return {title,article:await page.read({limit:1000})};
+        }));
+        return {inventory,tabs:(await qz.listTabs()).tabs};
+      `, { tabs: opened });
+      expect(result.inventory.map(item => item.title)).toEqual(['Item a', 'Item b', 'Item c']);
+      for (const item of result.inventory) expect(item.article.text).toContain('In stock: 12; Price: 35');
+      for (const tab of opened) expect(result.tabs.some(item => item.tabRef === tab.tabRef)).toBe(true);
+      await script('await Promise.all(args.tabs.map(tab=>qz.tab(tab.tabRef).close()));', { tabs: opened });
     });
 
     await step('locator observations on a user tab preserve its ownership', async () => {

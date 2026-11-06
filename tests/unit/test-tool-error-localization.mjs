@@ -346,3 +346,9 @@ assert.equal(isToolFailure({ code: "SUCCESS", message: "done" }), false);
     else globalThis.chrome = previousChrome;
   }
 }
+
+
+withLanguage("en", () => assert.equal(localizeToolFailureText("The requested tab is no longer available.", { code: "SESSION_TAB_UNAVAILABLE" }),
+  "The requested tab is no longer available."));
+withLanguage("zh-CN", () => assert.equal(localizeToolFailureText("Session tab unavailable", { code: "SESSION_TAB_UNAVAILABLE" }),
+  localizeToolFailureCode("SESSION_TAB_UNAVAILABLE")));

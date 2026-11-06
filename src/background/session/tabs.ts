@@ -198,21 +198,13 @@ export function createSessionTabs({
         createdTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.createdTabIds) ? runtime.createdTabIds : []), tabId]),
         popupTabIds: normalizeSessionTabIds([...(Array.isArray(runtime.popupTabIds) ? runtime.popupTabIds : []), tabId]) });
       await persistRuntime(scope.sessionId);
-      if (!popupCurrent(scope)) {
-        if (retainPopup(scope, tabId)) return;
-        await tabsApi.remove(tabId).catch(() => {});
-        await handleTabRemoved(tabId);
-        return;
-      }
+      // Published tabs belong to the Session. Stop owns their cleanup; a stale
+      // confirmation may withhold its receipt, but cannot close a later run's page.
+      if (!popupCurrent(scope) || !owns(scope.sessionId, tabId)) return;
       let tab: chrome.tabs.Tab;
       try { tab = await tabsApi.get(tabId); }
       catch { await handleTabRemoved(tabId); return; }
-      if (!popupCurrent(scope)) {
-        if (retainPopup(scope, tabId)) return;
-        await tabsApi.remove(tabId).catch(() => {});
-        await handleTabRemoved(tabId);
-        return;
-      }
+      if (!popupCurrent(scope) || !owns(scope.sessionId, tabId)) return;
       // A receipt reports only pages confirmed while its capture is still open.
       // Delayed confirmations retain their Session lifecycle without entering a later receipt.
       for (const capture of scopes) if (popupCaptures.has(capture) && popupCurrent(capture)

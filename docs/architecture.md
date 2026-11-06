@@ -19,7 +19,7 @@ within the call deadline; full inspection supplies presentation and navigation m
 Legacy target preparation defaults to at most 5 seconds inside the 20-second call budget; an explicit
 `timeout` sets the shared preparation and execution limit. Locator queries share the whole call budget
 for resolution, readiness, and dispatch.
-Mouse presses recheck the target after moving the pointer. A stale UID requires a new observation.
+Mouse presses recheck the target after moving the pointer, within the whole-call deadline. A stale UID requires a new observation.
 `evaluate({waitUntil:"commit"})` supports early observation and
 predicate waits. Content messaging does not wait for parsing. Preparation and navigation confirmation
 share the host's absolute call deadline and cancellation signal. Unfinished navigation returns

@@ -53,8 +53,13 @@ try {
     progress("idle", sample);
   }
   report.idlePolls = environment.pollRequests.length - pollsBeforeIdle;
-  assert.ok(report.idleSamples.every(sample => sample.connected && sample.clientCount === 1),
-    `connection expired while idle: ${JSON.stringify(report.idleSamples)}`);
+  const connected = sample => sample.connected && sample.clientCount === 1;
+  assert.ok(report.idleSamples.filter(sample => sample.elapsedMs < report.workerStop.elapsedMs).every(connected),
+    `connection expired before the forced worker stop: ${JSON.stringify(report.idleSamples)}`);
+  const recovered = report.idleSamples.findIndex(sample => sample.elapsedMs >= report.workerStop.elapsedMs && connected(sample));
+  assert.ok(recovered >= 0, "the stopped worker must reconnect within the idle observation window");
+  assert.ok(report.idleSamples.slice(recovered).every(connected),
+    `connection did not stay healthy after recovery: ${JSON.stringify(report.idleSamples)}`);
   assert.ok(report.idlePolls >= 3, "the extension must renew multiple long polls without an open UI");
   assert.ok(report.workerStop?.stopped, "the test must stop the extension worker during idle observation");
   assert.ok(environment.pollRequests.some(request => request.at > idleStartedAt + report.workerStop.elapsedMs),

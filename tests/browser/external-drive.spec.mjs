@@ -126,7 +126,7 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
       ],
     }, "120");
     expect(batch.results).toHaveLength(3);
-    expect(batch.results.every((item) => item.isError !== true)).toBe(true);
+    expect(batch.results.every((item) => item.isError !== true), JSON.stringify(batch)).toBe(true);
     expect(batch.runId).toEqual(expect.any(String));
     const savedTools = await environment.page.evaluate(async (id) => {
       const key = `_session_${id}`;
@@ -236,7 +236,7 @@ test("external drive runs page tools, preserves user tabs, and refuses occupied 
       args: { tabRef: "pdf", limit: 1200 } });
     expect(pdfRead.code, pdfRead.text || stderr.text).toBe(1);
     expect(pdfRead.text || stderr.text).toContain("PDF_PAGE_UNSUPPORTED");
-    expect(pdfRead.text || stderr.text).toContain("qingzhou-documents");
+    expect(JSON.parse(pdfRead.text).result.details.url).toBe(`${fixture}/document`);
     expect(pdfRead.text || stderr.text).not.toMatch(/tabId|\binner\b/);
     const pdfPress = await scriptTool(dependencies, stdout, stderr, { sessionId: pdfSession, name: "act_on_screen",
       args: { tabRef: "pdf", action: "press", key: "Escape", returnScreenshot: false } });

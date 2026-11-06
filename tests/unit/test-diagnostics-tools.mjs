@@ -199,7 +199,11 @@ const idle = await definitions.get("wait_for_network_idle").execute({ tabId: 4, 
 assert.equal(idle.idle, true);
 assert.equal(activePins, 0, "network reads and waits do not retain idle connections");
 emit("Network.requestWillBeSent", { requestId: "pending", request: { url: "https://example.test/pending", method: "GET" }, timestamp: 7 });
-await assert.rejects(definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.01 }, undefined, nextRun), error => error.code === "TOOL_TIMEOUT" && Boolean(error.hint));
+await assert.rejects(definitions.get("wait_for_network_idle").execute({ tabId: 4, idleSeconds: 0.1, timeout: 0.01 }, undefined, nextRun), error => {
+  assert.equal(error.code, "TOOL_TIMEOUT");
+  assert.equal(error.details.timeout, 0.01);
+  return true;
+});
 
 debuggerRun = null;
 detachListeners.forEach(listener => listener(4, connectionId));

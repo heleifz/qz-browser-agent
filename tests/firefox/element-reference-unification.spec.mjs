@@ -57,7 +57,7 @@ test('Firefox shares backend-node UIDs across readers, frames and UID absence wa
     const alphaClick = await call('act_on_element', { target: alpha.target, action: 'click' });
     expect(alphaClick).toEqual({});
     expect(await call('inspect_element', { target: alpha.target })).toMatchObject({
-      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: '', text: 'Alpha', attrs: { id: 'alpha' },
+      target: expect.stringMatching(uidPattern), tag: 'button', role: 'button', name: 'Alpha', text: 'Alpha', attrs: { id: 'alpha' },
     });
     await expect(page.locator('#alpha')).toHaveAttribute('data-clicked', 'yes');
     const inspected = await call('inspect_element', { target: '#alpha' });

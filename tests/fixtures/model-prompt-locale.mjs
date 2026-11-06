@@ -68,10 +68,10 @@ for (const vision of [true, false]) for (const canManageSessions of [true, false
     "Restricted sessions receive one goal prohibition without root goal instructions");
   assert.ok(system.includes('target = "uid:" <element_uid> | "css:" <css_selector>'));
   assert.ok(system.includes('schedule.type="once"'));
-  assert.match(system, en ? /Use evaluate with tabRef for a self-contained page function[\s\S]*Page functions cannot call tools/ : /使用 evaluate 和 tabRef 执行自包含页面函数[\s\S]*页面函数不能调用 tools/);
-  assert.match(system, en ? /Use run_script for dependent workflows, branching, loops and JavaScript computation/ : /多步依赖、分支、循环和 JavaScript 计算使用 run_script/);
-  assert.match(system, en ? /It runs outside pages without a DOM and survives navigation/ : /它在页面外运行，没有 DOM，页面导航不会销毁脚本/);
-  assert.match(system, en ? /Each nested page tool, including evaluate, must specify its own tabRef/ : /每个嵌套页面工具（包括 evaluate）显式传入自己的 tabRef/);
+  assert.match(system, en ? /Use evaluate\(\{tabRef, code, args\}\) for a self-contained function[\s\S]*Page functions cannot call the qz SDK or capture outer variables/ : /页面内求值使用 evaluate\(\{tabRef, code, args\}\)[\s\S]*页面函数不能调用 qz SDK 或捕获外层变量/);
+  assert.match(system, en ? /Use run_script for multi-step dependencies, branching, loops, and data processing/ : /多步依赖、条件分支、循环与数据处理使用 run_script/);
+  assert.match(system, en ? /it runs outside pages without a DOM, survives page navigation/ : /它在页面外运行（无 DOM，页面导航不中断脚本）/);
+  assert.match(system, en ? /bind an explicit page with qz\.tab\(tabRef\)/ : /qz\.tab\(tabRef\) 绑定明确页面/);
   assert.equal(imageMessages.length, vision ? 2 : 1);
   if (en) assert.doesNotMatch(JSON.stringify(imageMessages), /\p{Script=Han}/u);
   if (vision) assert.equal(imageMessages[1].content[1].image_url.url, image);

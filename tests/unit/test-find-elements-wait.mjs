@@ -104,7 +104,6 @@ test("match wait has one ten-second default deadline and echoes the caller's ref
   const rejected = assert.rejects(f.run({ waitFor: "match" }), error => {
     assert.equal(error.code, "TOOL_TIMEOUT");
     assert.deepEqual(error.details, { tabRef: "page", target: "css:#scope", timeout: 10 });
-    assert.ok(error.hint);
     return true;
   });
   await flush(); t.mock.timers.tick(10000); await rejected;

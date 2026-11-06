@@ -269,7 +269,7 @@ function installClickableElementMock({
     return activeHref;
   };
   contentMessageHandler = async (_tabId, message) => {
-    if (message?.action === "inspectElement") {
+    if (message?.action === "inspectElement" || message?.action === "readElementReadiness") {
       const currentHref = resolveHref();
       return {
         selector: message.selector,
@@ -277,6 +277,7 @@ function installClickableElementMock({
         visible: true,
         disabled: false,
         state: { inViewport: true, clickablePointInViewport: true, obscuredAtCenter: false },
+        rect: { x: 2, y: 24, width: 20, height: 20 },
         clickablePoint: clickable ? { x: 12, y: 34 } : null,
         href: currentHref || undefined,
         ...element,
@@ -1172,7 +1173,7 @@ test("act_on_element uses rate limits for known click href targets", async () =>
   const session = installSessionTabResolver(tools, { sessionId: "click-rate-session" });
   const sessionContext = session.context;
   const toolEvents = [];
-  const runtime = session.createRuntime({ emit: event => toolEvents.push(event) });
+  const runtime = session.createRuntime({ emit: event => toolEvents.push({ ...event, observedAt: Date.now() }) });
   try {
     await runtime.execute("act_on_element", { tabId: 82, target: "css:a.next", action: "click" }, null, {
       ...sessionContext,
@@ -1208,12 +1209,13 @@ test("act_on_element uses rate limits for known click href targets", async () =>
   }
 
   assert.equal(mockTabs[0].url, "https://click-rate.example/b");
-  assert.equal(toolEvents.some(event => (
-    event.type === "tool_execution_update"
-    && event.toolCallId === "call_click_rate_b"
-    && event.statusText === "流控等待中"
-    && event.rateLimit?.host === "click-rate.example"
-  )), true);
+  const grants = toolEvents.filter(event => event.type === "tool_execution_update"
+    && event.phase === "running" && event.rateLimit?.host === "click-rate.example");
+  assert.deepEqual(grants.map(event => [event.toolCallId, event.rateLimit.minOpenIntervalMs]), [
+    ["call_click_rate_a", 300], ["call_click_rate_b", 300],
+  ]);
+  assert.ok(grants[1].observedAt - grants[0].observedAt >= grants[0].rateLimit.nextIntervalMs,
+    "the second click cannot acquire its navigation slot before the first interval expires");
 });
 
 test("act_on_element records unknown post-click URL changes for later rate limits", async () => {

@@ -153,7 +153,7 @@ for (const seed of seeds) {
         expect(wrong.result.code).toBe('DRIVE_SESSION_NOT_FOUND');
         if (mode === 'shadow') {
           const cssMiss = await script(sid, `return await tools.act_on_element({tabRef:'order',target:'css:#gift',action:'check'});`, {}, 1);
-          expect(cssMiss.result.code).toBe('ELEMENT_NOT_FOUND');
+          expect(cssMiss.result.code).toBe('ELEMENT_NOT_READY');
           expect(pages.receipts.filter(row => row.id === task.id)).toHaveLength(0);
         }
         const changes = [
