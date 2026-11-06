@@ -44,9 +44,12 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     return result.documentId;
   };
   let baselineTimer: ReturnType<typeof setTimeout> | undefined;
-  let listenForCompletion = false, completed = false;
+  let completed = false;
+  let navigationVersion = 0;
   const onUpdated = (id: number, change: chrome.tabs.OnUpdatedInfo) => {
-    if (id === tabId && change.status) completed = change.status === "complete";
+    if (id !== tabId) return;
+    if (change.status || change.url) navigationVersion += 1;
+    if (change.status) completed = change.status === "complete";
   };
   try {
     const destination = new URL(url).href;
@@ -64,13 +67,14 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     const sameDocument = (destination.includes("#") || before.url !== destination)
       && withoutFragment(before.url || "") === withoutFragment(destination);
     // Without a baseline, require a load completion observed after navigation starts.
-    listenForCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
-    if (listenForCompletion) chrome.tabs.onUpdated.addListener(onUpdated);
+    const requireCompletion = previousId === null && isPageTabUrl(before.url) && !sameDocument;
+    chrome.tabs.onUpdated.addListener(onUpdated);
     try {
       if (!joiningNavigation) await wait(chrome.tabs.update(tabId, { url }));
     } catch (error) { await getTab(); throw error; }
     let missingFrames = 0;
     for (;;) {
+      const observedVersion = navigationVersion;
       const tab = await getTab();
       if (!tab.pendingUrl && tab.url && tab.url !== "about:blank") {
         try {
@@ -78,15 +82,19 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
           check();
           missingFrames = 0;
           if ((joiningNavigation && tab.status === "complete" && (tab.url === destination || tab.url !== before.url))
-            || (listenForCompletion ? completed && tab.status === "complete"
+            || (requireCompletion ? completed && tab.status === "complete"
             : currentId !== previousId || (sameDocument && tab.url === destination))) return;
         } catch (error) {
           check();
           if (error instanceof ToolExecutionError) throw error;
+          // An injection failure describes the probed document, which navigation may already have replaced.
+          const latest = await getTab();
+          const changed = navigationVersion !== observedVersion || latest.url !== tab.url
+            || latest.status !== tab.status || Boolean(latest.pendingUrl);
           const frameMissing = String(error).includes(FIREFOX_FRAME_MISSING);
-          if (frameMissing) missingFrames += 1;
-          if (tab.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
-            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { url: tab.url, cause: String(error) });
+          missingFrames = !changed && frameMissing ? missingFrames + 1 : 0;
+          if (!changed && latest.status === "complete" && !(frameMissing && missingFrames <= FRAME_MISSING_RETRIES)) {
+            throw new ToolExecutionError("NAVIGATION_FAILED", t("navigationFailed"), { url: latest.url, cause: String(error) });
           }
         }
       }
@@ -97,6 +105,6 @@ export async function navigateTab(tabId: number, url: string, assertTabAllowed: 
     disposed = true;
     clearTimeout(baselineTimer);
     signal?.removeEventListener("abort", onAbort);
-    if (listenForCompletion) chrome.tabs.onUpdated.removeListener(onUpdated);
+    chrome.tabs.onUpdated.removeListener(onUpdated);
   }
 }

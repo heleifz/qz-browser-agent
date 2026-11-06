@@ -222,7 +222,10 @@ for (const failure of ["abort-before", "abort-during", "closed", "network", "api
     const count = f.probes.length;
     await pause(65);
     assert.equal(f.probes.length, count, "no probe may run after cancellation or failure");
+    assert.equal(f.listeners.size, 0);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
     if (failure === "abort-before") assert.deepEqual(f.calls, []);
+    else assert.deepEqual(f.calls, [{ id: 1, url }]);
     const next = fixture();
     next.onUpdate(() => next.commit());
     await navigateTab(1, url);
@@ -238,6 +241,39 @@ test("a transient injection failure during loading is retried", async () => {
   delete f.pages.get(1).error;
   await pending;
 });
+
+for (const transition of ["pending", "completed same-URL reload"]) {
+  test(`an error-page probe overtaken by ${transition} does not fail or replay navigation`, async () => {
+    const f = fixture(url);
+    const controller = new AbortController();
+    let commitTimer;
+    // The old completed document is still visible when navigation is dispatched.
+    f.onUpdate(() => f.commit(1, { documentId: "1:old" }));
+    f.onProbe(() => {
+      if (f.probes.length !== 2) return;
+      if (transition === "pending") {
+        Object.assign(f.pages.get(1), { status: "loading", pendingUrl: url });
+        commitTimer = setTimeout(() => f.commit(), 100);
+      } else {
+        // URL and status return to their earlier values before the old probe rejects.
+        f.emit(1, { status: "loading" });
+        f.commit();
+      }
+      throw new Error("Frame with ID 0 is showing error page");
+    });
+    try {
+      await navigateTab(1, url, controller.signal);
+      assert.equal(f.pages.get(1).documentId, "1:new");
+      assert.ok(f.probes.length >= 3, "the replacement document must be probed");
+      assert.deepEqual(f.calls, [{ id: 1, url }]);
+      assert.equal(f.listeners.size, 0);
+      assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+    } finally {
+      clearTimeout(commitTimer);
+      controller.abort();
+    }
+  });
+}
 
 test("a Firefox frame missing on a completed same-URL reload is retried", async () => {
   const f = fixture(url);
