@@ -39,7 +39,6 @@ export async function launchIsolatedExtensionMcp({
       viewport: { width: 980, height: 860 },
       args: [
         "--lang=zh-CN",
-        "--disable-features=DisableLoadExtensionCommandLineSwitch",
         `--disable-extensions-except=${extensionDir}`,
         `--load-extension=${extensionDir}`,
       ],

@@ -69,7 +69,7 @@ for (const seed of seeds) {
       for (const name of ['alpha', 'beta']) {
         const context = await chromium.launchPersistentContext(join(directory, name), {
           headless: true, executablePath: process.env.CHROME_EXECUTABLE || chromium.executablePath(), ignoreDefaultArgs: ['--disable-extensions'],
-          args: ['--disable-features=DisableLoadExtensionCommandLineSwitch', `--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+          args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
         });
         contexts.push(context);
         // A renderer can crash before Playwright exposes its Page object.
