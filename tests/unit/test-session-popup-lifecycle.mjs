@@ -11,8 +11,11 @@ function fixture() {
   const current = new Map([['a', 'run-a'], ['b', 'run-b']]);
   const tabs = new Map([1, 2].map(id => [id, { id, url: `https://public.example/${id}`, title: `Tab ${id}`, windowId: 1, active: false }]));
   const removed = [];
+  const storageWrites = [];
+  const lookupFailures = new Set();
   const records = { a: { id: 'a', source: 'external-drive' }, b: { id: 'b', source: 'external-drive' } };
   let persist = async () => {};
+  let query = async () => [...tabs.values()];
   const host = createSessionTabs({
     supervisor: {
       getRuntime: id => runtimes.get(id), runtimeEntries: () => [...runtimes],
@@ -20,11 +23,15 @@ function fixture() {
       isRunCurrent: (id, runId) => current.get(id) === runId,
     },
     tabsApi: {
-      async get(id) { if (!tabs.has(id)) throw new Error(`No tab with id: ${id}.`); return tabs.get(id); },
-      async query() { return [...tabs.values()]; }, async create() {}, async update() {}, async ungroup() {},
+      async get(id) {
+        if (lookupFailures.has(id)) throw new Error('Temporary browser lookup failure');
+        if (!tabs.has(id)) throw new Error(`No tab with id: ${id}.`);
+        return tabs.get(id);
+      },
+      query: () => query(), async create() {}, async update() {}, async ungroup() {},
       async remove(id) { tabs.delete(id); removed.push(id); },
     },
-    storage: { async get() { return {}; }, async set() {}, async remove() {} },
+    storage: { async get() { return {}; }, async set(value) { storageWrites.push(value); }, async remove() {} },
     getSessions: async () => records,
     isAutomationSessionFamily: () => false,
     setRuntime(id, patch) { const next = { ...runtimes.get(id), ...patch }; runtimes.set(id, next); return next; },
@@ -34,10 +41,75 @@ function fixture() {
   });
   const scope = { sessionId: 'a', runId: 'run-a', openerTabId: 1 };
   const popup = id => { const tab = { id, openerTabId: 1, url: 'about:blank', title: '', active: false, windowId: 1 }; tabs.set(id, tab); return tab; };
-  return { host, scope, popup, runtimes, current, tabs, removed, records, persist: fn => { persist = fn; } };
+  return { host, scope, popup, runtimes, current, tabs, removed, records, lookupFailures, storageWrites,
+    persist: fn => { persist = fn; }, query: fn => { query = fn; } };
 }
 
 function arrive(f, tab) { return f.host.handlePopupCreated({ tabId: tab.id, sourceTabId: tab.openerTabId }); }
+
+test('group lookup failures preserve published popup ownership until its removal event', async () => {
+  const f = fixture(), capture = f.host.beginPopupCapture(f.scope);
+  await arrive(f, f.popup(3));
+  capture.dispose();
+  f.runtimes.set('a', { ...f.runtimes.get('a'), tabAliases: { item: 3 }, driveHandoffTabIds: [3], workingTabId: 3 });
+  const before = structuredClone(f.runtimes.get('a'));
+  f.lookupFailures.add(3);
+  await f.host.syncGroup();
+  assert.deepEqual(f.runtimes.get('a'), before, 'a failed per-tab lookup cannot revoke ownership');
+  const writesBeforeFailure = f.storageWrites.length;
+  f.query(async () => { throw new Error('Temporary browser query failure'); });
+  await assert.rejects(f.host.syncGroup(), /Temporary browser query failure/);
+  assert.deepEqual(f.runtimes.get('a'), before, 'an incomplete inventory cannot identify closed tabs');
+  assert.equal(f.storageWrites.length, writesBeforeFailure, 'failed inventory leaves group presentation intact');
+  f.query(async () => [...f.tabs.values()]);
+  f.tabs.delete(3);
+  await f.host.handleTabRemoved(3);
+  const after = f.runtimes.get('a');
+  assert.deepEqual(getOwnedTabIds(after), [1]);
+  assert.deepEqual(after.createdTabIds, [1]);
+  assert.deepEqual(after.popupTabIds, []);
+  assert.deepEqual(after.tabAliases, {});
+  assert.deepEqual(after.driveHandoffTabIds, []);
+  assert.equal(after.workingTabId, null);
+  assert.deepEqual(f.removed, [], 'reconciliation never closes browser tabs');
+});
+
+test('startup group reconciliation cleans closed persisted tabs using the complete browser inventory', async () => {
+  const f = fixture();
+  f.runtimes.set('a', { ...f.runtimes.get('a'), ownedTabIds: [1, 3], createdTabIds: [1, 3],
+    popupTabIds: [3], tabAliases: { item: 3 }, driveHandoffTabIds: [3], workingTabId: 3 });
+  await f.host.syncGroup('startup');
+  const after = f.runtimes.get('a');
+  assert.deepEqual(getOwnedTabIds(after), [1]);
+  assert.deepEqual(after.createdTabIds, [1]);
+  assert.deepEqual(after.popupTabIds, []);
+  assert.deepEqual(after.tabAliases, {});
+  assert.deepEqual(after.driveHandoffTabIds, []);
+  assert.equal(after.workingTabId, null);
+  assert.deepEqual(f.removed, []);
+});
+
+test('a browser inventory cannot revoke a popup published after that inventory began', async () => {
+  const f = fixture(), capture = f.host.beginPopupCapture(f.scope);
+  let startQuery, finishQuery;
+  const started = new Promise(resolve => { startQuery = resolve; });
+  f.query(() => new Promise(resolve => {
+    const snapshot = [...f.tabs.values()];
+    finishQuery = () => resolve(snapshot);
+    startQuery();
+  }));
+  const syncing = f.host.syncGroup();
+  await started;
+  await arrive(f, f.popup(3));
+  const before = structuredClone(f.runtimes.get('a'));
+  f.query(async () => [...f.tabs.values()]);
+  finishQuery();
+  await syncing;
+  assert.deepEqual(f.runtimes.get('a'), before);
+  assert.equal(f.host.owns('a', 3), true);
+  assert.deepEqual(f.removed, []);
+  capture.dispose();
+});
 
 test('task popups enter owned and created sets atomically before persistence, and cancel closes them', async () => {
   const f = fixture();

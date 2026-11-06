@@ -1120,51 +1120,32 @@ export function createSessionTabs({
   async function syncGroup(_sessionId = "") {
     await ready();
     const sessions = await getSessions();
+    // Only a complete inventory can confirm a closed tab after worker restart.
+    // Snapshot ownership first so newly published tabs cannot appear missing.
+    const owners = supervisor.runtimeEntries().map(([id, runtime]) => [id, getOwnedTabIds(runtime)] as const);
+    const liveTabs = new Map((await tabsApi.query({})).map(tab => [Number(tab.id), tab]));
     const groupedTabIds = new Set<number>();
     const buckets = new Map<string, { title: string; tabs: { id?: number; windowId?: number }[] }>();
-    let runtimeChanged = false;
-    for (const [runtimeSessionId, runtime] of supervisor.runtimeEntries()) {
+    const missingTabIds = new Set<number>();
+    for (const [runtimeSessionId, ownedTabIds] of owners) {
       const meta = sessions[runtimeSessionId];
       const drive = meta?.source === "external-drive";
       const key = drive ? `drive:${runtimeSessionId}` : GLOBAL_SESSION_TAB_GROUP_ID;
       const title = drive ? meta.driveClientName !== undefined ? driveGroupTitle(meta.driveClientName)
         : String(meta.driveGroupTitle || "").trim() || driveGroupTitle("") : "";
-      const validTabIds: number[] = [];
-      const ownedTabIds = getOwnedTabIds(runtime);
       for (const tabId of ownedTabIds) {
-        try {
-          const tab = await tabsApi.get(tabId);
-          const normalizedTabId = Number(tab.id);
-          validTabIds.push(normalizedTabId);
-          // Loading about:blank and temporarily non-page tabs still belong to their Session.
-          // Group presentation must not revoke the reference before navigation commits.
-          if (!isPageTab(tab)) continue;
-          if (!groupedTabIds.has(normalizedTabId)) {
-            groupedTabIds.add(normalizedTabId);
-            const bucket = buckets.get(key) || { title, tabs: [] };
-            bucket.tabs.push(tab);
-            buckets.set(key, bucket);
-          }
-        } catch (_error) {}
-      }
-      if (!sameTabIdSet(ownedTabIds, validTabIds)) {
-        const latest = supervisor.getRuntime(runtimeSessionId);
-        if (!latest) continue;
-        const missing = new Set(ownedTabIds.filter(tabId => !validTabIds.includes(tabId)));
-        const retained = getOwnedTabIds(latest).filter(tabId => !missing.has(tabId));
-        supervisor.setRuntime(runtimeSessionId, {
-          ...latest,
-          ownedTabIds: retained,
-          sessionTabIds: retained,
-          createdTabIds: normalizeSessionTabIds(latest.createdTabIds).filter(tabId => !missing.has(tabId)),
-          tabAliases: normalizeTabAliases(latest.tabAliases, retained),
-          ownedTabSchemaVersion: OWNED_TAB_SCHEMA_VERSION,
-          updatedAt: timestamp(),
-        });
-        runtimeChanged = true;
+        if (!owns(runtimeSessionId, tabId)) continue;
+        const tab = liveTabs.get(tabId);
+        if (!tab) { missingTabIds.add(tabId); continue; }
+        // Loading blanks and temporarily non-page tabs retain their Session ownership.
+        if (!isPageTab(tab) || groupedTabIds.has(tabId)) continue;
+        groupedTabIds.add(tabId);
+        const bucket = buckets.get(key) || { title, tabs: [] };
+        bucket.tabs.push(tab);
+        buckets.set(key, bucket);
       }
     }
-    if (runtimeChanged) await persistRuntime();
+    for (const tabId of missingTabIds) await handleTabRemoved(tabId);
 
     const store = await getGroupStore();
     const nextStore: GroupStore = {};
