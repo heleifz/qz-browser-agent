@@ -481,6 +481,16 @@ export function createMcpRuntime({
     return { sessionId, metadata };
   }
 
+  async function activateGlobalSkills(sessionId: string) {
+    try {
+      const global = discoverUserSkills(await skills.list()).filter(({ skill }) => skill.scope === "global");
+      tools.recordLoadedSkillNames(sessionId, global.map(({ skill }) => skill.name));
+    } catch (error) {
+      // load_skill still activates a workflow when the installed list is unavailable.
+      console.warn("[qz] Global Skill activation unavailable:", error);
+    }
+  }
+
   async function createDriveSession(params: Fields = {}) {
     const title = typeof params.title === "string" ? params.title.replace(/\s+/gu, " ").trim() : "";
     if (!title) throw Object.assign(new Error(t("session.titleRequired")), {
@@ -495,6 +505,7 @@ export function createMcpRuntime({
         throw Object.assign(new Error(t("drive.sessionOccupied")), { code: "DRIVE_SESSION_OCCUPIED" });
       }
       sessions.setRuntime(sessionId, { driveLastActivityAt: Date.now() });
+      await activateGlobalSkills(sessionId);
       drive.restore(sessionId, Date.now());
       const created = (await sessions.listMetadata())[sessionId];
       return publicSessionObservation(sessionId, String(created?.title || title), String(readRuntime(sessionId).status || "idle"));
