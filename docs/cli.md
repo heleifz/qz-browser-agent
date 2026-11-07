@@ -432,7 +432,9 @@ or create a new task session with `qz session create --title "Task title"` / `qi
 `qz session create --title "Task title"` creates a fresh session and requires a readable title.
 It prints `sessionId <id>`; with `--json`, read `result.sessionId`. The new session activates the
 tools of enabled user Global Skills; Resident Skills are always active, and Site Skills activate on
-matching task sites. `qz skills tools --session ID` shows each Skill's state. Use the installed `qz` command
+matching task sites. `result.qz_skills` lists the summaries of the Skills available to the new
+session, in the same form as a script receipt's `context.qz_skills`, and is omitted when Skill
+discovery is unavailable. `qz skills tools --session ID` shows each Skill's state. Use the installed `qz` command
 and read `qz skill` for its guide. `qz session list` lists direct-drive sessions, and
 `qz session show ID` reads `{sessionId,title,status}`. Finish with `qz session cancel ID` to end
 the session and clean up its created tabs, including while a script is running. User tabs are

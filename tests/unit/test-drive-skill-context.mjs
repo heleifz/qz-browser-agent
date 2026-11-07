@@ -126,17 +126,21 @@ test('legacy multi-script batches share one discovery context outside business r
   assert.deepEqual(names(await h.execute()), ['research']);
 });
 
-test('session creation activates enabled user Global Skills; creation survives unavailable discovery', async t => {
+test('session creation activates enabled user Global Skills and returns the first receipt catalog; creation survives unavailable discovery', async t => {
   const h = harness(), recorded = [];
   h.options.tools.recordLoadedSkillNames = (id, loaded) => recorded.push([id, loaded]);
   h.options.skills.list = async () => [skill('research'), skill('catalog', 'site', { domains: ['shop.test'] }),
     skill('rules', 'resident'), skill('disabled', 'global', { status: 'disabled' }), skill('built-in', 'global', { builtin: true })];
-  assert.deepEqual(await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'a' }),
-    { sessionId: 'a', title: 'Inspect', status: 'idle' });
+  const { qz_skills, ...created } = await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'a' });
+  assert.deepEqual(created, { sessionId: 'a', title: 'Inspect', status: 'idle' });
+  assert.deepEqual(names({ context: { qz_skills } }), ['research', 'rules']);
+  assert.deepEqual(qz_skills, (await h.execute('a')).context.qz_skills, 'creation and the first script receipt show one catalog');
+  assert.equal(JSON.stringify(qz_skills).includes('Private full instructions'), false);
   assert.deepEqual(recorded, [['a', ['research']]], 'Site Skills wait for a matching site; Resident Skills are always active');
   h.options.skills.list = async () => { throw new Error('Storage unavailable'); };
   const warn = t.mock.method(console, 'warn', () => {});
-  assert.equal((await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'b' })).sessionId, 'b');
+  assert.deepEqual(await h.runtime.createDriveSession({ title: 'Inspect', sessionId: 'b' }),
+    { sessionId: 'b', title: 'Inspect', status: 'idle' }, 'an unavailable catalog is omitted, never reported as empty');
   assert.equal(warn.mock.callCount(), 1);
   assert.deepEqual(recorded, [['a', ['research']]]);
 });
