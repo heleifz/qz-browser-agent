@@ -27,6 +27,8 @@ export function listProviderSummaries() {
       protocol: providerDef.protocol || "",
       endpoint: getProviderEndpoint(providerDef),
       ...(providerDef.hideEndpoint ? { hideEndpoint: true } : {}),
+      ...(providerDef.editableEndpoint ? { editableEndpoint: providerDef.editableEndpoint } : {}),
+      ...(providerDef.modelsIncludeCapabilities ? { modelsIncludeCapabilities: true } : {}),
       custom: providerDef.custom === true,
       ...(providerDef.auth ? { auth: { label: providerDef.auth.label, hint: providerDef.auth.hint } } : {}),
       modelOptions: providerDef.modelOptions || [],
@@ -77,6 +79,10 @@ export function getProviderDef(configOrProvider: ProviderInput | string = {}): P
     : { provider: configOrProvider };
   const provider = normalizeProvider(config.provider);
   const providerDef = PROVIDERS[provider] || PROVIDERS.fireworks;
+  if (providerDef.editableEndpoint) return {
+    ...providerDef,
+    endpoint: normalizeCustomEndpoint((Object.hasOwn(config, "customEndpoint") ? config.customEndpoint : config.endpoint) || providerDef.editableEndpoint, providerDef.protocol),
+  };
   if (!isCustomProvider(provider)) return providerDef;
   const protocol = normalizeCustomProtocol(config.customProtocol);
   return {
