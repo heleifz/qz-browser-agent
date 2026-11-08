@@ -224,7 +224,10 @@ test("an explicit offline profile reconnects within its deadline without opening
 });
 
 test("stalled reconnect health reads respect cancellation and the remaining connection budget", async t => {
-  for (const cancelled of [true, false]) await t.test(cancelled ? "caller cancellation" : "deadline exhaustion", async t => {
+  const timedOut = Object.assign(new Error("The operation was aborted"), { name: "AbortError",
+    cause: new DOMException("The operation was aborted due to timeout", "TimeoutError") });
+  for (const scenario of ["caller cancellation", "deadline exhaustion", "read timeout before the wall-clock deadline"]) await t.test(scenario, async t => {
+    const cancelled = scenario === "caller cancellation", earlyTimeout = scenario.startsWith("read timeout");
     const controller = new AbortController(), reason = new Error("Cancelled during health read");
     let reads = 0;
     const server = createServer((_request, _response) => {
@@ -239,8 +242,9 @@ test("stalled reconnect health reads respect cancellation and the remaining conn
         clients: [], browsers: [{ clientId: "offline-profile", name: "offline-profile" }],
       } } };
     const started = performance.now();
-    await assert.rejects(runCli(["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", cancelled ? "2" : "0.0305"], {
+    await assert.rejects(runCli(["session", "create", "--title", "Stalled health", "--client", "offline-profile", "--timeout", cancelled ? "2" : "0.2"], {
       signal: controller.signal, findDaemon: async () => running,
+      ...(earlyTimeout ? { readHealth: async () => { reads++; throw timedOut; } } : {}),
       callTool: () => assert.fail("no browser operation may be submitted"),
       openConnectionBrowser: () => assert.fail("a pinned profile cannot launch a substitute"),
     }), error => cancelled ? error === reason : error.code === "CLIENT_OFFLINE");
