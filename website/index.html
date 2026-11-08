@@ -86,30 +86,63 @@
 <section class="agent-access section wrap" id="agents" aria-labelledby="agents-title">
   <div class="section-heading"><h2 id="agents-title" data-i18n="agentsTitle">Agent-friendly.</h2><p data-i18n="agentsDescription">Let your agent drive your browser, or hand qz the whole task.</p></div>
   <figure class="agent-demo">
-    <div class="agent-demo-grid">
-      <div class="agent-console-column">
-        <p class="agent-surface-label" data-i18n="agentTerminalLabel">YOUR TERMINAL / CODING AGENT</p>
-        <div class="agent-console">
-          <div class="console-titlebar"><span class="console-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>qz</span><span data-i18n="agentExampleLabel">Example session</span></div>
-          <div class="console-body">
-            <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentTerminalPrompt">qz create &quot;Compare Playwright, Puppeteer and Selenium. Save a sourced table.&quot; --stream</code></div>
-            <div class="console-response"><strong data-i18n="agentTerminalQueued">Task queued</strong><span class="console-dim">Task  2901abd5fb0f4e038b334eb300716f26</span></div>
-            <p class="console-narration" data-i18n="agentTerminalReading">I’ll read their official documentation and compare the tools.</p>
-            <div class="console-tools"><span>› open_tab</span><span>› read_article</span><span>› run_script</span></div>
-            <p class="console-result" data-i18n="agentTerminalResult">Saved 6 comparison rows with source links.</p>
-            <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentTerminalExport">qz data export &quot;browser_automation_tool_comparison&quot; --format csv</code></div>
-            <p class="console-file"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6M9 16h4"></path></svg><span data-i18n="agentTerminalFile">browser_automation_tool_comparison.csv</span></p>
+    <div class="agent-mode-tabs" role="tablist" aria-label="How your agent uses qz" data-i18n-attributes="agentModeTabs" hidden>
+      <button type="button" role="tab" id="agent-mode-drive-tab" aria-controls="agent-mode-drive" aria-selected="true" data-i18n="agentDriveTab">Drive the browser</button>
+      <button type="button" role="tab" id="agent-mode-task-tab" aria-controls="agent-mode-task" aria-selected="false" tabindex="-1" data-i18n="agentTaskTab">Hand qz a task</button>
+    </div>
+    <div class="agent-mode" id="agent-mode-drive" role="tabpanel" aria-labelledby="agent-mode-drive-tab">
+      <p class="agent-mode-summary" data-i18n="agentDriveSummary">No model to configure in qz: the agent you already use gets the same browser abilities as qz. One script runs every step in your browser and returns only the result, so it stays token-efficient.</p>
+      <div class="agent-demo-grid">
+        <div class="agent-console-column">
+          <p class="agent-surface-label" data-i18n="agentTerminalLabel">YOUR TERMINAL / CODING AGENT</p>
+          <div class="agent-console">
+            <div class="console-titlebar"><span class="console-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>qz</span><span data-i18n="agentExampleLabel">Example session</span></div>
+            <div class="console-body">
+              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveCreate">qz session create --title &quot;Compare browser automation docs&quot;</code></div>
+              <div class="console-response"><span class="console-dim" data-i18n="agentDriveSession">sessionId 957371d5090d4412997473c807dcbe19</span></div>
+              <p class="console-narration" data-i18n="agentDriveReading">I’ll read the three official docs with one qz script.</p>
+              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveScript">qz script --session 957371d5090d4412997473c807dcbe19 compare-docs.js</code></div>
+              <div class="console-response"><span class="console-dim">{"ok":true,"result":{"table":"browser_automation_docs","rows":3},"trace":["read 3 pages"],"context":{"qz_skills":[]}}</span></div>
+              <p class="console-result" data-i18n="agentDriveResult">Saved 3 rows with source links.</p>
+              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code>qz data export &quot;browser_automation_docs&quot; --format csv</code></div>
+              <p class="console-file"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6M9 16h4"></path></svg><span>browser_automation_docs.csv</span></p>
+            </div>
           </div>
         </div>
+        <div class="agent-connector" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8h16m-4-4 4 4-4 4M20 16H4m4-4-4 4 4 4"></path></svg></div>
+        <div class="agent-panel-column">
+          <p class="agent-surface-label" data-i18n="agentPanelLabel">qz / CHROME SIDE PANEL</p>
+          <a class="screen-link agent-panel-link" data-open-image href="./assets/screens/drive-en.png" aria-label="Enlarge the qz side panel" data-i18n-attributes="agentDriveLink"><img src="./assets/screens/drive-en.png" width="840" height="1360" alt="qz side panel listing each browser call from an external agent's script and the saved table" loading="lazy" decoding="async" data-i18n-attributes="agentDriveImage"></a>
+        </div>
       </div>
-      <div class="agent-connector" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8h16m-4-4 4 4-4 4M20 16H4m4-4-4 4 4 4"></path></svg></div>
-      <div class="agent-panel-column">
-        <p class="agent-surface-label" data-i18n="agentPanelLabel">qz / CHROME SIDE PANEL</p>
-        <a class="screen-link agent-panel-link" data-open-image href="./assets/screens/agent-en.png" aria-label="Enlarge the qz side panel" data-i18n-attributes="agentPanelLink"><img src="./assets/screens/agent-en.png" width="840" height="1360" alt="qz side panel showing a real browser automation research task" loading="lazy" decoding="async" data-i18n-attributes="agentPanelImage"></a>
+    </div>
+    <div class="agent-mode" id="agent-mode-task" role="tabpanel" aria-labelledby="agent-mode-task-tab">
+      <p class="agent-mode-summary" data-i18n="agentTaskSummary">qz plans and runs the whole task with the model configured in qz. Your terminal or agent follows the progress and collects the saved data.</p>
+      <div class="agent-demo-grid">
+        <div class="agent-console-column">
+          <p class="agent-surface-label" data-i18n="agentTerminalLabel">YOUR TERMINAL / CODING AGENT</p>
+          <div class="agent-console">
+            <div class="console-titlebar"><span class="console-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>qz</span><span data-i18n="agentExampleLabel">Example session</span></div>
+            <div class="console-body">
+              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentTerminalPrompt">qz create &quot;Compare Playwright, Puppeteer and Selenium. Save a sourced table.&quot; --stream</code></div>
+              <div class="console-response"><strong data-i18n="agentTerminalQueued">Task queued</strong><span class="console-dim">Task  2901abd5fb0f4e038b334eb300716f26</span></div>
+              <p class="console-narration" data-i18n="agentTerminalReading">I’ll read their official documentation and compare the tools.</p>
+              <div class="console-tools"><span>› open_tab</span><span>› read_article</span><span>› run_script</span></div>
+              <p class="console-result" data-i18n="agentTerminalResult">Saved 6 comparison rows with source links.</p>
+              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentTerminalExport">qz data export &quot;browser_automation_tool_comparison&quot; --format csv</code></div>
+              <p class="console-file"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6M9 16h4"></path></svg><span data-i18n="agentTerminalFile">browser_automation_tool_comparison.csv</span></p>
+            </div>
+          </div>
+        </div>
+        <div class="agent-connector" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8h16m-4-4 4 4-4 4M20 16H4m4-4-4 4 4 4"></path></svg></div>
+        <div class="agent-panel-column">
+          <p class="agent-surface-label" data-i18n="agentPanelLabel">qz / CHROME SIDE PANEL</p>
+          <a class="screen-link agent-panel-link" data-open-image href="./assets/screens/agent-en.png" aria-label="Enlarge the qz side panel" data-i18n-attributes="agentPanelLink"><img src="./assets/screens/agent-en.png" width="840" height="1360" alt="qz side panel showing a real browser automation research task" loading="lazy" decoding="async" data-i18n-attributes="agentPanelImage"></a>
+        </div>
       </div>
     </div>
   </figure>
-  <div class="agent-setup-note"><p data-i18n="agentRequirements">Requires Node.js 22+ and Chrome with the qz extension on the same machine. Handing qz a whole task also needs a model configured in qz.</p></div>
+  <div class="agent-setup-note"><p data-i18n="agentRequirements">Requires Node.js 22+ and Chrome with the qz extension on the same machine.</p></div>
   <div class="integration-grid">
     <article>
       <h3 data-i18n="cliTitle">Install the CLI</h3>

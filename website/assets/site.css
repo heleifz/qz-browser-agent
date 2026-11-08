@@ -121,6 +121,14 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .agent-access .section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px 40px; }
 .agent-access .section-heading > p { text-wrap: balance; }
 .agent-demo { margin-top: 38px; padding: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.agent-mode-tabs { display: inline-flex; gap: 2px; margin-bottom: 24px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.agent-mode-tabs[hidden] { display: none; }
+.agent-mode-tabs button { min-height: 34px; padding: 6px 16px; border: 0; border-radius: 4px; background: transparent; color: var(--secondary); font-size: 13px; font-weight: 500; transition: background-color 180ms var(--ease), color 180ms var(--ease); }
+.agent-mode-tabs button:hover, .agent-mode-tabs button[aria-selected="true"] { color: var(--ink); }
+.agent-mode-tabs button[aria-selected="true"] { background: var(--soft); }
+.agent-mode-tabs button:focus-visible { outline-offset: 2px; }
+.agent-mode-tabs[hidden] ~ .agent-mode + .agent-mode { margin-top: 40px; }
+.agent-mode-summary { max-width: 720px; margin-bottom: 28px; font-size: 14px; line-height: 1.75; color: var(--secondary); }
 .agent-demo-grid { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 360px); gap: 22px; align-items: stretch; }
 .agent-console-column, .agent-panel-column { display: grid; grid-template-rows: auto 1fr; min-width: 0; }
 .agent-surface-label { margin-bottom: 16px; font-size: 10px; font-weight: 550; line-height: 1.5; letter-spacing: 1px; color: var(--secondary); }
@@ -302,6 +310,9 @@ video { display: block; width: 100%; max-height: 70dvh; aspect-ratio: 16 / 9; ba
 }
 @media (max-width: 700px) {
   .agent-demo { margin-top: 28px; padding: 14px; }
+  .agent-mode-tabs { display: flex; margin-bottom: 18px; }
+  .agent-mode-tabs button { flex: 1; padding-inline: 10px; }
+  .agent-mode-summary { margin-bottom: 22px; font-size: 13px; }
   .agent-surface-label { font-size: 9px; margin-bottom: 12px; letter-spacing: .7px; }
   .console-titlebar { padding-inline: 14px; }
   .console-body { padding: 20px 15px; font-size: 12px; gap: 18px; }

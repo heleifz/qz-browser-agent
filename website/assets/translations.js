@@ -77,13 +77,22 @@ export const translations = {
       "agentTerminalLabel": "YOUR TERMINAL / CODING AGENT",
       "agentPanelLabel": "qz / CHROME SIDE PANEL",
       "agentExampleLabel": "Example session",
+      "agentDriveTab": "Drive the browser",
+      "agentTaskTab": "Hand qz a task",
+      "agentDriveSummary": "No model to configure in qz: the agent you already use gets the same browser abilities as qz. One script runs every step in your browser and returns only the result, so it stays token-efficient.",
+      "agentDriveCreate": "qz session create --title \"Compare browser automation docs\"",
+      "agentDriveSession": "sessionId 957371d5090d4412997473c807dcbe19",
+      "agentDriveReading": "I’ll read the three official docs with one qz script.",
+      "agentDriveScript": "qz script --session 957371d5090d4412997473c807dcbe19 compare-docs.js",
+      "agentDriveResult": "Saved 3 rows with source links.",
+      "agentTaskSummary": "qz plans and runs the whole task with the model configured in qz. Your terminal or agent follows the progress and collects the saved data.",
       "agentTerminalPrompt": "qz create \"Compare Playwright, Puppeteer and Selenium. Save a sourced table.\" --stream",
       "agentTerminalQueued": "Task queued",
       "agentTerminalReading": "I’ll read their official documentation and compare the tools.",
       "agentTerminalResult": "Saved 6 comparison rows with source links.",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "Requires Node.js 22+ and Chrome with the qz extension on the same machine. Handing qz a whole task also needs a model configured in qz.",
+      "agentRequirements": "Requires Node.js 22+ and Chrome with the qz extension on the same machine.",
       /* example-html:en:start */
       "examplesTitle": "Real tasks, start to finish.",
       "examplesLede": "Each example is a real qz session. The frame on the left is from that session. Follow every step on the right, then import it into qz and pick up the conversation.",
@@ -205,6 +214,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "Copied",
         "data-failed": "Select and copy the commands below."
+      },
+      "agentModeTabs": {
+        "aria-label": "How your agent uses qz"
+      },
+      "agentDriveImage": {
+        "src": "./assets/screens/drive-en.png",
+        "alt": "qz side panel listing each browser call from an external agent's script and the saved table"
+      },
+      "agentDriveLink": {
+        "href": "./assets/screens/drive-en.png",
+        "aria-label": "Enlarge the qz side panel"
       },
       "agentPanelImage": {
         "src": "./assets/screens/agent-en.png",
@@ -361,13 +381,22 @@ export const translations = {
       "agentTerminalLabel": "你的终端 / 编程 AGENT",
       "agentPanelLabel": "轻舟 / CHROME 侧边栏",
       "agentExampleLabel": "命令示例",
+      "agentDriveTab": "直接操作浏览器",
+      "agentTaskTab": "把任务交给轻舟",
+      "agentDriveSummary": "无需在轻舟配置模型接口，你熟悉的 Agent 就能拥有和轻舟一样的浏览器操作能力。一段脚本在浏览器里跑完所有步骤，只把结果交回 Agent，省 token。",
+      "agentDriveCreate": "qz session create --title \"对比浏览器自动化文档\"",
+      "agentDriveSession": "sessionId 1f3435ea8988466a9ad8ee3e667a4cce",
+      "agentDriveReading": "我用一段 qz 脚本读取三个官方文档。",
+      "agentDriveScript": "qz script --session 1f3435ea8988466a9ad8ee3e667a4cce compare-docs.js",
+      "agentDriveResult": "已保存 3 行数据，附有来源链接。",
+      "agentTaskSummary": "由轻舟用已配置的模型规划并完成整个任务，终端或 Agent 只需跟进进度、取回保存的数据。",
       "agentTerminalPrompt": "qz create \"对比 Playwright、Puppeteer 和 Selenium，保存带来源的表格。\" --stream",
       "agentTerminalQueued": "Task queued",
       "agentTerminalReading": "我会查阅官方文档，整理三个工具的差异。",
       "agentTerminalResult": "已保存 6 行对比数据，附有来源链接。",
       "agentTerminalExport": "qz data export \"browser_automation_tool_comparison\" --format csv",
       "agentTerminalFile": "browser_automation_tool_comparison.csv",
-      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上装有轻舟扩展的 Chrome。把整个任务交给轻舟时，还需在轻舟中配置模型。",
+      "agentRequirements": "需要 Node.js 22+，以及同一台电脑上装有轻舟扩展的 Chrome。",
       /* example-html:zh:start */
       "examplesTitle": "真实任务，完整过程。",
       "examplesLede": "每个例子都是轻舟的一次真实会话。左边是这次会话自己的画面，右边是它每一步怎么想、怎么做；导入轻舟，就能接着这段对话继续问。",
@@ -489,6 +518,17 @@ export const translations = {
       "copyCommand": {
         "data-copied": "已复制",
         "data-failed": "请选中下方命令并复制。"
+      },
+      "agentModeTabs": {
+        "aria-label": "Agent 使用轻舟的方式"
+      },
+      "agentDriveImage": {
+        "src": "./assets/screens/drive-zh.png",
+        "alt": "轻舟侧边栏逐条列出外部 Agent 脚本的浏览器调用和保存的数据表"
+      },
+      "agentDriveLink": {
+        "href": "./assets/screens/drive-zh.png",
+        "aria-label": "放大查看轻舟侧边栏"
       },
       "agentPanelImage": {
         "src": "./assets/screens/agent-zh.png",
