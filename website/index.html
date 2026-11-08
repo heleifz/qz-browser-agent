@@ -84,7 +84,7 @@
 </div></section>
 
 <section class="agent-access section wrap" id="agents" aria-labelledby="agents-title">
-  <div class="section-heading"><h2 id="agents-title" data-i18n="agentsTitle">Agent-friendly.</h2><p data-i18n="agentsDescription">Let your agent delegate browser tasks to qz.</p></div>
+  <div class="section-heading"><h2 id="agents-title" data-i18n="agentsTitle">Agent-friendly.</h2><p data-i18n="agentsDescription">Let your agent drive your browser, or hand qz the whole task.</p></div>
   <figure class="agent-demo">
     <div class="agent-demo-grid">
       <div class="agent-console-column">
@@ -109,23 +109,23 @@
       </div>
     </div>
   </figure>
-  <div class="agent-setup-note"><p data-i18n="agentRequirements">Requires Node.js 22+ and Chrome on the same machine, with the qz extension and a model configured.</p></div>
+  <div class="agent-setup-note"><p data-i18n="agentRequirements">Requires Node.js 22+ and Chrome with the qz extension on the same machine. Handing qz a whole task also needs a model configured in qz.</p></div>
   <div class="integration-grid">
     <article>
       <h3 data-i18n="cliTitle">Install the CLI</h3>
-      <p data-i18n="cliDescription">Connect once. Start tasks from your terminal.</p>
+      <p data-i18n="cliDescription">Drive your browser from the terminal, or hand qz a whole task.</p>
       <div class="command-block" data-copy-block>
         <div class="command-header"><span class="eyebrow">CLI</span><button class="copy-prompt" type="button" data-copy-target="cli-commands" data-copied="Copied" data-failed="Select and copy the commands below." data-i18n-attributes="copyCommand" hidden><span data-i18n="commandCopy">Copy commands</span></button></div>
         <pre><code id="cli-commands" data-i18n="cliCommands">npm install --global qz-browser-agent
-qz connect</code></pre>
+qz session create --title &quot;Try qz&quot;</code></pre>
         <span class="copy-status" role="status" aria-live="polite"></span>
       </div>
-      <p class="integration-note" data-i18n="cliMcp">Also available via <code>npx --yes qz-browser-agent@latest</code>. For MCP, run <code>qz mcp</code> after connecting to get the connection URL.</p>
+      <p class="integration-note" data-i18n="cliMcp">The first browser command opens a connection page and connects automatically. Also available via <code>npx --yes qz-browser-agent@latest</code>. For MCP, run <code>qz mcp</code> to get the server URL.</p>
       <a class="text-link" href="https://github.com/alibaba/qz-browser-agent/blob/main/services/mcp-bridge/README.md" data-i18n="cliGuide">CLI &amp; MCP guide</a>
     </article>
     <article>
       <h3 data-i18n="agentTitle">Install the Skill</h3>
-      <p data-i18n="agentDescription">Let your coding agent delegate browser tasks to qz.</p>
+      <p data-i18n="agentDescription">Teach your coding agent to drive the browser with qz.</p>
       <div class="command-block" data-copy-block>
         <div class="command-header"><span class="eyebrow">SKILL</span><button class="copy-prompt" type="button" data-copy-target="skill-command" data-copied="Copied" data-failed="Select and copy the commands below." data-i18n-attributes="copyCommand" hidden><span data-i18n="commandCopy">Copy commands</span></button></div>
         <pre><code id="skill-command">npx skills add alibaba/qz-browser-agent -g</code></pre>
