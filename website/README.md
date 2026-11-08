@@ -26,8 +26,8 @@ path `/qz-browser-agent/`.
 - The Agent-friendly section has two tabs, **Drive the browser** and **Hand qz a task**; without
   JavaScript, both appear in order. Each tab pairs an authored terminal with a native narrow Side
   Panel screenshot of the documentation-research task. The Drive terminal repeats the commands,
-  session IDs, and script receipts of the real CLI runs captured in `assets/screens/drive-en.png`
-  and `drive-zh.png`. The Task terminal is an illustrative command example beside `agent-en.png`
+  session IDs, full scripts, and receipts of the real CLI runs captured in
+  `assets/screens/drive-en.png` and `drive-zh.png`. The Task terminal is an illustrative command example beside `agent-en.png`
   and `agent-zh.png`, which show the same original English conversation in each interface language.
   See [screenshot sources](assets/screens/SOURCES.md) for capture details.
 - The CLI and Skill installation commands use the published `qz-browser-agent` npm package and

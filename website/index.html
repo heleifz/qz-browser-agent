@@ -99,13 +99,29 @@
             <div class="console-titlebar"><span class="console-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>qz</span><span data-i18n="agentExampleLabel">Example session</span></div>
             <div class="console-body">
               <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveCreate">qz session create --title &quot;Compare browser automation docs&quot;</code></div>
-              <div class="console-response"><span class="console-dim" data-i18n="agentDriveSession">sessionId 957371d5090d4412997473c807dcbe19</span></div>
-              <p class="console-narration" data-i18n="agentDriveReading">I’ll read the three official docs with one qz script.</p>
-              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveScript">qz script --session 957371d5090d4412997473c807dcbe19 compare-docs.js</code></div>
-              <div class="console-response"><span class="console-dim">{"ok":true,"result":{"table":"browser_automation_docs","rows":3},"trace":["read 3 pages"],"context":{"qz_skills":[]}}</span></div>
-              <p class="console-result" data-i18n="agentDriveResult">Saved 3 rows with source links.</p>
-              <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code>qz data export &quot;browser_automation_docs&quot; --format csv</code></div>
-              <p class="console-file"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6M9 16h4"></path></svg><span>browser_automation_docs.csv</span></p>
+              <div class="console-response"><span class="console-dim" data-i18n="agentDriveSession">sessionId 53d24037c61a42ed812910577cc7578c</span></div>
+              <div class="console-heredoc">
+                <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveScript">qz script --session 53d24037c61a42ed812910577cc7578c - &lt;&lt;'JS'</code></div>
+                <pre class="console-script"><code data-i18n="agentDriveCode"><span class="console-comment">// Read three docs in parallel; save a sourced table in qz.</span>
+const docs = {
+  Playwright: "https://playwright.dev/docs/intro",
+  Puppeteer: "https://pptr.dev/guides/what-is-puppeteer",
+  Selenium: "https://www.selenium.dev/documentation/webdriver/",
+};
+const rows = await Promise.all(
+  Object.entries(docs).map(async ([Tool, Source]) =&gt; {
+    const page = qz.tab(await qz.openTab({ url: Source }));
+    const { text } = await page.read();
+    const Summary = text.split("\n\n").find(p =&gt; !p.startsWith("#"));
+    return { Tool, Summary, Source };
+  }),
+);
+const table = "browser_automation_docs";
+await qz.call("data_store", { action: "insert", table, rows });
+return { table, rows: rows.length };
+JS</code></pre>
+              </div>
+              <div class="console-response"><span class="console-dim">{"ok":true,"result":{"table":"browser_automation_docs","rows":3},"trace":[],"context":{"qz_skills":[]}}</span></div>
             </div>
           </div>
         </div>

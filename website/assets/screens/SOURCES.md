@@ -83,30 +83,32 @@ isolated Chromium profile with the production build of this repository and its i
 preference set. No model was configured in qz, and no page or tool responses were mocked.
 
 The qz CLI from the same checkout created one titled session per language,
-`Compare browser automation docs` and `对比浏览器自动化文档`, then ran this script once:
+`Compare browser automation docs` and `对比浏览器自动化文档`, then ran this script once with
+`qz script --session ID -` on stdin:
 
 ```js
-// Read three official docs in parallel and save a sourced table in qz.
+// Read three docs in parallel; save a sourced table in qz.
 const docs = {
   Playwright: "https://playwright.dev/docs/intro",
   Puppeteer: "https://pptr.dev/guides/what-is-puppeteer",
   Selenium: "https://www.selenium.dev/documentation/webdriver/",
 };
-const rows = await Promise.all(Object.entries(docs).map(async ([Tool, Source]) => {
-  const page = qz.tab(await qz.openTab({ url: Source }));
-  const { excerpt } = await page.read({ limit: 1200 });
-  return { Tool, Summary: excerpt, Source };
-}));
+const rows = await Promise.all(
+  Object.entries(docs).map(async ([Tool, Source]) => {
+    const page = qz.tab(await qz.openTab({ url: Source }));
+    const { text } = await page.read();
+    const Summary = text.split("\n\n").find(p => !p.startsWith("#"));
+    return { Tool, Summary, Source };
+  }),
+);
 const table = "browser_automation_docs";
-await qz.call("data_store", { action: "create_table", table, columns: ["Tool", "Summary", "Source"] });
 await qz.call("data_store", { action: "insert", table, rows });
-trace(`read ${rows.length} pages`);
 return { table, rows: rows.length };
 ```
 
 The Chinese run used the same script with a Chinese first comment. Each run saved the three-row
-`browser_automation_docs` table, and the Side Panel shows its nine calls and the saved table. The
-Drive terminal repeats the commands, session IDs, and script receipts of these runs. `qz data
-export` returned a JSON receipt for the CSV file; the terminal shows its filename. Each session was
-cancelled after capture, and its profile was removed. The capture helper is
-`tests/results/website/capture-drive.mjs` in the ignored local results.
+`browser_automation_docs` table with Tool, Summary, and Source columns; `qz data export` confirmed
+it as CSV. The Side Panel shows the eight calls and the saved table. The Drive terminal repeats each
+run's commands, session ID, script, and receipt. Each session was cancelled after capture, and its
+profile was removed. The capture helper is `tests/results/website/capture-drive.mjs` in the
+ignored local results.
