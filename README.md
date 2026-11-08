@@ -36,6 +36,10 @@ General-purpose AI agents often break on real-world browsing: login walls, long 
 
 Other browser agents usually let you watch them work, but stepping in mid-task is hard, and each is built for either people or agents, not both. qz lives in the side panel, so you see every step and result, and you can step in or stop it at any time. Coding agents such as Claude Code and Codex can also drive the same browser or send tasks to qz through the CLI or MCP.
 
+<p align="center">
+  <img src="docs/images/agent-drive-en.png" width="800" alt="A coding agent runs one qz script from the terminal while the qz side panel shows each browser step and the saved table">
+</p>
+
 ### Parallel research, from web data to reusable Skills
 
 qz runs many tasks at once, and each task can spawn subtasks, so a large research job is split up and worked in parallel instead of stalling a single agent. It pulls the figures you want to compare from scattered, inconsistent websites and turns them into comparison tables or local files. Once a task works, say "Save this as a Skill" and reuse it next time with one sentence.
