@@ -151,7 +151,13 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .console-heredoc { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .console-script { margin: 0; padding-left: calc(1ch + 12px); overflow-x: auto; font: inherit; font-size: clamp(10.5px, calc((100cqi - 62px) / 43), .93em); line-height: 1.6; color: #e4e4e1; white-space: pre; scrollbar-width: thin; scrollbar-color: #444 transparent; }
 .console-script code { font: inherit; }
-.console-comment { color: #8b8b87; }
+.tok-comment { color: #7f848e; font-style: italic; }
+.tok-keyword { color: #c792ea; }
+.tok-string { color: #a5d391; }
+.tok-function { color: #82aaff; }
+.tok-builtin { color: #e5c07b; }
+.tok-property { color: #f0a17a; }
+.tok-heredoc { color: #6fc6d1; }
 .console-dollar { flex: none; color: #8b8b87; user-select: none; }
 .console-response, .console-tools { display: flex; flex-direction: column; gap: 2px; }
 .console-response strong { font-weight: 550; }

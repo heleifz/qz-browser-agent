@@ -101,25 +101,25 @@
               <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveCreate">qz session create --title &quot;Compare browser automation docs&quot;</code></div>
               <div class="console-response"><span class="console-dim" data-i18n="agentDriveSession">sessionId 53d24037c61a42ed812910577cc7578c</span></div>
               <div class="console-heredoc">
-                <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveScript">qz script --session 53d24037c61a42ed812910577cc7578c - &lt;&lt;'JS'</code></div>
-                <pre class="console-script"><code data-i18n="agentDriveCode"><span class="console-comment">// Read three docs in parallel; save a sourced table in qz.</span>
-const docs = {
-  Playwright: "https://playwright.dev/docs/intro",
-  Puppeteer: "https://pptr.dev/guides/what-is-puppeteer",
-  Selenium: "https://www.selenium.dev/documentation/webdriver/",
+                <div class="console-command"><span class="console-dollar" aria-hidden="true">$</span><code data-i18n="agentDriveScript">qz script --session 53d24037c61a42ed812910577cc7578c - <span class="tok-heredoc">&lt;&lt;'JS'</span></code></div>
+                <pre class="console-script"><code data-i18n="agentDriveCode"><span class="tok-comment">// Read three docs in parallel; save a sourced table in qz.</span>
+<span class="tok-keyword">const</span> docs = {
+  <span class="tok-property">Playwright</span>: <span class="tok-string">"https://playwright.dev/docs/intro"</span>,
+  <span class="tok-property">Puppeteer</span>: <span class="tok-string">"https://pptr.dev/guides/what-is-puppeteer"</span>,
+  <span class="tok-property">Selenium</span>: <span class="tok-string">"https://www.selenium.dev/documentation/webdriver/"</span>,
 };
-const rows = await Promise.all(
-  Object.entries(docs).map(async ([Tool, Source]) =&gt; {
-    const page = qz.tab(await qz.openTab({ url: Source }));
-    const { text } = await page.read();
-    const Summary = text.split("\n\n").find(p =&gt; !p.startsWith("#"));
-    return { Tool, Summary, Source };
+<span class="tok-keyword">const</span> rows = <span class="tok-keyword">await</span> <span class="tok-builtin">Promise</span>.<span class="tok-function">all</span>(
+  <span class="tok-builtin">Object</span>.<span class="tok-function">entries</span>(docs).<span class="tok-function">map</span>(<span class="tok-keyword">async</span> ([Tool, Source]) <span class="tok-keyword">=&gt;</span> {
+    <span class="tok-keyword">const</span> page = <span class="tok-builtin">qz</span>.<span class="tok-function">tab</span>(<span class="tok-keyword">await</span> <span class="tok-builtin">qz</span>.<span class="tok-function">openTab</span>({ <span class="tok-property">url</span>: Source }));
+    <span class="tok-keyword">const</span> { text } = <span class="tok-keyword">await</span> page.<span class="tok-function">read</span>();
+    <span class="tok-keyword">const</span> Summary = text.<span class="tok-function">split</span>(<span class="tok-string">"\n\n"</span>).<span class="tok-function">find</span>(p <span class="tok-keyword">=&gt;</span> !p.<span class="tok-function">startsWith</span>(<span class="tok-string">"#"</span>));
+    <span class="tok-keyword">return</span> { Tool, Summary, Source };
   }),
 );
-const table = "browser_automation_docs";
-await qz.call("data_store", { action: "insert", table, rows });
-return { table, rows: rows.length };
-JS</code></pre>
+<span class="tok-keyword">const</span> table = <span class="tok-string">"browser_automation_docs"</span>;
+<span class="tok-keyword">await</span> <span class="tok-builtin">qz</span>.<span class="tok-function">call</span>(<span class="tok-string">"data_store"</span>, { <span class="tok-property">action</span>: <span class="tok-string">"insert"</span>, table, rows });
+<span class="tok-keyword">return</span> { table, <span class="tok-property">rows</span>: rows.length };
+<span class="tok-heredoc">JS</span></code></pre>
               </div>
               <div class="console-response"><span class="console-dim">{"ok":true,"result":{"table":"browser_automation_docs","rows":3},"trace":[],"context":{"qz_skills":[]}}</span></div>
             </div>
