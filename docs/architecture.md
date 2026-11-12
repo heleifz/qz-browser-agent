@@ -587,8 +587,9 @@ Session permissions, scheduling, cancellation, deadlines, and result contracts. 
 legacy page bridge inject the same SDK; `evaluate` remains a self-contained DOM function. Legacy
 `tools` and `tool` bindings remain compatible, while new CLI and Skill scripts use `qz`.
 
-[Locator queries](../src/shared/contracts/element-locator.ts) distinguish precise role/name/text filters
-from exploratory `find_elements.pattern` matching. Element actions resolve one matching node and bind
+[Locator queries](../src/shared/contracts/element-locator.ts) define precise role/name/text filters.
+`find_elements` applies the same matcher to its candidates; `pattern` is its regex alternative, and the
+two cannot be combined. Element actions resolve one matching node and bind
 it through the existing registry before readiness checks and dispatch. Queries may re-resolve before
 input delivery; explicit UID targets retain their original identity. Ambiguous queries require
 narrowing or an explicit index. Scoped queries retain their frame and document authority.

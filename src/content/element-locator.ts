@@ -48,6 +48,30 @@ function cssMatches(root: Element | Document, elements: Element[], target: strin
   }
 }
 
+/**
+ * The field matcher shared by locators and find_elements. name and text compare whitespace-normalized
+ * values exactly (case-sensitive) unless exact is false, which matches a substring. Unless the caller
+ * has already narrowed candidates, a text-only query keeps the smallest matching nodes rather than every
+ * ancestor whose aggregate text contains the phrase.
+ */
+export function matchElementQuery(
+  candidates: Element[], query: Pick<ElementLocator, "role" | "name" | "text" | "exact">,
+  semantics: ElementSemantics, narrowed = false,
+): Element[] {
+  const matchesText = (actual: string, expected: string) => query.exact === false
+    ? normalize(actual).includes(normalize(expected)) : normalize(actual) === normalize(expected);
+  const matches = candidates.filter(element => element.isConnected
+    && (query.role === undefined || semantics.role(element) === query.role)
+    && (query.name === undefined || matchesText(semantics.name(element), query.name))
+    && (query.text === undefined || matchesText(element.textContent || "", query.text)));
+  if (query.text === undefined || narrowed || query.role !== undefined || query.name !== undefined) return matches;
+  const ancestors = new Set<Element>();
+  for (const element of matches) {
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
+  }
+  return matches.filter(element => !ancestors.has(element));
+}
+
 /** Strict queries keep tree order and hidden nodes; discovery ranking is deliberately separate. */
 export function resolveElementLocator(
   root: Element | Document, locator: ElementLocator, semantics: ElementSemantics,
@@ -64,21 +88,7 @@ export function resolveElementLocator(
     candidates = roots.length ? allElements(roots[0]!) : [];
   }
   if (locator.target) candidates = cssMatches(queryRoot, candidates, locator.target);
-  const matchesText = (actual: string, expected: string) => locator.exact === false
-    ? normalize(actual).includes(normalize(expected)) : normalize(actual) === normalize(expected);
-  let matches = candidates.filter(element => element.isConnected
-    && (locator.role === undefined || semantics.role(element) === locator.role)
-    && (locator.name === undefined || matchesText(semantics.name(element), locator.name))
-    && (locator.text === undefined || matchesText(element.textContent || "", locator.text)));
-  // Text-only queries identify the smallest matching nodes, rather than every
-  // ancestor whose aggregate text happens to contain the same phrase.
-  if (locator.text !== undefined && locator.target === undefined && locator.role === undefined && locator.name === undefined) {
-    const ancestors = new Set<Element>();
-    for (const element of matches) {
-      for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
-    }
-    matches = matches.filter(element => !ancestors.has(element));
-  }
+  const matches = matchElementQuery(candidates, locator, semantics, locator.target !== undefined);
   const selected = locator.nth === undefined
     ? matches.length === 1 ? matches[0] : undefined
     : matches[locator.nth];

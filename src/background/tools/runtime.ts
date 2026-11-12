@@ -8,7 +8,7 @@ import { isTabAlias } from "../../shared/tab-reference.js";
 import { t } from "../../shared/i18n/backend.js";
 import { t as toolT } from "./messages.js";
 import { runToolWithTimeout, type ToolPartialResult } from "./tool-timeout.js";
-import { createToolOperation, withToolOperationFailure } from "./tool-operation.js";
+import { createToolOperation, notStartedToolFailure, withToolOperationFailure } from "./tool-operation.js";
 import { readPartialPageState } from "./partial-page-state.js";
 import { createToolPhaseTiming } from "./phase-timing.js";
 import { getLanguage, withLanguage } from "../../shared/i18n/index.js";
@@ -636,7 +636,7 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
     }
     assertToolAllowedByPolicy(name, normalizeToolPolicy(context));
     if (isRecord(args)) args = canonicalToolArgs(definition, args);
-    if (!isRecord(args)) throw new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`);
+    if (!isRecord(args)) throw notStartedToolFailure(new ToolExecutionError("INVALID_ARGUMENTS", `Invalid arguments for ${name}: expected an object`), name);
     if (resolveTimeoutResult(definition, args)?.kind === "action") {
       operation.prepare({ ...operationErrorDetails(context, args), tool: name });
     }
@@ -674,10 +674,12 @@ export async function executeTool(name: string, args: unknown, signal?: AbortSig
       const { timeoutMs, ...canonicalArgs } = validationArgs;
       validationArgs = canonicalArgs;
     }
-    validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
-    const validateArgs = definition.validateArgs;
-    if (validateArgs) withLanguage(language, () => validateArgs(effectiveArgs));
-    validateToolSchema(name, validationArgs, definition.parameters);
+    try {
+      validateToolArgs(name, validationArgs, definition.parameters, definition.defaultableFields);
+      const validateArgs = definition.validateArgs;
+      if (validateArgs) withLanguage(language, () => validateArgs(effectiveArgs));
+      validateToolSchema(name, validationArgs, definition.parameters);
+    } catch (error) { throw notStartedToolFailure(error, name); }
     await assertToolAllowedForSession(definition, context);
     const executionArgs = await withSessionOwnedTarget(definition, effectiveArgs, parameters, context, signal,
       needsCommittedPage(definition, effectiveArgs));

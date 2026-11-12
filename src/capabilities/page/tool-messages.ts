@@ -44,20 +44,28 @@ const messages = defineMessages("page-tools", {
     en: "Target scope: prefer uid:, with css: as fallback; defaults to css:body.",
   },
   findElementsDescription: {
-    "zh-CN": "在 tabRef 指定页面按范围、语义属性和可选正则查找元素候选（优先排序可操作、视口内、匹配更明确的元素）。pattern 是可选过滤条件：不传 pattern 时会列出 target/role/roles/tag/tags/type/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 role/name/text/rect/actionable/inViewport/lineRange 等摘要；需原始 HTML 时将 tabRef 和 lineRange 传给 read_dom。",
-    en: "Find candidate elements on the page specified by tabRef by scope, semantic filters, and an optional regex (prioritizing actionable, in-viewport, and specific matches). pattern is an optional filter: when omitted, lists candidates matching target/role/roles/tag/tags/type/types. Returns a target usable directly with inspect_element/act_on_element, plus role/name/text/rect/actionable/inViewport/lineRange summaries; pass tabRef and lineRange to read_dom for raw HTML.",
+    "zh-CN": "在 tabRef 指定页面按范围、语义属性和可选文本匹配查找元素候选（优先排序可操作、视口内、匹配更明确的元素）。role、name、text、exact 与 locator 查询的匹配规则相同；pattern 是 name/text 的正则替代，不能与 name/text/exact 同时使用。不传 name、text 或 pattern 时会列出 target/role/roles/tag/tags/type/types 命中的候选。返回可直接用于 inspect_element/act_on_element 的 target，以及 role/name/text/rect/actionable/inViewport/lineRange 等摘要；需原始 HTML 时将 tabRef 和 lineRange 传给 read_dom。",
+    en: "Find candidate elements on the page specified by tabRef by scope, semantic filters, and optional text matching (prioritizing actionable, in-viewport, and specific matches). role, name, text, and exact match as in a locator query; pattern is the regex alternative to name/text and cannot be combined with name/text/exact. Without name, text, or pattern, lists candidates matching target/role/roles/tag/tags/type/types. Returns a target usable directly with inspect_element/act_on_element, plus role/name/text/rect/actionable/inViewport/lineRange summaries; pass tabRef and lineRange to read_dom for raw HTML.",
   },
   findElementsPattern: {
-    "zh-CN": "可选正则，匹配 name、aria-label、placeholder、value、id、name/title/data-testid、href、text、role、tag、class。",
-    en: "Optional regex matched against name, aria-label, placeholder, value, id, name/title/data-testid, href, text, role, tag, and class.",
+    "zh-CN": "可选正则，匹配 name、aria-label、placeholder、value、id、name/title/data-testid、href、text、role、tag、class。与 name/text/exact 二选一。",
+    en: "Optional regex matched against name, aria-label, placeholder, value, id, name/title/data-testid, href, text, role, tag, and class. Use instead of name/text/exact, not with them.",
+  },
+  findElementsMatchConflict: {
+    "zh-CN": "name/text/exact 用于字面匹配，pattern/flags 用于正则匹配；请只使用其中一种。",
+    en: "Use name/text/exact for literal matching or pattern/flags for a regular expression; pass only one kind.",
+  },
+  findElementsEmptyQuery: {
+    "zh-CN": "{field} 必须是非空字符串。",
+    en: "{field} must be a non-empty string.",
   },
   findElementsFlags: {
     "zh-CN": "RegExp flags，默认 i。",
     en: "RegExp flags. Default: i.",
   },
   findElementsSelector: {
-    "zh-CN": "查找范围 target（穿透 open Shadow DOM），优先 uid:，css: 兜底，默认 css:body。",
-    en: "Target search scope: prefer uid:, with css: as fallback; pierces open Shadow DOM and defaults to css:body.",
+    "zh-CN": "查找范围 target（即 locator 的 scope，也可传 scope；穿透 open Shadow DOM），优先 uid:，css: 兜底，默认 css:body。",
+    en: "Target search scope, the same root as a locator's scope (scope is also accepted): prefer uid:, with css: as fallback; pierces open Shadow DOM and defaults to css:body.",
   },
   findElementsRole: {
     "zh-CN": "按单个 ARIA role 过滤（含显式与隐式 role），如 link。与 roles 二选一。",

@@ -256,7 +256,7 @@ registerTool({
 
 registerTool({
   name: "find_elements",
-  argumentAliases: { selector: "target" },
+  argumentAliases: { selector: "target", scope: "target" },
   behavior: { parallelRead: true, targetLookup: "openShadow", passiveWait: args => args.waitFor === "match",
     uidTargets: args => locatorReferences(args.locator),
     timeoutResult: args => args.waitFor === "match" || args.locator ? undefined : { kind: "read", pending: "element scan" } },
@@ -266,6 +266,9 @@ registerTool({
     additionalProperties: false,
     properties: {
       tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
+      name: elementLocatorSchema.properties.name,
+      text: elementLocatorSchema.properties.text,
+      exact: elementLocatorSchema.properties.exact,
       pattern: { type: "string", description: toolT("findElementsPattern") },
       flags: { type: "string", description: toolT("findElementsFlags") },
       target: { type: "string", description: toolT("findElementsSelector") },
@@ -293,10 +296,20 @@ registerTool({
           { details: { invalidFields: [single, plural] } });
       }
     }
+    const literal = ["name", "text", "exact"].filter(key => args[key] !== undefined);
+    const regex = ["pattern", "flags"].filter(key => args[key] !== undefined);
+    if (literal.length && regex.length) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsMatchConflict"), { details: { invalidFields: [...literal, ...regex] } });
+    }
+    for (const field of ["name", "text"]) {
+      if (typeof args[field] === "string" && !args[field].trim()) {
+        throw toolError("INVALID_ARGUMENTS", toolT("findElementsEmptyQuery", { field }), { details: { invalidFields: [field] } });
+      }
+    }
     if (args.locator !== undefined) {
       try { validateElementLocator(args.locator); }
       catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String((error as Error).message)); }
-      if (["target", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
+      if (["target", "name", "text", "exact", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
         throw toolError("INVALID_ARGUMENTS", toolT("findElementsLocatorConflict"));
       }
     } else if (args.countOnly === true) {
@@ -307,7 +320,7 @@ registerTool({
       throw new ToolExecutionError("INVALID_TIMEOUT", toolT("findElementsTimeout"), { timeout: args.timeout });
     }
   },
-  execute: async ({ tabId, pattern = "", flags = "i", target: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit = 20, includeHidden = false, waitFor, timeout = 10 }, signal, context = {}) => {
+  execute: async ({ tabId, name, text, exact, pattern = "", flags = "i", target: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit = 20, includeHidden = false, waitFor, timeout = 10 }, signal, context = {}) => {
     const waiting = waitFor === "match";
     if (waiting && pattern) {
       try { new RegExp(pattern, flags); }
@@ -327,6 +340,7 @@ registerTool({
       const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
       if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
       const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
+        ...Object.fromEntries(Object.entries({ name, text, exact }).filter(([, value]) => value !== undefined)),
         pattern, flags, selector: scopedSelector(target), roles: role === undefined ? roles : [role],
         tags: tag === undefined ? tags : [tag], types: type === undefined ? types : [type], limit, includeHidden,
       }, call, observing));
