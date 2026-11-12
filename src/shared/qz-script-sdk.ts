@@ -9,13 +9,13 @@ type CallTool = (name: string, args?: Arguments) => Promise<unknown>;
 type ActionOptions = { expect?: "navigation" | "popup"; timeout?: number; tabAlias?: string; submit?: boolean };
 /**
  * page.find(query): role, name, text, exact, and within match as in page.locator(query);
- * pattern (string or RegExp) is the regex alternative to name/text. Returns up to limit observations.
+ * pattern (string or RegExp) is the regex alternative to name/text.
  */
 type FindQuery = Arguments & Pick<ElementLocator, "role" | "name" | "text" | "exact" | "within"> & {
   pattern?: string | RegExp; flags?: string; limit?: number; includeHidden?: boolean; waitForMatch?: boolean; timeout?: number;
 };
-/** total counts every match; truncated means limit dropped some of them. */
-type FindResult = ElementObservation[] & { readonly total: number; readonly truncated: boolean };
+/** results holds up to limit observations; total counts every match; truncated means limit dropped some. */
+type FindResult = { results: ElementObservation[]; total: number; truncated: boolean };
 
 /** Stateless script bindings. Every operation uses the host's normal tool execution path. */
 export function createQzSdk(callTool: CallTool) {
@@ -123,8 +123,8 @@ export function createQzSdk(callTool: CallTool) {
         const args = options(opts);
         if (Object.hasOwn(args, "countOnly")) return invalid("Use page.locator(query).count() to count matches.");
         return call("find_elements", serializePattern(args, "pattern")).then(result => {
-          const { results, total, truncated } = result as { results: ElementObservation[]; total: number; truncated: boolean };
-          return Object.defineProperties([...results], { total: { value: total }, truncated: { value: truncated } }) as FindResult;
+          const { results, total, truncated } = result as FindResult;
+          return { results, total, truncated };
         });
       },
       axTree(opts: Arguments = {}) { return call("get_ax_tree", opts); },

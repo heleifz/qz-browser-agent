@@ -40,7 +40,9 @@ test("the packaged guide matches the installed Skill and keeps one script vocabu
   assert.match(guide, /expect:"popup"/);
   assert.match(guide, /`within`/);
   assert.match(guide, /waitForMatch:true/);
-  assert.match(guide, /`total`.*`truncated`/);
+  assert.match(guide, /returns `\{results,total,truncated\}`/);
+  assert.match(guide, /\)\)\.results\.slice\(/);
+  assert.doesNotMatch(guide, /returns an array of current element observations/);
   assert.match(guide, /scrollIntoView/);
   assert.match(guide, /page\.scroll\(\{direction,pixels\}\)/);
   assert.equal(guide.match(/timeout` option is in seconds/g)?.length, 1, "the guide states the timeout unit once");
