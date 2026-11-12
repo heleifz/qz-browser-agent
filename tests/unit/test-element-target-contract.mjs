@@ -242,7 +242,7 @@ function assertFindElementsFilterContract() {
   const block = toolBlock("find_elements");
   assert.doesNotMatch(block, /required: \["pattern"\]/, "find_elements should not require pattern when target/tags/roles can list candidates");
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
-  assert.match(resolveToolDefinition("find_elements").description, /pattern 是可选过滤条件：不传 pattern 时会列出 target\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain target-scoped candidate discovery");
+  assert.match(resolveToolDefinition("find_elements").description, /不传 name、text 或 pattern 时会列出 target\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain target-scoped candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
   assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");

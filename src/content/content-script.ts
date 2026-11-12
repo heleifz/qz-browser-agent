@@ -11,7 +11,7 @@ import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
 import type { ElementLocator } from '../shared/contracts/element-locator.js';
-import { invalidCssTargetError, resolveElementLocator } from './element-locator.js';
+import { invalidCssTargetError, matchElementQuery, resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -23,6 +23,7 @@ interface ContentRequest {
   scroll?: boolean;
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; retainRef?: boolean; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
+  name?: string; text?: string; exact?: boolean;
   locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -55,7 +56,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-06-element-outcomes";
+  const QZ_CONTENT_VERSION = "2026-11-12-find-query-fields";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -1758,7 +1759,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
     },
 
-    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
+    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], name, text, exact, limit = 20, includeHidden = false }) {
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
       const maxResults = clampNumber(limit, 1, 100, 20);
@@ -1780,8 +1781,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const candidates: Element[] = [];
       // A light-DOM scope still includes descendants inside nested open shadows.
       eachElementWithinOpenShadow(scope, (element) => { candidates.push(element); });
-      const matches = [];
-
+      const eligible = [];
       for (let order = 0; order < candidates.length; order += 1) {
         const el = candidates[order];
         if (roleSet.size && !roleSet.has(getElementRole(el))) continue;
@@ -1789,7 +1789,14 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         if (typeSet.size && !typeSet.has((el.getAttribute("type") || "").toLowerCase())) continue;
         const summary = getElementSummary(el);
         if (!includeHidden && !summary.visible) continue;
+        eligible.push({ el, summary, order });
+      }
+      const queried = name === undefined && text === undefined ? null : new Set(matchElementQuery(eligible.map(item => item.el),
+        { name, text, exact }, { role: getElementRole, name: getAccessibleName }, Boolean(roleSet.size || tagSet.size || typeSet.size)));
+      const matches = [];
 
+      for (const { el, summary, order } of eligible) {
+        if (queried && !queried.has(el)) continue;
         const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
         if (regex && !matchInfo.matched) continue;
         matches.push({

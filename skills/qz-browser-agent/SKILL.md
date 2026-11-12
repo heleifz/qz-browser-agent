@@ -49,7 +49,7 @@ Bind `const page = qz.tab(tabRef)` and use:
 | Purpose | SDK methods |
 | --- | --- |
 | Navigation and page mode | `page.goto(url, options?)`, `page.close()`, `page.setMode(mode)` |
-| Focused observations | `page.read({limit,...})`, `page.find({role:"link",...})`, `page.axTree(options)`, `page.screenshot(options)` |
+| Focused observations | `page.read({limit,...})`, `page.find(query)`, `page.axTree(options)`, `page.screenshot(options)` |
 | Page JavaScript | `page.evaluate(code, args?, options?)` |
 | State waits | `page.waitForURL(pattern, options?)`, `page.waitForLoad(options?)`, `page.waitForFunction(code, args?, options?)` |
 | Element operations | `page.locator(targetOrQuery)` with the methods below |
@@ -119,7 +119,7 @@ return await page.waitForFunction(name => {
 
 Use selectors and fields observed on the page. If it retains previous values while loading, also wait for a completion signal that distinguishes the selected item's result.
 
-`page.find` returns an array of current element observations (up to `limit`), or `[]` when none match. Use normal array operations, e.g. `(await page.find({role:"link"})).slice(0,5)`; `waitFor:"match",timeout:10` waits for a candidate. Use `role`, `tag`, and `type` for single filters, or `roles`, `tags`, and `types` for multiple alternatives; use one form per filter. For example, `page.find({tag:"input",type:"search"})` finds search inputs. Its `pattern` accepts a regex string (case-insensitive by default) or a `RegExp`, as in `page.find({role:"link",pattern:/download/i})`; a `RegExp` supplies its own flags. Locator `name` and `text` match their specific fields. `page.axTree` uses `scope:"viewport"` or `"full"`; narrow `target` or `limit` when inspecting one control. Reserve screenshots for visual checks.
+`page.find(query)` accepts the same `role`, `name`, `text`, `exact`, and `scope` fields as `page.locator(query)` and returns an array of current element observations (up to `limit`), or `[]` when none match. Use normal array operations, e.g. `(await page.find({text:"Tomorrow",exact:false,limit:8})).slice(0,5)`; `waitFor:"match",timeout:10` waits for a candidate. Use `role`, `tag`, and `type` for single filters, or `roles`, `tags`, and `types` for multiple alternatives; use one form per filter. For example, `page.find({tag:"input",type:"search"})` finds search inputs. For a regular expression, pass `pattern` instead of `name`/`text`/`exact`: a regex string (case-insensitive by default) or a `RegExp`, as in `page.find({role:"link",pattern:/download/i})`; a `RegExp` supplies its own flags. `page.axTree` uses `scope:"viewport"` or `"full"`; narrow `target` or `limit` when inspecting one control. Reserve screenshots for visual checks.
 
 Run one `qz script` at a time per session. Within it, use `await` for dependencies and `Promise.all` for independent page workflows. Same-page actions serialize; the caller sees results when the script returns. `Promise.all` preserves input order and rejects on first failure without cancelling siblings; use `Promise.allSettled` to retain every outcome. Await all calls before returning: exit cancels unfinished calls.
 

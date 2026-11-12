@@ -4,6 +4,11 @@ import { registerPageElementTools } from "../../src/capabilities/page/tools.js";
 import { ToolExecutionError } from "../../src/background/tools/arguments.js";
 import { createToolRegistry } from "../../src/background/tools/registry.js";
 import { createQzSdk } from "../../src/shared/qz-script-sdk.js";
+import { createToolOperation, withToolOperationFailure } from "../../src/background/tools/tool-operation.js";
+import { withToolCallLifecycle } from "../../src/background/tools/call-lifecycle.js";
+import { createRunScriptBridge } from "../../src/background/tools/run-script-bridge.js";
+import { localizeToolFailurePayload } from "../../src/shared/tools/tool-error-localization.js";
+import { withLanguage } from "../../src/shared/i18n/index.js";
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const empty = { results: [], matches: 0 };
@@ -113,6 +118,14 @@ test("match wait has one ten-second default deadline and echoes the caller's ref
   assert.equal(f.reads, reads);
 });
 
+test("literal query fields reach the page only when supplied", async () => {
+  const f = fixture();
+  await f.run({ text: "Tomorrow", exact: false, limit: 8 });
+  await f.run({ roles: ["link"], name: "Download" });
+  assert.deepEqual(f.seen[0].params, { text: "Tomorrow", exact: false, selector: "#scope", pattern: "", flags: "i", roles: [], tags: [], types: [], limit: 8, includeHidden: false });
+  assert.deepEqual(f.seen[1].params, { name: "Download", selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], limit: 20, includeHidden: false });
+});
+
 test("cancellation during a pending scan prevents late reference registration", async () => {
   let release;
   const f = fixture(() => new Promise(resolve => { release = resolve; }));
@@ -191,6 +204,89 @@ test("find rejects unknown query fields before page access and retains canonical
   assert.equal(calls.at(-1).countOnly, true);
 });
 
+test("find shares locator query fields, keeps pattern as the exclusive regex form, and rejects validation before starting", async () => {
+  globalThis.chrome = {
+    runtime: { getURL: path => `chrome-extension://test/${path}` },
+    storage: { local: { async get() { return {}; } } },
+    tabs: {
+      async get(id) { return { id, url: "https://example.test/", title: "Fixture", status: "complete" }; },
+      async sendMessage() { return { ok: true, contentType: "text/html", elementRefs: 1 }; },
+    },
+  };
+  const { createToolRuntime, resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
+  const registry = createToolRegistry(), calls = [], accesses = [];
+  registry.forCapability("query-fields-test")({ ...resolveToolDefinition("find_elements"), execute: args => { calls.push(args); return { results: [] }; } });
+  const runtime = createToolRuntime({ sessions: {
+    isRunCurrent: () => true, getTabAliases: () => ({ page: 7 }),
+    async resolveTargetTab(input) { accesses.push(input); return { ok: true, tabId: input.tabId }; },
+  } });
+  const context = { sessionId: "session", runId: "run", language: "en", toolRegistrySnapshot: registry.snapshot("en") };
+  const qz = createQzSdk((name, args) => runtime.execute(name, args, undefined, context));
+  const page = qz.tab("page");
+  const notStarted = { tool: "find_elements", status: "not_started", executed: false, mayHaveTakenEffect: false, automaticReplay: false };
+
+  await page.find({ text: "Tomorrow", exact: false, limit: 8, scope: "css:main" });
+  await page.find({ role: "link", name: "Download" });
+  await page.find({ role: "link", pattern: /download/i });
+  assert.deepEqual(calls.map(({ text, name, exact, pattern, flags, target, role }) => ({ text, name, exact, pattern, flags, target, role })), [
+    { text: "Tomorrow", name: undefined, exact: false, pattern: undefined, flags: undefined, target: "css:main", role: undefined },
+    { text: undefined, name: "Download", exact: undefined, pattern: undefined, flags: undefined, target: undefined, role: "link" },
+    { text: undefined, name: undefined, exact: undefined, pattern: "download", flags: "i", target: undefined, role: "link" },
+  ]);
+  assert.equal(Object.hasOwn(calls[0], "scope"), false, "scope is the locator name for find's search root");
+
+  const accessed = accesses.length;
+  const conflict = "Use name/text/exact for literal matching or pattern/flags for a regular expression; pass only one kind.";
+  for (const [query, fields, message] of [
+    [{ text: "Tomorrow", pattern: "Tomorrow" }, ["text", "pattern"], conflict],
+    [{ name: "Download", exact: false, pattern: "Down", flags: "i" }, ["name", "exact", "pattern", "flags"], conflict],
+    [{ text: "Tomorrow", pattern: /Tomorrow/ }, ["text", "pattern", "flags"], conflict],
+    [{ text: "  " }, ["text"], "text must be a non-empty string."],
+  ]) await assert.rejects(page.find(query), error => {
+    assert.equal(error.code, "INVALID_ARGUMENTS");
+    assert.equal(error.message, message);
+    assert.deepEqual(error.details, { invalidFields: fields, ...notStarted });
+    return true;
+  });
+  assert.equal(calls.length, 3);
+  assert.equal(accesses.length, accessed, "invalid queries are rejected before page access");
+
+  const outer = createToolOperation();
+  outer.prepare({ tool: "run_script" });
+  outer.dispatch();
+  const bridge = createRunScriptBridge({
+    supervisor: { isRunCurrent: () => true, hasAgent: () => true, getAbortSignal: () => undefined },
+    getRuntime: () => ({ status: "running" }),
+    canManageSessions: async () => false,
+    buildRunProfile: async () => ({}),
+    getRunToolContext: async () => ({ toolRegistrySnapshot: context.toolRegistrySnapshot, language: "en" }),
+    toolRuntime: { resolveDefinition: resolveToolDefinition, getTabAliases: () => ({ page: 7 }), execute: (...args) => runtime.execute(...args) },
+    collectArtifacts: () => [],
+  });
+  const viaBridge = query => withToolCallLifecycle({ sessionId: "session", runId: "run", operation: outer },
+    parent => createQzSdk((name, args) => bridge.invokeTool(parent, name, args)).tab("page").find(query));
+  for (const invoke of [
+    () => runtime.execute("find_elements", { tabRef: "page", text: "Tomorrow", exat: false, limit: 8 }, undefined, context),
+    () => page.find({ text: "Tomorrow", exat: false, limit: 8 }),
+    () => viaBridge({ text: "Tomorrow", exat: false, limit: 8 }),
+  ]) {
+    const error = await invoke().then(() => assert.fail("unknown fields must be rejected"), received => received);
+    const failure = withToolOperationFailure(error, outer);
+    for (const language of ["en", "zh-CN"]) {
+      const shown = withLanguage(language, () => localizeToolFailurePayload(failure, { isError: true }));
+      assert.equal(shown.code, "INVALID_ARGUMENTS");
+      assert.match(shown.message || shown.error, /exat/);
+      assert.doesNotMatch(shown.message || shown.error, /timed out|操作超时/);
+    }
+    assert.match(error.message || error.error, /Unknown fields.*exat.*Supported fields:.*exact/);
+    const { invalidFields, allowedFields, ...facts } = failure.details;
+    assert.deepEqual(invalidFields, ["exat"]);
+    assert.ok(allowedFields.includes("text"));
+    assert.deepEqual(facts, { name: "find_elements", path: "$", ...notStarted });
+  }
+  assert.equal(calls.length, 3);
+});
+
 test("host timeout rejects unfinished snapshots and match waits", async () => {
   globalThis.chrome = {
     runtime: { getURL: path => `chrome-extension://test/${path}` },
@@ -214,4 +310,14 @@ test("host timeout rejects unfinished snapshots and match waits", async () => {
   await assert.rejects(runtime.execute("find_elements", { tabRef: 7, waitFor: "visible" }, undefined, context), { code: "INVALID_ARGUMENTS" });
   await assert.rejects(runtime.execute("find_elements", { tabRef: 7 }, undefined, context), { code: "TOOL_TIMEOUT" });
   await assert.rejects(runtime.execute("find_elements", { tabRef: 7, waitFor: "match" }, undefined, context), { code: "TOOL_TIMEOUT" });
+  const outer = createToolOperation();
+  outer.prepare({ tool: "run_script" });
+  for (const [language, expected] of [["en", /timed out/i], ["zh-CN", /超时/]]) {
+    const timedOut = await runtime.execute("find_elements", { tabRef: 7, text: "Tomorrow", exact: false }, undefined, { ...context, language, toolRegistrySnapshot: registry.snapshot(language), operation: outer })
+      .then(() => assert.fail("the scan never finishes"), error => error);
+    assert.equal(timedOut.code, "TOOL_TIMEOUT");
+    const shown = withLanguage(language, () => localizeToolFailurePayload(withToolOperationFailure(timedOut, outer), { isError: true }));
+    assert.equal(shown.code, "TOOL_TIMEOUT");
+    assert.match(shown.message || shown.error, expected, "a real timeout still reports a timeout");
+  }
 });

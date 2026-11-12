@@ -6,6 +6,13 @@ type TabRef = string | number;
 type PageFunction = string | ((...args: never[]) => unknown);
 type CallTool = (name: string, args?: Arguments) => Promise<unknown>;
 type ActionOptions = Arguments & { waitFor?: "navigation" | "popup"; waitOptions?: Arguments };
+/**
+ * page.find(query): role, name, text, exact, and scope match as in page.locator(query);
+ * pattern (string or RegExp) is the regex alternative to name/text. Returns up to limit observations.
+ */
+type FindQuery = Arguments & Pick<ElementLocator, "role" | "name" | "text" | "exact" | "scope"> & {
+  pattern?: string | RegExp; flags?: string; limit?: number; includeHidden?: boolean; waitFor?: "match"; timeout?: number;
+};
 
 /** Stateless script bindings. Every operation uses the host's normal tool execution path. */
 export function createQzSdk(callTool: CallTool) {
@@ -101,7 +108,7 @@ export function createQzSdk(callTool: CallTool) {
       locator,
       goto(url: string, opts: Arguments = {}) { return call("navigate", { ...options(opts, ["url"]), url }); },
       read(opts: Arguments = {}) { return call("read_article", { limit: 4000, ...opts }); },
-      find(opts: Arguments = {}): Promise<ElementObservation[]> {
+      find(opts: FindQuery = {}): Promise<ElementObservation[]> {
         const args = options(opts);
         if (Object.hasOwn(args, "countOnly")) return invalid("Use page.locator(query).count() to count matches.");
         return call("find_elements", serializePattern(args, "pattern"))
