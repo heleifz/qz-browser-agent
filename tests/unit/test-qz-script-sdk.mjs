@@ -50,18 +50,23 @@ test('Tab observations bind their explicit reference once and reject missing or 
 test('CSS shorthand becomes a canonical locator while retaining qualifiers and strict validation', async () => {
   const { qz, calls } = fixture();
   const page = qz.tab('form');
-  const query = Object.freeze({ css: 'input, textarea', role: 'textbox', name: 'Search', exact: false, scope: 'css:form', nth: 1 });
+  const query = Object.freeze({ css: 'input, textarea', role: 'textbox', name: 'Search', exact: false, within: 'css:form', nth: 1 });
   await page.locator(query).fill('query');
-  assert.deepEqual(calls, [{ name: 'act_on_element', args: {
+  const expected = { name: 'act_on_element', args: {
     tabRef: 'form', action: 'fill', value: 'query', locator: {
-      target: 'css:input, textarea', role: 'textbox', name: 'Search', exact: false, scope: 'css:form', nth: 1,
+      target: 'css:input, textarea', role: 'textbox', name: 'Search', exact: false, within: 'css:form', nth: 1,
     },
-  } }]);
+  } };
+  assert.deepEqual(calls, [expected]);
+  const { within, ...legacyQuery } = query;
+  await page.locator({ ...legacyQuery, scope: within }).fill('query');
+  assert.deepEqual(calls[1], expected, 'the retired scope spelling resolves to within');
+  calls.length = 1;
   assert.equal(query.css, 'input, textarea');
   for (const input of [
     { css: '#search', target: 'css:#search' }, { css: '#search', target: undefined },
     ...[undefined, null, '', ' ', 1, [], {}].map(css => ({ css })),
-    { css: '#search', exact: 'yes' }, { css: '#search', nth: -1 }, { css: '#search', scope: 1 },
+    { css: '#search', exact: 'yes' }, { css: '#search', nth: -1 }, { css: '#search', within: 1 },
   ]) assert.throws(() => page.locator(input), { code: 'INVALID_ARGUMENTS' });
   assert.equal(calls.length, 1, 'invalid locators never dispatch');
 });
@@ -88,6 +93,14 @@ test('bound calls reject changes to page, query and positional arguments before 
     () => qz.tab(undefined),
     () => page.locator({}),
     () => input.nth(-1),
+    () => input.click({ expect: 'stable' }),
+    () => input.click({ tabAlias: 'other' }),
+    () => input.click({ submit: true }),
+    () => input.click({ force: true }),
+    () => input.fill(undefined),
+    () => input.press(13),
+    () => input.scrollIntoView({ direction: 'down' }),
+    () => page.scroll({ locator: { role: 'list' } }),
   ]) assert.throws(invoke, { code: 'INVALID_ARGUMENTS' });
   assert.equal(calls.length, 0);
 });
@@ -97,10 +110,10 @@ test('unknown locator keys identify the invalid input and supported fields witho
   assert.throws(() => qz.tab('page').locator({ cs: '#search', timeout: 2 }), error => {
     assert.equal(error.code, 'INVALID_ARGUMENTS');
     assert.match(error.message, /"cs", "timeout"/);
-    assert.match(error.message, /Supported fields: target, role, name, text, exact, scope, nth/);
+    assert.match(error.message, /Supported fields: target, role, name, text, exact, within, nth/);
     assert.equal(error.hint, undefined);
     assert.deepEqual(error.details, {
-      invalidFields: ['cs', 'timeout'], allowedFields: ['target', 'role', 'name', 'text', 'exact', 'scope', 'nth'],
+      invalidFields: ['cs', 'timeout'], allowedFields: ['target', 'role', 'name', 'text', 'exact', 'within', 'nth'],
     });
     return true;
   });
@@ -127,8 +140,8 @@ test('URL waits preserve string patterns and lower RegExp source and flags witho
 
 test('find returns plain element arrays while raw tools keep query metadata', async () => {
   const elements = [{ target: 'uid:t1.snap.1', name: 'First' }, { target: 'uid:t1.snap.2', name: 'Second' }];
-  const response = { matches: 5, results: elements, truncated: true };
-  const { qz, calls } = fixture(async (_, args) => args.pattern === 'missing' ? { matches: 0, results: [] } : response);
+  const response = { results: elements, total: 5, truncated: true };
+  const { qz, calls } = fixture(async (_, args) => args.pattern === 'missing' ? { results: [], total: 0, truncated: false } : response);
   const page = qz.tab('page');
   const found = await page.find({ role: 'link', limit: 2 });
   assert.equal(Array.isArray(found), true);
@@ -136,7 +149,12 @@ test('find returns plain element arrays while raw tools keep query metadata', as
   assert.equal(found[1].target, 'uid:t1.snap.2');
   assert.equal(Object.hasOwn(found, 'results'), false);
   assert.deepEqual(JSON.parse(JSON.stringify(found)), elements);
-  assert.deepEqual(await page.find({ pattern: 'missing' }), []);
+  assert.equal(found.total, 5);
+  assert.equal(found.truncated, true);
+  const missing = await page.find({ pattern: 'missing' });
+  assert.deepEqual(missing, []);
+  assert.equal(missing.total, 0);
+  assert.equal(missing.truncated, false);
   assert.equal(await qz.call('find_elements', { tabRef: 'page', role: 'link', limit: 2 }), response);
   assert.throws(() => page.find({ countOnly: true }), { code: 'INVALID_ARGUMENTS' });
   assert.equal(calls.length, 3, 'count-only requests must use locator.count or the raw tool');
@@ -162,6 +180,24 @@ test('find preserves string filters and serializes RegExp without mutating calle
   assert.equal(calls.length, 2, 'conflicting regex flags fail before dispatch');
 });
 
+test('scroll names separate page scrolling from bringing an element into view', async () => {
+  const { qz, calls } = fixture();
+  const page = qz.tab('feed');
+  const item = page.locator({ role: 'article', nth: 2 });
+  await page.scroll({ direction: 'down', pixels: 600 });
+  await item.scrollIntoView();
+  await item.scroll();
+  await item.screenshot();
+  await item.axTree({ maxDepth: 2 });
+  assert.deepEqual(calls, [
+    { name: 'scroll_page', args: { tabRef: 'feed', direction: 'down', pixels: 600 } },
+    { name: 'act_on_element', args: { tabRef: 'feed', locator: { role: 'article', nth: 2 }, action: 'scroll' } },
+    { name: 'act_on_element', args: { tabRef: 'feed', locator: { role: 'article', nth: 2 }, action: 'scroll' } },
+    { name: 'screenshot', args: { tabRef: 'feed', locator: { role: 'article', nth: 2 } } },
+    { name: 'get_ax_tree', args: { tabRef: 'feed', maxDepth: 2, locator: { role: 'article', nth: 2 } } },
+  ]);
+});
+
 test('drag binds both ends on the same explicit page', async () => {
   const { qz, calls } = fixture();
   const source = qz.tab('board').locator({ role: 'listitem', name: 'Task' });
@@ -176,20 +212,22 @@ test('drag binds both ends on the same explicit page', async () => {
 test('event actions compile one armed trigger and preserve the waited business value', async () => {
   const popup = { tabRef: 'receipt', url: 'https://fixture.test/receipt', title: 'Receipt', active: false };
   const { qz, calls } = fixture(async () => popup);
-  const value = await qz.tab('checkout').locator('uid:t1.snap.1').click({
-    timeout: 7, waitFor: 'popup', waitOptions: { tabAlias: 'receipt' },
-  });
+  const button = qz.tab('checkout').locator('uid:t1.snap.1');
+  const value = await button.click({ timeout: 7, expect: 'popup', tabAlias: 'receipt' });
   assert.equal(value, popup);
-  assert.deepEqual(calls, [{ name: 'wait_for_popup', args: {
+  const expected = { name: 'wait_for_popup', args: {
     tabRef: 'checkout', timeout: 7, tabAlias: 'receipt', trigger: {
       name: 'act_on_element', args: { tabRef: 'checkout', locator: { target: 'uid:t1.snap.1' }, action: 'click', timeout: 7 },
     },
-  } }]);
+  } };
+  assert.deepEqual(calls, [expected]);
+  await button.click({ timeout: 7, waitFor: 'popup', waitOptions: { tabAlias: 'receipt' } });
+  assert.deepEqual(calls[1], expected, 'the retired waitFor and waitOptions spelling compiles to the same call');
 });
 
 test('counts, zero-count waits and reads retain their distinct backend semantics', async () => {
   const { qz, calls } = fixture(async name => name === 'find_elements' ? { count: 3 } : { state: 'ready' });
-  const rows = qz.tab('orders').locator({ role: 'row', scope: 'css:#orders' });
+  const rows = qz.tab('orders').locator({ role: 'row', within: 'css:#orders' });
   assert.equal(await rows.count(), 3);
   await rows.wait({ count: 0, timeout: 2 });
   await rows.nth(0).read({ limit: 1500 });
@@ -235,7 +273,7 @@ for (const mode of ['development', 'production']) {
       calls.push(message);
       reply({ type: 'tool_response', callId: message.callId, response: { ok: true, result:
         message.toolName === 'evaluate' ? 'Map' : message.toolName === 'find_elements'
-          ? message.args.countOnly ? { count: 4 } : { matches: 1, results: [{ target: 'uid:t1.snap.1' }] } : {} } });
+          ? message.args.countOnly ? { count: 4 } : { results: [{ target: 'uid:t1.snap.1' }], total: 1, truncated: false } : {} } });
     } });
     assert.equal(result.ok, true);
     assert.deepEqual(result.result, { title: 'Map', count: 4, found: ['uid:t1.snap.1'], lastIndex: 7 });
@@ -253,7 +291,7 @@ for (const mode of ['development', 'production']) {
 
     const popupCalls = [];
     const popupRun = await runInnerWorker(compiled, `
-      const popup = qz.tab(await qz.tab("portal").locator({css:"a.item"}).click({waitFor:"popup"}));
+      const popup = qz.tab(await qz.tab("portal").locator({css:"a.item"}).click({expect:"popup"}));
       return await popup.read({limit:200});
     `, { strictResult: true, onMessage(message, reply) {
       if (message.type !== 'tool_call') return;
