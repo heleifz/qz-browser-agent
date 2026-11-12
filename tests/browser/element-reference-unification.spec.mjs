@@ -159,6 +159,9 @@ test('all element readers share node UIDs, consumers accept target/legacy select
       }, { tabId: nativeTabId, target: scope, sessionId });
       expect(frameFind.message, `${kind}: ${JSON.stringify({ frameFind, diagnostic })}`).toBeUndefined();
       expect(frameFind.results[0].target).toMatch(uidPattern);
+      const named = await invoke('find_elements', { target: scope, name: `Frame ${kind}`, limit: 5 });
+      expect(named.message, JSON.stringify(named)).toBeUndefined();
+      expect(named.results.map(item => item.name)).toEqual([`Frame ${kind}`]);
       const action = await invoke('act_on_element', { target: frameFind.results[0].target, action: 'click' });
       expect(action.message, JSON.stringify(action)).toBeUndefined();
       await expect(page.frameLocator(`#${kind}`).locator('body')).toHaveAttribute('data-clicked', 'yes');
