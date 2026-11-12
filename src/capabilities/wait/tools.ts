@@ -1,8 +1,8 @@
 import { toolT } from "./tool-messages.js";
 import { t } from "./i18n.js";
 import type { ToolExtension } from "#sdk/background";
-import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, waitTriggerParameter, operationErrorDetails, type WaitTrigger } from "#sdk/background/tools";
-import { bindCreatedTabResult, createdTabResultId, elementLocatorSchema, locatorReferences, validateElementLocator } from "#sdk/shared/browser";
+import { delayTimeout, pageWaitTimeout, pollState, waitDelay, runWaitWithTrigger, validateElementInput, waitTriggerParameter, operationErrorDetails, type WaitTrigger } from "#sdk/background/tools";
+import { bindCreatedTabResult, createdTabResultId, elementLocatorSchema, locatorReferences } from "#sdk/shared/browser";
 import { isCdpFallbackForbiddenError, observeNextPageNavigation, type ElementAccess } from "#sdk/background/browser";
 /** Wait for user actions, navigation, page elements, or a specified time. */
 
@@ -495,6 +495,11 @@ registerTool({
 
 registerTool({
   name: "wait_for_element", behavior: { parallelTab: true, passiveWait: true, uidTargets: args => locatorReferences(args.locator) }, argumentAliases: { selector: "target" },
+  compatArgs: ({ absent, interval, ...args }) => ({
+    ...args,
+    ...(absent === true && args.state === undefined ? { state: "hidden" } : {}),
+    ...(interval != null && args.intervalSeconds === undefined ? { intervalSeconds: Math.max(1, Number(interval) || 0) / 1000 } : {}),
+  }),
   get description() { return toolT("waitForElementDescription"); },
   get parameters() { return { type: "object", properties: { ...pageWaitProperties(),
     target: { type: "string", description: toolT("waitForElementSelector") },
@@ -508,21 +513,16 @@ registerTool({
   ] } as const; },
   page: "readOnly", timeout: pageWaitTimeout,
   validateArgs: args => {
-    if ((args.locator !== undefined) === (args.target !== undefined)) throw new ToolExecutionError("INVALID_ELEMENT_TARGET", "Pass exactly one of target or locator.");
-    if (args.locator !== undefined) {
-      try { validateElementLocator(args.locator); }
-      catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", error instanceof Error ? error.message : String(error)); }
-    }
+    validateElementInput(args);
     if (args.count !== undefined && (!args.locator || args.state !== undefined || typeof args.count !== "number" || !Number.isInteger(args.count) || args.count < 0)) {
       throw new ToolExecutionError("INVALID_ELEMENT_WAIT", "count requires a locator and a non-negative integer; omit state.");
     }
   },
   execute: async (input, signal, context = {}) => {
-    const legacy = input as Record<string, unknown>;
-    const state = String(input.state || (legacy.absent === true ? "hidden" : "visible"));
+    const state = String(input.state || "visible");
     const visibleOnly = state === "visible" || state === "hidden";
     const absent = state === "hidden" || state === "detached";
-    const intervalMs = legacy.interval != null ? Math.max(1, Number(legacy.interval) || 0) : secondsToMs(input.intervalSeconds, 500);
+    const intervalMs = secondsToMs(input.intervalSeconds, 500);
     return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input) },
       async current => {
       const observing = Object.assign(Object.create(context), { signal: current });
