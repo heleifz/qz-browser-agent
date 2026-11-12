@@ -81,9 +81,9 @@ export function resolveElementLocator(
   catch (error) { throw failure("INVALID_ELEMENT_LOCATOR", error instanceof Error ? error.message : String(error)); }
   let queryRoot = root;
   let candidates = matchSelf && root.nodeType === 1 ? [root as Element] : allElements(root);
-  if (locator.scope) {
-    const roots = cssMatches(queryRoot, candidates, locator.scope);
-    if (roots.length > 1) throw failure("AMBIGUOUS_ELEMENT", "The locator scope matches multiple elements.", roots.length);
+  if (locator.within) {
+    const roots = cssMatches(queryRoot, candidates, locator.within);
+    if (roots.length > 1) throw failure("AMBIGUOUS_ELEMENT", "The locator within matches multiple elements.", roots.length);
     if (roots[0]) queryRoot = roots[0];
     candidates = roots.length ? allElements(roots[0]!) : [];
   }

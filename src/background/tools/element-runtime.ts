@@ -425,7 +425,7 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
   try { validateElementLocator(locator); }
   catch (error) {
     throw Object.assign(new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String(record(error).message || error), pageErrorDetails(context)), {
-      hint: "Pass a CSS/UID target or a role, name, or text query; use scope to narrow the search.",
+      hint: "Pass a CSS/UID target or a role, name, or text query; use within to narrow the search.",
     });
   }
   context.signal?.throwIfAborted();
@@ -435,13 +435,13 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
   const id = Number(tabId);
   const pinned = isUidElementTarget(locator.target);
   const root = pinned ? await resolveElementReference(id, { target: locator.target }, context)
-    : isUidElementTarget(locator.scope) ? await resolveElementReference(id, { target: locator.scope }, context) : null;
+    : isUidElementTarget(locator.within) ? await resolveElementReference(id, { target: locator.within }, context) : null;
   if (pinned && !options.countOnly && !options.all && !locator.role && !locator.name && !locator.text) {
     return { id, pinned, root, matched: 1, element: undefined, results: [] as unknown[] };
   }
   // CSS scopes are resolved strictly in the same Content scan. Only UID roots need host binding.
   const queryInput = { ...locator };
-  if (root) delete queryInput.scope;
+  if (root) delete queryInput.within;
   if (pinned) delete queryInput.target;
   const params = { locator: queryInput, ...options, ...(pinned ? { matchSelf: true } : {}) };
   let response: Record<string, unknown>;
@@ -493,7 +493,7 @@ async function resolveLocatorTarget(tabId: number | undefined, locator: ElementL
   if (matched === 0 || locator.nth !== undefined && locator.nth >= matched) return null;
   if (matched > 1 && locator.nth === undefined) throw Object.assign(
     new ToolExecutionError("AMBIGUOUS_ELEMENT", "The locator matches more than one element.", { ...pageErrorDetails(context, locator.target), matched }),
-    { hint: "Narrow the locator or its scope, or select an explicit nth match." },
+    { hint: "Narrow the locator or its within element, or select an explicit nth match." },
   );
   if (pinned) return root;
   if (!isRecord(element)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Element query returned no selected node.", pageErrorDetails(context));
@@ -505,6 +505,18 @@ async function resolveLocatorTarget(tabId: number | undefined, locator: ElementL
     { hint: "Retry the query before dispatching an action; an explicit UID cannot be retargeted." },
   );
   return resolveElementReference(id, { target: binding.target }, context);
+}
+
+/** The element input every element tool shares: a target string with an optional nth, or a locator query. */
+async function resolveElementInput(tabId: number | undefined, { target = "", locator, nth = 0, readOnly = false }: {
+  target?: string; locator?: ElementLocator; nth?: number; readOnly?: boolean;
+} = {}, context: ToolContext = {}): Promise<ElementTarget & { index?: number }> {
+  if (locator === undefined) return resolveElementReference(tabId, { target, index: nth, readOnly }, context);
+  const binding = await resolveLocatorTarget(tabId, locator, context);
+  if (!binding) throw Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "No element matches the locator.", pageErrorDetails(context)), {
+    hint: "Inspect the page or refine the locator, then retry.",
+  });
+  return binding;
 }
 
 async function resolveElementReference(tabId: number | undefined, { target = "", index = 0, readOnly = false } = {}, context: ToolContext = {}) {
@@ -964,6 +976,7 @@ function samePageUrl(a: unknown, b: unknown) {
     prepareCssTargets,
     resolveSelectorTarget,
     resolveElementReference,
+    resolveElementInput,
     resolveLocatorTarget,
     countLocatorMatches,
     findLocatorElements,

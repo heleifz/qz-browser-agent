@@ -211,7 +211,7 @@ test("text-only queries choose smallest matching nodes and scoped calls remain l
     action: "resolveLocator", locator: { role: "button", name: "Save" },
   }));
   assert.equal(documentRoot.matched, 1);
-  assert.equal((await resolve({ target: "css:button", scope: "css:.twin" })).code, "AMBIGUOUS_ELEMENT");
+  assert.equal((await resolve({ target: "css:button", within: "css:.twin" })).code, "AMBIGUOUS_ELEMENT");
 });
 
 test("open shadow queries bind the exact node and never rematch after replacement", async () => {
@@ -243,7 +243,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
     document.querySelector("#scope").append(list);
     document.querySelector("#shadow").attachShadow({ mode: "open" }).innerHTML = '<ul><li id="shadow-row">Shadow</li></ul>';
   });
-  const scoped = await resolve({ scope: "css:#list", target: "css::scope > li" }, { all: true });
+  const scoped = await resolve({ within: "css:#list", target: "css::scope > li" }, { all: true });
   assert.equal(scoped.matched, 2);
   assert.deepEqual(scoped.results.map(element => element.text), ["FirstNested", "Second"]);
   const bound = await page.evaluate(async () => {
@@ -253,7 +253,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
   });
   assert.equal(bound.matched, 2);
   assert.deepEqual(bound.results.map(element => element.text), ["FirstNested", "Second"]);
-  const root = await resolve({ scope: "css:#list", target: "css::scope" });
+  const root = await resolve({ within: "css:#list", target: "css::scope" });
   assert.equal(root.matched, 1);
   assert.equal(root.element.tag, "ul");
   const ordinary = await resolve({ target: "css:li" }, { all: true });
@@ -270,7 +270,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
 test("invalid queries fail before selection", async () => {
   assert.equal((await resolve({ target: "css:[" })).code, "INVALID_SELECTOR");
   assert.equal((await resolve({ role: "button", nth: -1 })).code, "INVALID_ELEMENT_LOCATOR");
-  assert.equal((await resolve({ scope: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
+  assert.equal((await resolve({ within: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
   assert.equal((await resolve({ target: "uid:unknown" })).code, "INVALID_ELEMENT_LOCATOR");
 });
 
@@ -292,8 +292,8 @@ test("invalid CSS keeps the browser syntax reason and the whole public target th
     assert.equal(error.message, failed.error);
     assert.equal(error.hint, undefined);
   });
-  const scoped = await resolve({ target: "css:button", scope: target });
-  assert.equal(scoped.details.target, target, "an invalid scope identifies the offending query");
+  const scoped = await resolve({ target: "css:button", within: target });
+  assert.equal(scoped.details.target, target, "an invalid within identifies the offending query");
   assert.equal((await resolve({ target: "css:form input[type=submit], form button" }, { all: true })).matched, 2,
     "one css prefix applies to the entire comma-separated query");
 });
