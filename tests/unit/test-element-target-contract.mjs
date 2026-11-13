@@ -251,9 +251,9 @@ function assertFindElementsFilterContract() {
   assert.match(contentScript, /const maxResults = clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp result limit");
   assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
   assert.match(contentScript, /matchElementSearch\(regex, getElementSearchParts\(el, summary\)\)/, "content findElements should classify field-level matches");
-  assert.match(contentScript, /\.sort\(compareElementCandidates\)/, "content findElements should rank candidates before returning");
+  assert.match(contentScript, /orderElementMatches\(matches, \(?item\)? => item\.tier\)/, "content findElements should use the shared locator match order");
   assert.match(contentScript, /matchKind/, "content findElements should expose matchKind");
-  assert.match(contentScript, /score: Math\.round\(score\)/, "content findElements should expose a rounded score");
+  assert.doesNotMatch(contentScript, /scoreElementCandidate|compareElementCandidates/, "content findElements should not rank by layout heuristics");
   assert.match(contentScript, /cssEscapeIdent\(current\.id\)/, "absolute selectors should escape element ids");
   assert.match(contentScript, /cssEscapeIdent\(cls\)/, "absolute selectors should escape class names");
   assert.match(contentScript, /summary\.actionable = isActionableElement\(el\)/, "find element summaries should expose actionability");

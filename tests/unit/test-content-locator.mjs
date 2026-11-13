@@ -267,6 +267,104 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
   assert.equal(documentRoot.element.tag, "body");
 });
 
+const newsHtml = `<div id="itn" style="width:640px">
+  <h2>In the news</h2>
+  <div style="float:right"><a id="image" href="/wiki/File:Cover.jpg"><img alt="Cover" width="220" height="160"
+    src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a></div>
+  <ul>
+    <li><b><a id="book" href="/wiki/The_End">The End of Everything</a></b> by <a id="author" href="/wiki/MJH">M. John Harrison</a>
+      wins the <a id="booker" href="/wiki/Booker">Booker Prize</a>.</li>
+    <li><a id="paper" href="/wiki/NG">Novaya Gazeta</a> is fined.</li>
+    <li><span><span><small><a id="deep" href="/wiki/Jaros">Peter Jaroš</a></small></span></span> dies.</li>
+  </ul>
+  <p><small><a id="timeline" href="/wiki/Timeline">timeline</a></small> ·
+    <span><span><small><a id="booker-again" href="/wiki/Booker">Booker Prize</a></small></span></span></p>
+  <a id="hidden" href="/wiki/Hidden" hidden>Booker Prize</a>
+  <div id="itn-shadow"></div>
+</div>`;
+
+/** Element ids in find_elements order and in locator nth order (nth = 0, 1, ... until no match). */
+async function findAndNthOrder(target, findArgs, locator) {
+  return target.evaluate(async ({ findArgs, locator }) => {
+    const label = node => node?.id || node?.textContent || null;
+    const nodes = async refs => window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: refs });
+    const found = await window.callContent("findElements", { limit: 100, ...findArgs });
+    const located = [];
+    for (let nth = 0; locator && nth < 100; nth += 1) {
+      const result = await window.callContent("resolveLocator", { locator: { ...locator, nth } });
+      if (!result.element) break;
+      located.push(result.element._elementRef);
+    }
+    return {
+      find: (await nodes(found.results.map(item => item._elementRef))).map(label),
+      nth: (await nodes(located)).map(label),
+      matchKinds: found.results.map(item => item.matchKind),
+    };
+  }, { findArgs, locator });
+}
+
+async function installNews(target) {
+  await target.evaluate(html => {
+    document.body.insertAdjacentHTML("beforeend", html);
+    document.querySelector("#itn-shadow").attachShadow({ mode: "open" }).innerHTML = '<a id="shadow-link" href="/wiki/Shadow">Shadow story</a>';
+  }, newsHtml);
+}
+
+const newsLinks = ["image", "book", "author", "booker", "paper", "deep", "timeline", "booker-again", "hidden", "shadow-link"];
+
+test("structural queries list find results in locator nth order, which is document order", async () => {
+  await installNews(page);
+  const all = await findAndNthOrder(page, { selector: "#itn", roles: ["link"], includeHidden: true }, { role: "link", within: "css:#itn" });
+  assert.deepEqual(all.nth, newsLinks, "nth follows document order, including open shadow content and hidden nodes");
+  assert.deepEqual(all.find, all.nth, "find results[i] is locator nth i");
+  const visible = await findAndNthOrder(page, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" });
+  assert.deepEqual(visible.find, newsLinks.filter(id => id !== "hidden"), "skipping hidden matches keeps the shared order");
+});
+
+test("name queries share one order between find and locator nth", async () => {
+  await installNews(page);
+  const exact = await findAndNthOrder(page, { selector: "#itn", roles: ["link"], name: "Booker Prize", includeHidden: true },
+    { role: "link", name: "Booker Prize", within: "css:#itn" });
+  assert.deepEqual(exact.nth, ["booker", "booker-again"], "a hidden link has no accessible name");
+  assert.deepEqual(exact.find, exact.nth);
+  assert.deepEqual(await resolve({ role: "link", name: "Booker Prize", within: "css:#itn" }), { matched: 2 });
+});
+
+test("fuzzy name and pattern queries list whole, then prefix, then other matches, each in document order", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<nav id="prizes">
+    <a id="nobel" href="/nobel">Nobel Peace Prize</a><a id="money" href="/money">Prize money</a>
+    <a id="winners" href="/prize-winners">Winners</a><a id="prize" href="/prize">Prize</a>
+    <a id="booker" href="/booker">Booker Prize</a><a id="money-again" href="/money-2">Prize money</a></nav>`));
+  const fuzzy = await findAndNthOrder(page, { selector: "#prizes", roles: ["link"], name: "Prize", exact: false },
+    { role: "link", name: "Prize", exact: false, within: "css:#prizes" });
+  assert.deepEqual(fuzzy.nth, ["prize", "money", "money-again", "nobel", "booker"]);
+  assert.deepEqual(fuzzy.find, fuzzy.nth, "find and locator nth rank fuzzy matches identically");
+  const strict = await resolve({ role: "link", name: "Prize", exact: false, within: "css:#prizes" });
+  assert.deepEqual(strict, { matched: 5 }, "a best match does not resolve ambiguity without nth");
+
+  const pattern = await findAndNthOrder(page, { selector: "#prizes", roles: ["link"], pattern: "prize" });
+  assert.deepEqual(pattern.find, ["prize", "money", "money-again", "nobel", "booker", "winners"]);
+  assert.deepEqual(pattern.matchKinds, ["name", "name", "name", "name", "name", "href"],
+    "an attribute-only pattern match ranks after name and text matches");
+});
+
+test("frame documents use the same find and locator nth order", async () => {
+  await page.evaluate(html => {
+    const frame = document.createElement("iframe");
+    frame.srcdoc = html;
+    document.body.append(frame);
+  }, newsHtml);
+  const frame = await (await page.locator("iframe").elementHandle()).contentFrame();
+  await frame.waitForSelector("#itn");
+  await installContent(frame);
+  await frame.evaluate(() => {
+    document.querySelector("#itn-shadow").attachShadow({ mode: "open" }).innerHTML = '<a id="shadow-link" href="/wiki/Shadow">Shadow story</a>';
+  });
+  const order = await findAndNthOrder(frame, { selector: "#itn", roles: ["link"], includeHidden: true }, { role: "link", within: "css:#itn" });
+  assert.deepEqual(order.nth, newsLinks);
+  assert.deepEqual(order.find, order.nth);
+});
+
 test("invalid queries fail before selection", async () => {
   assert.equal((await resolve({ target: "css:[" })).code, "INVALID_SELECTOR");
   assert.equal((await resolve({ role: "button", nth: -1 })).code, "INVALID_ELEMENT_LOCATOR");

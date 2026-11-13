@@ -48,31 +48,61 @@ function cssMatches(root: Element | Document, elements: Element[], target: strin
   }
 }
 
+/** How a match covers a field value: 0 the whole value, 1 its start, 2 elsewhere. */
+export function matchTier(value: string, index: number, length: number): number {
+  if (index !== 0) return 2;
+  return length === value.length ? 0 : 1;
+}
+
+/**
+ * The one match order shared by locator nth and find_elements: ascending tier, ties in tree order.
+ * Only fuzzy matches (exact: false or a find pattern) carry a nonzero tier.
+ */
+export function orderElementMatches<T>(matches: T[], tier: (match: T) => number): T[] {
+  return matches.map((match, order) => ({ match, order, tier: tier(match) }))
+    .sort((a, b) => a.tier - b.tier || a.order - b.order)
+    .map(entry => entry.match);
+}
+
 /**
  * The field matcher shared by locators and find_elements. name and text compare whitespace-normalized
  * values exactly (case-sensitive) unless exact is false, which matches a substring. Unless the caller
  * has already narrowed candidates, a text-only query keeps the smallest matching nodes rather than every
- * ancestor whose aggregate text contains the phrase.
+ * ancestor whose aggregate text contains the phrase. Matches are returned in orderElementMatches order.
  */
 export function matchElementQuery(
   candidates: Element[], query: Pick<ElementLocator, "role" | "name" | "text" | "exact">,
   semantics: ElementSemantics, narrowed = false,
 ): Element[] {
-  const matchesText = (actual: string, expected: string) => query.exact === false
-    ? normalize(actual).includes(normalize(expected)) : normalize(actual) === normalize(expected);
-  const matches = candidates.filter(element => element.isConnected
-    && (query.role === undefined || semantics.role(element) === query.role)
-    && (query.name === undefined || matchesText(semantics.name(element), query.name))
-    && (query.text === undefined || matchesText(element.textContent || "", query.text)));
-  if (query.text === undefined || narrowed || query.role !== undefined || query.name !== undefined) return matches;
+  const fieldTier = (actual: string, expected: string) => {
+    const value = normalize(actual);
+    const wanted = normalize(expected);
+    if (query.exact !== false) return value === wanted ? 0 : -1;
+    const index = value.indexOf(wanted);
+    return index < 0 ? -1 : matchTier(value, index, wanted.length);
+  };
+  const tiers = new Map<Element, number>();
+  const matches = candidates.filter(element => {
+    if (!element.isConnected || query.role !== undefined && semantics.role(element) !== query.role) return false;
+    const name = query.name === undefined ? 0 : fieldTier(semantics.name(element), query.name);
+    if (name < 0) return false;
+    const text = query.text === undefined ? 0 : fieldTier(element.textContent || "", query.text);
+    if (text < 0) return false;
+    tiers.set(element, Math.max(name, text));
+    return true;
+  });
+  const byTier = (element: Element) => tiers.get(element) ?? 0;
+  if (query.text === undefined || narrowed || query.role !== undefined || query.name !== undefined) {
+    return orderElementMatches(matches, byTier);
+  }
   const ancestors = new Set<Element>();
   for (const element of matches) {
     for (let parent = element.parentElement; parent; parent = parent.parentElement) ancestors.add(parent);
   }
-  return matches.filter(element => !ancestors.has(element));
+  return orderElementMatches(matches.filter(element => !ancestors.has(element)), byTier);
 }
 
-/** Strict queries keep tree order and hidden nodes; discovery ranking is deliberately separate. */
+/** Strict queries keep hidden nodes; nth indexes the shared match order, and ambiguity depends only on the count. */
 export function resolveElementLocator(
   root: Element | Document, locator: ElementLocator, semantics: ElementSemantics,
   { matchSelf = false, all = false, limit = 20 }: { matchSelf?: boolean; all?: boolean; limit?: number } = {},
