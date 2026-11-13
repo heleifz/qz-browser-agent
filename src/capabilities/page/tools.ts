@@ -242,123 +242,160 @@ registerTool({
   },
 });
 
+const findElementsAliases = { target: "within", selector: "within", scope: "within" };
+const findElementsCompatArgs = ({ waitFor, ...args }: Record<string, unknown>) => waitFor === "match" && args.waitForMatch === undefined ? { ...args, waitForMatch: true } : waitFor === undefined ? args : { ...args, waitFor };
+const findElementsBehavior = { parallelRead: true, targetLookup: "openShadow", passiveWait: (args: Readonly<Record<string, unknown>>) => args.waitForMatch === true,
+  uidTargets: (args: Readonly<Record<string, unknown>>) => locatorReferences(args.locator),
+  timeoutResult: (args: Readonly<Record<string, unknown>>) => args.waitForMatch === true || args.locator ? undefined : { kind: "read" as const, pending: "element scan" } } as const;
+const findElementsParameters = () => ({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
+    name: elementLocatorSchema.properties.name,
+    text: elementLocatorSchema.properties.text,
+    exact: elementLocatorSchema.properties.exact,
+    pattern: { type: "string", description: toolT("findElementsPattern") },
+    flags: { type: "string", description: toolT("findElementsFlags") },
+    within: { type: "string", description: toolT("findElementsWithin") },
+    locator: elementLocatorSchema,
+    countOnly: { type: "boolean", description: "With locator, return only the current match count." },
+    role: { type: "string", description: toolT("findElementsRole") },
+    roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
+    tag: { type: "string", description: toolT("findElementsTag") },
+    tags: { type: "array", items: { type: "string" }, description: toolT("findElementsTags") },
+    type: { type: "string", description: toolT("findElementsType") },
+    types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
+    limit: { type: "number", description: toolT("findElementsLimit") },
+    includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
+    waitForMatch: { type: "boolean", description: toolT("findElementsWaitForMatch") },
+    timeout: { type: "number", exclusiveMinimum: 0, maximum: 300, description: toolT("findElementsTimeout") },
+  },
+  required: ["tabRef"],
+} as const);
+const findElementsTimeout = (args: Record<string, unknown>) => args.waitForMatch === true ? { ...pageWaitTimeout(args), maxMs: 300000 } : { defaultMs: 30000, maxMs: 300000 };
+function validateFindElementsArgs(args: Record<string, unknown>): undefined {
+  for (const [single, plural] of [["role", "roles"], ["tag", "tags"], ["type", "types"]]) {
+    if (args[single] !== undefined && args[plural] !== undefined) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsFilterConflict", { single, plural }),
+        { details: { invalidFields: [single, plural] } });
+    }
+  }
+  const literal = ["name", "text", "exact"].filter(key => args[key] !== undefined);
+  const regex = ["pattern", "flags"].filter(key => args[key] !== undefined);
+  if (literal.length && regex.length) {
+    throw toolError("INVALID_ARGUMENTS", toolT("findElementsMatchConflict"), { details: { invalidFields: [...literal, ...regex] } });
+  }
+  for (const field of ["name", "text"]) {
+    if (typeof args[field] === "string" && !args[field].trim()) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsEmptyQuery", { field }), { details: { invalidFields: [field] } });
+    }
+  }
+  if (args.locator !== undefined) {
+    try { validateElementLocator(args.locator); }
+    catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String((error as Error).message)); }
+    if (["within", "name", "text", "exact", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findElementsLocatorConflict"));
+    }
+  } else if (args.countOnly === true) {
+    throw new ToolExecutionError("INVALID_ARGUMENTS", "countOnly requires locator.");
+  }
+}
+interface FindElementsInput {
+  tabId: number; name?: string; text?: string; exact?: boolean; pattern?: string; flags?: string; within?: string;
+  locator?: unknown; countOnly?: boolean; role?: string; roles?: readonly string[]; tag?: string; tags?: readonly string[];
+  type?: string; types?: readonly string[]; limit?: number; includeHidden?: boolean; waitForMatch?: boolean; timeout?: number;
+}
+/** all returns every match as {results}, capped only by an explicit limit; otherwise the find_elements result. */
+async function findElements({ tabId, name, text, exact, pattern = "", flags = "i", within: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit, includeHidden = false, waitForMatch = false, timeout = 10 }: FindElementsInput,
+  signal: AbortSignal | undefined, context: ToolContext, all: boolean) {
+  const waiting = waitForMatch === true;
+  if (waiting && pattern) {
+    try { new RegExp(pattern, flags); }
+    catch { throw Object.assign(new ToolExecutionError("INVALID_REGEX", toolT("findElementsInvalidRegex"), { pattern, flags }),
+      { hint: toolT("findElementsInvalidRegexHint") }); }
+  }
+  const scan = async (observing: ToolContext) => {
+    observing.signal?.throwIfAborted();
+    if (locator) {
+      const query = locator as ElementLocator;
+      if (countOnly) {
+        const count = await countLocatorMatches(tabId, query, observing);
+        observing.signal?.throwIfAborted();
+        return waiting && count === 0 ? undefined : { count };
+      }
+      const { count, results } = await findLocatorElements(tabId, query, observing, Math.max(1, Math.min(100, Number(limit) || 20)));
+      observing.signal?.throwIfAborted();
+      return waiting && count === 0 ? undefined : { results, total: count, truncated: count > results.length };
+    }
+    const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
+    if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
+    const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
+      ...Object.fromEntries(Object.entries({ name, text, exact }).filter(([, value]) => value !== undefined)),
+      pattern, flags, selector: scopedSelector(target), roles: role === undefined ? roles : [role],
+      tags: tag === undefined ? tags : [tag], types: type === undefined ? types : [type], includeHidden,
+      ...(all ? { all, ...(limit === undefined ? {} : { limit }) } : { limit: limit ?? 20 }),
+    }, call, observing));
+    observing.signal?.throwIfAborted();
+    if (waiting) {
+      if (result.code || result.error) throw result;
+      if (!Array.isArray(result.results)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element search response.");
+      if (!result.results.length) return undefined;
+    }
+    const { matches, resultTruncated, ...found } = asRecord(await addElementTargetsToFindResult(result, target.tabId, observing, target.ref));
+    if (all) return found;
+    return Array.isArray(found.results) ? { ...found, total: Number(matches) || found.results.length, truncated: resultTruncated === true } : found;
+  };
+  if (!waiting) return scan(context);
+  return runWaitWithTrigger({ tool: all ? "find_all_elements" : "find_elements", timeoutMs: timeout * 1000, signal, context,
+    details: { ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
+      ...(selector ? { within: selector } : {}), ...(pattern ? { pattern } : {}) },
+  }, current => {
+    const observing = Object.assign(Object.create(context), { signal: current });
+    return pollState(current, async () => {
+      try { return await scan(observing); }
+      catch (error) {
+        if (current.aborted || isCdpFallbackForbiddenError(error)) throw error;
+        const code = String(asRecord(error).code || "");
+        if ((code === "ELEMENT_NOT_FOUND" && !selector.trim().startsWith("uid:"))
+          || ["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) return undefined;
+        throw error;
+      }
+    });
+  });
+}
+
 registerTool({
   name: "find_elements",
-  argumentAliases: { target: "within", selector: "within", scope: "within" },
-  compatArgs: ({ waitFor, ...args }) => waitFor === "match" && args.waitForMatch === undefined ? { ...args, waitForMatch: true } : waitFor === undefined ? args : { ...args, waitFor },
-  behavior: { parallelRead: true, targetLookup: "openShadow", passiveWait: args => args.waitForMatch === true,
-    uidTargets: args => locatorReferences(args.locator),
-    timeoutResult: args => args.waitForMatch === true || args.locator ? undefined : { kind: "read", pending: "element scan" } },
+  argumentAliases: findElementsAliases,
+  compatArgs: findElementsCompatArgs,
+  behavior: findElementsBehavior,
   get description() { return toolT("findElementsDescription"); },
-  get parameters() { return {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      tabRef: { type: ["integer", "string"], description: toolT("readArticleTabId") },
-      name: elementLocatorSchema.properties.name,
-      text: elementLocatorSchema.properties.text,
-      exact: elementLocatorSchema.properties.exact,
-      pattern: { type: "string", description: toolT("findElementsPattern") },
-      flags: { type: "string", description: toolT("findElementsFlags") },
-      within: { type: "string", description: toolT("findElementsWithin") },
-      locator: elementLocatorSchema,
-      countOnly: { type: "boolean", description: "With locator, return only the current match count." },
-      role: { type: "string", description: toolT("findElementsRole") },
-      roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
-      tag: { type: "string", description: toolT("findElementsTag") },
-      tags: { type: "array", items: { type: "string" }, description: toolT("findElementsTags") },
-      type: { type: "string", description: toolT("findElementsType") },
-      types: { type: "array", items: { type: "string" }, description: toolT("findElementsTypes") },
-      limit: { type: "number", description: toolT("findElementsLimit") },
-      includeHidden: { type: "boolean", description: toolT("findElementsIncludeHidden") },
-      waitForMatch: { type: "boolean", description: toolT("findElementsWaitForMatch") },
-      timeout: { type: "number", exclusiveMinimum: 0, maximum: 300, description: toolT("findElementsTimeout") },
-    },
-    required: ["tabRef"],
-  } as const; },
+  get parameters() { return findElementsParameters(); },
   page: "readOnly",
-  timeout: args => args.waitForMatch === true ? { ...pageWaitTimeout(args), maxMs: 300000 } : { defaultMs: 30000, maxMs: 300000 },
-  validateArgs: args => {
-    for (const [single, plural] of [["role", "roles"], ["tag", "tags"], ["type", "types"]]) {
-      if (args[single] !== undefined && args[plural] !== undefined) {
-        throw toolError("INVALID_ARGUMENTS", toolT("findElementsFilterConflict", { single, plural }),
-          { details: { invalidFields: [single, plural] } });
-      }
-    }
-    const literal = ["name", "text", "exact"].filter(key => args[key] !== undefined);
-    const regex = ["pattern", "flags"].filter(key => args[key] !== undefined);
-    if (literal.length && regex.length) {
-      throw toolError("INVALID_ARGUMENTS", toolT("findElementsMatchConflict"), { details: { invalidFields: [...literal, ...regex] } });
-    }
-    for (const field of ["name", "text"]) {
-      if (typeof args[field] === "string" && !args[field].trim()) {
-        throw toolError("INVALID_ARGUMENTS", toolT("findElementsEmptyQuery", { field }), { details: { invalidFields: [field] } });
-      }
-    }
-    if (args.locator !== undefined) {
-      try { validateElementLocator(args.locator); }
-      catch (error) { throw new ToolExecutionError("INVALID_ELEMENT_LOCATOR", String((error as Error).message)); }
-      if (["within", "name", "text", "exact", "pattern", "flags", "role", "roles", "tag", "tags", "type", "types", "includeHidden"].some(key => Object.hasOwn(args, key))) {
-        throw toolError("INVALID_ARGUMENTS", toolT("findElementsLocatorConflict"));
-      }
-    } else if (args.countOnly === true) {
-      throw new ToolExecutionError("INVALID_ARGUMENTS", "countOnly requires locator.");
-    }
+  timeout: findElementsTimeout,
+  validateArgs: validateFindElementsArgs,
+  execute: (args, signal, context = {}) => findElements(args, signal, context, false),
+});
+
+// The script SDK's page.find: the find_elements query without its result limit or count fields.
+registerTool({
+  name: "find_all_elements",
+  hidden: true,
+  requires: { tools: ["find_elements"] },
+  argumentAliases: findElementsAliases,
+  compatArgs: findElementsCompatArgs,
+  behavior: findElementsBehavior,
+  description: "Return every element matching a find_elements query, in locator nth order, as {results}. limit optionally caps the list.",
+  get parameters() {
+    const { locator: _locator, countOnly: _countOnly, limit: _limit, ...properties } = findElementsParameters().properties;
+    return { type: "object", additionalProperties: false, properties: { ...properties,
+      limit: { type: "number", description: "Optional maximum number of matches to return." } }, required: ["tabRef"] } as const;
   },
-  execute: async ({ tabId, name, text, exact, pattern = "", flags = "i", within: selector = "", locator, countOnly = false, role, roles = [], tag, tags = [], type, types = [], limit = 20, includeHidden = false, waitForMatch = false, timeout = 10 }, signal, context = {}) => {
-    const waiting = waitForMatch === true;
-    if (waiting && pattern) {
-      try { new RegExp(pattern, flags); }
-      catch { throw Object.assign(new ToolExecutionError("INVALID_REGEX", toolT("findElementsInvalidRegex"), { pattern, flags }),
-        { hint: toolT("findElementsInvalidRegexHint") }); }
-    }
-    const scan = async (observing: ToolContext) => {
-      observing.signal?.throwIfAborted();
-      if (locator) {
-        const query = locator as ElementLocator;
-        if (countOnly) {
-          const count = await countLocatorMatches(tabId, query, observing);
-          observing.signal?.throwIfAborted();
-          return waiting && count === 0 ? undefined : { count };
-        }
-        const { count, results } = await findLocatorElements(tabId, query, observing, Math.max(1, Math.min(100, Number(limit) || 20)));
-        observing.signal?.throwIfAborted();
-        return waiting && count === 0 ? undefined : { results, total: count, truncated: count > results.length };
-      }
-      const target = await resolveSelectorTarget(tabId, selector || "body", 0, observing);
-      if (!selector && target.tabId) await waitForParsedDocument(target.tabId, observing);
-      const result = await readBound(target, observing, call => sendToContent(target.tabId, "findElements", {
-        ...Object.fromEntries(Object.entries({ name, text, exact }).filter(([, value]) => value !== undefined)),
-        pattern, flags, selector: scopedSelector(target), roles: role === undefined ? roles : [role],
-        tags: tag === undefined ? tags : [tag], types: type === undefined ? types : [type], limit, includeHidden,
-      }, call, observing));
-      observing.signal?.throwIfAborted();
-      if (waiting) {
-        if (result.code || result.error) throw result;
-        if (!Array.isArray(result.results)) throw new ToolExecutionError("INVALID_CONTENT_RESPONSE", "Invalid element search response.");
-        if (!result.results.length) return undefined;
-      }
-      const { matches, resultTruncated, ...found } = asRecord(await addElementTargetsToFindResult(result, target.tabId, observing, target.ref));
-      return Array.isArray(found.results) ? { ...found, total: Number(matches) || found.results.length, truncated: resultTruncated === true } : found;
-    };
-    if (!waiting) return scan(context);
-    return runWaitWithTrigger({ tool: "find_elements", timeoutMs: timeout * 1000, signal, context,
-      details: { ...(context.requestedTabRef == null ? {} : { tabRef: context.requestedTabRef }),
-        ...(selector ? { within: selector } : {}), ...(pattern ? { pattern } : {}) },
-    }, current => {
-      const observing = Object.assign(Object.create(context), { signal: current });
-      return pollState(current, async () => {
-        try { return await scan(observing); }
-        catch (error) {
-          if (current.aborted || isCdpFallbackForbiddenError(error)) throw error;
-          const code = String(asRecord(error).code || "");
-          if ((code === "ELEMENT_NOT_FOUND" && !selector.trim().startsWith("uid:"))
-            || ["CONTENT_SCRIPT_NOT_READY", "CONTENT_SCRIPT_MESSAGE_FAILED", "EMPTY_CONTENT_RESPONSE"].includes(code)) return undefined;
-          throw error;
-        }
-      });
-    });
-  },
+  page: "readOnly",
+  timeout: findElementsTimeout,
+  validateArgs: validateFindElementsArgs,
+  execute: (args, signal, context = {}) => findElements(args, signal, context, true),
 });
 
 registerTool({

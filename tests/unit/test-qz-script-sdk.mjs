@@ -138,20 +138,24 @@ test('URL waits preserve string patterns and lower RegExp source and flags witho
   assert.equal(calls.length, 2);
 });
 
-test('find returns results with total and truncated while raw tools keep query metadata', async () => {
+test('find resolves to a plain Array of every match while raw tools keep query metadata', async () => {
   const elements = [{ target: 'uid:t1.snap.1', name: 'First' }, { target: 'uid:t1.snap.2', name: 'Second' }];
-  const response = { results: elements, total: 5, truncated: true, limit: 2, searched: 9 };
-  const { qz, calls } = fixture(async (_, args) => args.pattern === 'missing' ? { results: [], total: 0, truncated: false } : response);
+  const raw = { results: elements.slice(0, 1), total: 2, truncated: true, limit: 1, searched: 9 };
+  const { qz, calls } = fixture(async (name, args) => name === 'find_elements' ? raw
+    : { results: args.pattern === 'missing' ? [] : elements });
   const page = qz.tab('page');
-  const found = await page.find({ role: 'link', limit: 2 });
-  assert.deepEqual(found, { results: elements, total: 5, truncated: true });
-  assert.deepEqual(found.results.slice(0, 1).map(element => element.name), ['First']);
-  assert.deepEqual(JSON.parse(JSON.stringify(found)), { results: elements, total: 5, truncated: true });
-  const missing = await page.find({ pattern: 'missing' });
-  assert.deepEqual(missing, { results: [], total: 0, truncated: false });
-  assert.equal(await qz.call('find_elements', { tabRef: 'page', role: 'link', limit: 2 }), response);
+  const found = await page.find({ role: 'link' });
+  assert.equal(Array.isArray(found), true);
+  assert.deepEqual(found, elements);
+  assert.deepEqual(found.slice(0, 1).map(element => element.name), ['First']);
+  assert.deepEqual([...found].map(element => element.target), ['uid:t1.snap.1', 'uid:t1.snap.2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(found)), elements);
+  assert.deepEqual(await page.find({ pattern: 'missing' }), []);
+  assert.equal(await qz.call('find_elements', { tabRef: 'page', role: 'link', limit: 1 }), raw);
   assert.throws(() => page.find({ countOnly: true }), { code: 'INVALID_ARGUMENTS' });
-  assert.equal(calls.length, 3, 'count-only requests must use locator.count or the raw tool');
+  assert.deepEqual(calls.map(call => call.name), ['find_all_elements', 'find_all_elements', 'find_elements'],
+    'count-only requests must use locator.count or the raw tool');
+  assert.deepEqual(calls[0].args, { tabRef: 'page', role: 'link' }, 'find sends no result limit');
 });
 
 test('find preserves string filters and serializes RegExp without mutating caller options or matcher state', async () => {
@@ -163,8 +167,8 @@ test('find preserves string filters and serializes RegExp without mutating calle
   const filters = Object.freeze({ pattern, role: 'button', limit: 3 });
   await page.find(filters);
   assert.deepEqual(calls, [
-    { name: 'find_elements', args: { tabRef: 'page', pattern: '^Download$', flags: 'i', role: 'link' } },
-    { name: 'find_elements', args: { tabRef: 'page', pattern: pattern.source, flags: 'giu', role: 'button', limit: 3 } },
+    { name: 'find_all_elements', args: { tabRef: 'page', pattern: '^Download$', flags: 'i', role: 'link' } },
+    { name: 'find_all_elements', args: { tabRef: 'page', pattern: pattern.source, flags: 'giu', role: 'button', limit: 3 } },
   ]);
   assert.equal(filters.pattern, pattern);
   assert.equal(pattern.lastIndex, 7);
@@ -261,31 +265,31 @@ for (const mode of ['development', 'production']) {
       const found = await page.find({pattern,role:"button"});
       await tools.legacy({value:1});
       trace("selected");
-      return {title, count: await page.locator({role:"option"}).count(), found: found.results.slice(0,1).map(element => element.target), lastIndex: pattern.lastIndex};
+      return {title, count: await page.locator({role:"option"}).count(), isArray: Array.isArray(found), found: found.slice(0,1).map(element => element.target), lastIndex: pattern.lastIndex};
     `, { strictResult: true, onMessage(message, reply) {
       if (message.type !== 'tool_call') return;
       calls.push(message);
       reply({ type: 'tool_response', callId: message.callId, response: { ok: true, result:
-        message.toolName === 'evaluate' ? 'Map' : message.toolName === 'find_elements'
-          ? message.args.countOnly ? { count: 4 } : { results: [{ target: 'uid:t1.snap.1' }], total: 1, truncated: false } : {} } });
+        message.toolName === 'evaluate' ? 'Map' : message.toolName === 'find_elements' ? { count: 4 }
+          : message.toolName === 'find_all_elements' ? { results: [{ target: 'uid:t1.snap.1' }, { target: 'uid:t1.snap.2' }] } : {} } });
     } });
     assert.equal(result.ok, true);
-    assert.deepEqual(result.result, { title: 'Map', count: 4, found: ['uid:t1.snap.1'], lastIndex: 7 });
+    assert.deepEqual(result.result, { title: 'Map', count: 4, isArray: true, found: ['uid:t1.snap.1'], lastIndex: 7 });
     assert.deepEqual(result.trace.map(row => row.message), ['selected']);
-    assert.deepEqual(calls.map(call => call.toolName), ['act_on_element', 'evaluate', 'wait_for_url', 'find_elements', 'legacy', 'find_elements']);
+    assert.deepEqual(calls.map(call => call.toolName), ['act_on_element', 'evaluate', 'wait_for_url', 'find_all_elements', 'legacy', 'find_elements']);
     assert.equal(typeof calls[1].args.code, 'string');
     assert.match(calls[1].args.code, /document.title/);
     assert.deepEqual(calls[2].args, { tabRef: 'map', urlPattern: '#done$', flags: 'i', timeout: 2 });
     assert.deepEqual(calls[3].args, { tabRef: 'map', pattern: '^Download$', flags: 'gi', role: 'button' });
 
-    const returned = await runInnerWorker(compiled, 'return await qz.tab("map").find({role:"button",limit:1});', {
+    const returned = await runInnerWorker(compiled, 'return await qz.tab("map").find({role:"button"});', {
       strictResult: true, onMessage(message, reply) {
         if (message.type === 'tool_call') reply({ type: 'tool_response', callId: message.callId, response: { ok: true,
-          result: { results: [{ target: 'uid:t1.snap.1' }], total: 3, truncated: true, limit: 1 } } });
+          result: { results: [{ target: 'uid:t1.snap.1' }, { target: 'uid:t1.snap.2' }, { target: 'uid:t1.snap.3' }] } } });
       } });
     assert.equal(returned.result.ok, true);
-    assert.deepEqual(returned.result.result, { results: [{ target: 'uid:t1.snap.1' }], total: 3, truncated: true },
-      'a returned find result keeps its truncation fields through script serialization');
+    assert.deepEqual(returned.result.result, [{ target: 'uid:t1.snap.1' }, { target: 'uid:t1.snap.2' }, { target: 'uid:t1.snap.3' }],
+      'a returned find result is the element array through script serialization');
 
     const conflictingPattern = await runInnerWorker(compiled,
       'return qz.tab("map").find({pattern:/download/i,flags:"i"});', { strictResult: true });

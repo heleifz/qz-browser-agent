@@ -245,12 +245,14 @@ function assertFindElementsFilterContract() {
   assert.doesNotMatch(resolveToolDefinition("find_elements").description, /可操作候选元素/, "find_elements should not describe the candidate set as action-only");
   assert.match(resolveToolDefinition("find_elements").description, /不传 name、text 或 pattern 时会列出 within\/role\/roles\/tag\/tags\/type\/types 命中的候选/, "find_elements should explain container-scoped candidate discovery");
   assert.match(resolveToolDefinition("find_elements").description, /actionable\/inViewport/, "find_elements should document rank signals returned in summaries");
-  assert.match(block, /pattern = ""/, "find_elements runtime should default pattern to an empty filter");
+  assert.match(block, /findElements\(args, signal, context, false\)/, "find_elements runs the shared scan with its result limit");
+  assert.match(toolBlock("find_all_elements"), /findElements\(args, signal, context, true\)/, "the SDK find tool runs the same scan for every match");
+  assert.match(pageElementTools, /async function findElements\(\{[^)]*pattern = ""/, "the shared find scan should default pattern to an empty filter");
   assert.doesNotMatch(contentScript, /MISSING_PATTERN/, "content findElements should not reject empty pattern");
   assert.match(contentScript, /const patternText = String\(pattern \|\| ""\);/, "content findElements should preserve literal whitespace in a pattern");
-  assert.match(contentScript, /const maxResults = clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp result limit");
+  assert.match(contentScript, /const maxResults = !all \? clampNumber\(limit, 1, 100, 20\)/, "content findElements should clamp the find_elements result limit");
   assert.match(contentScript, /eachElementWithinOpenShadow\(scope,\s*\(element\)\s*=>\s*\{\s*candidates\.push\(element\);\s*\}\)/, "content findElements should keep a broad DOM candidate set");
-  assert.match(contentScript, /matchElementSearch\(regex, getElementSearchParts\(el, summary\)\)/, "content findElements should classify field-level matches");
+  assert.match(contentScript, /matchElementSearch\(regex, regex \? getElementSearchParts\(el, summary\) : \[\]\)/, "content findElements should classify field-level matches");
   assert.match(contentScript, /orderElementMatches\(matches, \(?item\)? => item\.tier\)/, "content findElements should use the shared locator match order");
   assert.match(contentScript, /matchKind/, "content findElements should expose matchKind");
   assert.doesNotMatch(contentScript, /scoreElementCandidate|compareElementCandidates/, "content findElements should not rank by layout heuristics");

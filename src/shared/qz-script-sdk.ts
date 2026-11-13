@@ -14,8 +14,6 @@ type ActionOptions = { expect?: "navigation" | "popup"; timeout?: number; tabAli
 type FindQuery = Arguments & Pick<ElementLocator, "role" | "name" | "text" | "exact" | "within"> & {
   pattern?: string | RegExp; flags?: string; limit?: number; includeHidden?: boolean; waitForMatch?: boolean; timeout?: number;
 };
-/** results holds up to limit observations; total counts every match; truncated means limit dropped some. */
-type FindResult = { results: ElementObservation[]; total: number; truncated: boolean };
 
 /** Stateless script bindings. Every operation uses the host's normal tool execution path. */
 export function createQzSdk(callTool: CallTool) {
@@ -119,13 +117,12 @@ export function createQzSdk(callTool: CallTool) {
       locator,
       goto(url: string, opts: Arguments = {}) { return call("navigate", { ...options(opts, ["url"]), url }); },
       read(opts: Arguments = {}) { return call("read_article", { limit: 4000, ...opts }); },
-      find(opts: FindQuery = {}): Promise<FindResult> {
+      /** Every match as an Array, in the order of page.locator({...query, nth}). */
+      find(opts: FindQuery = {}): Promise<ElementObservation[]> {
         const args = options(opts);
         if (Object.hasOwn(args, "countOnly")) return invalid("Use page.locator(query).count() to count matches.");
-        return call("find_elements", serializePattern(args, "pattern")).then(result => {
-          const { results, total, truncated } = result as FindResult;
-          return { results, total, truncated };
-        });
+        return call("find_all_elements", serializePattern(args, "pattern"))
+          .then(result => (result as { results: ElementObservation[] }).results);
       },
       axTree(opts: Arguments = {}) { return call("get_ax_tree", opts); },
       screenshot(opts: Arguments = {}) { return call("screenshot", opts); },

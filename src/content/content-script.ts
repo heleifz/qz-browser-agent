@@ -56,7 +56,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-12-find-query-fields";
+  const QZ_CONTENT_VERSION = "2026-11-13-find-all-matches";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -1759,10 +1759,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
     },
 
-    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], name, text, exact, limit = 20, includeHidden = false }) {
+    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], name, text, exact, limit, includeHidden = false, all = false }) {
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
-      const maxResults = clampNumber(limit, 1, 100, 20);
+      // all returns every match in one pass; it skips the O(n²) absolute selector, line ranges and hit tests.
+      const maxResults = !all ? clampNumber(limit, 1, 100, 20) : Number(limit) >= 1 ? Math.floor(Number(limit)) : Infinity;
 
       const patternText = String(pattern || "");
       let regex = null;
@@ -1788,14 +1789,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
         elementSemantics, Boolean(roleSet.size || tagSet.size || typeSet.size));
       const matches = [];
       for (const el of queried) {
-        const summary = getElementSummary(el);
-        const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
+        const summary = getElementSummary(el, { selector: !all });
+        const matchInfo = matchElementSearch(regex, regex ? getElementSearchParts(el, summary) : []);
         if (regex && !matchInfo.matched) continue;
         matches.push({ el, summary, ...matchInfo });
       }
 
-      const results = orderElementMatches(matches, item => item.tier)
-        .slice(0, maxResults)
+      const ordered = orderElementMatches(matches, item => item.tier).slice(0, maxResults);
+      if (all) return { results: ordered.map(({ el, summary, match, matchKind }) => ({ ...summary, _elementRef: rememberElement(el), match, matchKind })) };
+      const results = ordered
         .map(({ el, summary, match, matchKind }) => ({
           ...summary,
           _elementRef: rememberElement(el),
