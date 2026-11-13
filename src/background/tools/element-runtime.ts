@@ -195,20 +195,21 @@ function nodeKey(ref: ElementReference) {
 
 function registerElementRef(ref: ElementReference) {
   if (!ref?.uid) return;
-  cleanupElementRefs();
   const previous = elementRefRegistry.get(ref.uid);
   if (previous && nodeRefRegistry.get(nodeKey(previous)) === ref.uid) nodeRefRegistry.delete(nodeKey(previous));
   elementRefRegistry.set(ref.uid, { ...ref, createdAt: Date.now() });
   if (Number(ref.backendNodeId) > 0) nodeRefRegistry.set(nodeKey(ref), ref.uid);
 }
 
-/** All producers use this registration path; a CSS fallback is never advertised as a node UID. */
+/**
+ * All producers use this registration path; a CSS fallback is never advertised as a node UID.
+ * Callers run cleanupElementRefs once before and after a batch, keeping batch registration linear.
+ */
 function registerElementBinding(ref: ElementReference): ElementReference & { target: string } {
   const backendNodeId = Number(ref.backendNodeId);
   if (!Number.isInteger(backendNodeId) || backendNodeId <= 0) {
     return { ...ref, uid: undefined, target: elementTargetForSelector(ref.selector) };
   }
-  cleanupElementRefs();
   const snapshotId = String(ref.snapshotId || makeSnapshotId(Number(ref.tabId), { sessionId: ref.sessionId }));
   const scoped = { ...ref, snapshotId };
   const existing = nodeRefRegistry.get(nodeKey(scoped));
@@ -219,18 +220,18 @@ function registerElementBinding(ref: ElementReference): ElementReference & { tar
 
 function cleanupElementRefs() {
   const now = Date.now();
-  for (const [uid, ref] of elementRefRegistry.entries()) {
-    if (now - Number(ref.createdAt || 0) > ELEMENT_REF_TTL_MS) {
-      elementRefRegistry.delete(uid);
-      if (nodeRefRegistry.get(nodeKey(ref)) === uid) nodeRefRegistry.delete(nodeKey(ref));
-    }
+  const evict = (uid: string, ref: ElementReference) => {
+    elementRefRegistry.delete(uid);
+    if (nodeRefRegistry.get(nodeKey(ref)) === uid) nodeRefRegistry.delete(nodeKey(ref));
+  };
+  for (const [uid, ref] of elementRefRegistry) {
+    if (now - Number(ref.createdAt || 0) > ELEMENT_REF_TTL_MS) evict(uid, ref);
   }
-  while (elementRefRegistry.size > ELEMENT_REF_MAX) {
-    const first = elementRefRegistry.keys().next().value;
-    if (!first) break;
-    const ref = elementRefRegistry.get(first)!;
-    elementRefRegistry.delete(first);
-    if (nodeRefRegistry.get(nodeKey(ref)) === first) nodeRefRegistry.delete(nodeKey(ref));
+  // One iterator evicts the oldest entries; restarting keys() per eviction rescans deleted slots.
+  let excess = elementRefRegistry.size - ELEMENT_REF_MAX;
+  for (const [uid, ref] of elementRefRegistry) {
+    if (excess-- <= 0) break;
+    evict(uid, ref);
   }
 }
 
@@ -320,7 +321,8 @@ async function bindElementReferences(tabId: number, candidates: readonly Element
   const selectorBindings = new Map(selectorCandidates.map((item, index) => [item, selected.ids[index] || 0]));
   context.signal?.throwIfAborted();
   const snapshotId = makeSnapshotId(tabId, context);
-  return candidates.map(item => {
+  cleanupElementRefs();
+  const registered = candidates.map(item => {
     const binding = typeof item._elementRef === "string" ? bound.get(item._elementRef) : null;
     return registerElementBinding({ ...item, ...binding, tabId, sessionId: context.sessionId, pageUrl, documentId, snapshotId,
       frameId: binding?.frameId || scope?.frameId,
@@ -328,6 +330,8 @@ async function bindElementReferences(tabId: number, candidates: readonly Element
       backendNodeId: mode === "required" && item._elementRef ? binding?.backendNodeId
         : binding?.backendNodeId || item.backendNodeId || selectorBindings.get(item) || undefined });
   });
+  cleanupElementRefs();
+  return registered;
 }
 
 async function bindContentElementRefs(tabId: number, tokens: string[], context: ToolContext, scope?: ElementReference, mode: "bestEffort" | "required" = "bestEffort") {

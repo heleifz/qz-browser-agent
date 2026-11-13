@@ -55,6 +55,10 @@ const messages = defineMessages("page-tools", {
     "zh-CN": "name/text/exact 用于字面匹配，pattern/flags 用于正则匹配；请只使用其中一种。",
     en: "Use name/text/exact for literal matching or pattern/flags for a regular expression; pass only one kind.",
   },
+  findAllElementsLimit: {
+    "zh-CN": "limit 必须是正整数；省略 limit 则返回全部匹配。",
+    en: "limit must be a positive integer; omit limit to return every match.",
+  },
   findElementsEmptyQuery: {
     "zh-CN": "{field} 必须是非空字符串。",
     en: "{field} must be a non-empty string.",

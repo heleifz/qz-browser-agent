@@ -110,8 +110,8 @@ changes diagnostic data only, with the Worker and page execution boundaries pres
 The packaged SDK lowers find and URL-wait `RegExp` inputs to source and flags passed as data to
 the existing tools, preserving explicit flags and pattern whitespace. A returned Tab object supplies
 only its explicit `tabRef`; locator `css` becomes a `target` string before schema validation. These
-values do not become executable source or grant page ownership. SDK `find()` returns the existing
-`find_elements` `results`, `total`, and `truncated` fields as a plain object and
+values do not become executable source or grant page ownership. SDK `find()` runs the existing
+`find_elements` query without its result limit, returns every match as a plain array, and
 rejects `countOnly`; raw tool receipts remain unchanged. Locator actions accept only `expect`,
 `timeout`, `tabAlias` with a popup, and `submit` for fill, and compile `expect` to the existing
 wait-tool trigger; `scrollIntoView` and `page.scroll` lower to the existing element and page scroll

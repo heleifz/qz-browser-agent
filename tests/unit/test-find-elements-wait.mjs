@@ -16,13 +16,13 @@ const matched = { results: [{ target: "uid:t7.000001.1", role: "button", name: "
 const failure = code => new ToolExecutionError(code, code);
 const observed = ({ results, matches }) => ({ results, total: matches, truncated: false });
 
-function fixture(read = async () => empty) {
+function fixture(read = async () => empty, name = "find_elements") {
   let definition, reads = 0, bindings = 0;
   const controller = new AbortController(), seen = [];
   const authority = Symbol("authority");
   const context = { requestedTabRef: "page", signal: controller.signal, [authority]: "session-permit" };
   registerPageElementTools({
-    registerTool(value) { if (value.name === "find_elements") definition = value; },
+    registerTool(value) { if (value.name === name) definition = value; },
     ToolExecutionError,
     async resolveSelectorTarget(tabId, target, _index, observing) {
       assert.equal(observing[authority], "session-permit");
@@ -127,6 +127,30 @@ test("literal query fields reach the page only when supplied", async () => {
   assert.deepEqual(f.seen[1].params, { name: "Download", selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], limit: 20, includeHidden: false });
 });
 
+test("the SDK find tool asks the page for every match and returns only the result list", async () => {
+  const many = { results: Array.from({ length: 150 }, (_, i) => ({ target: `uid:t7.000001.${i}`, role: "link", name: `Item ${i}` })) };
+  const f = fixture(async () => many, "find_all_elements");
+  assert.equal(f.definition.hidden, true);
+  assert.deepEqual(f.definition.requires, { tools: ["find_elements"] });
+  assert.equal(Object.hasOwn(f.definition.parameters.properties, "locator"), false);
+  assert.equal(Object.hasOwn(f.definition.parameters.properties, "countOnly"), false);
+  assert.deepEqual(await f.run({ roles: ["link"] }), many);
+  await f.run({ roles: ["link"], limit: 3 });
+  assert.deepEqual(f.seen.map(({ params }) => params), [
+    { selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], includeHidden: false, all: true },
+    { selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], includeHidden: false, all: true, limit: 3 },
+  ]);
+  for (const limit of [0, -1, 1.5, Infinity, NaN, null, "3"]) {
+    assert.throws(() => f.definition.validateArgs({ tabId: 7, limit }), { code: "INVALID_ARGUMENTS", message: /limit 必须是正整数/, details: { invalidFields: ["limit"] } },
+      `limit ${String(limit)} is rejected rather than read as unbounded`);
+  }
+  f.definition.validateArgs({ tabId: 7, limit: 1 });
+  fixture(async () => many).definition.validateArgs({ tabId: 7, limit: 0 });
+  const waiting = fixture(async count => count < 2 ? empty : matched, "find_all_elements");
+  assert.deepEqual(await waiting.run({ waitForMatch: true, timeout: 1 }), { results: matched.results });
+  assert.equal(waiting.reads, 2);
+});
+
 test("cancellation during a pending scan prevents late reference registration", async () => {
   let release;
   const f = fixture(() => new Promise(resolve => { release = resolve; }));
@@ -152,8 +176,9 @@ test("find rejects unknown query fields before page access and retains canonical
   };
   const { createToolRuntime, resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
   const registry = createToolRegistry(), calls = [], accesses = [];
-  const definition = resolveToolDefinition("find_elements");
-  registry.forCapability("query-test")({ ...definition, execute: args => { calls.push(args); return { results: [] }; } });
+  for (const name of ["find_elements", "find_all_elements"]) {
+    registry.forCapability("query-test")({ ...resolveToolDefinition(name), execute: args => { calls.push({ name, ...args }); return { results: [] }; } });
+  }
   const runtime = createToolRuntime({ sessions: {
     isRunCurrent: () => true, getTabAliases: () => ({ page: 7 }),
     async resolveTargetTab(input) { accesses.push(input); return { ok: true, tabId: input.tabId }; },
@@ -193,7 +218,8 @@ test("find rejects unknown query fields before page access and retains canonical
   await qz.tab("page").find({ roles: ["link"], within: "css:main" });
   await qz.call("find_elements", { tabRef: "page", roles: ["link"], selector: "css:main" });
   await runtime.execute("find_elements", { tabId: 7, roles: ["link"], selector: "css:main" }, undefined, context);
-  for (const call of calls) {
+  assert.deepEqual(calls.map(call => call.name), ["find_all_elements", "find_elements", "find_elements"]);
+  for (const { name: _name, ...call } of calls) {
     assert.deepEqual(call.roles, ["link"]);
     assert.equal(call.within, "css:main");
     assert.equal(call.tabId, 7);
@@ -217,7 +243,9 @@ test("find shares locator query fields, keeps pattern as the exclusive regex for
   };
   const { createToolRuntime, resolveToolDefinition } = await import("../../src/background/tools/runtime.js");
   const registry = createToolRegistry(), calls = [], accesses = [];
-  registry.forCapability("query-fields-test")({ ...resolveToolDefinition("find_elements"), execute: args => { calls.push(args); return { results: [] }; } });
+  for (const name of ["find_elements", "find_all_elements"]) {
+    registry.forCapability("query-fields-test")({ ...resolveToolDefinition(name), execute: args => { calls.push(args); return { results: [] }; } });
+  }
   const runtime = createToolRuntime({ sessions: {
     isRunCurrent: () => true, getTabAliases: () => ({ page: 7 }),
     async resolveTargetTab(input) { accesses.push(input); return { ok: true, tabId: input.tabId }; },
@@ -225,7 +253,7 @@ test("find shares locator query fields, keeps pattern as the exclusive regex for
   const context = { sessionId: "session", runId: "run", language: "en", toolRegistrySnapshot: registry.snapshot("en") };
   const qz = createQzSdk((name, args) => runtime.execute(name, args, undefined, context));
   const page = qz.tab("page");
-  const notStarted = { tool: "find_elements", status: "not_started", executed: false, mayHaveTakenEffect: false, automaticReplay: false };
+  const notStarted = { tool: "find_all_elements", status: "not_started", executed: false, mayHaveTakenEffect: false, automaticReplay: false };
 
   await page.find({ text: "Tomorrow", exact: false, limit: 8, within: "css:main" });
   await page.find({ role: "link", name: "Download" });
@@ -266,10 +294,10 @@ test("find shares locator query fields, keeps pattern as the exclusive regex for
   });
   const viaBridge = query => withToolCallLifecycle({ sessionId: "session", runId: "run", operation: outer },
     parent => createQzSdk((name, args) => bridge.invokeTool(parent, name, args)).tab("page").find(query));
-  for (const invoke of [
-    () => runtime.execute("find_elements", { tabRef: "page", text: "Tomorrow", exat: false, limit: 8 }, undefined, context),
-    () => page.find({ text: "Tomorrow", exat: false, limit: 8 }),
-    () => viaBridge({ text: "Tomorrow", exat: false, limit: 8 }),
+  for (const [tool, invoke] of [
+    ["find_elements", () => runtime.execute("find_elements", { tabRef: "page", text: "Tomorrow", exat: false, limit: 8 }, undefined, context)],
+    ["find_all_elements", () => page.find({ text: "Tomorrow", exat: false, limit: 8 })],
+    ["find_all_elements", () => viaBridge({ text: "Tomorrow", exat: false, limit: 8 })],
   ]) {
     const error = await invoke().then(() => assert.fail("unknown fields must be rejected"), received => received);
     const failure = withToolOperationFailure(error, outer);
@@ -283,7 +311,7 @@ test("find shares locator query fields, keeps pattern as the exclusive regex for
     const { invalidFields, allowedFields, ...facts } = failure.details;
     assert.deepEqual(invalidFields, ["exat"]);
     assert.ok(allowedFields.includes("text"));
-    assert.deepEqual(facts, { name: "find_elements", path: "$", ...notStarted });
+    assert.deepEqual(facts, { name: tool, path: "$", ...notStarted, tool });
   }
   assert.equal(calls.length, 3);
 });
