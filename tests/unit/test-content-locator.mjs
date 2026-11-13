@@ -162,31 +162,83 @@ test("strict queries report ambiguity; nth is explicit and preserves tree order"
   assert.deepEqual(await resolve({ target: "css:.twin", nth: 8 }), { matched: 2 });
 });
 
-test("hidden nodes match only with includeHidden, and counting does not bind nodes", async () => {
-  assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
-  const hidden = await resolve({ target: "css:#hidden", includeHidden: true });
-  assert.equal(hidden.matched, 1);
+test("queries match hidden nodes only with includeHidden, a target always does, and counting does not bind nodes", async () => {
+  assert.deepEqual(await resolve({ role: "button", name: "Hidden" }), { matched: 0 });
+  const named = await resolve({ role: "button", name: "Hidden", includeHidden: true });
+  assert.equal(named.matched, 1, "includeHidden names hidden nodes from their hidden content");
+  assert.equal(named.element.visible, false);
+  const hidden = await resolve({ target: "css:#hidden" });
+  assert.equal(hidden.matched, 1, "an explicit target is not visibility-filtered");
   assert.equal(hidden.element.visible, false);
   assert.equal(hidden.element.name, "");
+  assert.equal((await resolve({ target: "css:#hidden", role: "button", name: "Hidden" })).matched, 1,
+    "role and name narrow a target without filtering its hidden nodes");
   assert.deepEqual(await resolve({ role: "button" }, { countOnly: true }), { matched: 4 });
   assert.deepEqual(await resolve({ role: "button", includeHidden: true }, { countOnly: true }), { matched: 5 });
+  assert.deepEqual(await resolve({ target: "css:button" }, { countOnly: true }), { matched: 5 });
   await page.evaluate(() => { document.querySelector("#hidden").hidden = false; });
   assert.equal((await resolve({ role: "button", name: "Hidden" })).matched, 1);
   await page.evaluate(() => document.querySelector("#hidden").remove());
-  assert.deepEqual(await resolve({ target: "css:#hidden", includeHidden: true }), { matched: 0 });
+  assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
 });
 
-test("a hidden duplicate neither makes a locator ambiguous nor shifts nth", async () => {
+test("a hidden duplicate neither makes a query ambiguous nor shifts its nth, while target nth indexes every css match", async () => {
   await page.evaluate(() => {
     document.body.insertAdjacentHTML("afterbegin", '<button class="go" hidden>Go</button>');
     document.body.insertAdjacentHTML("beforeend", '<button class="go" id="visible-go">Go</button>');
   });
-  const strict = await resolve({ target: "css:.go" });
+  const strict = await resolve({ role: "button", name: "Go" });
   assert.equal(strict.matched, 1, "the visible match resolves without nth");
   assert.equal(strict.element.visible, true);
-  assert.equal((await resolve({ target: "css:.go", nth: 0 })).element.visible, true);
-  assert.deepEqual(await resolve({ target: "css:.go", includeHidden: true }), { matched: 2 });
-  assert.equal((await resolve({ target: "css:.go", includeHidden: true, nth: 0 })).element.visible, false);
+  assert.equal((await resolve({ role: "button", name: "Go", nth: 0 })).element.visible, true);
+  assert.deepEqual(await resolve({ role: "button", name: "Go", includeHidden: true }), { matched: 2 });
+  assert.equal((await resolve({ role: "button", name: "Go", includeHidden: true, nth: 0 })).element.visible, false);
+  assert.deepEqual(await resolve({ target: "css:.go" }), { matched: 2 });
+  assert.equal((await resolve({ target: "css:.go", nth: 0 })).element.visible, false);
+  assert.equal((await resolve({ target: ".go", nth: 1 })).element.visible, true, "bare CSS is a target too");
+});
+
+test("an explicit target resolves a hidden file input for upload and a native select behind a custom dropdown", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<form id="controls">
+    <label for="upload">Attach file</label><input id="upload" type="file" style="display:none">
+    <input id="zero-upload" type="file" style="position:absolute;width:0;height:0;border:0;padding:0">
+    <button type="button">Choose file</button>
+    <label for="country">Country</label><select id="country" style="display:none">
+      <option value="">Choose</option><option value="cn">China</option></select>
+    <div id="fake-country" role="combobox" aria-label="Country picker" tabindex="0">Choose</div></form>`));
+  const node = token => page.evaluateHandle(async token =>
+    (await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: [token] }))[0], token);
+
+  for (const target of ["css:#upload", "#zero-upload"]) {
+    const upload = await resolve({ target });
+    assert.equal(upload.matched, 1, `${target} resolves although hidden`);
+    assert.equal(upload.element.visible, false);
+    const handle = await node(upload.element._elementRef);
+    await handle.asElement().setInputFiles({ name: "report.csv", mimeType: "text/csv", buffer: Buffer.from("a,b\n1,2\n") });
+    const inspected = await page.evaluate(input => window.__qzInvoke(input, { action: "inspectElement" }), handle);
+    assert.equal(inspected.selectedFileCount, 1, `${target} reports the uploaded file`);
+  }
+  assert.equal((await resolve({ name: "Attach file" })).matched, 0);
+  assert.equal((await resolve({ name: "Attach file", includeHidden: true })).matched, 1);
+
+  const select = await resolve({ target: "css:#controls select", name: "Country" });
+  assert.equal(select.matched, 1, "a target narrowed by name still sees the hidden select");
+  assert.equal(select.element.visible, false);
+  const selectNode = await node(select.element._elementRef);
+  const selected = await page.evaluate(
+    input => window.__qzInvoke(input, { action: "actOnElement", elementAction: "select", value: "cn" }), selectNode);
+  assert.equal(selected.error, undefined);
+  assert.equal(await page.$eval("#country", element => element.value), "cn");
+  const presence = await page.evaluate(async input => ({
+    visible: await window.__qzInvoke(input, { action: "elementPresence", visibleOnly: true }),
+    attached: await window.__qzInvoke(input, { action: "elementPresence", visibleOnly: false }),
+  }), selectNode);
+  assert.equal(presence.visible.found, false, "a visible wait on a hidden target keeps waiting");
+  assert.equal(presence.attached.found, true);
+
+  await assertFindNthParity(page, { selector: "#controls", roles: ["combobox"] }, { role: "combobox", within: "css:#controls" },
+    { visible: ["fake-country"], all: ["country", "fake-country"] });
+  assert.equal((await resolve({ role: "combobox", name: "Country" })).matched, 0, "queries stay visible-only by default");
 });
 
 test("list queries preserve total counts, bounded results and explicit nth", async () => {
@@ -355,7 +407,7 @@ test("name queries share one order between find and locator nth", async () => {
   await installNews(page);
   await assertFindNthParity(page, { selector: "#itn", roles: ["link"], name: "Booker Prize" },
     { role: "link", name: "Booker Prize", within: "css:#itn" },
-    { visible: ["booker", "booker-again"], all: ["booker", "booker-again"] });
+    { visible: ["booker", "booker-again"], all: ["hidden", "booker", "booker-again"] });
   assert.deepEqual(await resolve({ role: "link", name: "Booker Prize", within: "css:#itn" }), { matched: 2 });
 });
 

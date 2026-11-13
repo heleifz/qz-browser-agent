@@ -2920,8 +2920,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return elementAriaRole(el);
   }
 
-  function getAccessibleName(el: Element) {
-    return elementAccessibleName(el);
+  function getAccessibleName(el: Element, includeHidden = false) {
+    return elementAccessibleName(el, includeHidden);
   }
 
   const elementSemantics = { role: getElementRole, name: getAccessibleName, visible: isVisible };

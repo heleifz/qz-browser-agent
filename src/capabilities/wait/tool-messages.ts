@@ -139,8 +139,8 @@ const messages = defineMessages("wait-tools", {
     en: "Wait for target or locator in tabRef to reach attached, visible (default), hidden, or detached; locators are queried on every poll. Alternatively pass locator and count for an exact match count; omit state. Hidden includes removal or invisibility; detached requires removal. A uid observes its original node, never a replacement.",
   },
   waitForElementCount: {
-    "zh-CN": "等待 locator 的匹配数等于此值（隐藏元素仅在 includeHidden 时计入），允许 0；与 state 互斥。",
-    en: "Wait for exactly this many locator matches (hidden elements count only with includeHidden); zero is allowed. Mutually exclusive with state.",
+    "zh-CN": "等待 locator 的匹配数等于此值（role/name/text 查询仅在 includeHidden 时计入隐藏元素，target 始终计入），允许 0；与 state 互斥。",
+    en: "Wait for exactly this many locator matches (role/name/text queries count hidden elements only with includeHidden; a target always counts them); zero is allowed. Mutually exclusive with state.",
   },
   waitForElementTabId: {
     "zh-CN": "目标标签页 tabRef：别名或 open_tab/list_tabs 返回的 tabRef。",

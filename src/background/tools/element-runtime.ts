@@ -514,7 +514,9 @@ async function resolveElementInput(tabId: number | undefined, { target = "", loc
   if (locator === undefined) return resolveElementReference(tabId, { target, index: nth, readOnly }, context);
   const binding = await resolveLocatorTarget(tabId, locator, context);
   if (!binding) throw Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "No element matches the locator.", pageErrorDetails(context)), {
-    hint: "Inspect the page or refine the locator, then retry. A hidden element matches only with includeHidden: true.",
+    hint: locator.target === undefined
+      ? "Inspect the page or refine the locator, then retry. A hidden element matches a role/name/text query only with includeHidden: true."
+      : "Inspect the page or refine the locator, then retry.",
   });
   return binding;
 }

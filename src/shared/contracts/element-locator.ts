@@ -20,7 +20,7 @@ export const elementLocatorSchema = {
     exact: { type: "boolean", description: "Exact normalized text/name match (default true); false matches a substring." },
     within: { type: "string", description: "Search only inside this uid: or css: element. A frame document reference limits the query to that frame." },
     nth: { type: "integer", minimum: 0, description: "Explicit zero-based match index; otherwise a single match is required." },
-    includeHidden: { type: "boolean", description: "Also match hidden elements, including in nth and counts. Default: false." },
+    includeHidden: { type: "boolean", description: "Also match hidden elements in role/name/text queries, including in nth and counts; a target always matches them. Default: false." },
   },
   additionalProperties: false,
 } as const;
