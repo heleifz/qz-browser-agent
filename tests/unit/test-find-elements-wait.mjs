@@ -140,6 +140,12 @@ test("the SDK find tool asks the page for every match and returns only the resul
     { selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], includeHidden: false, all: true },
     { selector: "#scope", pattern: "", flags: "i", roles: ["link"], tags: [], types: [], includeHidden: false, all: true, limit: 3 },
   ]);
+  for (const limit of [0, -1, 1.5, Infinity, NaN, null, "3"]) {
+    assert.throws(() => f.definition.validateArgs({ tabId: 7, limit }), { code: "INVALID_ARGUMENTS", message: /limit 必须是正整数/, details: { invalidFields: ["limit"] } },
+      `limit ${String(limit)} is rejected rather than read as unbounded`);
+  }
+  f.definition.validateArgs({ tabId: 7, limit: 1 });
+  fixture(async () => many).definition.validateArgs({ tabId: 7, limit: 0 });
   const waiting = fixture(async count => count < 2 ? empty : matched, "find_all_elements");
   assert.deepEqual(await waiting.run({ waitForMatch: true, timeout: 1 }), { results: matched.results });
   assert.equal(waiting.reads, 2);

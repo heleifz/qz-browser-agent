@@ -390,11 +390,16 @@ registerTool({
   get parameters() {
     const { locator: _locator, countOnly: _countOnly, limit: _limit, ...properties } = findElementsParameters().properties;
     return { type: "object", additionalProperties: false, properties: { ...properties,
-      limit: { type: "number", description: "Optional maximum number of matches to return." } }, required: ["tabRef"] } as const;
+      limit: { type: "integer", minimum: 1, description: "Optional maximum number of matches to return." } }, required: ["tabRef"] } as const;
   },
   page: "readOnly",
   timeout: findElementsTimeout,
-  validateArgs: validateFindElementsArgs,
+  validateArgs: args => {
+    if (args.limit !== undefined && !(Number.isInteger(args.limit) && Number(args.limit) >= 1)) {
+      throw toolError("INVALID_ARGUMENTS", toolT("findAllElementsLimit"), { details: { invalidFields: ["limit"] } });
+    }
+    return validateFindElementsArgs(args);
+  },
   execute: (args, signal, context = {}) => findElements(args, signal, context, true),
 });
 

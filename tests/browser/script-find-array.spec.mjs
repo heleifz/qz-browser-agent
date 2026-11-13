@@ -3,12 +3,12 @@ import { test, expect } from './fixtures.mjs';
 import { callTool } from '../../services/mcp-bridge/src/client.mjs';
 import { buildScriptRequest } from '../../services/mcp-bridge/src/script-call.mjs';
 
-// Three visible report links precede the items; 5000 visible links fill the 5000-entry element registries exactly.
-const LINKS = 5000;
-const ITEMS = LINKS - 3;
+// Over 6000 matches, every returned element keeps a usable target.
+const ITEMS = 6500;
+const LINKS = ITEMS + 3;
 
 test('page.find returns every match as an Array in nth order while find_elements keeps its limit', async () => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const { launchIsolatedExtensionMcp } = await import('../support/isolated-extension-mcp.mjs');
   const items = Array.from({ length: ITEMS }, (_, index) => `<li><a href="/item/${index}">Item ${index}</a></li>`).join('');
   const server = createServer((_, response) => {
@@ -24,43 +24,58 @@ test('page.find returns every match as an Array in nth order while find_elements
     environment = await launchIsolatedExtensionMcp({ profilePrefix: 'qz-find-array-' });
     ({ sessionId } = await callTool(environment.bridge.endpoint, 'qingzhou_create_drive_session', { title: 'Find array' }));
     await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', { sessionId, name: 'open_tab', args: { url, tabAlias: 'page' } });
-    const run = async code => (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', buildScriptRequest({ sessionId, code, timeout: 120 }))).result;
+    const run = async code => (await callTool(environment.bridge.endpoint, 'qingzhou_execute_tool', buildScriptRequest({ sessionId, code, timeout: 200 }))).result;
 
     const large = await run(`
       const page = qz.tab('page');
+      const query = {role:'link'};
       const started = Date.now();
-      const links = await page.find({role:'link'});
+      const links = await page.find(query);
       const ms = Date.now() - started;
-      const sampled = [0, 3, 2500, links.length - 1];
-      const nth = [];
-      for (const index of sampled) nth.push((await page.locator({role:'link', nth:index}).inspect()).name);
-      const names = [];
-      for (const link of links) names.push(link.name);
+      const node = async locator => { const seen = await page.locator(locator).inspect(); return { target: seen.target, name: seen.name }; };
+      const sampled = [0, 1, 4, Math.floor(links.length / 2), links.length - 1];
+      const identity = [];
+      for (const index of sampled) {
+        identity.push({ index, name: links[index].name, byTarget: await node({target: links[index].target}), byNth: await node({...query, nth: index}) });
+      }
+      const hiddenLength = (await page.find({...query, includeHidden:true})).length;
+      const later = [await node({target: links[0].target}), await node({target: links[links.length - 1].target})];
+      const again = await page.find(query);
       return {
-        ms, isArray: Array.isArray(links), length: links.length, count: await page.locator({role:'link'}).count(),
-        hiddenLength: (await page.find({role:'link', includeHidden:true})).length,
-        hiddenCount: await page.locator({role:'link', includeHidden:true}).count(),
-        sliced: links.slice(0, 5).map(link => link.name), mapped: links.map(link => link.target).filter(Boolean).length,
-        distinct: new Set(links.map(link => link.target)).size, sampled: sampled.map(index => links[index].name), nth, names: names.length,
+        ms, isArray: Array.isArray(links), length: links.length, count: await page.locator(query).count(),
+        hiddenLength, hiddenCount: await page.locator({...query, includeHidden:true}).count(),
+        sliced: links.slice(0, 5).map(link => link.name), withTarget: links.filter(link => /^uid:/.test(link.target)).length,
+        distinct: new Set(links.map(link => link.target)).size, identity, later: later.map(item => item.name),
+        stable: again.length === links.length && again.every((link, index) => link.target === links[index].target),
+        iterated: (() => { let n = 0; for (const link of links) if (link.name) n++; return n; })(),
         shape: Object.keys(links[0]).filter(key => ['target', 'role', 'name', 'text', 'rect'].includes(key)).sort(),
-        rect: Object.keys(links[0].rect).sort(), capped: (await page.find({role:'link', limit:3})).map(link => link.name),
+        rect: Object.keys(links[0].rect).sort(), capped: (await page.find({...query, limit:3})).map(link => link.name),
+        invalid: await Promise.all([0, -1, 1.5].map(limit => page.find({...query, limit}).then(() => 'accepted', error => error.code))),
       };
     `);
-    expect(large.ok, JSON.stringify(large)).toBe(true);
+    expect(large.ok, JSON.stringify(large).slice(0, 2000)).toBe(true);
     const found = large.result;
     expect(found.isArray).toBe(true);
     expect(found.length).toBe(LINKS);
     expect(found.count).toBe(found.length);
-    expect(found.names).toBe(found.length);
+    expect(found.iterated).toBe(found.length);
     expect(found.hiddenCount).toBe(LINKS + 2);
     expect(found.hiddenLength).toBe(found.hiddenCount);
     expect(found.sliced).toEqual(['Monthly Report', 'Report', 'Report archive', 'Item 0', 'Item 1']);
-    expect(found.mapped).toBe(found.length);
+    expect(found.withTarget).toBe(found.length);
     expect(found.distinct).toBe(found.length);
-    expect(found.nth).toEqual(found.sampled);
+    for (const { index, name, byTarget, byNth } of found.identity) {
+      expect(byTarget.name, `match ${index} resolves through its target`).toBe(name);
+      expect(byTarget.target, `match ${index} is the element nth ${index} resolves`).toMatch(/^uid:/);
+      expect(byNth.target, `match ${index} is the element nth ${index} resolves`).toBe(byTarget.target);
+    }
+    expect(new Set(found.identity.map(item => item.byTarget.target)).size).toBe(found.identity.length);
+    expect(found.later).toEqual(['Monthly Report', `Item ${ITEMS - 1}`]);
+    expect(found.stable).toBe(true);
     expect(found.shape).toEqual(['name', 'rect', 'role', 'target', 'text']);
     expect(found.rect).toEqual(['height', 'width', 'x', 'y']);
     expect(found.capped).toEqual(['Monthly Report', 'Report', 'Report archive']);
+    expect(found.invalid).toEqual(['INVALID_ARGUMENTS', 'INVALID_ARGUMENTS', 'INVALID_ARGUMENTS']);
     expect(found.ms, `page.find of ${found.length} links took ${found.ms} ms`).toBeLessThan(5_000);
 
     const ordered = await run(`

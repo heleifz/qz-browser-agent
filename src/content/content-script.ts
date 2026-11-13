@@ -1763,7 +1763,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
       // all returns every match in one pass; it skips the O(n²) absolute selector, line ranges and hit tests.
-      const maxResults = !all ? clampNumber(limit, 1, 100, 20) : Number(limit) >= 1 ? Math.floor(Number(limit)) : Infinity;
+      // Background validates an all-mode limit as a positive integer.
+      const maxResults = !all ? clampNumber(limit, 1, 100, 20) : limit ?? Infinity;
 
       const patternText = String(pattern || "");
       let regex = null;
