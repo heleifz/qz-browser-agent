@@ -478,7 +478,7 @@ stdout is JSON `{ok,result,trace}` on success and failure. `ok` reports executio
 For action-dependent navigation or popups, use `locator.click({expect:"navigation"})` or
 `locator.click({expect:"popup"})`. The wait listens before dispatching the action once; failure
 never replays it. For current element state, use `locator.wait({state:"visible"})`; for an exact
-attached match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
+match count, use `locator.wait({count:3})`. `locator.count()` reads the current count.
 Use `page.waitForFunction(code,args?,options?)` for application-specific completion conditions.
 
 MCP clients can call `qingzhou_execute_tool` directly. Its single-call transport returns

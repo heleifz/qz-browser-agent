@@ -593,7 +593,7 @@ two cannot be combined. Element actions resolve one matching node and bind
 it through the existing registry before readiness checks and dispatch. Queries may re-resolve before
 input delivery; explicit UID targets retain their original identity. Ambiguous queries require
 narrowing or an explicit index. Scoped queries retain their frame and document authority.
-Element waits re-evaluate queries for the requested state or attached match count; reads preserve
+Element waits re-evaluate queries for the requested state or match count; reads preserve
 their observation semantics. An action is never replayed to confirm its outcome.
 MCP cancellation returns a control receipt rather than the private runtime snapshot. Public Session
 metadata drops implicit page-selection state and names page references with `tabRef`/`TabRefs`.
