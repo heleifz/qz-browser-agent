@@ -494,3 +494,144 @@ test("detached original nodes have a retryable reason but foreign documents do n
   assert.equal(result.foreign.code, "STALE_ELEMENT_UID");
   assert.equal(result.foreign.details.reason, undefined);
 });
+
+const lineHtml = `<main id="lines"><button>Save</button><button>Save</button>
+<p>Lead <button>Save</button></p>
+<div role="group" aria-label="Pair"><button>Inner</button>
+<button>Inner</button></div>
+<script>const copy = "<button>Save</button>";
+</script><style>
+button { color: red }
+</style>
+<button title="first
+second">Multi</button><svg><a href="#vector"><text>Vector</text></a></svg>
+<button><svg viewBox="0 0 1 1"><path d="M0 0"></path></svg>Icon</button></main>`;
+
+/** find rows with the read_dom lines of the same scope, both read in one page state. */
+async function findWithDomLines(target, findArgs) {
+  return target.evaluate(async findArgs => {
+    const dom = await window.callContent("readDom", { selector: findArgs.selector, limit: 1000 });
+    const found = await window.callContent("findElements", { limit: 100, ...findArgs });
+    return { lines: dom.content.split("\n").map(line => line.replace(/^\d+: /, "")), results: found.results };
+  }, findArgs);
+}
+
+test("find line ranges are each element's own read_dom lines, past duplicates and removed tags", async () => {
+  await page.setContent(lineHtml);
+  await installContent(page);
+  const { lines, results } = await findWithDomLines(page, { selector: "#lines", roles: ["button", "group", "link"] });
+  const byText = text => results.filter(item => item.text === text);
+  const text = (range) => lines.slice(range[0] - 1, range[1]).join("\n");
+  const saves = byText("Save");
+  assert.deepEqual(saves.map(item => item.lineRange), [[1, 1], [2, 2], [3, 3]], "identical buttons keep their own lines");
+  assert.deepEqual(saves.map(item => lines[item.line - 1]), ["<button>Save</button>", "<button>Save</button>", "<p>Lead <button>Save</button>"]);
+  const [group] = results.filter(item => item.role === "group");
+  const inner = byText("Inner");
+  assert.deepEqual(inner.map(item => item.lineRange), [[6, 6], [7, 7]]);
+  assert.deepEqual(group.lineRange, [5, 8], "a container range spans its nested elements");
+  assert.equal(text(group.lineRange), '<div role="group" aria-label="Pair">\n<button>Inner</button>\n<button>Inner</button>\n</div>');
+  const [multi] = byText("Multi");
+  assert.equal(text(multi.lineRange), '<button title="first\nsecond">Multi</button>', "a multi-line attribute starts at its tag");
+  const [icon] = byText("Icon");
+  assert.equal(text(icon.lineRange), "<button>Icon</button>", "removed svg markup does not extend the range");
+  const vector = results.find(item => item.href?.endsWith("#vector"));
+  assert.ok(vector);
+  assert.equal("line" in vector || "lineRange" in vector, false, "read_dom omits svg content");
+  assert.equal(lines.some(line => line.includes("const copy")), false);
+  for (const item of results) assert.ok(!("line" in item) || item.line === item.lineRange[0]);
+});
+
+test("find line ranges follow the scope root, the page body and frame documents", async () => {
+  await page.setContent(lineHtml);
+  await installContent(page);
+  const body = await findWithDomLines(page, { selector: "body", roles: ["button"], name: "Save" });
+  assert.deepEqual(body.results.map(item => item.lineRange), [[2, 2], [3, 3], [4, 4]]);
+  assert.equal(body.lines[0], '<main id="lines">');
+  const scoped = await findWithDomLines(page, { selector: "#lines > p", roles: ["button"] });
+  assert.deepEqual(scoped.results.map(item => item.lineRange), [[1, 1]]);
+  assert.equal(scoped.lines[0], "Lead <button>Save</button>");
+  const root = await page.evaluate(() => window.callContent("findElements", { selector: "#lines > p", tags: ["p"] }));
+  assert.equal(root.results.length, 1);
+  assert.equal("lineRange" in root.results[0], false, "read_dom of a scope does not show the scope's own tag");
+  await page.evaluate(html => {
+    const frame = document.createElement("iframe");
+    frame.srcdoc = html;
+    document.body.append(frame);
+  }, lineHtml);
+  const frame = await (await page.locator("iframe").elementHandle()).contentFrame();
+  await frame.waitForSelector("#lines");
+  await installContent(frame);
+  const framed = await findWithDomLines(frame, { selector: "#lines", roles: ["button"], name: "Save" });
+  assert.deepEqual(framed.results.map(item => item.lineRange), [[1, 1], [2, 2], [3, 3]]);
+});
+
+test("find all returns the limited find fields for every match", async () => {
+  await page.setContent(lineHtml);
+  await installContent(page);
+  const [limited, all] = await page.evaluate(async () => Promise.all([
+    window.callContent("findElements", { selector: "#lines", roles: ["button", "group"], limit: 100 }),
+    window.callContent("findElements", { selector: "#lines", roles: ["button", "group"], all: true }),
+  ]));
+  const strip = ({ _elementRef, ...item }) => item;
+  assert.ok(limited.results.length > 5);
+  assert.deepEqual(all.results.map(strip), limited.results.map(strip));
+  for (const item of all.results) {
+    assert.ok(item.selector && "obscuredAtCenter" in item && Array.isArray(item.lineRange), JSON.stringify(item));
+  }
+});
+
+test("absolute selectors equal the per-element document query result on ambiguous markup", async () => {
+  await page.setContent(`<div id="dup"><span>one</span></div><div id="dup"><span>two</span></div>
+    <ul class="list">${Array.from({ length: 12 }, (_, i) => `<li><a href="/${i}">L${i}</a></li>`).join("")}</ul>
+    <section><p class="x:y">colon</p><p class="1st">digit</p><p>plain</p></section>
+    <div id="mixed"><div>html</div></div><div id="nest"></div><div id="host"></div>`);
+  await installContent(page);
+  const result = await page.evaluate(async () => {
+    const svgDiv = document.createElementNS("http://www.w3.org/2000/svg", "div");
+    document.querySelector("#mixed").append(svgDiv);
+    const nested = document.createElement("body");
+    nested.innerHTML = '<div id="dup"><span>three</span></div>';
+    document.querySelector("#nest").append(nested);
+    document.querySelector("#host").attachShadow({ mode: "open" }).innerHTML = '<div id="dup"><span>shadow</span></div><p>own</p>';
+    const reference = el => {
+      const parts = [];
+      let current = el;
+      while (current && current !== document.documentElement) {
+        if (current.id) {
+          const idSelector = `#${CSS.escape(current.id)}`;
+          if (current.ownerDocument.querySelectorAll(idSelector).length === 1) { parts.unshift(idSelector); break; }
+        }
+        let tag = current.tagName.toLowerCase();
+        const parent = current.parentElement;
+        if (parent) {
+          const siblings = [...parent.children].filter(c => c.tagName === current.tagName);
+          if (siblings.length > 1) tag += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+        if (current.className && typeof current.className === "string") {
+          const cls = current.className.split(/\s+/).filter(Boolean)[0];
+          if (cls) tag = tag.split(":")[0] + `.${CSS.escape(cls)}` + (tag.includes(":") ? ":" + tag.split(":").slice(1).join(":") : "");
+        }
+        parts.unshift(tag);
+        current = parent;
+      }
+      const selector = parts.join(" > ");
+      if (!selector) return "";
+      try {
+        const matches = el.ownerDocument.querySelectorAll(selector);
+        return matches.length === 1 && matches[0] === el ? selector : "";
+      } catch { return ""; }
+    };
+    const found = await window.callContent("findElements", { all: true, includeHidden: true });
+    const nodes = await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: found.results.map(item => item._elementRef) });
+    const single = [];
+    for (const node of nodes) single.push((await window.__qzInvoke(node, { action: "inspectElement" })).selector);
+    return found.results.map((item, index) => [item.selector, single[index], reference(nodes[index]), nodes[index].textContent.slice(0, 12)]);
+  });
+  assert.ok(result.length > 25);
+  for (const [batch, single, expected, label] of result) {
+    assert.equal(batch, expected, `batch ${label}`);
+    assert.equal(single, expected, `single ${label}`);
+  }
+  assert.ok(result.some(([selector]) => selector === ""), "ambiguous and shadow elements keep an empty selector");
+  assert.ok(result.some(([selector]) => selector.includes(":nth-of-type(12)")));
+});
