@@ -11,7 +11,7 @@ import type { ArticleExtractor, ExtractedArticle } from './article-types.js';
 import { eachElementWithinOpenShadow, firstElementMatchingOpenShadow, graftOpenShadows, openShadowRoot } from './open-shadow.js';
 import type { PageOverview, PageAction, PagePoint } from '../shared/contracts/page-content.js';
 import type { ElementLocator } from '../shared/contracts/element-locator.js';
-import { invalidCssTargetError, resolveElementLocator } from './element-locator.js';
+import { invalidCssTargetError, matchElementQuery, matchTier, orderElementMatches, resolveElementLocator } from './element-locator.js';
 
 interface Article { mode: string; title: string; byline: string; siteName: string; publishedTime: string; excerpt: string; content: string; text: string; sourceSelector: string }
 interface ElementSummary extends PageAction {
@@ -23,6 +23,7 @@ interface ContentRequest {
   scroll?: boolean;
   action: string; selector?: string; editingHost?: boolean; fillToken?: string; elementRefs?: string[]; retainRef?: boolean; source?: string; offset?: number; limit?: number;
   pattern?: string; flags?: string; roles?: string[]; tags?: string[]; types?: string[]; includeHidden?: boolean;
+  name?: string; text?: string; exact?: boolean;
   locator?: ElementLocator; matchSelf?: boolean; countOnly?: boolean; all?: boolean;
   index?: number; block?: ScrollLogicalPosition; clickTarget?: boolean; includeShadow?: boolean; queryOnly?: boolean; elementAction?: string; value?: string; key?: string; submit?: boolean;
   direction?: string; pixels?: number; minWidth?: number; minHeight?: number; visibleOnly?: boolean;
@@ -55,7 +56,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // Background validates Session/tab ownership before dispatch. Replies contain data, never DOM nodes.
 
 (() => {
-  const QZ_CONTENT_VERSION = "2026-11-06-element-outcomes";
+  const QZ_CONTENT_VERSION = "2026-11-12-find-query-fields";
   const elementRefs = new Map<string, WeakRef<Element>>();
   const elementRefScope = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let elementRefSequence = 0;
@@ -1744,7 +1745,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const scope: unknown = selector;
       const root = scope instanceof Element ? scope : document;
       try {
-        const result = resolveElementLocator(root, locator!, { role: getElementRole, name: getAccessibleName }, { matchSelf, all, limit });
+        const result = resolveElementLocator(root, locator!, elementSemantics, { matchSelf, all, limit });
         const observe = (element: Element) => ({ ...getElementSummary(element, { selector: false }), _elementRef: rememberElement(element) });
         if (countOnly) return { matched: result.matched };
         if (all) return { matched: result.matched, results: (result.elements || []).map(observe) };
@@ -1758,7 +1759,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       }
     },
 
-    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], limit = 20, includeHidden = false }) {
+    findElements({ pattern = "", flags = "i", selector = "body", roles = [], tags = [], types = [], name, text, exact, limit = 20, includeHidden = false }) {
       const rootResult = queryOpenShadowScope(selector);
       if (rootResult.error || !rootResult.element) return rootResult.error;
       const maxResults = clampNumber(limit, 1, 100, 20);
@@ -1780,37 +1781,27 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const candidates: Element[] = [];
       // A light-DOM scope still includes descendants inside nested open shadows.
       eachElementWithinOpenShadow(scope, (element) => { candidates.push(element); });
+      const filtered = candidates.filter(el => (!roleSet.size || roleSet.has(getElementRole(el)))
+        && (!tagSet.size || tagSet.has(el.tagName.toLowerCase()))
+        && (!typeSet.size || typeSet.has((el.getAttribute("type") || "").toLowerCase())));
+      const queried = matchElementQuery(filtered, { name, text, exact, includeHidden: includeHidden === true },
+        elementSemantics, Boolean(roleSet.size || tagSet.size || typeSet.size));
       const matches = [];
-
-      for (let order = 0; order < candidates.length; order += 1) {
-        const el = candidates[order];
-        if (roleSet.size && !roleSet.has(getElementRole(el))) continue;
-        if (tagSet.size && !tagSet.has(el.tagName.toLowerCase())) continue;
-        if (typeSet.size && !typeSet.has((el.getAttribute("type") || "").toLowerCase())) continue;
+      for (const el of queried) {
         const summary = getElementSummary(el);
-        if (!includeHidden && !summary.visible) continue;
-
         const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
         if (regex && !matchInfo.matched) continue;
-        matches.push({
-          el,
-          summary,
-          order,
-          ...matchInfo,
-          score: scoreElementCandidate(el, summary, matchInfo),
-        });
+        matches.push({ el, summary, ...matchInfo });
       }
 
-      const results = matches
-        .sort(compareElementCandidates)
+      const results = orderElementMatches(matches, item => item.tier)
         .slice(0, maxResults)
-        .map(({ el, summary, match = "", matchKind = "none", score = 0 }) => ({
+        .map(({ el, summary, match, matchKind }) => ({
           ...summary,
           _elementRef: rememberElement(el),
           ...getElementDomLocation(el, selector),
           match,
           matchKind,
-          score: Math.round(score),
           obscuredAtCenter: summary.visible ? isObscuredAtCenter(el) : false,
         }));
 
@@ -2826,106 +2817,44 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 
   function getElementSearchParts(el: Element, summary = getElementSummary(el)) {
     const attrs = getElementAttrs(el);
+    // Equal-tier matches report the first matching kind in this list.
     return [
-      { kind: "tag", value: summary.tag },
-      { kind: "role", value: summary.role },
       { kind: "name", value: summary.name },
+      { kind: "text", value: summary.text },
       { kind: "aria", value: attrs["aria-label"] },
       { kind: "placeholder", value: summary.placeholder },
       { kind: "value", value: summary.value },
-      { kind: "text", value: summary.text },
-      { kind: "href", value: summary.href },
       { kind: "id", value: attrs.id },
-      { kind: "class", value: attrs.class },
       { kind: "attr", value: attrs.name },
       { kind: "attr", value: attrs.title },
       { kind: "attr", value: attrs["data-testid"] },
+      { kind: "href", value: summary.href },
+      { kind: "role", value: summary.role },
+      { kind: "tag", value: summary.tag },
+      { kind: "class", value: attrs.class },
     ].map(part => ({
       kind: part.kind,
       value: normalizeSearchField(part.value, part.kind),
     })).filter(part => part.value);
   }
 
+  /** A pattern match in the name or text takes its matchTier; a match only in another field ranks after them. */
   function matchElementSearch(regex: RegExp | null, parts: { kind: string; value: string }[]) {
-    if (!regex) return { matched: true, match: "", matchKind: "none", matchScore: 0 };
-    let best = { matched: false, match: "", matchKind: "none", matchScore: 0 };
+    if (!regex) return { matched: true, match: "", matchKind: "none", tier: 0 };
+    let best = { matched: false, match: "", matchKind: "none", tier: 4 };
     for (const part of parts) {
       regex.lastIndex = 0;
-      const match = regex.exec(part.value);
-      if (!match) continue;
-      const weight = matchKindWeight(part.kind);
-      const exactBonus = normalizeText(match[0]).length === part.value.length ? 24 : 0;
-      const prefixBonus = part.value.startsWith(normalizeText(match[0])) ? 8 : 0;
-      const lengthPenalty = part.kind === "text" ? Math.min(28, Math.max(0, part.value.length - 80) / 10) : 0;
-      const score = weight + exactBonus + prefixBonus - lengthPenalty;
-      if (score > best.matchScore) {
-        best = {
-          matched: true,
-          match: match[0],
-          matchKind: part.kind,
-          matchScore: score,
-        };
-      }
+      const found = regex.exec(part.value);
+      if (!found) continue;
+      const tier = part.kind === "name" || part.kind === "text" ? matchTier(part.value, found.index, found[0].length) : 3;
+      if (tier < best.tier) best = { matched: true, match: found[0], matchKind: part.kind, tier };
     }
     return best;
-  }
-
-  function scoreElementCandidate(el: Element, summary: ReturnType<typeof getElementSummary>, matchInfo: ReturnType<typeof matchElementSearch>) {
-    const rect = summary.rect || {};
-    const area = Math.max(1, Math.max(0, rect.w || 0) * Math.max(0, rect.h || 0));
-    const depth = elementDepth(el);
-    let score = Number(matchInfo?.matchScore || 0);
-    if (summary.actionable) score += 70;
-    if (summary.inViewport) score += 22;
-    if (summary.editable) score += 18;
-    if (summary.href) score += 10;
-    if (summary.disabled) score -= 45;
-    if (!summary.visible) score -= 80;
-    score += Math.min(26, depth * 1.4);
-    score -= Math.min(38, Math.log2(area + 1) * 3.2);
-    if (summary.text && summary.text.length > 120 && !summary.actionable) score -= 18;
-    return score;
-  }
-
-  function compareElementCandidates(a: { score: number; summary: ReturnType<typeof getElementSummary>; order: number }, b: typeof a) {
-    return (b.score - a.score)
-      || (Number(b.summary?.inViewport) - Number(a.summary?.inViewport))
-      || (Number(b.summary?.actionable) - Number(a.summary?.actionable))
-      || ((a.summary?.rect?.y || 0) - (b.summary?.rect?.y || 0))
-      || ((a.summary?.rect?.x || 0) - (b.summary?.rect?.x || 0))
-      || (a.order - b.order);
-  }
-
-  function matchKindWeight(kind: string) {
-    const weights: Record<string, number> = {
-      name: 130,
-      aria: 126,
-      placeholder: 118,
-      value: 112,
-      id: 104,
-      attr: 96,
-      href: 86,
-      text: 72,
-      role: 42,
-      tag: 18,
-      class: 14,
-    };
-    return weights[kind] || 30;
   }
 
   function normalizeSearchField(value: unknown, kind = "") {
     const max = kind === "text" ? 600 : 240;
     return normalizeText(value).slice(0, max);
-  }
-
-  function elementDepth(el: Element) {
-    let depth = 0;
-    let current: Element | null = el;
-    while (current && current !== document.documentElement) {
-      depth += 1;
-      current = current.parentElement;
-    }
-    return depth;
   }
 
   function rememberElement(el: Element) {
@@ -2991,9 +2920,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
     return elementAriaRole(el);
   }
 
-  function getAccessibleName(el: Element) {
-    return elementAccessibleName(el);
+  function getAccessibleName(el: Element, includeHidden = false) {
+    return elementAccessibleName(el, includeHidden);
   }
+
+  const elementSemantics = { role: getElementRole, name: getAccessibleName, visible: isVisible };
 
   function getElementValue(el: Element, full = false) {
     if (el instanceof HTMLInputElement && String(el.type || "").toLowerCase() === "file") return "";

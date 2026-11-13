@@ -111,9 +111,12 @@ The packaged SDK lowers find and URL-wait `RegExp` inputs to source and flags pa
 the existing tools, preserving explicit flags and pattern whitespace. A returned Tab object supplies
 only its explicit `tabRef`; locator `css` becomes a `target` string before schema validation. These
 values do not become executable source or grant page ownership. SDK `find()` returns the existing
-`find_elements.results` array and rejects `countOnly`; raw tool receipts remain unchanged. This
-unwraps data without adding execution or source interpolation. Locator validation reports field
-names from its static schema; JSON-value errors retain their source message. The host records dispatch
+`find_elements` `results`, `total`, and `truncated` fields as a plain object and
+rejects `countOnly`; raw tool receipts remain unchanged. Locator actions accept only `expect`,
+`timeout`, `tabAlias` with a popup, and `submit` for fill, and compile `expect` to the existing
+wait-tool trigger; `scrollIntoView` and `page.scroll` lower to the existing element and page scroll
+tools. This unwraps and validates data without adding execution or source interpolation. Locator validation reports field
+names from its static schema and accepts `includeHidden` only as a boolean; JSON-value errors retain their source message. The host records dispatch
 and confirmation around the existing evaluation for timeout diagnostics; that evidence never enters
 page code and does not authorize or replay execution. These changes affect the Worker source,
 private page-bridge factory fingerprints, and storecheck's whole-runner token digest without changing

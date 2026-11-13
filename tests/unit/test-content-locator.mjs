@@ -162,36 +162,104 @@ test("strict queries report ambiguity; nth is explicit and preserves tree order"
   assert.deepEqual(await resolve({ target: "css:.twin", nth: 8 }), { matched: 2 });
 });
 
-test("attached hidden nodes remain queryable and counting does not bind nodes", async () => {
+test("queries match hidden nodes only with includeHidden, a target always does, and counting does not bind nodes", async () => {
+  assert.deepEqual(await resolve({ role: "button", name: "Hidden" }), { matched: 0 });
+  const named = await resolve({ role: "button", name: "Hidden", includeHidden: true });
+  assert.equal(named.matched, 1, "includeHidden names hidden nodes from their hidden content");
+  assert.equal(named.element.visible, false);
   const hidden = await resolve({ target: "css:#hidden" });
-  assert.equal(hidden.matched, 1);
+  assert.equal(hidden.matched, 1, "an explicit target is not visibility-filtered");
   assert.equal(hidden.element.visible, false);
   assert.equal(hidden.element.name, "");
-  const count = await resolve({ role: "button" }, { countOnly: true });
-  assert.deepEqual(count, { matched: 5 });
+  assert.equal((await resolve({ target: "css:#hidden", role: "button", name: "Hidden" })).matched, 1,
+    "role and name narrow a target without filtering its hidden nodes");
+  assert.deepEqual(await resolve({ role: "button" }, { countOnly: true }), { matched: 4 });
+  assert.deepEqual(await resolve({ role: "button", includeHidden: true }, { countOnly: true }), { matched: 5 });
+  assert.deepEqual(await resolve({ target: "css:button" }, { countOnly: true }), { matched: 5 });
   await page.evaluate(() => { document.querySelector("#hidden").hidden = false; });
   assert.equal((await resolve({ role: "button", name: "Hidden" })).matched, 1);
   await page.evaluate(() => document.querySelector("#hidden").remove());
   assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
 });
 
+test("a hidden duplicate neither makes a query ambiguous nor shifts its nth, while target nth indexes every css match", async () => {
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML("afterbegin", '<button class="go" hidden>Go</button>');
+    document.body.insertAdjacentHTML("beforeend", '<button class="go" id="visible-go">Go</button>');
+  });
+  const strict = await resolve({ role: "button", name: "Go" });
+  assert.equal(strict.matched, 1, "the visible match resolves without nth");
+  assert.equal(strict.element.visible, true);
+  assert.equal((await resolve({ role: "button", name: "Go", nth: 0 })).element.visible, true);
+  assert.deepEqual(await resolve({ role: "button", name: "Go", includeHidden: true }), { matched: 2 });
+  assert.equal((await resolve({ role: "button", name: "Go", includeHidden: true, nth: 0 })).element.visible, false);
+  assert.deepEqual(await resolve({ target: "css:.go" }), { matched: 2 });
+  assert.equal((await resolve({ target: "css:.go", nth: 0 })).element.visible, false);
+  assert.equal((await resolve({ target: ".go", nth: 1 })).element.visible, true, "bare CSS is a target too");
+});
+
+test("an explicit target resolves a hidden file input for upload and a native select behind a custom dropdown", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<form id="controls">
+    <label for="upload">Attach file</label><input id="upload" type="file" style="display:none">
+    <input id="zero-upload" type="file" style="position:absolute;width:0;height:0;border:0;padding:0">
+    <button type="button">Choose file</button>
+    <label for="country">Country</label><select id="country" style="display:none">
+      <option value="">Choose</option><option value="cn">China</option></select>
+    <div id="fake-country" role="combobox" aria-label="Country picker" tabindex="0">Choose</div></form>`));
+  const node = token => page.evaluateHandle(async token =>
+    (await window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: [token] }))[0], token);
+
+  for (const target of ["css:#upload", "#zero-upload"]) {
+    const upload = await resolve({ target });
+    assert.equal(upload.matched, 1, `${target} resolves although hidden`);
+    assert.equal(upload.element.visible, false);
+    const handle = await node(upload.element._elementRef);
+    await handle.asElement().setInputFiles({ name: "report.csv", mimeType: "text/csv", buffer: Buffer.from("a,b\n1,2\n") });
+    const inspected = await page.evaluate(input => window.__qzInvoke(input, { action: "inspectElement" }), handle);
+    assert.equal(inspected.selectedFileCount, 1, `${target} reports the uploaded file`);
+  }
+  assert.equal((await resolve({ name: "Attach file" })).matched, 0);
+  assert.equal((await resolve({ name: "Attach file", includeHidden: true })).matched, 1);
+
+  const select = await resolve({ target: "css:#controls select", name: "Country" });
+  assert.equal(select.matched, 1, "a target narrowed by name still sees the hidden select");
+  assert.equal(select.element.visible, false);
+  const selectNode = await node(select.element._elementRef);
+  const selected = await page.evaluate(
+    input => window.__qzInvoke(input, { action: "actOnElement", elementAction: "select", value: "cn" }), selectNode);
+  assert.equal(selected.error, undefined);
+  assert.equal(await page.$eval("#country", element => element.value), "cn");
+  const presence = await page.evaluate(async input => ({
+    visible: await window.__qzInvoke(input, { action: "elementPresence", visibleOnly: true }),
+    attached: await window.__qzInvoke(input, { action: "elementPresence", visibleOnly: false }),
+  }), selectNode);
+  assert.equal(presence.visible.found, false, "a visible wait on a hidden target keeps waiting");
+  assert.equal(presence.attached.found, true);
+
+  await assertFindNthParity(page, { selector: "#controls", roles: ["combobox"] }, { role: "combobox", within: "css:#controls" },
+    { visible: ["fake-country"], all: ["country", "fake-country"] });
+  assert.equal((await resolve({ role: "combobox", name: "Country" })).matched, 0, "queries stay visible-only by default");
+});
+
 test("list queries preserve total counts, bounded results and explicit nth", async () => {
   const found = await resolve({ role: "button" }, { all: true, limit: 2 });
-  assert.equal(found.matched, 5);
+  assert.equal(found.matched, 4);
   assert.equal(found.results.length, 2);
   assert.deepEqual(found.results.map(element => element.name), ["Save", "Save draft"]);
   assert.ok(found.results.every(element => element._elementRef));
   const nth = await resolve({ role: "button", nth: 3 }, { all: true });
-  assert.equal(nth.matched, 5);
-  assert.equal(nth.results.length, 1);
-  assert.equal(nth.results[0].visible, false);
+  assert.equal(nth.matched, 4);
+  assert.deepEqual(nth.results.map(element => element.text), ["Scoped"]);
+  const hidden = await resolve({ role: "button", nth: 3, includeHidden: true }, { all: true });
+  assert.equal(hidden.matched, 5);
+  assert.equal(hidden.results[0].visible, false);
   const missing = await resolve({ role: "button", nth: 9 }, { all: true });
-  assert.deepEqual(missing, { matched: 5, results: [] });
-  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#save"), {
-    action: "resolveLocator", locator: {}, matchSelf: true, all: true,
+  assert.deepEqual(missing, { matched: 4, results: [] });
+  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#hidden"), {
+    action: "resolveLocator", locator: { role: "button" }, matchSelf: true, all: true,
   }));
-  assert.equal(self.matched, 1);
-  assert.equal(self.results[0].text, "Save");
+  assert.equal(self.matched, 1, "a pinned node matches its own query even when hidden");
+  assert.equal(self.results[0].visible, false);
 });
 
 test("text-only queries choose smallest matching nodes and scoped calls remain local", async () => {
@@ -211,7 +279,7 @@ test("text-only queries choose smallest matching nodes and scoped calls remain l
     action: "resolveLocator", locator: { role: "button", name: "Save" },
   }));
   assert.equal(documentRoot.matched, 1);
-  assert.equal((await resolve({ target: "css:button", scope: "css:.twin" })).code, "AMBIGUOUS_ELEMENT");
+  assert.equal((await resolve({ target: "css:button", within: "css:.twin" })).code, "AMBIGUOUS_ELEMENT");
 });
 
 test("open shadow queries bind the exact node and never rematch after replacement", async () => {
@@ -243,7 +311,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
     document.querySelector("#scope").append(list);
     document.querySelector("#shadow").attachShadow({ mode: "open" }).innerHTML = '<ul><li id="shadow-row">Shadow</li></ul>';
   });
-  const scoped = await resolve({ scope: "css:#list", target: "css::scope > li" }, { all: true });
+  const scoped = await resolve({ within: "css:#list", target: "css::scope > li" }, { all: true });
   assert.equal(scoped.matched, 2);
   assert.deepEqual(scoped.results.map(element => element.text), ["FirstNested", "Second"]);
   const bound = await page.evaluate(async () => {
@@ -253,7 +321,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
   });
   assert.equal(bound.matched, 2);
   assert.deepEqual(bound.results.map(element => element.text), ["FirstNested", "Second"]);
-  const root = await resolve({ scope: "css:#list", target: "css::scope" });
+  const root = await resolve({ within: "css:#list", target: "css::scope" });
   assert.equal(root.matched, 1);
   assert.equal(root.element.tag, "ul");
   const ordinary = await resolve({ target: "css:li" }, { all: true });
@@ -267,10 +335,120 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
   assert.equal(documentRoot.element.tag, "body");
 });
 
+const newsHtml = `<div id="itn" style="width:640px">
+  <h2>In the news</h2>
+  <a id="hidden" href="/wiki/Hidden" hidden>Booker Prize</a>
+  <div style="float:right"><a id="image" href="/wiki/File:Cover.jpg"><img alt="Cover" width="220" height="160"
+    src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a></div>
+  <ul>
+    <li><b><a id="book" href="/wiki/The_End">The End of Everything</a></b> by <a id="author" href="/wiki/MJH">M. John Harrison</a>
+      wins the <a id="booker" href="/wiki/Booker">Booker Prize</a>.</li>
+    <li><a id="paper" href="/wiki/NG">Novaya Gazeta</a> is fined.</li>
+    <li><span><span><small><a id="deep" href="/wiki/Jaros">Peter Jaroš</a></small></span></span> dies.</li>
+  </ul>
+  <p><small><a id="timeline" href="/wiki/Timeline">timeline</a></small> ·
+    <span><span><small><a id="booker-again" href="/wiki/Booker">Booker Prize</a></small></span></span></p>
+  <div id="itn-shadow"></div>
+</div>`;
+
+/** Element ids in find_elements order and in locator nth order (nth = 0, 1, ... until no match). */
+async function findAndNthOrder(target, findArgs, locator) {
+  return target.evaluate(async ({ findArgs, locator }) => {
+    const label = node => node?.id || node?.textContent || null;
+    const nodes = async refs => window.__qzInvoke(null, { action: "resolveElementRefs", elementRefs: refs });
+    const found = await window.callContent("findElements", { limit: 100, ...findArgs });
+    const located = [];
+    for (let nth = 0; locator && nth < 100; nth += 1) {
+      const result = await window.callContent("resolveLocator", { locator: { ...locator, nth } });
+      if (!result.element) break;
+      located.push(result.element._elementRef);
+    }
+    return {
+      find: (await nodes(found.results.map(item => item._elementRef))).map(label),
+      nth: (await nodes(located)).map(label),
+      matchKinds: found.results.map(item => item.matchKind),
+    };
+  }, { findArgs, locator });
+}
+
+async function installNews(target) {
+  await target.evaluate(html => {
+    document.body.insertAdjacentHTML("beforeend", html);
+    document.querySelector("#itn-shadow").attachShadow({ mode: "open" }).innerHTML = '<a id="shadow-link" href="/wiki/Shadow">Shadow story</a>';
+  }, newsHtml);
+}
+
+const visibleNewsLinks = ["image", "book", "author", "booker", "paper", "deep", "timeline", "booker-again", "shadow-link"];
+
+/** find results[i] and locator nth: i name the same node, by default and with includeHidden on both. */
+async function assertFindNthParity(target, findArgs, locator, expected) {
+  const visible = await findAndNthOrder(target, findArgs, locator);
+  assert.deepEqual(visible.nth, expected.visible);
+  assert.deepEqual(visible.find, visible.nth, "default find results[i] is default locator nth i");
+  const all = await findAndNthOrder(target, { ...findArgs, includeHidden: true }, { ...locator, includeHidden: true });
+  assert.deepEqual(all.nth, expected.all);
+  assert.deepEqual(all.find, all.nth, "includeHidden find results[i] is includeHidden locator nth i");
+}
+
+test("structural queries list find results in locator nth order, which is document order", async () => {
+  await installNews(page);
+  await assertFindNthParity(page, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" },
+    { visible: visibleNewsLinks, all: ["hidden", ...visibleNewsLinks] });
+});
+
+test("an exact:false text match inside a visible parent survives a hidden child with the same text", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend",
+    '<ul id="prices"><li id="row">Price: 42 <span id="tip" hidden>Price</span></li></ul>'));
+  await assertFindNthParity(page, { selector: "#prices", text: "Price", exact: false },
+    { text: "Price", exact: false, within: "css:#prices" }, { visible: ["row"], all: ["tip"] });
+});
+
+test("name queries share one order between find and locator nth", async () => {
+  await installNews(page);
+  await assertFindNthParity(page, { selector: "#itn", roles: ["link"], name: "Booker Prize" },
+    { role: "link", name: "Booker Prize", within: "css:#itn" },
+    { visible: ["booker", "booker-again"], all: ["hidden", "booker", "booker-again"] });
+  assert.deepEqual(await resolve({ role: "link", name: "Booker Prize", within: "css:#itn" }), { matched: 2 });
+});
+
+test("fuzzy name and pattern queries list whole, then prefix, then other matches, each in document order", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend", `<nav id="prizes">
+    <a id="nobel" href="/nobel">Nobel Peace Prize</a><a id="money" href="/money">Prize money</a>
+    <a id="winners" href="/prize-winners">Winners</a><a id="prize" href="/prize">Prize</a>
+    <a id="booker" href="/booker">Booker Prize</a><a id="money-again" href="/money-2">Prize money</a></nav>`));
+  const fuzzy = await findAndNthOrder(page, { selector: "#prizes", roles: ["link"], name: "Prize", exact: false },
+    { role: "link", name: "Prize", exact: false, within: "css:#prizes" });
+  assert.deepEqual(fuzzy.nth, ["prize", "money", "money-again", "nobel", "booker"]);
+  assert.deepEqual(fuzzy.find, fuzzy.nth, "find and locator nth rank fuzzy matches identically");
+  const strict = await resolve({ role: "link", name: "Prize", exact: false, within: "css:#prizes" });
+  assert.deepEqual(strict, { matched: 5 }, "a best match does not resolve ambiguity without nth");
+
+  const pattern = await findAndNthOrder(page, { selector: "#prizes", roles: ["link"], pattern: "prize" });
+  assert.deepEqual(pattern.find, ["prize", "money", "money-again", "nobel", "booker", "winners"]);
+  assert.deepEqual(pattern.matchKinds, ["name", "name", "name", "name", "name", "href"],
+    "an attribute-only pattern match ranks after name and text matches");
+});
+
+test("frame documents use the same find and locator nth order", async () => {
+  await page.evaluate(html => {
+    const frame = document.createElement("iframe");
+    frame.srcdoc = html;
+    document.body.append(frame);
+  }, newsHtml);
+  const frame = await (await page.locator("iframe").elementHandle()).contentFrame();
+  await frame.waitForSelector("#itn");
+  await installContent(frame);
+  await frame.evaluate(() => {
+    document.querySelector("#itn-shadow").attachShadow({ mode: "open" }).innerHTML = '<a id="shadow-link" href="/wiki/Shadow">Shadow story</a>';
+  });
+  await assertFindNthParity(frame, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" },
+    { visible: visibleNewsLinks, all: ["hidden", ...visibleNewsLinks] });
+});
+
 test("invalid queries fail before selection", async () => {
   assert.equal((await resolve({ target: "css:[" })).code, "INVALID_SELECTOR");
   assert.equal((await resolve({ role: "button", nth: -1 })).code, "INVALID_ELEMENT_LOCATOR");
-  assert.equal((await resolve({ scope: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
+  assert.equal((await resolve({ within: "css:#scope" })).code, "INVALID_ELEMENT_LOCATOR");
   assert.equal((await resolve({ target: "uid:unknown" })).code, "INVALID_ELEMENT_LOCATOR");
 });
 
@@ -292,8 +470,8 @@ test("invalid CSS keeps the browser syntax reason and the whole public target th
     assert.equal(error.message, failed.error);
     assert.equal(error.hint, undefined);
   });
-  const scoped = await resolve({ target: "css:button", scope: target });
-  assert.equal(scoped.details.target, target, "an invalid scope identifies the offending query");
+  const scoped = await resolve({ target: "css:button", within: target });
+  assert.equal(scoped.details.target, target, "an invalid within identifies the offending query");
   assert.equal((await resolve({ target: "css:form input[type=submit], form button" }, { all: true })).matched, 2,
     "one css prefix applies to the entire comma-separated query");
 });
