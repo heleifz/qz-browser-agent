@@ -96,7 +96,7 @@ TypeScript transforms do not substitute for the production pipeline when reviewi
 | Firefox `evaluateFirefoxPage` | Native `userScripts.execute` compiles the existing user/Agent expression in the page's `MAIN` world after optional permission and live-run checks. `webNavigation.getFrame` supplies the document ID; the injection targets that exact document and checks context generation again after execution. It never falls back to another document or replays failed code. The enclosing function includes the serialized result/error helper, so changes to that source also require review. Only the Firefox adapter output path is accepted. |
 | `getElementScreenshotBoundsFromRuntime` | Calls only the packaged element bounds function on an owned page element; public geometry uses the shared Rect contract. |
 | `clearStaleOptionDisabled` | Calls only the literal disabled-state predicate on resolved option/optgroup nodes through their owned document send; no model/page strings become code. |
-| `bindContentElementRefs` | Resolves bounded batches of original-node tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveElementRefs`; token arrays are CDP values, not code. It validates the frame/document and bounds concurrent node descriptions. Required locator binding validates the node-array response and propagates permission/transport failures; ordinary discovery retains its best-effort fallback. This changes binding error handling, not the packaged declaration or value-only token arguments. |
+| `bindContentElementRefs` | Resolves bounded batches of original-node tokens through the packaged `ISOLATED_CONTENT_INVOKE` bridge with action `resolveElementRefs`; token arrays are CDP values, not code. A second literal `function() { return this; }` serializes the retained isolated-world array with CDP deep serialization, without interpolating source. Backend IDs must be elements in the captured loader. Unsupported hosts or shapes describe the same retained objects without replaying the one-shot tokens. Frame/document checks, cancellation and object-group cleanup remain enforced. Required locator binding propagates permission/transport failures; ordinary discovery retains its best-effort fallback. |
 
 On the Firefox-integrated branch, `contentContextId` and `invokeBound` read their probe and bridge
 source from the literal constants in `background/tools/isolated-page-calls.ts`. Their function
@@ -122,7 +122,7 @@ page code and does not authorize or replay execution. These changes affect the W
 private page-bridge factory fingerprints, and storecheck's whole-runner token digest without changing
 execution sources, target authorization, sandbox isolation, or replay behavior.
 
-The ten CDP call sites remain explicit findings in the custom report, each limited to its exact
+The CDP call sites remain explicit findings in the custom report, each limited to its exact
 function fingerprint and owning output path. storecheck does not detect these calls. In particular,
 `evaluate` deliberately executes a self-contained user/Agent function in an explicitly owned page through CDP; it is not
 made static or policy-safe merely because there is no `eval` token. This capability has the same

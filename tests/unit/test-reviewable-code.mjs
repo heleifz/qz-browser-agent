@@ -70,7 +70,7 @@ try {
     const scriptPath = bundle ? 'background/service-worker.js' : 'capabilities/script/tools.js';
     const scriptCode = await readFile(join(outputDir, scriptPath), 'utf8');
     const scriptFindings = cdpFindings(scriptCode, scriptPath);
-    assert.equal(scriptFindings.length, bundle ? 10 : 2);
+    assert.equal(scriptFindings.length, bundle ? 11 : 2);
     assert.ok(scriptFindings.every(item => item.reviewed));
     assert.ok(cdpFindings(scriptCode, 'unrelated.js').every(item => !item.reviewed));
     const mutatedScriptCode = scriptCode.replaceAll('context.toolExecutionId || ""', 'pageControlledParent');
@@ -86,6 +86,12 @@ try {
     assert.equal(cdpFindings(`${scriptCode}\nevaluateCdpScript(tabId, { expression: remoteCode });`, scriptPath).filter(item => !item.reviewed).length, 1);
 
     if (!bundle) {
+      const elementPath = 'background/tools/element-runtime.js';
+      const elementCode = await readFile(join(outputDir, elementPath), 'utf8');
+      const changedSerialization = elementCode.replace('function() { return this; }', 'function() { return pageControlledNodes; }');
+      assert.notEqual(changedSerialization, elementCode);
+      assert.equal(cdpFindings(changedSerialization, elementPath).filter(item => !item.reviewed).length, 2,
+        'the static identity serialization and original token bridge share a reviewed enclosing function');
       // The disabled-option repair is a fixed node predicate, not a general execution exemption.
       const axPath = 'capabilities/accessibility/tools.js';
       const axCode = await readFile(join(outputDir, axPath), 'utf8');
