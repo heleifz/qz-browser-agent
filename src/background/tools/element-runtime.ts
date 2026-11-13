@@ -470,7 +470,7 @@ async function scanLocator(tabId: number | undefined, locator: ElementLocator, c
     results: Array.isArray(response.results) ? response.results : [] };
 }
 
-/** Count attached matches, including hidden nodes. An explicit nth selects at most one. */
+/** Count the locator's matches (visible unless includeHidden). An explicit nth selects at most one. */
 async function countLocatorMatches(tabId: number | undefined, locator: ElementLocator, context: ToolContext = {}) {
   const { matched } = await scanLocator(tabId, locator, context, { countOnly: true });
   return locator.nth === undefined ? matched : locator.nth < matched ? 1 : 0;
@@ -514,7 +514,7 @@ async function resolveElementInput(tabId: number | undefined, { target = "", loc
   if (locator === undefined) return resolveElementReference(tabId, { target, index: nth, readOnly }, context);
   const binding = await resolveLocatorTarget(tabId, locator, context);
   if (!binding) throw Object.assign(new ToolExecutionError("ELEMENT_NOT_FOUND", "No element matches the locator.", pageErrorDetails(context)), {
-    hint: "Inspect the page or refine the locator, then retry.",
+    hint: "Inspect the page or refine the locator, then retry. A hidden element matches only with includeHidden: true.",
   });
   return binding;
 }

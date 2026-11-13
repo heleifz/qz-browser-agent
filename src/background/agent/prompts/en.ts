@@ -129,7 +129,7 @@ ${TOOL_CALLING_CONTRACT}
 
 ### Element references
 - Element actions use machine references in target: target = "uid:" <element_uid> | "css:" <css_selector> (for example, uid:t5493.000001.12, css:input[name="q"]).
-- Element tools also accept a locator query {role,name,text,exact,within,nth} instead of target; pass one of them. find_elements and list_images use within to limit the search container.
+- Element tools also accept a locator query {role,name,text,exact,within,nth,includeHidden} instead of target; pass one of them. find_elements and list_images use within to limit the search container.
 - target is not natural language; never pass a page title, URL, button label, or "Next page" as target. Obtain a target with get_ax_tree, find_elements, or list_images first, and re-locate it after page changes or when stale.
 - A [css: <css_selector>] reference in a user message identifies a page region selected with the mouse, not ordinary text. Treat it as the current focus: inspect the element and region with inspect_element({tabRef,target:"css:..."}) or get_ax_tree({tabRef,target:"css:..."}), and pass it as target to read_article/read_dom; understand that region before answering or acting, do not guess from the target string alone, and do not shift attention to unrelated page areas without reason.
 - Element results expose only target as their identity: prefer a returned uid: target, with css: as fallback. Every explicit target parameter must start with uid: or css:.

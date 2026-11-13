@@ -129,17 +129,17 @@ test('locator reads resolve once and missing or ambiguous matches do not become 
 });
 
 function waitFixture(states) {
-  const definitions = new Map(); let scans = 0, counts = 0, current;
+  const definitions = new Map(), located = []; let scans = 0, counts = 0, current;
   registerWaitTools({ registerTool: definition => definitions.set(definition.name, definition),
     element: {
-      async resolveLocatorTarget() { current = states[Math.min(scans++, states.length - 1)]; if (current?.error) throw current.error; return current?.attached ? binding(scans) : null; },
-      async countLocatorMatches() { return states[Math.min(counts++, states.length - 1)].count; },
+      async resolveLocatorTarget(_tabId, locator) { located.push(locator); current = states[Math.min(scans++, states.length - 1)]; if (current?.error) throw current.error; return current?.attached ? binding(scans) : null; },
+      async countLocatorMatches(_tabId, locator) { located.push(locator); return states[Math.min(counts++, states.length - 1)].count; },
       async callElement(_id, _ref, _action, args) { if (current.presenceError) throw current.presenceError; const found = current.attached && (!args.visibleOnly || current.visible); return { found, element: found ? { text: 'node' } : null }; },
       async addElementTargetsToFindResult(value, _id, _context, ref) { return { ...value, target: `uid:t7.000001.${ref.backendNodeId}` }; },
       elementTargetForSelector: value => `css:${value}`,
     },
   });
-  return { definitions, scans: () => scans, counts: () => counts,
+  return { definitions, located, scans: () => scans, counts: () => counts,
     run(input) {
       const definition = definitions.get('wait_for_element');
       definition.validateArgs(input);
@@ -167,6 +167,20 @@ test('state waits rescan locators and distinguish hidden nodes from detached nod
   const original = waitFixture([{ attached: true, presenceError: stale(binding(1).target) }]);
   assert.equal((await original.run({ locator: { target: 'uid:original' }, state: 'detached' })).found, false);
   assert.equal(original.scans(), 1, 'an explicit UID wait observes disappearance, without selecting a replacement');
+});
+
+test('attachment states query hidden nodes too, while visibility states and counts keep the locator as given', async () => {
+  for (const [state, includeHidden] of [['attached', true], ['detached', true], ['visible', undefined], ['hidden', undefined]]) {
+    const f = waitFixture([{ attached: state !== 'detached', visible: state !== 'hidden' }]);
+    await f.run({ locator: query, state });
+    assert.equal(f.located[0].includeHidden, includeHidden, state);
+  }
+  const explicit = waitFixture([{ attached: true, visible: true }]);
+  await explicit.run({ locator: { ...query, includeHidden: false }, state: 'attached' });
+  assert.equal(explicit.located[0].includeHidden, false, 'an explicit includeHidden wins');
+  const counted = waitFixture([{ count: 1 }]);
+  await counted.run({ locator: query, count: 1 });
+  assert.equal(counted.located[0].includeHidden, undefined);
 });
 
 test('count waits include zero, use count-only queries and reject state/count ambiguity', async () => {

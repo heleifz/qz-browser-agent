@@ -113,7 +113,7 @@ test('unknown locator keys identify the invalid input and supported fields witho
     assert.match(error.message, /Supported fields: target, role, name, text, exact, within, nth/);
     assert.equal(error.hint, undefined);
     assert.deepEqual(error.details, {
-      invalidFields: ['cs', 'timeout'], allowedFields: ['target', 'role', 'name', 'text', 'exact', 'within', 'nth'],
+      invalidFields: ['cs', 'timeout'], allowedFields: ['target', 'role', 'name', 'text', 'exact', 'within', 'nth', 'includeHidden'],
     });
     return true;
   });

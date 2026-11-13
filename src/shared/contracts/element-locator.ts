@@ -7,6 +7,7 @@ export interface ElementLocator {
   exact?: boolean;
   within?: string;
   nth?: number;
+  includeHidden?: boolean;
 }
 
 export const elementLocatorSchema = {
@@ -19,6 +20,7 @@ export const elementLocatorSchema = {
     exact: { type: "boolean", description: "Exact normalized text/name match (default true); false matches a substring." },
     within: { type: "string", description: "Search only inside this uid: or css: element. A frame document reference limits the query to that frame." },
     nth: { type: "integer", minimum: 0, description: "Explicit zero-based match index; otherwise a single match is required." },
+    includeHidden: { type: "boolean", description: "Also match hidden elements, including in nth and counts. Default: false." },
   },
   additionalProperties: false,
 } as const;
@@ -58,6 +60,7 @@ export function validateElementLocator(value: unknown): asserts value is Element
     throw new Error("A locator requires target, role, name, or text.");
   }
   if (query.exact !== undefined && typeof query.exact !== "boolean") throw new Error("Locator exact must be a boolean.");
+  if (query.includeHidden !== undefined && typeof query.includeHidden !== "boolean") throw new Error("Locator includeHidden must be a boolean.");
   if (query.nth !== undefined && (!Number.isInteger(query.nth) || Number(query.nth) < 0)) {
     throw new Error("Locator nth must be a non-negative integer.");
   }

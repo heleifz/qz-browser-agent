@@ -262,7 +262,7 @@ registerTool({
       flags: { type: "string", description: toolT("findElementsFlags") },
       within: { type: "string", description: toolT("findElementsWithin") },
       locator: elementLocatorSchema,
-      countOnly: { type: "boolean", description: "With locator, return only the current attached match count, including hidden elements." },
+      countOnly: { type: "boolean", description: "With locator, return only the current match count." },
       role: { type: "string", description: toolT("findElementsRole") },
       roles: { type: "array", items: { type: "string" }, description: toolT("findElementsRoles") },
       tag: { type: "string", description: toolT("findElementsTag") },

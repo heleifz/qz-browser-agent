@@ -1745,7 +1745,7 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const scope: unknown = selector;
       const root = scope instanceof Element ? scope : document;
       try {
-        const result = resolveElementLocator(root, locator!, { role: getElementRole, name: getAccessibleName }, { matchSelf, all, limit });
+        const result = resolveElementLocator(root, locator!, elementSemantics, { matchSelf, all, limit });
         const observe = (element: Element) => ({ ...getElementSummary(element, { selector: false }), _elementRef: rememberElement(element) });
         if (countOnly) return { matched: result.matched };
         if (all) return { matched: result.matched, results: (result.elements || []).map(observe) };
@@ -1784,14 +1784,11 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
       const filtered = candidates.filter(el => (!roleSet.size || roleSet.has(getElementRole(el)))
         && (!tagSet.size || tagSet.has(el.tagName.toLowerCase()))
         && (!typeSet.size || typeSet.has((el.getAttribute("type") || "").toLowerCase())));
-      // The locator's match sequence for the same fields; hidden matches are dropped afterwards so the
-      // visible results keep that sequence.
-      const queried = name === undefined && text === undefined ? filtered : matchElementQuery(filtered,
-        { name, text, exact }, { role: getElementRole, name: getAccessibleName }, Boolean(roleSet.size || tagSet.size || typeSet.size));
+      const queried = matchElementQuery(filtered, { name, text, exact, includeHidden: includeHidden === true },
+        elementSemantics, Boolean(roleSet.size || tagSet.size || typeSet.size));
       const matches = [];
       for (const el of queried) {
         const summary = getElementSummary(el);
-        if (!includeHidden && !summary.visible) continue;
         const matchInfo = matchElementSearch(regex, getElementSearchParts(el, summary));
         if (regex && !matchInfo.matched) continue;
         matches.push({ el, summary, ...matchInfo });
@@ -2926,6 +2923,8 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
   function getAccessibleName(el: Element) {
     return elementAccessibleName(el);
   }
+
+  const elementSemantics = { role: getElementRole, name: getAccessibleName, visible: isVisible };
 
   function getElementValue(el: Element, full = false) {
     if (el instanceof HTMLInputElement && String(el.type || "").toLowerCase() === "file") return "";

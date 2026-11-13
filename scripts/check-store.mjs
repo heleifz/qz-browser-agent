@@ -9,7 +9,7 @@ import { loadExtension, loadRules, runRules, formatJson } from "storecheck";
 
 const STORECHECK_VERSION = "0.1.0";
 // Reviewed packaged SDK data conversions; execution and sandbox boundaries are documented in store-code-audit.md.
-const SANDBOX_TOKENS = "9d37febcee1462bf83e70714675983bd0af3482aaa14db364fd3ccd2293ed64a";
+const SANDBOX_TOKENS = "42524dcbbe7f67c5aa862ed974691b4ad118d8a06da16f9809fde7a689481819";
 const REQUIRED_CLEAN = /^(?:code\/(?:obfuscated-code|minified-without-source)|privacy\/(?:remote-code-execution|remote-script-tag)|csp\/)/u;
 const identity = finding => JSON.stringify([finding.ruleId, finding.file, finding.line, finding.message]);
 

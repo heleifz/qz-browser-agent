@@ -4,6 +4,7 @@ import { eachElementWithinOpenShadow, openShadowRoot } from "./open-shadow.js";
 interface ElementSemantics {
   role(element: Element): string;
   name(element: Element): string;
+  visible(element: Element): boolean;
 }
 
 function failure(code: string, message: string, matched?: number): Error {
@@ -65,13 +66,15 @@ export function orderElementMatches<T>(matches: T[], tier: (match: T) => number)
 }
 
 /**
- * The field matcher shared by locators and find_elements. name and text compare whitespace-normalized
- * values exactly (case-sensitive) unless exact is false, which matches a substring. Unless the caller
- * has already narrowed candidates, a text-only query keeps the smallest matching nodes rather than every
- * ancestor whose aggregate text contains the phrase. Matches are returned in orderElementMatches order.
+ * The match list shared by locators and find_elements. Hidden elements are dropped unless includeHidden is
+ * true, before any other rule, so a hidden node never displaces a visible one. name and text compare
+ * whitespace-normalized values exactly (case-sensitive) unless exact is false, which matches a substring.
+ * Unless the caller has already narrowed candidates, a text-only query keeps the smallest matching nodes
+ * rather than every ancestor whose aggregate text contains the phrase. Matches are returned in
+ * orderElementMatches order.
  */
 export function matchElementQuery(
-  candidates: Element[], query: Pick<ElementLocator, "role" | "name" | "text" | "exact">,
+  candidates: Element[], query: Pick<ElementLocator, "role" | "name" | "text" | "exact" | "includeHidden">,
   semantics: ElementSemantics, narrowed = false,
 ): Element[] {
   const fieldTier = (actual: string, expected: string) => {
@@ -84,6 +87,7 @@ export function matchElementQuery(
   const tiers = new Map<Element, number>();
   const matches = candidates.filter(element => {
     if (!element.isConnected || query.role !== undefined && semantics.role(element) !== query.role) return false;
+    if (query.includeHidden !== true && !semantics.visible(element)) return false;
     const name = query.name === undefined ? 0 : fieldTier(semantics.name(element), query.name);
     if (name < 0) return false;
     const text = query.text === undefined ? 0 : fieldTier(element.textContent || "", query.text);
@@ -102,7 +106,7 @@ export function matchElementQuery(
   return orderElementMatches(matches.filter(element => !ancestors.has(element)), byTier);
 }
 
-/** Strict queries keep hidden nodes; nth indexes the shared match order, and ambiguity depends only on the count. */
+/** nth indexes the shared match list and ambiguity counts it; a pinned node (matchSelf) matches even when hidden. */
 export function resolveElementLocator(
   root: Element | Document, locator: ElementLocator, semantics: ElementSemantics,
   { matchSelf = false, all = false, limit = 20 }: { matchSelf?: boolean; all?: boolean; limit?: number } = {},
@@ -118,7 +122,8 @@ export function resolveElementLocator(
     candidates = roots.length ? allElements(roots[0]!) : [];
   }
   if (locator.target) candidates = cssMatches(queryRoot, candidates, locator.target);
-  const matches = matchElementQuery(candidates, locator, semantics, locator.target !== undefined);
+  const query = matchSelf ? { ...locator, includeHidden: true } : locator;
+  const matches = matchElementQuery(candidates, query, semantics, locator.target !== undefined);
   const selected = locator.nth === undefined
     ? matches.length === 1 ? matches[0] : undefined
     : matches[locator.nth];

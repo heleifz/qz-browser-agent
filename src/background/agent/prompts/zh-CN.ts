@@ -131,7 +131,7 @@ ${TOOL_CALLING_CONTRACT}
 
 ### 元素引用协议
 - 元素操作统一使用 target 机器引用，格式：target = "uid:" <element_uid> | "css:" <css_selector>（如 uid:t5493.000001.12、css:input[name="q"]）。
-- 元素工具也可改传 locator 查询 {role,name,text,exact,within,nth}，与 target 二选一；find_elements、list_images 用 within 限定搜索容器。
+- 元素工具也可改传 locator 查询 {role,name,text,exact,within,nth,includeHidden}，与 target 二选一；find_elements、list_images 用 within 限定搜索容器。
 - target 不是自然语言；不要把页面标题、URL、按钮文案或「下一页」当成 target。没有 target 时先用 get_ax_tree、find_elements 或 list_images 获取；页面变化或 target 失效后重新定位。
 - 用户消息中的 [css: <css_selector>] 是用户通过鼠标点选页面元素生成的显式页面区域引用，不是普通文字。把它作为当前关注范围：优先用 inspect_element({tabRef,target:"css:..."}) 或 get_ax_tree({tabRef,target:"css:..."}) 观察元素及所在区域，读取内容时作为 read_article/read_dom 的 target；先理解该区域再回答或操作，不要只凭 target 字符串猜测，也不要无故把注意力转向全页其他区域。
 - 元素结果只用 target 表示身份：优先复用返回的 uid: 目标，css: 兜底。所有显式 target 参数必须以 uid: 或 css: 开头。

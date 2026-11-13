@@ -162,36 +162,52 @@ test("strict queries report ambiguity; nth is explicit and preserves tree order"
   assert.deepEqual(await resolve({ target: "css:.twin", nth: 8 }), { matched: 2 });
 });
 
-test("attached hidden nodes remain queryable and counting does not bind nodes", async () => {
-  const hidden = await resolve({ target: "css:#hidden" });
+test("hidden nodes match only with includeHidden, and counting does not bind nodes", async () => {
+  assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
+  const hidden = await resolve({ target: "css:#hidden", includeHidden: true });
   assert.equal(hidden.matched, 1);
   assert.equal(hidden.element.visible, false);
   assert.equal(hidden.element.name, "");
-  const count = await resolve({ role: "button" }, { countOnly: true });
-  assert.deepEqual(count, { matched: 5 });
+  assert.deepEqual(await resolve({ role: "button" }, { countOnly: true }), { matched: 4 });
+  assert.deepEqual(await resolve({ role: "button", includeHidden: true }, { countOnly: true }), { matched: 5 });
   await page.evaluate(() => { document.querySelector("#hidden").hidden = false; });
   assert.equal((await resolve({ role: "button", name: "Hidden" })).matched, 1);
   await page.evaluate(() => document.querySelector("#hidden").remove());
-  assert.deepEqual(await resolve({ target: "css:#hidden" }), { matched: 0 });
+  assert.deepEqual(await resolve({ target: "css:#hidden", includeHidden: true }), { matched: 0 });
+});
+
+test("a hidden duplicate neither makes a locator ambiguous nor shifts nth", async () => {
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML("afterbegin", '<button class="go" hidden>Go</button>');
+    document.body.insertAdjacentHTML("beforeend", '<button class="go" id="visible-go">Go</button>');
+  });
+  const strict = await resolve({ target: "css:.go" });
+  assert.equal(strict.matched, 1, "the visible match resolves without nth");
+  assert.equal(strict.element.visible, true);
+  assert.equal((await resolve({ target: "css:.go", nth: 0 })).element.visible, true);
+  assert.deepEqual(await resolve({ target: "css:.go", includeHidden: true }), { matched: 2 });
+  assert.equal((await resolve({ target: "css:.go", includeHidden: true, nth: 0 })).element.visible, false);
 });
 
 test("list queries preserve total counts, bounded results and explicit nth", async () => {
   const found = await resolve({ role: "button" }, { all: true, limit: 2 });
-  assert.equal(found.matched, 5);
+  assert.equal(found.matched, 4);
   assert.equal(found.results.length, 2);
   assert.deepEqual(found.results.map(element => element.name), ["Save", "Save draft"]);
   assert.ok(found.results.every(element => element._elementRef));
   const nth = await resolve({ role: "button", nth: 3 }, { all: true });
-  assert.equal(nth.matched, 5);
-  assert.equal(nth.results.length, 1);
-  assert.equal(nth.results[0].visible, false);
+  assert.equal(nth.matched, 4);
+  assert.deepEqual(nth.results.map(element => element.text), ["Scoped"]);
+  const hidden = await resolve({ role: "button", nth: 3, includeHidden: true }, { all: true });
+  assert.equal(hidden.matched, 5);
+  assert.equal(hidden.results[0].visible, false);
   const missing = await resolve({ role: "button", nth: 9 }, { all: true });
-  assert.deepEqual(missing, { matched: 5, results: [] });
-  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#save"), {
-    action: "resolveLocator", locator: {}, matchSelf: true, all: true,
+  assert.deepEqual(missing, { matched: 4, results: [] });
+  const self = await page.evaluate(() => window.__qzInvoke(document.querySelector("#hidden"), {
+    action: "resolveLocator", locator: { role: "button" }, matchSelf: true, all: true,
   }));
-  assert.equal(self.matched, 1);
-  assert.equal(self.results[0].text, "Save");
+  assert.equal(self.matched, 1, "a pinned node matches its own query even when hidden");
+  assert.equal(self.results[0].visible, false);
 });
 
 test("text-only queries choose smallest matching nodes and scoped calls remain local", async () => {
@@ -269,6 +285,7 @@ test("CSS scope is rooted at the supplied search root and preserves shadow walk 
 
 const newsHtml = `<div id="itn" style="width:640px">
   <h2>In the news</h2>
+  <a id="hidden" href="/wiki/Hidden" hidden>Booker Prize</a>
   <div style="float:right"><a id="image" href="/wiki/File:Cover.jpg"><img alt="Cover" width="220" height="160"
     src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></a></div>
   <ul>
@@ -279,7 +296,6 @@ const newsHtml = `<div id="itn" style="width:640px">
   </ul>
   <p><small><a id="timeline" href="/wiki/Timeline">timeline</a></small> ·
     <span><span><small><a id="booker-again" href="/wiki/Booker">Booker Prize</a></small></span></span></p>
-  <a id="hidden" href="/wiki/Hidden" hidden>Booker Prize</a>
   <div id="itn-shadow"></div>
 </div>`;
 
@@ -310,23 +326,36 @@ async function installNews(target) {
   }, newsHtml);
 }
 
-const newsLinks = ["image", "book", "author", "booker", "paper", "deep", "timeline", "booker-again", "hidden", "shadow-link"];
+const visibleNewsLinks = ["image", "book", "author", "booker", "paper", "deep", "timeline", "booker-again", "shadow-link"];
+
+/** find results[i] and locator nth: i name the same node, by default and with includeHidden on both. */
+async function assertFindNthParity(target, findArgs, locator, expected) {
+  const visible = await findAndNthOrder(target, findArgs, locator);
+  assert.deepEqual(visible.nth, expected.visible);
+  assert.deepEqual(visible.find, visible.nth, "default find results[i] is default locator nth i");
+  const all = await findAndNthOrder(target, { ...findArgs, includeHidden: true }, { ...locator, includeHidden: true });
+  assert.deepEqual(all.nth, expected.all);
+  assert.deepEqual(all.find, all.nth, "includeHidden find results[i] is includeHidden locator nth i");
+}
 
 test("structural queries list find results in locator nth order, which is document order", async () => {
   await installNews(page);
-  const all = await findAndNthOrder(page, { selector: "#itn", roles: ["link"], includeHidden: true }, { role: "link", within: "css:#itn" });
-  assert.deepEqual(all.nth, newsLinks, "nth follows document order, including open shadow content and hidden nodes");
-  assert.deepEqual(all.find, all.nth, "find results[i] is locator nth i");
-  const visible = await findAndNthOrder(page, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" });
-  assert.deepEqual(visible.find, newsLinks.filter(id => id !== "hidden"), "skipping hidden matches keeps the shared order");
+  await assertFindNthParity(page, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" },
+    { visible: visibleNewsLinks, all: ["hidden", ...visibleNewsLinks] });
+});
+
+test("an exact:false text match inside a visible parent survives a hidden child with the same text", async () => {
+  await page.evaluate(() => document.body.insertAdjacentHTML("beforeend",
+    '<ul id="prices"><li id="row">Price: 42 <span id="tip" hidden>Price</span></li></ul>'));
+  await assertFindNthParity(page, { selector: "#prices", text: "Price", exact: false },
+    { text: "Price", exact: false, within: "css:#prices" }, { visible: ["row"], all: ["tip"] });
 });
 
 test("name queries share one order between find and locator nth", async () => {
   await installNews(page);
-  const exact = await findAndNthOrder(page, { selector: "#itn", roles: ["link"], name: "Booker Prize", includeHidden: true },
-    { role: "link", name: "Booker Prize", within: "css:#itn" });
-  assert.deepEqual(exact.nth, ["booker", "booker-again"], "a hidden link has no accessible name");
-  assert.deepEqual(exact.find, exact.nth);
+  await assertFindNthParity(page, { selector: "#itn", roles: ["link"], name: "Booker Prize" },
+    { role: "link", name: "Booker Prize", within: "css:#itn" },
+    { visible: ["booker", "booker-again"], all: ["booker", "booker-again"] });
   assert.deepEqual(await resolve({ role: "link", name: "Booker Prize", within: "css:#itn" }), { matched: 2 });
 });
 
@@ -360,9 +389,8 @@ test("frame documents use the same find and locator nth order", async () => {
   await frame.evaluate(() => {
     document.querySelector("#itn-shadow").attachShadow({ mode: "open" }).innerHTML = '<a id="shadow-link" href="/wiki/Shadow">Shadow story</a>';
   });
-  const order = await findAndNthOrder(frame, { selector: "#itn", roles: ["link"], includeHidden: true }, { role: "link", within: "css:#itn" });
-  assert.deepEqual(order.nth, newsLinks);
-  assert.deepEqual(order.find, order.nth);
+  await assertFindNthParity(frame, { selector: "#itn", roles: ["link"] }, { role: "link", within: "css:#itn" },
+    { visible: visibleNewsLinks, all: ["hidden", ...visibleNewsLinks] });
 });
 
 test("invalid queries fail before selection", async () => {

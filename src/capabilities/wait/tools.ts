@@ -522,21 +522,24 @@ registerTool({
     const state = String(input.state || "visible");
     const visibleOnly = state === "visible" || state === "hidden";
     const absent = state === "hidden" || state === "detached";
+    // Attachment states observe connected nodes, so their locator also sees hidden ones unless told otherwise.
+    const locator = input.locator && !visibleOnly
+      ? { ...input.locator, includeHidden: input.locator.includeHidden ?? true } : input.locator;
     const intervalMs = secondsToMs(input.intervalSeconds, 500);
     return runWaitWithTrigger({ tool: "wait_for_element", timeoutMs: waitBudget(input), signal, context, details: waitDetails(context, input) },
       async current => {
       const observing = Object.assign(Object.create(context), { signal: current });
-      const fixed = input.locator ? undefined : await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);
+      const fixed = locator ? undefined : await element.resolveSelectorTarget(input.tabId, String(input.target || ""), 0, observing);
       current.throwIfAborted();
       return pollState(current, async () => {
         let binding = fixed;
         let result: Record<string, unknown>;
         try {
-          if (input.count !== undefined && input.locator) {
-            const count = await element.countLocatorMatches(input.tabId, input.locator, observing);
+          if (input.count !== undefined && locator) {
+            const count = await element.countLocatorMatches(input.tabId, locator, observing);
             return count === input.count ? { count } : undefined;
           }
-          binding = fixed ?? await element.resolveLocatorTarget(input.tabId, input.locator!, observing) ?? undefined;
+          binding = fixed ?? await element.resolveLocatorTarget(input.tabId, locator!, observing) ?? undefined;
           if (!binding) return absent ? { state, found: false, element: null } : undefined;
           const params = { selector: binding.selector, visibleOnly };
           result = (binding.uid ? await element.callElement(binding.tabId, binding, "elementPresence", params, observing)
